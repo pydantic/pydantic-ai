@@ -340,6 +340,7 @@ def test_observer_cannot_choose_the_status_target():
         ('native', 'error'),
         ('observer-bot-event', 'error'),
         ('producer-review-event', 'error'),
+        ('checks-producer-review-event', 'error'),
         ('api-error', 'error'),
         ('moved-while-queued', 'stale'),
         ('repository-changed', 'stale'),
@@ -392,9 +393,9 @@ if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.event = 'pull_request_target';
 }
 if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
-if (data.scenario === 'checks-producer') {
+if (['checks-producer', 'checks-producer-review-event'].includes(data.scenario)) {
   serverRun.name = 'PR Review Checks'; serverRun.path = '.github/workflows/pr-review-checks.yml';
-  serverRun.event = 'pull_request_target';
+  serverRun.event = data.scenario === 'checks-producer' ? 'pull_request_target' : 'pull_request_review';
 }
 // GitHub reports the base repository as a review run's head repository, even for a fork PR.
 if (['pull_request_review', 'pull_request_review_comment'].includes(serverRun.event)) {
@@ -1025,9 +1026,9 @@ def test_findings_on_every_head_and_size_need_an_answer(size: review_gates.Size)
 @pytest.mark.parametrize(
     ('posted', 'resolved', 'passes'),
     [
-        (review_gates.RESOLUTION_SETTLES_BEFORE.replace(hour=1), True, False),
-        (review_gates.RESOLUTION_SETTLES_BEFORE.replace(day=18), True, True),
-        (review_gates.RESOLUTION_SETTLES_BEFORE.replace(day=18), False, False),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(hour=1), True, False),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18), True, True),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18), False, False),
     ],
 )
 def test_only_threads_resolved_before_the_cutoff_need_no_answer(posted: datetime, resolved: bool, passes: bool):
@@ -1041,7 +1042,7 @@ def test_unregistered_bot_fails_even_with_an_answer():
     assert verdicts(github)['dispositions'].failures[1:] == [
         'https://github.com/o/r/pull/7#discussion_r40: no registered reviewer started this `new-reviewer[bot]` thread.'
     ]
-    github.comments = [finding(stranger, posted=review_gates.RESOLUTION_SETTLES_BEFORE.replace(day=18))]
+    github.comments = [finding(stranger, posted=review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18))]
     github.resolved = {40}
     assert not verdicts(github)['dispositions'].failures
 

@@ -26,7 +26,7 @@ REVIEW_CONTEXTS: dict[ReviewGate, str] = {
 }
 # The douwebot prompt in `bots.yml` asks for this prefix on every optional finding.
 OPTIONAL_FINDING_PREFIX = 'Optional:'
-# Review bots by REST login. `github-actions[bot]` posts for several reviewers, so `finding_reviewer` reads its receipts.
+# Review bots by REST login. `finding_reviewer` tells the `github-actions[bot]` reviewers apart by receipt.
 REVIEWER_LOGINS: dict[str, str] = {
     'chatgpt-codex-connector[bot]': 'Codex',
     'coderabbitai[bot]': 'CodeRabbit',
@@ -46,7 +46,7 @@ GH_AW_REVIEWERS: dict[str, str] = {
 }
 # Resolving a thread settled a finding started before this time. GitHub records no resolution time.
 # Delete this baseline once no open PR has a bot thread started before it.
-RESOLUTION_SETTLES_BEFORE = datetime(2026, 11, 19, tzinfo=UTC)
+RESOLVED_THREADS_STARTED_BEFORE = datetime(2026, 11, 19, tzinfo=UTC)
 # A reply line that answers a finding; reply bodies can open with an attribution line.
 DISPOSITION = re.compile(
     r'^(?:Fixed in (?P<sha>[0-9a-f]{7,40})\b|Tracked in #(?P<number>[1-9][0-9]*)\b|(?P<declined>Declined: \S))',
@@ -321,7 +321,7 @@ def finding_dispositions(
 
     A reply line `Fixed in <sha>` names a commit of this PR, and `Tracked in #N` another issue or PR; either
     counts from anyone. `Declined: <reason>` counts from write access, and from anyone on a douwebot `Optional:`
-    finding. A thread started before `RESOLUTION_SETTLES_BEFORE` and resolved is settled, whichever bot started it.
+    finding. A resolved thread started before `RESOLVED_THREADS_STARTED_BEFORE` is settled, whatever bot started it.
     """
     parents = {review.id: review for review in reviews}
     findings = [comment for comment in comments if comment.in_reply_to_id is None and comment.user.type == 'Bot']
@@ -342,7 +342,7 @@ def finding_dispositions(
     unanswered: list[str] = []
     unregistered: list[str] = []
     for finding in findings:
-        if finding.created_at < RESOLUTION_SETTLES_BEFORE and finding.id in resolved:
+        if finding.created_at < RESOLVED_THREADS_STARTED_BEFORE and finding.id in resolved:
             continue
         url = f'{pull.html_url}#discussion_r{finding.id}'
         reviewer = finding_reviewer(finding, parents.get(finding.pull_request_review_id))
