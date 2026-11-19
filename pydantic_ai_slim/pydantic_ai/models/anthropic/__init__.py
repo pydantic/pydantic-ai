@@ -4459,8 +4459,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if computer is None:
             return None
         version = self.profile.get('anthropic_computer_tool_version', 'computer_20250124')
-        names = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)
-        return _computer.NativeComputer(names[0], version, computer.display_size) if names else None
+        name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
+        return _computer.NativeComputer(name, version, computer.display_size) if name is not None else None
 
     def _sent_computer(
         self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters

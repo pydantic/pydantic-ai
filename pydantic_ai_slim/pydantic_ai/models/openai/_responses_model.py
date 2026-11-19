@@ -2623,10 +2623,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         That is: made here, of the `computer` tool sent natively in its place, with the item's actions. A hook may have
         renamed the call or changed its actions, and the item would then say they ran.
         """
-        if (
-            part.provider_name != self.system
-            or part.tool_name not in model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)[:1]
-        ):
+        computer_name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
+        if part.provider_name != self.system or part.tool_name != computer_name:
             return None
         return stored_computer_call(part)
 
