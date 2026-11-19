@@ -444,9 +444,9 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
     API; the other file operations run as shell commands.
 
-    With `desktop`, `True` or a `(width, height)` (1280x800 by default), the Sprite gets a display for
+    With `desktop`, `True` or a `(width, height)` (1280x800 by default), the Sprite gets a desktop for
     [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse] on first use, which installs the programs it needs.
-    A cold wake stops the display and the programs on it; it starts again empty.
+    A cold wake closes the windows on it; the desktop starts again on the next use.
     """
 
     def __init__(
