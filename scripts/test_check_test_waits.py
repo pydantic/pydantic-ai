@@ -315,8 +315,23 @@ def test_server(start, cond):
     port = 8124
 """
 
+_READ_IN_A_REBIND = """\
+import socket
 
-@pytest.mark.parametrize('source', [_RETURNED, _READ_AFTER, _READ_BEFORE_REBIND])
+
+def test_server(start):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    port = max(
+        port,
+        1,
+    )
+    start(port)
+"""
+
+
+@pytest.mark.parametrize('source', [_RETURNED, _READ_AFTER, _READ_BEFORE_REBIND, _READ_IN_A_REBIND])
 def test_a_port_used_after_its_socket_closes_fails(repo: Path, capsys: pytest.CaptureFixture[str], source: str):
     code, out = _staged(repo, capsys, 'tests/test_new.py', source)
 
@@ -356,6 +371,16 @@ def rebound(run):
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     port = 8123
+    run(port)
+
+
+def rebound_with_annotation(run):
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    port, other = 8123, 8124
+    run(port)
+    port: int = 8125
     run(port)
 
 

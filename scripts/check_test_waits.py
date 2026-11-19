@@ -314,18 +314,26 @@ def _enclosing_scope(tree: ast.Module, target: ast.AST) -> ast.AST:
 
 
 def _rebinds(scope: ast.AST, node: ast.stmt, names: set[str]) -> dict[str, list[int]]:
-    """The lines after `node` where a statement beside it assigns each of `names` again, so a later read is not the port.
+    """The lines where a statement after `node`, beside it, assigns each of `names` again.
 
-    Only an assignment in the same statement list counts: one under a condition or in another function may not run.
+    A read after such a line is not the port. Only an assignment in the same statement list counts: one under a
+    condition or in another function may not run.
     """
     lines: dict[str, list[int]] = {name: [] for name in names}
     for body in _statement_lists(scope):
         if not any(statement is node for statement in body):
             continue
         for statement in body[body.index(node) + 1 :]:
-            for target in statement.targets if isinstance(statement, ast.Assign) else []:
+            if isinstance(statement, ast.Assign):
+                targets = statement.targets
+            elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+                targets = [statement.target]
+            else:
+                continue
+            for target in (n for t in targets for n in ast.walk(t)):
                 if isinstance(target, ast.Name) and target.id in names:
-                    lines[target.id].append(statement.lineno)
+                    # A read in a multi-line right-hand side still sees the port, so count from the statement's end.
+                    lines[target.id].append(statement.end_lineno or statement.lineno)
     return lines
 
 
