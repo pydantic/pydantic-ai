@@ -92,6 +92,23 @@ def _computer_tool_def(*, defer_loading: bool = False) -> ToolDefinition:
     return ToolDefinition(name='my_computer', tool_kind=COMPUTER_KIND, defer_loading=defer_loading)
 
 
+def test_available_tool_names_for_kind_skips_deferred_tools_until_history_reveals_them() -> None:
+    # A unit test: model adapters read this while building a request, so no recorded exchange shows its answer.
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='lookup', tool_kind='docs.lookup'),
+            ToolDefinition(name='hidden_computer', tool_kind=COMPUTER_KIND, defer_loading=True),
+            ToolDefinition(name='revealed_computer', tool_kind=COMPUTER_KIND, defer_loading=True),
+            _computer_tool_def(),
+        ],
+        revealed_tool_names={'revealed_computer'},
+    )
+    assert params.available_tool_names_for_kind(COMPUTER_KIND) == ['revealed_computer', 'my_computer']
+    assert params.available_tool_names_for_kind(COMPUTER_KIND.id) == ['revealed_computer', 'my_computer']
+    assert params.available_tool_names_for_kind('docs.lookup') == ['lookup']
+    assert params.available_tool_names_for_kind('docs.missing') == []
+
+
 def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
     model = FunctionModel(lambda m, i: ModelResponse(parts=[]))  # supports every native tool
     return model.prepare_request(None, params)[1]
