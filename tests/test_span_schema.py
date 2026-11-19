@@ -75,6 +75,8 @@ def test_a_declared_property_the_span_leaves_out_fails_its_test(run: RunPytest):
 @needs_sdk
 def test_a_set_on_success_property_must_be_set_on_a_span_that_succeeded(run: RunPytest):
     """`('embeddings', 'embeddings')` is `SetOnSuccess`: exempt on a failed span, so not on this one."""
+    # Without the entry this would pass as an unexempted property, testing nothing about `SetOnSuccess`.
+    assert isinstance(span_schema.SPAN_SCHEMA_EXEMPTIONS[('embeddings', 'embeddings')], span_schema.SetOnSuccess)
     result = run(test_spans=_SPANS.format(operation='embeddings', name='embeddings'))
     assert result.ret == pytest.ExitCode.TESTS_FAILED
     result.stdout.fnmatch_lines(['*span `embeddings model` declares `embeddings` in its `logfire.json_schema`*'])

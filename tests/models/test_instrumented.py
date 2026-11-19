@@ -3257,7 +3257,7 @@ class Silent(Generic[_PartT]):
 
 
 @dataclass(kw_only=True)
-class RequestsLeftPart(InstructionCapabilityPart, namespace='instrumentation_part_coverage'):
+class RequestsLeftPart(InstructionCapabilityPart, namespace='test_instrumented'):
     """An instruction a capability enqueues mid-run, in the application's voice."""
 
 
@@ -3442,8 +3442,10 @@ _RESPONSE_PARTS: dict[type, Rendered[ModelResponsePart] | Silent[ModelResponsePa
         reason='A `thinking` part.',
     ),
     CompactionPart: Silent(
+        # Built with content, as Anthropic's are: a part without content would render nothing even if the response
+        # stopped skipping compaction parts.
         lambda: CompactionPart(
-            id='cmp_1', provider_name='openai', provider_details={'encrypted_content': 'gAAAAB-compacted'}
+            content='The user asked for the weather in Paris, which was sunny.', provider_name='anthropic'
         ),
         reason="A provider's compaction item, replayed only to that provider: no OTel GenAI part type represents it.",
     ),
