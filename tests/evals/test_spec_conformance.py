@@ -76,7 +76,10 @@ def test_schema_publishes_spec_parameters(name: str, schema: JsonSchema):
 
 @pytest.mark.parametrize('name', sorted(EVALUATORS))
 def test_spec_forms_load(name: str, schema: JsonSchema, tmp_path: Path):
-    """Every instance loads, and the dataset holding them all survives `to_file()`, validating against its schema."""
+    """Every instance loads, and the dataset holding them all validates against the schema and survives `to_file()`.
+
+    The written file validates against the schema `to_file()` writes beside it, except for a `KNOWN_UNWRITABLE` entry.
+    """
     kind, cls = EVALUATORS[name]
     instances = form_instances(_forms(schema, kind, name), definitions(schema))
     assert instances
