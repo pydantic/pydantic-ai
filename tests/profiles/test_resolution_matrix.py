@@ -1480,7 +1480,6 @@ def test_bedrock_anthropic_with_geo_prefix():
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
-            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -1491,8 +1490,6 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'supports_video_input': False,
@@ -1906,7 +1903,6 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
-            'anthropic_computer_tool_version': 'computer_20251124',
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_max_effort': True,
@@ -1920,8 +1916,6 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'default_framing_announcement': 'always',
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
@@ -2248,7 +2242,6 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
-            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -2258,20 +2251,9 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -3902,7 +3884,6 @@ def test_vercel_anthropic_claude_sonnet():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
-            'anthropic_computer_tool_version': 'computer_20251124',
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
@@ -3916,20 +3897,9 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'default_framing_announcement': 'always',
             'may_tokenize_special_tokens_in_content': False,
         }
@@ -4063,7 +4033,6 @@ def test_heroku_returns_openai_transformer():
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
-            'anthropic_computer_tool_version': 'computer_20251124',
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
@@ -4077,20 +4046,9 @@ def test_heroku_returns_openai_transformer():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {
-                    AdvisorTool,
-                    CodeExecutionTool,
-                    ComputerTool,
-                    MCPServerTool,
-                    MemoryTool,
-                    ToolSearchTool,
-                    WebFetchTool,
-                    WebSearchTool,
-                }
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'default_framing_announcement': 'always',
             'may_tokenize_special_tokens_in_content': False,
         }
