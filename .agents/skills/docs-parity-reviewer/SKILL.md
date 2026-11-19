@@ -49,7 +49,7 @@ problem as a finding (blocking / warning / nit) with a concrete fix.
 3. **README <-> unified doc consistency.** The two agree on install extras,
    option names, defaults, and safety caveats. They need not be identical prose,
    but they must not contradict each other or the code.
-4. **Links.** Unified doc: harness-internal links are relative `.md`
+4. **Links.** Unified doc: links between harness SDK pages are relative `.md`
    (`[Shell](shell.md)`); other Pydantic AI pages are relative `.md` links from
    `docs/harness/` (`[Toolsets](../toolsets.md)`), and API elements use
    reference-style links (`[RunContext][pydantic_ai.tools.RunContext]`). No

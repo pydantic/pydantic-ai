@@ -333,11 +333,12 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
 
-      # The `complexity` job runs these scripts with only the `lint` group installed, so their tests run here.
-      - name: Test the cognitive complexity and test waits checks
+      # The `complexity` job runs the first two scripts with only the `lint` group installed, and pre-commit
+      # runs the glossary spelling check, so their tests run here.
+      - name: Test the cognitive complexity, test waits and glossary spelling checks
         env:
           UV_NO_SYNC: "1"
-        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
+        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py scripts/test_check_glossary_spellings.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s

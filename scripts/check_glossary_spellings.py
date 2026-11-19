@@ -28,7 +28,8 @@ def _blank(match: re.Match[str]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    """Return 1 when a file uses a rejected spelling, or the glossary has no "Spellings" rows."""
+    parser = argparse.ArgumentParser(description='Reject a spelling that the glossary\'s "Spellings" table replaces.')
     parser.add_argument('--glossary', type=Path, default=Path('agent_docs/GLOSSARY.md'))
     parser.add_argument('files', nargs='*', type=Path)
     args = parser.parse_args()
