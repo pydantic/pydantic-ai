@@ -295,18 +295,18 @@ _START_WINDOW_MANAGER = (
     f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
     # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
     # click focus and raise the window it lands on.
-    f'setsid fluxbox >>{_DESKTOP_LOG} 2>&1 9>&- & wm=$!; i=0; '
+    'setsid fluxbox >>"$desktop_log" 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
     # tint2 shows only once a window manager answers, so it starts after one.
-    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >>{_DESKTOP_LOG} 2>&1 9>&- & '
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >>"$desktop_log" 2>&1 9>&- & '
     f'panel=$!; i=0; until {_PANEL_SHOWS} || ! kill -0 $panel 2>/dev/null || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi; '
 )
 """Starts the window manager, unless it's missing, and waits up to 10 seconds for it to answer `xprop`. Then starts
 the panel unless it shows or is missing, and waits up to 10 seconds for its window, so the first screenshot isn't
-black. Either one exiting, or not answering in time, leaves the display working without it; why is in
-`_DESKTOP_LOG`."""
+black. Either one exiting, or not answering in time, leaves the display working without it. Their output goes to
+`$desktop_log`, which `start_x_server` sets: `_DESKTOP_LOG`, or `/dev/null` when that can't be opened."""
 
 
 def start_x_server(log: str, *, desktop: bool = True) -> str:
@@ -341,6 +341,9 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
+            # The desktop writes to `_DESKTOP_LOG`, or to nowhere when that can't be opened, so the log never stops it.
+            # Tried in a subshell, since a failed redirection would end the script itself in `dash`.
+            f'desktop_log={_DESKTOP_LOG}; ( : >>"$desktop_log" ) 2>/dev/null || desktop_log=/dev/null; '
             if desktop
             else 'wanted=; '
         )
@@ -362,7 +365,7 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         f'{{ [ -z "$missing" ] || $install $xvfb_package {_PACKAGES}; }}; }} >{log} 2>&1 || [ -z "$missing" ] || '
         f'{{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; '
         # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. The next start tries again.
-        f'[ -z "$wanted" ] || $install $wanted >{_DESKTOP_LOG} 2>&1 || true; '
+        f'[ -z "$wanted" ] || $install $wanted >"$desktop_log" 2>&1 || true; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
         'if ! x_runs; then '
