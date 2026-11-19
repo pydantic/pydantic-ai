@@ -118,6 +118,7 @@ from .._special_tokens import (
 )
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
+from ..computer_use import COMPUTER_KIND
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -157,6 +158,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKind,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -177,7 +180,7 @@ from ..messages import (
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
@@ -541,6 +544,23 @@ class ModelRequestParameters:
         # per-tool loops.
         tool_def = self.tool_defs.get(tool_name)
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
+
+    def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
+        """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
+
+        A tool with `defer_loading=True` is included only once the message history has revealed it. This is how it
+        differs from [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which also
+        returns a tool that is still deferred, so that instructions naming the tool don't change when it is revealed.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = kind.id if isinstance(kind, ToolKind) else kind
+        return [
+            t.name
+            for t in self.function_tools
+            if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+        ]
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -4136,6 +4156,36 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _natives_with_computer_tool(
+    params: ModelRequestParameters, natives: list[AbstractNativeTool]
+) -> list[AbstractNativeTool]:
+    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls.
+
+    An optional `ComputerTool` without one is dropped; a required one raises `UserError`, as does one with more than one.
+    """
+    # A tool that is left out because a native tool is sent in its place can't run any calls.
+    sent_ids = {t.unique_id for t in natives}
+    computer_tools = [
+        name
+        for name in params.available_tool_names_for_kind(COMPUTER_KIND)
+        if params.tool_defs[name].unless_native not in sent_ids
+    ]
+    kept: list[AbstractNativeTool] = []
+    for native_tool in natives:
+        if isinstance(native_tool, ComputerTool) and not computer_tools:
+            # Its calls would have no tool to run them.
+            if native_tool.optional:
+                continue
+            raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
+        if isinstance(native_tool, ComputerTool) and len(computer_tools) > 1:
+            # Which of them ran a call would depend on the order of the tools.
+            raise UserError(
+                '`ComputerTool` needs a `computer` tool the model can call, and this request has more than one.'
+            )
+        kept.append(native_tool)
+    return kept
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4226,17 +4276,19 @@ def resolve_request_tools(
        into `tool_visibility` exactly once. A caller without a `can_withhold_tool_schemas` answer
        (the realtime session path) can't withhold schemas at all.
 
-    On top of the filter, two narrower drops apply, kept independent:
+    On top of the filter, three narrower drops apply, kept independent. `optional=True` decides
+    the outcome of each one:
 
-    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-      optional native tool is silently dropped (no error raised). It does NOT govern the
-      corpus-empty drop.
+    * An optional native tool that this model doesn't support is silently dropped (no error raised).
     * The corpus-empty drop is specific to the framework-managed tool-search native tool's
       corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
       searchable, since sending it with no corpus to search would waste a tool slot. A
-      non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
-      don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+      non-optional `ToolSearchTool` stays, because the user asked for it explicitly. Other native
+      tools don't have a corpus and aren't subject to this drop, so making `optional` a base-class
       field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
+    * An optional `ComputerTool` is dropped when the request has no `computer` tool to run its
+      calls. A required `ComputerTool` in that case raises `UserError`, as does any `ComputerTool`
+      when the request has more than one `computer` tool.
 
     This is a module-level function rather than a `Model` method so both the classic agent-run
     path (via `Model._resolve_request_tools`, which passes its profile-derived
@@ -4255,6 +4307,9 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
+    # Runs after the optional tool search is dropped above. A tool that is kept only while that tool search isn't
+    # sent can then run a `ComputerTool`'s calls.
+    supported_natives = _natives_with_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.

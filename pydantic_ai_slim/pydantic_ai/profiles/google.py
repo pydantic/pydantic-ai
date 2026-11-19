@@ -340,8 +340,15 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    _set_computer_use_grid(profile, is_modern_gemini=is_modern_gemini, is_image_model=is_image_model)
     _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
     return profile
+
+
+def _set_computer_use_grid(profile: GoogleModelProfile, *, is_modern_gemini: bool, is_image_model: bool) -> None:
+    if is_modern_gemini and not is_image_model:
+        # Gemini 3 points accurately on a 0-999 grid but not in pixels. Gemini 2.5 is no more accurate on the grid.
+        profile['computer_use_coordinate_grid'] = 1000
 
 
 def _with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:

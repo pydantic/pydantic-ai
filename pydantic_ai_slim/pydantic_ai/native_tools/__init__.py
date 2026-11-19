@@ -40,6 +40,7 @@ __all__ = (
     'ImageSize',
     'ImageQuality',
     'MemoryTool',
+    'ComputerTool',
     'MCPServerTool',
     'XaiFileSearchToolSettings',
     'FileSearchProviderSettings',
@@ -900,6 +901,27 @@ class MemoryTool(AbstractNativeTool):
 
 
 @dataclass(kw_only=True)
+class ComputerTool(AbstractNativeTool):
+    """A provider's own (native) computer use tool, sent to the model in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
+
+    The request's `computer` tool still runs the calls the model makes. A `ComputerTool` is sent only when the
+    request has exactly one `computer` tool the model can call. With none, an
+    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one raises
+    [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`.
+    """
+
+    display_size: tuple[int, int]
+    """The `(width, height)` of the screenshots the model sees."""
+
+    kind: str = 'computer'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if min(self.display_size) < 1:
+            raise ValueError(f'`ComputerTool.display_size` must be positive, got {self.display_size}.')
+
+
+@dataclass(kw_only=True)
 class MCPServerTool(AbstractNativeTool):
     """A native tool that allows your agent to use MCP servers.
 
@@ -1194,5 +1216,5 @@ SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
 """Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, AdvisorTool, _tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, ComputerTool, AdvisorTool, _tool_search.ToolSearchTool}
 )

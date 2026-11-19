@@ -206,6 +206,7 @@ from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -497,6 +498,7 @@ __all__: tuple[str, ...] = (
     # builtin_tools
     'AdvisorTool',
     'CodeExecutionTool',
+    'ComputerTool',
     'FileSearchTool',
     'ImageGenerationTool',
     'MCPServerTool',
