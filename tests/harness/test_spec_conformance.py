@@ -29,10 +29,11 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai_harness.ask_user import AskUser
 
+from ..capability_cases import shipped_capability_types
 from ..spec_conformance import JsonSchema, check_capability_forms_load, check_capability_parameters
-from ._shipped_capabilities import shipped_capability_types
+from .capability_cases import HARNESS_CAPABILITY_PACKAGES
 
-SHIPPED, SKIPPED_MODULES = shipped_capability_types()
+SHIPPED, SKIPPED_MODULES = shipped_capability_types(HARNESS_CAPABILITY_PACKAGES)
 CLASSES = {
     name: cls
     for name, cls in SHIPPED.items()
@@ -114,7 +115,7 @@ CHECKED = sorted(CLASSES.keys() - KNOWN_SCHEMA_FAILURES.keys())
 
 
 @cache
-def _schema(cls: type[AbstractCapability[object]]) -> JsonSchema:
+def _schema(cls: type[AbstractCapability[None]]) -> JsonSchema:
     return AgentSpec.model_json_schema_with_capabilities([cls])
 
 
@@ -135,7 +136,7 @@ def test_spec_forms_load(name: str, tmp_path: Path):
     )
 
 
-def _shipped_class(name: str) -> type[AbstractCapability[object]]:
+def _shipped_class(name: str) -> type[AbstractCapability[None]]:
     """The class a table names; when every module imported, a name with no class fails as a stale entry."""
     if name not in CLASSES and SKIPPED_MODULES:  # pragma: lax no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
