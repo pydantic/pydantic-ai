@@ -161,6 +161,9 @@ Python 3.11+ is required.
 
 Launch `pax`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
+No ChatGPT subscription? Run `/login` to see every other sign-in (such as `/login github-copilot`),
+or `/model add` to pick another provider and use its API key from `/keys` or its environment variable.
+Until you do, a prompt fails with an error that lists these options.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 Until you choose one, the default is the agent's own model, so a plugin
