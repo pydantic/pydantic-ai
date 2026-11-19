@@ -43,18 +43,14 @@ async def main():
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the `computer` tool offers only the actions that look,
 and a native tool call that acts is refused.
 
-A `screenshot` action before a call's last action returns the screen at that point, besides the screenshot the
-call ends with.
-
 ## What the model is told
 
 The instructions tell the model how to group actions into calls and never to follow instructions shown on the screen.
 A run with a tool that runs shell commands, such as `Shell`'s, is also told that a program it starts from the shell
-opens on the screen, to start a program with a window in the background, and to use the screen only for work that
-needs it: operating a program's window, reading what the screen shows, and work the user asked to be done on the screen.
+opens on the screen, and to use the screen only for work that needs it.
 
-With `defer_loading=True`, the model reads only the capability's `description` until it loads it. The default names
-the same three cases. Pass `description=` to change when the model loads it.
+With `defer_loading=True`, the model reads only the capability's `description` until it loads it. Pass
+`description=` to change when the model loads it.
 
 ## Models
 
@@ -128,24 +124,24 @@ or below those sizes.
   counts against the tool's retries.
 - If the environment is gone, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Agents on one screen and one event loop, such as parallel sub-agents, take turns a whole call at a time, so their clicks never interleave. Agents on separate event loops or in separate processes don't wait for each other.
-- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, so a drag can span calls, and each result says which buttons are still pressed. A call that fails or is cancelled once it reaches the display releases them, unlike one refused on a read-only workspace, and so does the end of the run however it ends, so a drag must finish within one run, which matters when calls wait for approval. A `ComputerUse` loaded mid-run with `defer_loading=True` releases them at the end of each call instead. A failed call says which buttons it released, or that a button may still be held if its release failed too.
+- A button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result says which buttons are still pressed. A call that fails or is cancelled releases them, and so does the end of the run, so a drag must finish within one run, including any calls that wait for approval.
 
 ## Watching a run
 
 Each screenshot is in a `FunctionToolResultEvent` for the `computer` tool, so an
 [event stream handler](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-all-events) can save or show them as the run goes.
 
-Each call that finishes and returns a screenshot also emits
-[capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in the `computer_use` namespace, read with
+Each call that finishes and returns a screenshot also emits one
+[capability event](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) in the `computer_use` namespace, read with
 `@agent.on_event` or `run_stream_events()`:
 
 | Event | Payload |
 |---|---|
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
-Each such call emits one, and adds no telemetry spans, since core already traces the tool call. On Temporal, listeners
-run in workflow code, so they [run again on replay](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#choosing-what-to-publish). The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
-`ComputerResult`.
+On Temporal, listeners run in workflow code, so they [run again on replay](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#choosing-what-to-publish).
+The history keeps the same record: each result is a `ComputerReturnPart` whose `result` is the call's `ComputerResult`.
+`ComputerUse` adds no telemetry spans of its own, since the tool call is already traced.
 
 ## Limitations
 
@@ -155,14 +151,6 @@ run in workflow code, so they [run again on replay](https://pydantic.dev/docs/ai
   old screenshots, and [`ClearToolResults`](../compaction/) leaves `computer` results alone.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50.
   Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
-- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call's screen work is one durable step, so replay or recovery doesn't
-  repeat a finished call. A call cut off before its step was recorded can run again under the engine's retry settings
-  for capability steps. On Temporal those are `TemporalDurability`'s `activity_config`, which defaults to a 60-second
-  timeout and unlimited retries: raise `start_to_close_timeout` above your longest call, and set
-  `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`
-  or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
-- On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
-  [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
@@ -172,6 +160,20 @@ run in workflow code, so they [run again on replay](https://pydantic.dev/docs/ai
   ends the run with an error before its request. In a
   [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
   model in it does.
+
+## Durable execution
+
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call's screen work is one durable step, so replay or
+recovery doesn't repeat a finished call. A call cut off before its step was recorded can run again under the engine's
+retry settings for capability steps. When the engine gives up, the model is told some actions may have run.
+
+On Temporal, those settings are `TemporalDurability`'s `activity_config`, which defaults to a 60-second timeout and
+unlimited retries. Raise `start_to_close_timeout` above your longest call, and set
+`retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. Screenshots also pass Temporal's 2 MB
+payload limit after a few steps, so configure [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
+
+Use `TemporalDurability` or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't
+run it.
 
 ## Giving a workspace a screen
 
