@@ -1244,6 +1244,8 @@ The decision is made when the run step's tools are collected, after any [`prepar
 
 When several tools have the kind, `tool_name_for_kind` returns the first in the order of [`RunContext.tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list them in, and which you can iterate to see them all. Instruction functions, model request hooks and tools see the current step's tools, including a tool running in a Temporal activity, which answers from a snapshot of the step's tools taken when the activity was dispatched. A toolset's `get_tools` and `prepare_tools` functions run while those are still being collected, so there it answers from the previous step.
 
+A model adapter asks a different question: which tools of a kind can the model call on this request. [`ModelRequestParameters.available_tool_names_for_kind`][pydantic_ai.models.ModelRequestParameters.available_tool_names_for_kind] answers it with every such name, in the order of the request's function tools, and leaves out a deferred tool until history reveals it, since the model can't call that tool yet. The adapters that send a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] use it to find the local tool that runs the provider's computer calls.
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration
