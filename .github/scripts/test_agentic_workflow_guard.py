@@ -29,6 +29,7 @@ from agentic_workflow_guard import (
     changed_files,
     check_ai_credits_accounting,
     check_assigned_alert_metadata_gate,
+    check_at_claude_maintainer_threads,
     check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
@@ -771,7 +772,7 @@ _PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
     env:
-      GH_AW_ENGINE_VERSION: '0.64.0'
+      GH_AW_ENGINE_VERSION: '0.70.0'
     steps:
       - id: agentic_execution
         run: >-
@@ -798,11 +799,11 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     assert check_compiled_runner_contract(lock) == []
 
 
-@pytest.mark.parametrize('version', ['0.59.0', '0.64.0', '0.65.1', 'invalid'])
+@pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
 def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
-    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.64.0', version))
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.70.0', version))
     violations = check_compiled_runner_contract(lock)
-    assert bool(violations) == (version in {'0.59.0', 'invalid'})
+    assert bool(violations) == (version in {'0.64.0', 'invalid'})
 
 
 @pytest.mark.parametrize(
@@ -2869,3 +2870,88 @@ jobs:
     violations = check_assigned_alert_metadata_gate(workflows)
 
     assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']
+
+
+def test_at_claude_maintainer_threads_requires_author_gate_and_comment_filter(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        """name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{ steps.pr-info.outputs.is_fork }}
+  at-claude:
+    needs: get-pr-info
+    if: needs.get-pr-info.outputs.is_fork != 'true'
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == [
+        '`at-claude` must require `write` or `admin` permission from the thread author.',
+        '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+        'an empty value includes every commenter.',
+    ]
+
+
+_AT_CLAUDE_GATE = """needs.get-pr-info.outputs.is_fork != 'true' &&
+      contains(fromJSON('["write","admin"]'), needs.get-pr-info.outputs.thread_author_permission) &&
+      needs.get-pr-info.outputs.included_comment_authors != ''"""
+
+
+@pytest.mark.parametrize(
+    ('gate', 'expected'),
+    [
+        pytest.param(_AT_CLAUDE_GATE, [], id='compliant'),
+        pytest.param(
+            _AT_CLAUDE_GATE.replace("'true' &&", "'true' ||"),
+            [
+                '`at-claude` must require `write` or `admin` permission from the thread author.',
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.',
+            ],
+            id='author-gate-ored-with-fork-check',
+        ),
+        pytest.param(
+            _AT_CLAUDE_GATE.replace(" &&\n      needs.get-pr-info.outputs.included_comment_authors != ''", ''),
+            [
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.'
+            ],
+            id='empty-author-list-not-skipped',
+        ),
+    ],
+)
+def test_at_claude_maintainer_threads_checks_each_gate_conjunct(tmp_path: Path, gate: str, expected: list[str]):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        f"""name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{{{ steps.pr-info.outputs.is_fork }}}}
+      thread_author_permission: ${{{{ steps.thread.outputs.author_permission }}}}
+      included_comment_authors: ${{{{ steps.thread.outputs.included_comment_authors }}}}
+  at-claude:
+    needs: get-pr-info
+    if: |
+      {gate}
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          include_comments_by_actor: ${{{{ needs.get-pr-info.outputs.included_comment_authors }}}}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == expected
