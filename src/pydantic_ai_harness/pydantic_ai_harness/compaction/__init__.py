@@ -4,6 +4,7 @@ Each capability lives in its own module; shared utilities (token estimation, the
 `CompactionStrategy` protocol, tool-pair-safe cutoffs, in-place clearing) live in `_shared`.
 """
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
 from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
@@ -19,7 +20,7 @@ from pydantic_ai_harness.compaction._pinning import PinSource, is_pinned, pin, r
 from pydantic_ai_harness.compaction._prune_tool_results import PruneToolResults
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
-from pydantic_ai_harness.compaction._report_context_usage import ReportContextUsage
+from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
@@ -38,6 +39,7 @@ __all__ = [
     'ClearToolResults',
     'CompactOnRequest',
     'CompactionStrategy',
+    'ContextUsage',
     'ContextUsageMeasuredEvent',
     'REPORT_CONTEXT_USAGE_EVENTS',
     'RelevanceCompaction',
@@ -64,3 +66,17 @@ __all__ = [
     'reinject_pinned',
     'resolve_context_window',
 ]
+
+_RENAMED = {
+    'ContextUsageEvent': ContextUsageMeasuredEvent,
+    'LimitWarner': WarnNearLimits,
+    'SlidingWindow': SlidingWindowCompaction,
+}
+
+
+def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, 'pydantic_ai_harness.compaction')
+        return renamed
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

@@ -253,6 +253,7 @@ Override them with `resource_limits={'max_duration_seconds': 10, 'max_memory': 1
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
 supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
 suspension budget in place; suspensions cannot be unlimited.
+`max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 Nested tool calls also count toward the run's [`tool_calls_limit`](../agent.md#usage-limits), together
 with the `run_code` call that makes them. Each nested call is checked before it runs, counting the calls
@@ -555,9 +556,10 @@ boundary), `SpeculativeCallLaunchedEvent` (with the launching statement's line s
 `phase` of `streaming` or `execution`), `SpeculativeCallSettledEvent` (only while the stream
 is still flowing; a call that finishes later reports its state on its claimed or evicted
 event instead), and, once the snippet runs, `SpeculativeCallClaimedEvent`,
-`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`. A payload saved under the
-earlier `closed_statements` and `sandbox_function` keys still loads into `closed_statement_count`
-and `sandbox_function_name`.
+`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`. `closed_statements` and
+`sandbox_function` are the deprecated names of the `closed_statement_count` and
+`sandbox_function_name` fields. They still read, with a warning, and a payload saved under them
+still loads.
 
 ### Why isn't a call speculating?
 
@@ -930,7 +932,8 @@ def my_os(*, name, args, kwargs, **_):
 agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(os_access=my_os)])
 ```
 
-The callback takes keyword arguments and may be `async`.
+The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
+still works but is deprecated and will be removed in the next breaking release.
 
 Your callback's return value decides the call's fate:
 
