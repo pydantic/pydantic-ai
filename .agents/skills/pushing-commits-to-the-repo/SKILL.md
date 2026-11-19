@@ -333,7 +333,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
-  Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify when it inherits your working directory or loaded instructions.
+  Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify: it inherits the candidate's working directory and instructions instead of the policy base's.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
