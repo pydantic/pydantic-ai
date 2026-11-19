@@ -204,6 +204,41 @@ async def test_no_server_timeout_without_a_client_timeout(allow_model_requests: 
     assert mock_google.headers[-1].get_list('x-server-timeout') == []
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'google_cloud', 'profile', 'expected'),
+    [
+        pytest.param('gemini-4-neon', False, None, ('low', 'xhigh'), id='neon-gemini-api'),
+        pytest.param('gemini-4-neon', True, None, ('minimal', 'high'), id='neon-google-cloud'),
+        pytest.param(
+            'gemini-4-neon',
+            False,
+            GoogleModelProfile(google_thinking_levels=frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+            ('low', 'high'),
+            id='neon-gemini-api-user-levels-win',
+        ),
+        pytest.param('gemini-3.1-flash-image', False, None, ('minimal', 'high'), id='flash-image-gemini-api'),
+        pytest.param('gemini-3.1-flash-image', True, None, ('minimal', 'medium'), id='flash-image-google-cloud'),
+    ],
+)
+def test_gemini_api_thinking_levels_follow_the_client_transport(
+    model_name: str, google_cloud: bool, profile: GoogleModelProfile | None, expected: tuple[str, str]
+):
+    """Models whose thinking levels `GoogleModel` applies on the Gemini API only get them on Interactions there too.
+
+    `thinking=False` and a deeper effort (`xhigh` on Neon, `medium` on Flash Image) pin each side. Not a VCR test:
+    the level is decided before the request is built; the body-matched `google-interactions-*` cases in
+    `tests/test_thinking_wire_contract.py` pin the Gemini API side.
+    """
+    provider = GoogleCloudProvider(api_key='test-key') if google_cloud else GoogleProvider(api_key='test-key')
+    model = GoogleInteractionsModel(model_name, provider=provider, profile=profile)
+    deeper = 'xhigh' if model_name == 'gemini-4-neon' else 'medium'
+    sent = [
+        model._thinking_config(thinking).get('thinking_level')  # pyright: ignore[reportPrivateUsage]
+        for thinking in (False, deeper)
+    ]
+    assert tuple(sent) == expected
+
+
 def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
     """Resolve the explicit prefix and preserve model identity without a provider request."""
     monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')

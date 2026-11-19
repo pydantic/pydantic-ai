@@ -58,7 +58,7 @@ from ...native_tools import (
     WebSearchTool,
 )
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
-from ...profiles.google import GoogleModelProfile, google_interactions_model_profile
+from ...profiles.google import GoogleModelProfile, GoogleThinkingLevel, google_interactions_model_profile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
 from .. import (
@@ -173,6 +173,15 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     """Default resolution for video inputs. Per-file `vendor_metadata` takes precedence."""
 
 
+_GEMINI_API_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
+    # The thinking levels `GoogleModel.profile` applies on the Gemini API only, which `/interactions` enforces there
+    # too: verified live 2026-11-19 with `store=false`. `gemini-3.1-flash-image` returns 400 for `low` and `medium`,
+    # and `gemini-4-neon` for `minimal`; each accepts the rest of its set. Google Cloud keeps the default levels.
+    ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
+    ('gemini-4-neon', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
+)
+
+
 @dataclass(init=False)
 class GoogleInteractionsModel(Model[Client]):
     """A Google model accessed through the Interactions API, with `store=False`.
@@ -233,6 +242,17 @@ class GoogleInteractionsModel(Model[Client]):
     @cached_property
     def profile(self) -> GoogleModelProfile:
         profile = GoogleModelProfile(**super().profile)
+        model_name = self.model_name.rsplit('/', 1)[-1]
+        levels = next((levels for prefix, levels in _GEMINI_API_THINKING_LEVELS if model_name.startswith(prefix)), None)
+        if levels is not None and 'google_thinking_levels' not in profile and not self.client.vertexai:
+            profile = GoogleModelProfile(
+                **merge_profile(
+                    profile,
+                    GoogleModelProfile(
+                        google_thinking_levels=levels, google_supports_minimal_thinking_level='MINIMAL' in levels
+                    ),
+                )
+            )
         if not profile.get('supports_image_output', False):
             return GoogleModelProfile(
                 **merge_profile(

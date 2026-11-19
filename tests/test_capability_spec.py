@@ -1200,6 +1200,7 @@ def test_model_json_schema_with_capabilities():
                         'google-interactions:gemini-4-argon',
                         'google-interactions:gemini-4-carbon',
                         'google-interactions:gemini-4-hydrogen',
+                        'google-interactions:gemini-4-neon',
                         'google:gemini-3-pro-image',
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-lite',
