@@ -44,7 +44,7 @@ from pydantic_clai2.ui.menus.accounts_menu import ADD, AccountsSource, account_k
 from pydantic_clai2.ui.menus.key_menu import KeysSource, keys_menu
 from pydantic_clai2.ui.prompt.line_input import read_line
 from tests.clai2.dialog_script import Back, Confirm, Finish, Pick, ScriptedDialogs, Type
-from tests.clai2.test_auth import CREDENTIALS, fake_browser, never_called_back, never_pasted
+from tests.clai2.test_auth import CREDENTIALS, fake_browser, never_called_back, never_pasted, serve_codex_models
 from tests.clai2.test_github_copilot import device_flow as device_flow
 from tests.clai2.test_web import TOKEN, WIRE, MakeWeb, Web, make_web as make_web, receive_until
 
@@ -326,6 +326,7 @@ def test_adding_an_account_from_the_page_signs_in_behind_its_waiting_screen(
         return CREDENTIALS
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    serve_codex_models(monkeypatch)
     web_ = make_web(Agent(TestModel()))
     with web_.client.websocket_connect(SOCKET, headers=ORIGIN) as socket:
         socket.receive_text()
@@ -382,6 +383,7 @@ def test_login_typed_in_the_page_asks_there_when_clai_has_no_terminal(
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
     monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
+    serve_codex_models(monkeypatch)
     web_ = make_web(Agent(TestModel()), extra=[PluginSettings(id='paste', factory=f'{__name__}:PasteLogin')])
     with (
         open(os.devnull, encoding='utf-8') as stdin,
