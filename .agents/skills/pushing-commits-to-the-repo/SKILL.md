@@ -288,7 +288,7 @@ Prose-only documentation changes only natural-language text, including docstring
 Substantive changes to instruction or review policy do not qualify.
 Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
 
-Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata-subagent review.
+Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata check.
 Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
 Apply the merge bar, including its trivial-S exception, to required hosted reviews.
 
@@ -416,7 +416,7 @@ session reads the budget off the log; without it the cap silently resets.
    instructions: whether the reviewer may decompose the diff turns on it, so skipping it would let
    your launch choice decide the review's scope, which the contract forbids you.
 3. Select the review scope above. Prepare the review bundle under the context contract.
-4. Launch the fresh subagent under the context contract above. Require actionable findings or
+4. Launch the fresh reviewer session under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
@@ -424,7 +424,7 @@ session reads the budget off the log; without it the cap silently resets.
    evidence, and a recommendation; record the resulting decision. A remediation changes the
    candidate content. Reapply this gate, including its scope and exemptions, only while the budget remains.
    After a maintainer decision
-   changes the acceptance criteria, dispatch a different fresh subagent when the budget remains.
+   changes the acceptance criteria, dispatch a different fresh reviewer session when the budget remains.
    An evidence-backed dismissal on unchanged reviewed content does not require another pass.
    Escalate persistent disagreement.
 
@@ -704,14 +704,14 @@ maintainers run them, not something this repo can show you.
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
 Correct metadata directly, then hand the PR diff to a maintainer after the merge bar and comment triage are complete.
-Skip the subagent steps below.
+Skip the numbered steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
 Any author-selected additional review must also have settled.
 
-1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
-   The metadata subagent has not worked on the PR and never decomposes the diff.
-   Run the subagent on the light tier from [Model tiers](#model-tiers).
+1. Capture the current title, body, and labels. Start a fresh session under the context contract above.
+   The metadata session has not worked on the PR and never decomposes the diff.
+   Run the session on the light tier from [Model tiers](#model-tiers).
    Set effort from the PR's complexity. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
@@ -729,7 +729,7 @@ Any author-selected additional review must also have settled.
    The edit is done when all three hold:
    - The edited title, body, and labels follow every rule a kept correction cites.
    - The edited title, body, and labels break no rule that the current ones follow.
-   - The edit applies no subagent text that no kept correction covers.
+   - The edit applies no metadata-session text that no kept correction covers.
 
    Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 7. Verify the live title, body, and labels match the checked metadata.
