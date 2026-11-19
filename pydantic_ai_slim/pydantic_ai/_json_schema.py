@@ -4,10 +4,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, cast
+from functools import partial
+from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, cast
 
 from pydantic import JsonValue
 
+from ._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, iter_subschemas, map_subschemas
 from ._utils import contains_ref
 from .exceptions import UserError
 
@@ -92,23 +94,25 @@ def _is_sequence(value: Any) -> bool:
     return isinstance(value, list | tuple)
 
 
-# The keywords the walker and the provider `transform()`s read, grouped by the shape they expect.
+# The keywords the walker and the provider `transform()`s read.
 # Tool schemas that come from outside Pydantic AI (`Tool.from_schema`, `ExternalToolset`, MCP `inputSchema`,
 # AG-UI frontend tools) are plain dicts, so a node that is not a schema can reach the walker. `_check_schema_shape`
 # checks these keywords and nothing more: keywords not listed here are passed through to the provider untouched,
 # so provider extensions are unaffected. If a transformer starts reading a new keyword, add it here.
-_SCHEMA_KEYWORDS = ('additionalProperties', 'items', 'propertyNames', 'contains')
-"""Keywords whose value is a schema (or, for `items` in older drafts, a list of schemas)."""
-_SCHEMA_CONTAINER_KEYWORDS: dict[str, type[dict[str, Any]] | type[list[Any]]] = {
-    'properties': dict,
-    'patternProperties': dict,
-    '$defs': dict,
-    'prefixItems': list,
-    'allOf': list,
-    'anyOf': list,
-    'oneOf': list,
-}
-"""Keywords whose value is an object or a list of schemas."""
+_CHECKED_SUBSCHEMA_KEYWORDS = (
+    'additionalProperties',
+    'items',
+    'propertyNames',
+    'contains',
+    'properties',
+    'patternProperties',
+    '$defs',
+    'prefixItems',
+    'allOf',
+    'anyOf',
+    'oneOf',
+)
+"""The `SUBSCHEMA_KEYWORDS` the transformers read, each checked for the shape the table gives it."""
 _VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
     # keyword: (is the value well-formed, what a well-formed value is)
     '$ref': (lambda value: isinstance(value, str), 'must be a string'),
@@ -118,6 +122,29 @@ _VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
     'minItems': (_is_integer, 'must be an integer'),
 }
 """Keywords whose value the transformers interpret."""
+
+_REF_KEYWORDS = ('not', 'if', 'then', 'else', 'contentSchema')
+_REF_OBJECT_KEYWORDS = ('dependentSchemas', 'dependencies', 'unevaluatedProperties')
+_REF_ARRAY_KEYWORDS = ('additionalItems', 'unevaluatedItems')
+"""The `SUBSCHEMA_KEYWORDS` an inlining walker enters only when a `$ref` is under them, on any schema, on an `'object'`
+and on an `'array'` respectively.
+
+Inlining drops `$defs`, so a `$ref` into them left under one would point at nothing. Entering one without such a
+`$ref` would run `transform()` on a subschema that providers get as written, so it stays as written. The object and
+array keywords are type-gated like the walker's others, so under a schema without that `type` they stay as written.
+`walk()` handles `$defs`, and a root draft-7 `definitions`, which stays in the output, under the same rule once the
+rest of the schema is walked.
+"""
+
+
+def _refers_to_defs(node: Subschema) -> bool:
+    """Whether `node` or one of its subschemas has a `$ref` into `$defs`; a `$ref` in data like `const` doesn't count."""
+    if isinstance(node, bool):
+        return False
+    ref = node.get('$ref')
+    return (isinstance(ref, str) and ref.startswith('#/$defs/')) or any(
+        _refers_to_defs(subschema) for subschema in iter_subschemas(node)
+    )
 
 
 def _invalid_schema(path: str, what: str, value: Any) -> NoReturn:
@@ -134,13 +161,19 @@ def _check_schema_shape(node: Any, path: str = '') -> None:
     schema = cast(dict[str, Any], node)
     prefix = f'{path}.' if path else ''
 
-    for key in _SCHEMA_KEYWORDS:
+    for key in _CHECKED_SUBSCHEMA_KEYWORDS:
         # `None` is skipped like an absent key, as the walker and OpenAI's `transform()` do.
-        if (value := schema.get(key)) is not None:
-            _check_subschema(value, f'{prefix}{key}', allow_list=key == 'items')
-    for key, container in _SCHEMA_CONTAINER_KEYWORDS.items():
-        if (value := schema.get(key)) is not None:
-            _check_schema_container(key, container, value, f'{prefix}{key}')
+        if (value := schema.get(key)) is None:
+            continue
+        match shape := SUBSCHEMA_KEYWORDS[key]:
+            case 'schema' | 'schema_or_list':
+                _check_subschema(value, f'{prefix}{key}', allow_list=shape == 'schema_or_list')
+            case 'schema_map':
+                _check_schema_container(key, dict, value, f'{prefix}{key}')
+            case 'schema_list':
+                _check_schema_container(key, list, value, f'{prefix}{key}')
+            case _:
+                assert_never(shape)
     for key, (is_well_formed, what) in _VALUE_KEYWORDS.items():
         if (value := schema.get(key)) is not None and not is_well_formed(value):
             _invalid_schema(f'{prefix}{key}', f'`{key}` {what}', value)
@@ -270,6 +303,8 @@ class JsonSchemaTransformer(ABC):
         schema.pop('$defs', None)
         handled = self._handle(schema)
         assert not isinstance(handled, bool)
+        # After the rest, so a definition first reached from the schema is inlined there, as it is without this walk.
+        self._inline_refs_under(handled, ('definitions',))
 
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
@@ -305,12 +340,13 @@ class JsonSchemaTransformer(ABC):
         ):
             return inlined
 
+        type_ = schema.get('type')
+        self._inline_refs_under(schema, _REF_KEYWORDS)
         # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
         # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
         # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
         # on a `$ref` it can't resolve.
-        type_ = schema.get('type')
         match type_:
             case 'object':
                 schema = self._handle_object(schema)
@@ -428,6 +464,7 @@ class JsonSchemaTransformer(ABC):
         ):
             schema['propertyNames'] = self._handle(property_names)
 
+        self._inline_refs_under(schema, _REF_OBJECT_KEYWORDS)
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
@@ -444,6 +481,7 @@ class JsonSchemaTransformer(ABC):
         if (contains := schema.get('contains')) is not None and self._walks_keyword_subschema(contains):
             schema['contains'] = self._handle(contains)
 
+        self._inline_refs_under(schema, _REF_ARRAY_KEYWORDS)
         return schema
 
     def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
@@ -453,6 +491,19 @@ class JsonSchemaTransformer(ABC):
         is left as written, so `transform()` doesn't rewrite a schema that was already valid.
         """
         return self.prefer_inlined_defs and contains_ref(subschema)
+
+    def _inline_refs_under(self, schema: JsonSchema, keywords: Sequence[str]) -> None:
+        """When inlining, walk each subschema under `keywords` that refers to `$defs`, leaving the others as written."""
+        if self.prefer_inlined_defs:
+            for keyword in keywords:
+                map_subschemas(schema, partial(self._handle_ref_subschema, keyword=keyword), (keyword,))
+
+    def _handle_ref_subschema(self, subschema: _JsonSchemaNode, *, keyword: str) -> _JsonSchemaNode:
+        if not _refers_to_defs(subschema):
+            return subschema
+        # The up-front check doesn't visit these keywords, so a node under one is checked once it's walked.
+        _check_schema_shape(subschema, keyword)
+        return self._handle(subschema)
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
