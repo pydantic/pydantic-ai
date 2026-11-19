@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -354,16 +355,18 @@ async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDo
     assert docker.x_lock_exists(backend.ref.id)
 
 
-async def test_a_desktop_log_that_cant_be_opened_still_starts_the_desktop(
-    docker: FakeDocker, container_dir: Path
+@pytest.mark.parametrize('make', [Path.mkdir, os.mkfifo], ids=['directory', 'named-pipe'])
+async def test_a_desktop_log_that_isnt_a_file_still_starts_the_desktop(
+    docker: FakeDocker, container_dir: Path, make: Callable[[Path], None]
 ) -> None:
     backend = _desktop(container_dir, image='my-desktop')
     await backend.working_dir()
     assert backend.ref is not None
-    # A directory where the log goes, as a sandbox reused from an older start may have.
-    (docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log').mkdir()
+    # Something other than a file where the log goes. Opening a named pipe would wait forever for a reader.
+    make(docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log')
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    with anyio.fail_after(10):
+        assert await screen(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.panel_starts == 1
 
 
