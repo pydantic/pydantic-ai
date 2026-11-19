@@ -599,7 +599,8 @@ class LivePrompt:
         inner = max(1, height - len(rows) - 4 - bool(pinned))
         popup_want = min(6, len(self._completions))
         draft = self.buffer.rows(width=width - 2, limit=max(1, min(height // 3, inner - popup_want)))
-        rows.extend(_marked(draft))
+        rows.append(f'{theme.sgr(theme.ACCENT)}❯{reset} {draft[0]}')
+        rows.extend(map('  {}'.format, draft[1:]))
         popup_limit = max(0, min(6, len(self._completions), inner - len(draft)))
         start = max(0, self._selection - popup_limit + 1)
         for index, item in enumerate(self._completions[start : start + popup_limit], start=start):
@@ -730,11 +731,6 @@ class LivePrompt:
             self._completion_worker.close()
             self.console.file = original
             self.output.restore()
-
-
-def _marked(draft: list[str]) -> list[str]:
-    """Put the `❯ ` prompt marker before the first draft row and indent the rest to match."""
-    return [f'{theme.sgr(theme.ACCENT)}❯\x1b[0m {draft[0]}', *(f'  {row}' for row in draft[1:])]
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:
