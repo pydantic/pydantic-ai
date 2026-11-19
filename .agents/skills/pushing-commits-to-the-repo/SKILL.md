@@ -559,10 +559,11 @@ if the head changes, capture the new SHA and restart the loop.
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
      and resolve the thread.
      On an inline finding from a review bot, start the reply with `Fixed in <sha>`, naming the fixing commit.
-   - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
+   - **Invalid** → verify the claim, reply with concrete evidence, and react 👎.
      On an inline finding from a review bot, start the reply with `Declined: <reason>`.
      `Declined:` counts only from a user with write access, or from the PR author on a douwebot `Optional:` finding.
-     Without either, ask a maintainer to post the `Declined:` reply, and leave the thread open until they do.
+     When your `Declined:` cannot count, ask a maintainer to post one, and leave the thread open until they do.
+     Otherwise resolve the thread.
      A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
      what you tried and ask the user driving you; do not react 👎 on an untested claim.
    - **Close the bot verdict after its findings.** Verify every blocking finding against the current head.
