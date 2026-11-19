@@ -8,6 +8,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
 from pydantic_ai_harness.computer_use import ComputerUse
@@ -33,7 +34,7 @@ def display(fake_boxlite: FakeBoxLite) -> FakeDisplay:
 async def test_a_desktop_box_runs_debian_and_the_computer_tool(
     fake_boxlite: FakeBoxLite, display: FakeDisplay, tmp_path: Path
 ) -> None:
-    sandbox = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), desktop=True)
+    sandbox = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900), allow_internet_access=True)
     agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
 
     result = await agent.run('Click.')
@@ -45,17 +46,31 @@ async def test_a_desktop_box_runs_debian_and_the_computer_tool(
     assert clicked.result == {'performed': 1}
     assert clicked.screenshot is not None and clicked.screenshot.data == FAKE_SCREENSHOT
     assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
-    assert len(display.starts) == 1
+    (start,) = display.starts
+    assert start.endswith(' sh 1440x900')
     # The default Alpine image has no `apt-get` to install the display programs with.
     (box,) = fake_boxlite.boxes.values()
     assert box.options.image == 'debian:bookworm-slim'
+
+
+async def test_a_desktop_box_without_network_needs_an_image_with_the_display_programs(
+    fake_boxlite: FakeBoxLite, display: FakeDisplay, tmp_path: Path
+) -> None:
+    with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
+        BoxLiteSandboxBackend(desktop=True)
+
+    await BoxLiteSandboxBackend(working_dir=str(tmp_path.resolve()), image='my-desktop', desktop=True).get_sandbox()
+    (box,) = fake_boxlite.boxes.values()
+    assert box.options.image == 'my-desktop'
 
 
 async def test_a_shell_command_finds_the_desktop_running(
     fake_boxlite: FakeBoxLite, display: FakeDisplay, tmp_path: Path
 ) -> None:
     # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
-    backend = BoxLiteSandboxBackend(working_dir=str(tmp_path.resolve()), desktop=True, env={'FOO': 'bar'})
+    backend = BoxLiteSandboxBackend(
+        working_dir=str(tmp_path.resolve()), desktop=True, allow_internet_access=True, env={'FOO': 'bar'}
+    )
     result = await backend.run('printf %s "$DISPLAY $FOO"', shell=True)
 
     assert result.stdout == ':1 bar'
@@ -69,7 +84,8 @@ async def test_a_desktop_box_reattaches_with_its_display(
     await owner.get_sandbox()
     assert owner.ref is not None
 
-    attached = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900)).backend(owner.ref)
+    sandbox = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900), allow_internet_access=True)
+    attached = sandbox.backend(owner.ref)
     await screen(attached).display_size()
 
     (start,) = display.starts

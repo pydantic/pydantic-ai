@@ -227,9 +227,10 @@ _X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
 _X_SOCKET_DIR = '/tmp/.X11-unix'
 _X_SOCKET = f'{_X_SOCKET_DIR}/X{DISPLAY_NUMBER}'
 
-_PROGRAMS = ('Xvfb', 'xdotool', 'xwininfo', 'scrot', 'setsid')
+_CLIENTS = 'xdotool xwininfo scrot setsid'
+"""The programs the display's commands run: every one but Xvfb, which only a start without a running X server needs."""
 _PACKAGES = 'xvfb xdotool x11-utils scrot util-linux'
-"""The Debian and Ubuntu packages that have `_PROGRAMS`."""
+"""The Debian and Ubuntu packages that have Xvfb and `_CLIENTS`."""
 
 
 def start_x_server(log: str) -> str:
@@ -237,35 +238,37 @@ def start_x_server(log: str) -> str:
 
     Whether one runs is read from the display's X lock, not from an X server answering.
 
-    It first installs any of `_PROGRAMS` that's missing with `apt-get`, as root or through `sudo -n`, even when an X
-    server runs, and fails naming them when it can't. It fails once the X server exits, or after 10 seconds, printing
-    the end of `log`.
+    It first installs any of the programs it needs that's missing with `apt-get`, as root or through `sudo -n`, and
+    fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. It fails once the X server exits, or
+    after 10 seconds, printing the end of `log`.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
     until the script exits, so the rest of the script runs under it too; anything started in the background must close
     it with `9>&-`.
     """
     return (
-        f'{START_LOCK}missing=; for p in {" ".join(_PROGRAMS)}; do '
-        'command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
+        # Decided from the X lock, not from an X server answering: in a shared network namespace, such as Docker's
+        # `--network host`, another X server on the same display answers through Linux's shared abstract socket.
+        # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
+        # A running X server's lock names it, whichever server it is, such as `Xvnc`. `xvfb` is `Xvfb` when the script
+        # starts one, and empty when one runs.
+        f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) xvfb=;; '
+        '*) xvfb=Xvfb;; esac; '
+        f'missing=; for p in $xvfb {_CLIENTS}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
         # `elevate` prefixes a command that needs root: empty as root, `sudo -n` with passwordless sudo, and `none`
         # when neither works.
         'if [ "$(id -u)" = 0 ]; then elevate=; elif sudo -n true >/dev/null 2>&1; then elevate="sudo -n"; '
         'else elevate=none; fi; '
         'if [ -n "$missing" ]; then '
         'if ! command -v apt-get >/dev/null 2>&1; then '
-        """echo "missing$missing, and there's no apt-get to install them with" >&2; exit 1; fi; """
+        """echo "the display needs$missing, and there's no apt-get to install them with" >&2; exit 1; fi; """
         'if [ "$elevate" = none ]; then '
-        """echo "missing$missing, and there's no root or passwordless sudo to install them with" >&2; exit 1; fi; """
+        """echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
+        'exit 1; fi; '
         '{ $elevate apt-get update -qq && $elevate env DEBIAN_FRONTEND=noninteractive '
         f'apt-get install -y -qq --no-install-recommends {_PACKAGES}; }} >{log} 2>&1 '
         f'|| {{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; fi; '
-        # Decided from the X lock, not from an X server answering: in a shared network namespace, such as Docker's
-        # `--network host`, another X server on the same display answers through Linux's shared abstract socket.
-        # A stale lock, such as one left by `docker stop`, names a PID that is gone or belongs to another process.
-        # A running X server's lock names it, whichever server it is, such as `Xvnc`.
-        f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
-        f'*) '
+        'if [ -n "$xvfb" ]; then '
         # No X server here holds the lock, and ours doesn't listen on the abstract socket, so one listening there is
         # another namespace's, such as the host's under `--network host`: `xdotool` would reach it before ours.
         f'if grep -q " @{_X_SOCKET}$" /proc/net/unix 2>/dev/null; then echo "another X server, outside this sandbox, '
@@ -273,16 +276,16 @@ def start_x_server(log: str) -> str:
         'exit 1; fi; '
         f'rm -f {_X_LOCK} {_X_SOCKET}; '
         # Xvfb makes the socket directory only as root; without root, one the user makes works, so the mkdir then runs
-        # unprefixed.
+        # unprefixed. Without `-p`, so a path that appears after the check fails the mkdir instead of being reused.
         f'if [ ! -d {_X_SOCKET_DIR} ]; then [ "$elevate" = none ] && elevate=; '
-        f'$elevate mkdir -p {_X_SOCKET_DIR} && $elevate chmod 1777 {_X_SOCKET_DIR}; fi; '
+        f'$elevate mkdir -m 1777 {_X_SOCKET_DIR}; fi; '
         # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
         # running: the pointer goes back to the middle and held buttons are let go.
         # `-nolisten local` closes Linux's abstract socket, which a shared network namespace such as Docker's
         # `--network host` shares with every host user; the socket file in /tmp/.X11-unix stays for local commands.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
-        + ';; esac; '
+        + 'fi; '
     )
 
 
@@ -309,8 +312,7 @@ def x11_display(
         result = await run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
-                f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
-                f'({(result.stderr or result.stdout).strip()})'
+                f'Could not start the display in {where()}: {(result.stderr or result.stdout).strip()}'
             )
 
     return LazyDisplay(X11Computer(run), start)
