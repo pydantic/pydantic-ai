@@ -99,8 +99,8 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
-    for 1280x800, or its `(width, height)`. A non-root pod installs nothing, so its `SandboxTemplate` image must
-    already have Xvfb, `xdotool`, `x11-utils`, `scrot` and `util-linux`."""
+    for 1280x800, or its `(width, height)`. Without root or passwordless `sudo` in the pod, its `SandboxTemplate`
+    image must already have Xvfb, `xdotool`, `x11-utils`, `scrot` and `util-linux`."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('KubernetesSandbox', self.defer_loading)

@@ -410,7 +410,7 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   itself. The agent can type only ASCII. A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and
   `setsid`, which the first use installs with `apt-get` as root or with passwordless `sudo`, and `startxfce4`.
 - `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 screen for `ComputerUse()`, or pass
-  `desktop=(w, h)`. A non-root pod installs nothing, so the template's image must already have `xvfb`, `xdotool`, `x11-utils`, `scrot`
+  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have `xvfb`, `xdotool`, `x11-utils`, `scrot`
   and `util-linux` (and a browser if the agent needs one); otherwise the first use refuses, naming what is missing.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
