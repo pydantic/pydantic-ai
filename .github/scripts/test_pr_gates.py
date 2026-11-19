@@ -577,7 +577,7 @@ class ReviewGitHub:
         assert (run_id, head) == (20, HEAD)
         return self.verified
 
-    def contained_commits(self, head: str, shas: set[str]) -> set[str]:
+    def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]:
         return {sha for sha in shas if any(commit.startswith(sha) for commit in self.commits)}
 
     def issue_exists(self, number: int) -> bool:
@@ -983,7 +983,7 @@ def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[s
     [
         pytest.param('Fixed in 1234abc: the branch now returns early.', CONTRIBUTOR, True, id='fixed'),
         pytest.param('> Posted by an agent.\n\nFixed in 1234abc', CONTRIBUTOR, True, id='after-attribution'),
-        pytest.param('Fixed in 7777777', CONTRIBUTOR, False, id='fixed-outside-head'),
+        pytest.param('Fixed in 7777777', CONTRIBUTOR, False, id='fixed-outside-this-pr'),
         pytest.param('Agreed, fixed in 1234abc', CONTRIBUTOR, False, id='not-line-start'),
         pytest.param('Fixed in 123abc', CONTRIBUTOR, False, id='sha-too-short'),
         pytest.param('Fixed in 1234abc', VERIA, False, id='bot-reply'),
@@ -1071,8 +1071,11 @@ def test_github_actions_findings_are_told_apart_by_receipt(parent_body: str, rev
     assert review_gates.finding_reviewer(finding(BOT, parent=9), parent) == reviewer
 
 
-def test_gh_cli_answers_disposition_lookups():
-    full = '1234abc' + 'f' * 33
+@pytest.mark.parametrize('listed', [1, 250])
+def test_gh_cli_answers_disposition_lookups(listed: int):
+    """The PR commits endpoint stops at 250; only then does an unmatched SHA cost comparisons."""
+    own = '1234abc' + 'f' * 33
+    later = 'abcdef0' + '0' * 33
     calls: list[str] = []
 
     class Metadata(review_gates.ReviewGhCli):
@@ -1080,16 +1083,27 @@ def test_gh_cli_answers_disposition_lookups():
             calls.append(args[-1])
             match args[-1]:
                 case 'repos/o/r/pulls/7/commits?per_page=100':
-                    return json.dumps([[{'sha': full}]])
+                    commits = [own, *(f'{index:040x}' for index in range(listed - 1))]
+                    return json.dumps(
+                        [[{'sha': sha} for sha in commits[start : start + 100]] for start in (0, 100, 200)]
+                    )
                 case 'repos/o/r/commits/abcdef0':
-                    return json.dumps({'sha': 'abcdef0' + '0' * 33})
-                case path if path == f'repos/o/r/compare/abcdef0{"0" * 33}...{HEAD}?per_page=1':
-                    return '{"status": "ahead"}'
+                    return json.dumps({'sha': later})
+                case 'repos/o/r/commits/baseba5':
+                    return json.dumps({'sha': 'baseba5' + '0' * 33})
                 case 'repos/o/r/commits/7777777':
                     raise GateError('No commit found for SHA: 7777777 (HTTP 422)')
+                case path if path == f'repos/o/r/compare/{OLD_HEAD}...{later}?per_page=1':
+                    return '{"status": "ahead"}'
+                case path if path == f'repos/o/r/compare/{later}...{HEAD}?per_page=1':
+                    return '{"status": "ahead"}'
+                case path if path == f'repos/o/r/compare/{OLD_HEAD}...baseba5{"0" * 33}?per_page=1':
+                    return '{"status": "behind"}'
+                case path if path == f'repos/o/r/compare/baseba5{"0" * 33}...{HEAD}?per_page=1':
+                    return '{"status": "ahead"}'
                 case 'repos/o/r/issues/12':
                     return '{}'
-                case 'repos/o/r/issues/13':
+                case 'repos/o/r/issues/13' | 'repos/o/r/collaborators/stranger/permission':
                     raise GateError('Not Found (HTTP 404)')
                 case 'repos/o/r/collaborators/maintainer/permission':
                     return '{"permission": "write"}'
@@ -1097,15 +1111,19 @@ def test_gh_cli_answers_disposition_lookups():
                     raise GateError(f'Unexpected {args[-1]} (HTTP 500)')
 
     github = Metadata('o/r', 7)
-    assert github.contained_commits(HEAD, set()) == set()
+    assert github.own_commits(OLD_HEAD, HEAD, set()) == set()
     assert calls == []
-    assert github.contained_commits(HEAD, {'1234abc', 'abcdef0', '7777777'}) == {'1234abc', 'abcdef0'}
+    found = github.own_commits(OLD_HEAD, HEAD, {'1234abc', 'abcdef0', 'baseba5', '7777777'})
+    assert found == ({'1234abc', 'abcdef0'} if listed == 250 else {'1234abc'})
+    assert len(calls) == (1 if listed == 1 else 8)
     assert github.issue_exists(12)
     assert not github.issue_exists(13)
     with pytest.raises(GateError):
         github.issue_exists(14)
     assert github.permission('maintainer') == 'write'
     assert github.permission('stranger') == 'none'
+    with pytest.raises(GateError):
+        github.permission('unreachable')
 
 
 def test_publisher_binds_inline_comments_to_one_marked_review():

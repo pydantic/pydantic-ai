@@ -1,4 +1,4 @@
-"""Publish size-dependent review statuses from trusted default-branch code."""
+"""Publish the review statuses from trusted default-branch code."""
 
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ GH_AW_REVIEWERS: dict[str, str] = {
     'pydantic/pydantic-ai/pydantic-ai-ui-security-review': 'UI security review',
 }
 # Resolving a thread settled a finding started before this time. GitHub records no resolution time.
+# Delete this baseline once no open PR has a bot thread started before it.
 DISPOSITIONS_FROM = datetime(2026, 11, 19, tzinfo=UTC)
 # A reply line that answers a finding; reply bodies can open with an attribution line.
 DISPOSITION = re.compile(
@@ -178,7 +179,7 @@ class ReviewGitHub(Protocol):
     def review_comments(self) -> list[ReviewComment]: ...
     def resolved_comment_ids(self) -> set[int]: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
-    def contained_commits(self, head: str, shas: set[str]) -> set[str]: ...
+    def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]: ...
     def issue_exists(self, number: int) -> bool: ...
     def permission(self, login: str) -> str: ...
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
@@ -318,7 +319,7 @@ def finding_dispositions(
 ) -> Verdict:
     """Every inline thread a review bot started, on any head, needs a person's recorded answer.
 
-    A reply line `Fixed in <sha>` names a commit the head contains, and `Tracked in #N` another issue or PR; either
+    A reply line `Fixed in <sha>` names a commit of this PR, and `Tracked in #N` another issue or PR; either
     counts from anyone. `Declined: <reason>` counts from write access, and from anyone on a douwebot `Optional:`
     finding. A thread started before `DISPOSITIONS_FROM` and resolved is settled, whichever bot started it.
     """
@@ -330,7 +331,7 @@ def finding_dispositions(
             for line in DISPOSITION.finditer(comment.body):
                 answers.setdefault(comment.in_reply_to_id, []).append((comment.user.login, line))
     lines = [line for replies in answers.values() for _, line in replies]
-    contained = github.contained_commits(pull.head.sha, {line['sha'] for line in lines if line['sha']})
+    own = github.own_commits(pull.base.sha, pull.head.sha, {line['sha'] for line in lines if line['sha']})
     tracked = {number for line in lines if (number := line['number']) and int(number) != pull.number}
     existing = {number for number in tracked if github.issue_exists(int(number))}
     writers = {
@@ -338,30 +339,35 @@ def finding_dispositions(
         for login in {login for replies in answers.values() for login, line in replies if line['declined']}
         if github.permission(login) in {'write', 'admin'}
     }
-    failures: list[str] = []
+    unanswered: list[str] = []
+    unregistered: list[str] = []
     for finding in findings:
         if finding.created_at < DISPOSITIONS_FROM and finding.id in resolved:
             continue
         url = f'{pull.html_url}#discussion_r{finding.id}'
         reviewer = finding_reviewer(finding, parents.get(finding.pull_request_review_id))
         if reviewer is None:
-            failures.append(f'{url}: no registered reviewer started this `{finding.user.login}` thread.')
+            unregistered.append(f'{url}: no registered reviewer started this `{finding.user.login}` thread.')
             continue
         optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
         if any(
-            line['sha'] in contained
-            or line['number'] in existing
-            or (line['declined'] and (optional or login in writers))
+            line['sha'] in own or line['number'] in existing or (line['declined'] and (optional or login in writers))
             for login, line in answers.get(finding.id, [])
         ):
             continue
-        failures.append(f'{url}: the {reviewer} finding has no disposition reply.')
-    if failures:
-        failures.insert(
-            0,
-            f'{len(failures)} of {len(findings)} review bot findings need a reply: '
+        unanswered.append(f'{url}: the {reviewer} finding has no disposition reply.')
+    failures: list[str] = []
+    if unanswered:
+        failures += [
+            f'{len(unanswered)} of {len(findings)} review bot findings need a reply: '
             '`Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
-        )
+            *unanswered,
+        ]
+    if unregistered:
+        failures += [
+            f'{len(unregistered)} review bot threads have no registered reviewer in `REVIEWER_LOGINS`.',
+            *unregistered,
+        ]
     return Verdict(summary=[f'{len(findings)} review bot findings.'], failures=failures)
 
 
@@ -550,25 +556,31 @@ class ReviewGhCli(GhCli):
         jobs: dict[str, str | None] = {job.name: job.conclusion for page in pages for job in page.jobs}
         return jobs.get('douwebot') == 'success' and jobs.get('Publish douwebot review') == 'success'
 
-    def contained_commits(self, head: str, shas: set[str]) -> set[str]:
-        """Match the PR's own commits first; the endpoint lists at most 250, so compare any other SHA with the head."""
+    def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]:
+        """Return the given SHAs, full or abbreviated, that name a commit this PR adds to its base."""
         if not shas:
             return set()
         pages = _COMMIT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/commits?per_page=100'))
-        own = [commit.sha for page in pages for commit in page]
-        contained = {sha for sha in shas if any(commit.startswith(sha) for commit in own)}
-        for sha in shas - contained:
+        listed = [commit.sha for page in pages for commit in page]
+        own = {sha for sha in shas if any(commit.startswith(sha) for commit in listed)}
+        # The endpoint lists at most 250 commits; past that, compare each unmatched SHA with both ends.
+        if len(listed) < 250:
+            return own
+        for sha in shas - own:
             try:
                 # The compare endpoint finds a fork's commit only by its full SHA.
                 full = Commit.model_validate_json(self._api(f'{self._repo}/commits/{sha}')).sha
-                comparison = self._api(f'{self._repo}/compare/{full}...{head}?per_page=1')
+                after_base = self._api(f'{self._repo}/compare/{base}...{full}?per_page=1')
+                in_head = self._api(f'{self._repo}/compare/{full}...{head}?per_page=1')
             except GateError as error:
                 if 'HTTP 404' in str(error) or 'HTTP 422' in str(error):
                     continue
                 raise
-            if _CommitComparison.model_validate_json(comparison).status in {'ahead', 'identical'}:
-                contained.add(sha)
-        return contained
+            if _CommitComparison.model_validate_json(after_base).status in {'ahead', 'diverged'} and (
+                _CommitComparison.model_validate_json(in_head).status in {'ahead', 'identical'}
+            ):
+                own.add(sha)
+        return own
 
     def issue_exists(self, number: int) -> bool:
         """The issues endpoint also serves pull requests."""
@@ -581,12 +593,13 @@ class ReviewGhCli(GhCli):
         return True
 
     def permission(self, login: str) -> str:
-        """Fail closed: an account the endpoint cannot resolve has no write access."""
+        """An account the endpoint does not know has no permission; any other error fails the run closed."""
         try:
             permission = _PERMISSION.validate_json(self._api(f'{self._repo}/collaborators/{login}/permission'))
         except GateError as error:
-            print(f'No repository permission for @{login}: {error}')
-            return 'none'
+            if 'HTTP 404' in str(error):
+                return 'none'
+            raise
         return permission.permission
 
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None:
