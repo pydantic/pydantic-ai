@@ -61,8 +61,7 @@ interactions:
         object: response
         created_at: 1794824630
         status: incomplete
-        access_programs:
-          cyber: daybreak_blue
+        access_programs: null
         background: false
         billing:
           payer: developer
