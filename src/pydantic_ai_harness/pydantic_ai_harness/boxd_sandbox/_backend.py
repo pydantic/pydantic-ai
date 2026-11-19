@@ -292,7 +292,7 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
     try:
         if org is None:
             return await client.machines.get(name)
-        # Copied into a `list[Machine]`, so Pyright knows the items' type.
+        # Copy into a `list[Machine]`, so Pyright knows the type of each item.
         machines: list[Machine] = list(await client.machines.list(org=org))
         return next((m for m in machines if m.name == name), None)
     except boxd.BoxdError:
@@ -422,7 +422,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             ones it was created with.
         desktop: Give the agent the machine's desktop for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800,
-            or its `(width, height)`.
+            or a `(width, height)`.
     """
 
     def __init__(
@@ -456,7 +456,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._env = dict(env or {})
         size = desktop_size(desktop)
         if size:
-            # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+            # Commands get `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
             self._env = {'DISPLAY': DISPLAY, **self._env}
         self._display = (
             None
@@ -495,7 +495,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
 
     @property
     def display(self) -> Display | None:
-        """The machine's desktop, when created with `desktop=True`."""
+        """The machine's desktop, or `None` when the backend was created without `desktop`."""
         return self._display
 
     @asynccontextmanager
@@ -508,20 +508,20 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 except UnsupportedActionError:
                     raise
                 except WorkspaceError as error:
-                    # The desktop's own failure, such as a button it couldn't let go of, may come from a lost machine.
+                    # A desktop failure, such as a mouse button that couldn't be let go, may mean the machine is gone.
                     if (gone := await _probe(client, machine_id)) is not None:
                         raise gone from error
                     raise
 
     def _attached_computer(self) -> tuple[AsyncComputer, str]:
-        # The display calls it inside `_display_scope`, which has acquired the machine.
+        # The display calls this only inside `_display_scope`, which has already connected to the machine.
         assert self._client is not None and self._ref is not None
         return self._client.machines.computer, self._ref.id
 
     async def _start_display(self, size: tuple[int, int]) -> None:
-        """Start the desktop unless it runs, and hold it at `size`."""
+        """Start the desktop if it isn't running, and fix its screen at `size`."""
         computer, machine_id = self._attached_computer()
-        # Held, so boxd's console, which anyone in the organization can open, scales the screen instead of resizing it.
+        # Fixing the size makes boxd's console scale the screen instead of resizing it. Anyone in the org can open it.
         await computer.set_screen_size(machine_id, *size)
 
     async def get_sandbox(self) -> Machine:
@@ -705,7 +705,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         client, self._client = self._client, None
         self._ready = False
         self._resolved_working_dir = None
-        # A later connection may find the machine rebooted with a newer agent, and its desktop at another size.
+        # On a later connection, the machine may have rebooted with a newer boxd agent and a desktop of another size.
         self._agent_outdated = False
         if self._display is not None:
             self._display.reset()
@@ -753,7 +753,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             # Acquiring the machine has its own bound; the timeout is the command's alone.
             client, machine_id = await self._acquire()
             if self._display is not None:
-                # Started first, so a program the command opens shows on the screen.
+                # Start the display first, so a program the command opens appears on the screen.
                 await self._display.start()
             line = _command_line(
                 argv, cwd=self._working_dir, env={**self._env, **(env or {})}, marker=self._missing_cwd_marker

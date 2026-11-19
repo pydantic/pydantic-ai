@@ -1,21 +1,22 @@
-"""`BoxdDesktop`: display control for a boxd machine, through boxd's computer API (`machines.computer`).
+"""`BoxdDesktop` controls a boxd machine's desktop through boxd's computer API (`machines.computer`).
 
-How boxd's desktop behaves, checked 2026-11-13 against boxd 0.3.2 on boxd's production cluster. Re-run the live display
-tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before changing the mapping:
+These facts about boxd's desktop were checked on 2026-11-13 against boxd 0.3.2 on boxd's production cluster. Re-run
+the live display tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before changing how actions map to calls.
 
-- Every machine has a desktop on X display `:100`, also shown in the console's Desktop view. The first computer call
-  starts it, in about 3 seconds on a new machine, at 1280x800. It has no window manager, so a window opens at the top
-  left without a title bar.
-- `set_screen_size` holds the screen at a size until the desktop restarts, so someone watching in the console sees it
-  scaled rather than resizing it. Every call answers with the screen's size and the pointer's position.
-- Screenshots are PNGs at the screen's size; a `region` screenshot is the region at full resolution.
-- `type` types any Unicode, emoji included, newlines as Enter and tabs as Tab, at most 10,000 characters a call;
-  10,000 take about 46 seconds.
-- `key` takes X keysyms, several joined with `+` for a combination, and `U` plus a code point for any character. It
-  refuses the bare names `pause`, `numlock`, `scrolllock` and the numpad and media key names, and a `repeat` over 100.
-- `scroll` turns at most 100 wheel clicks a call, and `drag` takes 2 to 100 points.
-- Mouse buttons are `left`, `middle`, `right`, `back` and `forward`. `click`, `scroll` and `drag` hold modifiers
-  around the event; `move` takes none, and there is no call that holds a key down across calls.
+- Every machine has a desktop on X display `:100`. The console's Desktop view shows the same desktop. The first
+  computer call starts it at 1280x800, in about 3 seconds on a new machine. It has no window manager, so a window
+  opens at the top left without a title bar.
+- `set_screen_size` fixes the screen size until the desktop restarts. Someone watching in the console then sees the
+  screen scaled, and doesn't resize it. Every call returns the screen size and the pointer position.
+- Screenshots are PNGs at the screen size. A `region` screenshot shows that region at full resolution.
+- `type` types any Unicode text, emoji included. It types a newline as Enter and a tab as Tab. One call takes at most
+  10,000 characters, and 10,000 characters take about 46 seconds.
+- `key` takes X key names (keysyms). Several joined with `+` press a combination, and `U` plus a code point presses
+  any character. It refuses the plain names `pause`, `numlock`, `scrolllock` and the numpad and media key names. It
+  also refuses a `repeat` over 100.
+- `scroll` turns at most 100 wheel clicks per call. `drag` takes 2 to 100 points.
+- Mouse buttons are `left`, `middle`, `right`, `back` and `forward`. `click`, `scroll` and `drag` hold modifier keys
+  during the event. `move` can't hold modifier keys, and no call holds a key down from one call to the next.
 """
 
 from __future__ import annotations as _annotations
@@ -48,22 +49,22 @@ if TYPE_CHECKING:
     from boxd.resources.computer import AsyncComputer
 
 DISPLAY = ':100'
-"""The X display of every boxd machine's desktop."""
+"""The X display number of the desktop on every boxd machine."""
 
 _RELEASE_TIMEOUT = 10
-"""Maximum time spent releasing the mouse button after a failed or cancelled drag."""
+"""Seconds to spend letting go of the mouse button after a drag fails or is cancelled."""
 
 _TYPED_PER_CALL = 10_000
-"""Characters typed by one call, the most boxd takes."""
+"""Characters typed per call. boxd takes no more."""
 
 _SCROLLED_PER_CALL = 100
-"""Wheel clicks one call may turn."""
+"""Most wheel clicks per `scroll` call."""
 
 _REPEATS_PER_CALL = 100
-"""Times one call may press a key."""
+"""Most key presses per `key` call."""
 
 _DRAG_POINTS_PER_CALL = 100
-"""Points one `drag` call may take; a longer drag presses, moves and releases in separate calls."""
+"""Most points per `drag` call. A longer drag presses, moves and releases the button in separate calls."""
 
 _KEYSYMS = {
     'pause': 'Pause',
@@ -82,18 +83,18 @@ _KEYSYMS = {
     'mediaplay': 'XF86AudioPlay',
     'medianext': 'XF86AudioNext',
     'mediaprev': 'XF86AudioPrev',
-    # As keys, not characters: browsers ignore the Linefeed keysym.
+    # Sent as keys, not characters, because browsers ignore the Linefeed keysym.
     '\n': 'Return',
     '\t': 'Tab',
 }
-"""Normalized key names boxd knows only by their X keysym. It takes the other names as they are."""
+"""Key names that boxd accepts only as X keysyms, mapped to those keysyms. boxd takes every other name as is."""
 
 
 def _keysym(key: str) -> str:
     if key in _KEYSYMS:
         return _KEYSYMS[key]
     if len(key) == 1 and not (key.isascii() and key.isalnum()):
-        # A symbol such as `+` would read as the join in `ctrl++`; `U002B` can't.
+        # A symbol such as `+` would be read as the joiner in `ctrl++`. `U002B` can't be misread.
         return f'U{ord(key):04X}'
     return key
 
@@ -111,8 +112,8 @@ def _png(result: ComputerActionResult) -> bytes:
 class BoxdDesktop:
     """Controls a boxd machine's desktop with boxd's computer API.
 
-    `attached` returns the API and the machine's id. It is read on every call, since the backend attaches again with
-    a new client after closing the old one.
+    `attached` returns the API and the machine's ID. It is called again for every action, because the backend
+    reconnects with a new client after it closes the old one.
     """
 
     def __init__(self, attached: Callable[[], tuple[AsyncComputer, str]]):
@@ -182,22 +183,23 @@ class BoxdDesktop:
             raise UnsupportedActionError(
                 f"boxd's desktop can hold keys during a drag of at most {_DRAG_POINTS_PER_CALL} points."
             )
-        # More than 100 moves, each its own call: a browser sees the drag start and land without added pauses.
+        # Over 100 points: press, then one `move` call per point, then release. No pauses are added, and a browser
+        # still sees the drag start and land.
         start, end = path[0], path[-1]
         try:
-            # Inside the `try`: a press cancelled after boxd made it is still let go of.
+            # Inside the `try`, so a press that boxd made before a cancel is still let go.
             await computer.mouse_down(machine_id, start.x, start.y)
             for point in path[1:]:
                 await computer.move(machine_id, point.x, point.y)
             await computer.mouse_up(machine_id, end.x, end.y)
         except BaseException as error:
-            import boxd  # loaded by the backend, which guards the import for a missing extra
+            import boxd  # already imported by the backend, which reports a missing `boxd` extra
 
             released = False
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await computer.mouse_up(machine_id)
                 released = True
-            # Rejected credentials keep their type, so the backend still ends the run on them.
+            # A credentials error keeps its own type, so the backend still ends the run on it.
             if (
                 released
                 or not isinstance(error, Exception)

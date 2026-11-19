@@ -109,8 +109,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     as its real value. An attached machine keeps the ones it was created with."""
 
     desktop: bool | tuple[int, int] = False
-    """Give the agent the machine's desktop, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-    `True` for 1280x800, or its `(width, height)`."""
+    """Give the agent the machine's desktop for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+    `True` for 1280x800, or a `(width, height)`."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)

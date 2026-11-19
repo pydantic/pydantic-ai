@@ -95,8 +95,8 @@ async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str)
 
 
 async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumptions that the first computer call starts the machine's desktop, that it
-    stays at the size it was held at, and that a screenshot, a zoom and the pointer's position come back as the
+    """Validates the fake-encoded assumptions that the first computer call starts the machine's desktop, that the
+    desktop keeps the size it was set to, and that a screenshot, a zoom and the pointer position come back as the
     display contract expects."""
     async with _owned(client, desktop=(1440, 900)) as backend:
         display = screen(backend)
@@ -125,7 +125,7 @@ _KEY_CODES: dict[str, str | None] = {
     **{'up': 'ArrowUp', 'down': 'ArrowDown', 'left': 'ArrowLeft', 'right': 'ArrowRight', 'space': 'Space'},
     **{'printscreen': 'PrintScreen', 'pause': 'Pause', 'menu': 'ContextMenu', 'capslock': 'CapsLock'},
     **{'numlock': 'NumLock', 'scrolllock': 'ScrollLock', **{f'f{n}': f'F{n}' for n in range(1, 13)}},
-    # Chromium gets F13 to F24 on this desktop as a key it cannot name, so `None`: only that a key arrives is checked.
+    # Chromium can't name F13 to F24 on this desktop, so `None` checks only that a key arrives.
     **{f'f{n}': None for n in range(13, 25)},
     **{f'numpad{n}': f'Numpad{n}' for n in range(10)},
     **{'numpad_enter': 'NumpadEnter', 'numpad_add': 'NumpadAdd', 'numpad_subtract': 'NumpadSubtract'},
@@ -138,8 +138,8 @@ _KEY_CODES: dict[str, str | None] = {
 
 
 async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that the keysym the driver sends for each key name presses that key,
-    read back from Chromium (`agent-browser`, which boxd's image ships), alone and held with modifiers."""
+    """Validates the fake-encoded assumption that the X key name sent for each key presses that key, alone and with
+    modifiers held. Chromium (`agent-browser`, which boxd's image includes) reads back each key."""
     async with _owned(client, desktop=True) as backend:
         display = backend.display
         assert display is not None
@@ -150,7 +150,7 @@ async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
 
         async def pressed(*keys: str) -> list[str]:
             await display.act(PressKeys(keys=keys))
-            # Polls Chromium's key log; a dropped key leaves it empty until the deadline.
+            # Polls Chromium's key log. A key that never arrives leaves the log empty until the deadline.
             got: list[str] = []
             with anyio.move_on_after(10):
                 while not got:
@@ -174,18 +174,20 @@ _TERMINAL = "setsid xterm -e sh -c 'cat > typed.txt' </dev/null >/dev/null 2>&1 
 async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_any_text(
     client: boxd.AsyncBoxd,
 ) -> None:
-    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, and that typing reaches
-    the focused window as Unicode with a newline as Enter, also past boxd's 10,000 characters a call."""
+    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, and that typed text reaches
+    the focused window as Unicode, with a newline as Enter, even past boxd's 10,000 characters per call."""
     async with _owned(client, desktop=True) as backend:
         display = backend.display
         assert display is not None
         await display.screenshot()
         await backend.run(['sh', '-c', _TERMINAL], timeout=60)
-        # Not `--onlyvisible`: with no window manager, xdotool reports xterm's window unviewable while it takes input.
+        # No `--onlyvisible`: without a window manager, xdotool calls xterm's window unviewable even while it takes
+        # input.
         await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
 
         await display.act(Click(x=50, y=50))
-        # Over boxd's 10,000 characters a call, in lines a terminal takes (it keeps at most 4,095 of one line).
+        # Over boxd's 10,000 characters per call, in lines short enough for a terminal. A terminal keeps at most 4,095
+        # characters of one line.
         text = 'héllo 😀\n' + ('x' * 99 + '\n') * 101
         await display.act(TypeText(text=text))
         await display.act(PressKeys(keys=('ctrl+d',)))
@@ -197,8 +199,8 @@ async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_a
 
 
 async def test_boxd_takes_scrolls_key_repeats_and_drags_past_its_per_call_limits(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that wheel clicks, key repeats and drag points past the 100 boxd takes
-    in one call are split so boxd takes each part."""
+    """Validates the fake-encoded assumption that wheel clicks, key repeats and drag points over boxd's limit of 100
+    per call are split into calls that boxd accepts."""
     async with _owned(client, desktop=True) as backend:
         display = backend.display
         assert display is not None
@@ -225,9 +227,9 @@ document.addEventListener('wheel', e => E.push(`wheel ctrl=${e.ctrlKey}`));
 
 
 async def test_drags_key_repeats_and_modifiers_reach_a_browser(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumptions that boxd's `drag` and the drag split past 100 points both start and
-    land a browser's drag-and-drop, that a key repeated 3 times is pressed 3 times, and that boxd holds modifiers
-    around a click, a wheel turn and a drag, with `super` as the Meta key."""
+    """Validates the fake-encoded assumptions that a browser's drag-and-drop starts and lands both with boxd's `drag`
+    and with a drag split over 100 points, that a key repeated 3 times is pressed 3 times, and that boxd holds
+    modifiers during a click, a wheel turn and a drag, with `super` as the Meta key."""
     async with _owned(client, desktop=True) as backend:
         display = screen(backend)
         await display.screenshot()
@@ -236,7 +238,7 @@ async def test_drags_key_repeats_and_modifiers_reach_a_browser(client: boxd.Asyn
 
         async def logged(action: DisplayAction) -> list[str]:
             await display.act(action)
-            await anyio.sleep(1)  # lets every event arrive, so a key pressed once too often shows
+            await anyio.sleep(1)  # lets every event arrive, so an extra key press would show
             got = await backend.run(['agent-browser', 'eval', 'JSON.stringify(E.splice(0))'], timeout=60)
             return json.loads(json.loads(got.stdout))
 

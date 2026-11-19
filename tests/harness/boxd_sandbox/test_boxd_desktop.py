@@ -44,7 +44,7 @@ async def _started(host: FakeBoxd) -> BoxdSandboxBackend:
 
 
 def _path(points: int) -> tuple[Point, ...]:
-    # `y` differs from `x`, so swapped coordinates show.
+    # `y` differs from `x`, so swapped coordinates would fail the test.
     return tuple(Point(x=n, y=2 * n) for n in range(points))
 
 
@@ -65,7 +65,7 @@ def _path(points: int) -> tuple[Point, ...]:
         ),
         pytest.param(
             Drag(path=_path(101)),
-            # Too long for one call: pressed, moved along the path, released.
+            # Too long for one call, so the button is pressed, moved along the path and released in separate calls.
             ['mouse_down 0 0 left', *(f'mouse_move {n} {2 * n}' for n in range(1, 101)), 'mouse_up 100 200 left'],
             id='long-drag',
         ),
@@ -106,9 +106,9 @@ def _path(points: int) -> tuple[Point, ...]:
             id='keysyms',
         ),
         pytest.param(HoldKeys(keys=('shift', 'a'), seconds=1.5), ["key 'shift+a' repeat=0 hold_ms=1500"], id='hold'),
-        # boxd refuses a hold over 5 minutes itself: `hold_ms is at most 300000`.
+        # boxd itself refuses a hold over 5 minutes, with the error `hold_ms is at most 300000`.
         pytest.param(HoldKeys(keys=('a',), seconds=301), ["key 'a' repeat=0 hold_ms=301000"], id='long-hold'),
-        # boxd reads `hold_ms=0` as a plain press.
+        # boxd treats `hold_ms=0` as a plain press, so the shortest hold is 1 ms.
         pytest.param(HoldKeys(keys=('a',), seconds=0.0001), ["key 'a' repeat=0 hold_ms=1"], id='short-hold'),
     ],
 )
@@ -138,7 +138,7 @@ async def test_what_boxd_cannot_do_is_refused_before_anything_runs(host: FakeBox
 
 async def test_a_failed_long_drag_releases_the_button(host: FakeBoxd) -> None:
     backend = await _started(host)
-    # The press goes through; the first move fails.
+    # The press succeeds. The first move fails.
     host.desktop.errors = [None, APIStatusError('the desktop went away', code='internal', grpc_code=13)]
 
     with pytest.raises(APIStatusError, match='the desktop went away'):
@@ -149,7 +149,7 @@ async def test_a_failed_long_drag_releases_the_button(host: FakeBoxd) -> None:
 
 async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held(host: FakeBoxd) -> None:
     backend = await _started(host)
-    # The press goes through; the first move fails, and so does the release after it.
+    # The press succeeds. The first move fails, and so does the release after it.
     host.desktop.errors = [
         None,
         APIStatusError('move refused', code='invalid_argument', grpc_code=3),
@@ -178,14 +178,14 @@ async def test_rejected_credentials_during_a_long_drag_end_the_run_when_the_rele
 
 
 async def test_a_machine_deleted_during_a_failed_long_drag_ends_the_run(host: FakeBoxd) -> None:
-    """The model isn't left to retry on a machine that is gone."""
+    """A desktop failure on a machine that is gone raises `WorkspaceUnavailableError`, so the model doesn't retry."""
     backend = await _started(host)
     host.desktop.errors = [
         None,
         APIStatusError('move refused', code='invalid_argument', grpc_code=3),
         APIStatusError('release connection lost', code='unavailable', grpc_code=14),
     ]
-    # The lookup after the failure finds the machine gone.
+    # After the failure, the lookup finds that the machine is gone.
     host.get_errors.append(NotFoundError('VM is destroyed', code='not_found', grpc_code=5))
 
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
@@ -198,7 +198,7 @@ async def test_a_cancelled_long_drag_releases_the_button(host: FakeBoxd) -> None
 
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(screen(backend).act, Drag(path=_path(101)))
-        await anyio.wait_all_tasks_blocked()  # pressed, a move waiting on boxd
+        await anyio.wait_all_tasks_blocked()  # the button is down and a move waits for boxd
         tasks.cancel_scope.cancel()
 
     assert host.desktop.calls == [
@@ -219,7 +219,7 @@ async def test_the_desktop_is_held_at_its_size_when_it_starts(host: FakeBoxd) ->
 async def test_looks_come_from_the_desktop(host: FakeBoxd) -> None:
     backend = await _started(host)
     display = screen(backend)
-    # Whatever size boxd reports, not the size asked for.
+    # The size boxd reports, not the size that was asked for.
     host.desktop.size = (1000, 700)
 
     assert await display.screenshot() == host.desktop.png
@@ -254,7 +254,7 @@ async def test_a_deleted_machine_ends_the_run(host: FakeBoxd) -> None:
 
 
 async def test_after_aclose_the_desktop_is_held_again_before_any_input(host: FakeBoxd) -> None:
-    """The machine may restart before a later run attaches to it again, and its desktop with it."""
+    """The machine, and its desktop, may restart before a later run connects to it again."""
     backend = await _started(host)
     await backend.aclose()
 
@@ -264,7 +264,7 @@ async def test_after_aclose_the_desktop_is_held_again_before_any_input(host: Fak
 
 
 async def test_a_shell_command_finds_the_desktop_running(host: FakeBoxd) -> None:
-    # The shell is told a program it starts opens on the screen, before anything has looked at the screen.
+    # The shell command gets `DISPLAY`, so a program it starts opens on the screen, even before the first screenshot.
     backend = BoxdSandboxBackend(desktop=True, env={'A': '1'})
 
     await backend.run(['true'])
@@ -297,7 +297,7 @@ async def test_a_desktop_machine_runs_computer_use(host: FakeBoxd) -> None:
     assert clicked.screenshot is not None and clicked.screenshot.data == host.desktop.png
     assert host.desktop.calls == ['set_screen_size 1280x800', "click 3 4 left count=1 modifiers=''"]
 
-    # A backend attached by the run's ref reaches the same desktop.
+    # A backend that connects with the run's ref reaches the same desktop.
     ref = result.workspace.ref
     assert ref is not None
     attached = sandbox.backend(ref).display

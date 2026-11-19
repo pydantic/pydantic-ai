@@ -244,7 +244,7 @@ async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeB
 
 
 def test_agent_spec_schema_publishes_every_field_but_the_client() -> None:
-    """`from_spec` lists its fields by hand, so a new field must be added there too."""
+    """`from_spec` lists its fields by hand, so each new field must be added there too."""
     definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
     published = set(definitions['spec_params_BoxdSandbox']['properties'])
     # Fields set outside `__init__`, such as the `_authority_ceiling` every capability has, aren't spec fields.

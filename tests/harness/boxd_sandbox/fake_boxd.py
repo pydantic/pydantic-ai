@@ -359,15 +359,15 @@ class _FakeFsTransport:
 
 @dataclass
 class FakeDesktop:
-    """A machine's desktop as boxd's computer API shows it, recording each action as one line."""
+    """A fake of a machine's desktop as boxd's computer API shows it. It records each action as one line."""
 
     size: tuple[int, int] = (1280, 800)
     cursor: tuple[int, int] = (7, 8)
     png: bytes = FAKE_SCREENSHOT
     calls: list[str] = field(default_factory=list[str])
-    # A call recorded as this line waits until cancelled, as one boxd has not answered yet.
+    # A call that would record this line waits until it is cancelled, like a call boxd has not answered yet.
     hang_on: str | None = None
-    # Raised by the next action calls, in order; `None` lets that call through.
+    # Errors the next action calls raise, in order. `None` lets that call succeed.
     errors: list[BaseException | None] = field(default_factory=list[BaseException | None])
 
 
@@ -386,7 +386,7 @@ class _Message(Protocol):
 
 
 class _Action(_Message, Protocol):
-    """The fields of boxd's computer action messages that the fake reads; each message has only its own."""
+    """The fields of boxd's computer action messages that the fake reads. Each message sets only its own fields."""
 
     at: _Point
     to: _Point
@@ -427,7 +427,7 @@ def _at(action: _Action) -> str:
 
 
 class _FakeComputerTransport:
-    """boxd's `ComputerAction` gRPC call, under the SDK's own `AsyncComputer`."""
+    """A fake of boxd's `ComputerAction` gRPC call, which the SDK's real `AsyncComputer` calls."""
 
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner

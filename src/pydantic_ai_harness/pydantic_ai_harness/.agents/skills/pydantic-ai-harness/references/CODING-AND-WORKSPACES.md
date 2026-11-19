@@ -398,10 +398,11 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   isolated one and returns its ref: pass it as `workspace=` to try another approach from the same state,
   then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated or is on a
   named boxd network.
-- `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`, or pass
-  `desktop=(w, h)`. It needs a machine on boxd's current default image (not a fork or snapshot of an older one),
-  has no window manager or launcher (open a browser with `agent-browser open <url>`),
-  and types any text, emoji included. Anyone in the boxd organization can watch the desktop in the console's Desktop view.
+- `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`. `desktop=(w, h)`
+  sets another size. It needs a machine on boxd's current default image, not a fork or snapshot of an older one. The
+  desktop has no window manager or launcher. To open a browser, run `agent-browser open <url>`. The agent can type
+  any text, emoji included. Anyone in the boxd organization can watch the desktop in the console's Desktop view, and
+  may be able to click and type on it.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
