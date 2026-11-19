@@ -7,6 +7,7 @@ there, like the real one runs it in the container. Removing a container kills th
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -98,6 +99,8 @@ exec)
         export FAKE_TMP="$tmp"
         # The container's home, so the desktop's settings never land in the host's.
         export HOME="$tmp/home"
+        # Variables the image sets, as its `ENV` lines would.
+        [ ! -f "$bin/image-env" ] || . "$bin/image-env"
         for arg; do
             shift
             case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-*)
@@ -242,7 +245,21 @@ _FAKE_APT_GET = """#!/bin/sh
 bin=$(dirname "$0")
 echo "${FAKE_SUDO:+sudo }$*" >> "$bin/apt-get-calls"
 if [ "$1" = install ] && [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
-[ "$1" != install ] || mv "$bin"/uninstalled/* "$bin"/ 2>/dev/null
+if [ "$1" = install ]; then
+    # Like apt-get, nothing is installed when one package can't be found.
+    for package; do
+        if grep -qx -- "$package" "$bin/apt-get-lacks" 2>/dev/null; then
+            echo "E: Unable to locate package $package" >&2; exit 100
+        fi
+    done
+    for package; do
+        case $package in
+            xvfb) programs=Xvfb ;; x11-utils) programs='xwininfo xprop' ;; util-linux) programs=setsid ;;
+            *) programs=$package ;;
+        esac
+        for program in $programs; do mv "$bin/uninstalled/$program" "$bin/" 2>/dev/null; done
+    done
+fi
 if [ "$1" = install ] && [ -e "$bin/x-starts-during-install" ]; then
     printf '%10d\\n' 25 > "$FAKE_TMP/.X1-lock" && mkdir -p "$FAKE_TMP/proc/25" && echo Xvnc > "$FAKE_TMP/proc/25/comm"
     rm -f "$bin/no-display"
@@ -250,7 +267,8 @@ fi
 exit 0
 """
 """Stands in for `apt-get`: logs each call, prefixed `sudo` when run through the fake `sudo`, and has `install` put back
-the programs `uninstall` took away, or fail if `apt-get-fails` exists. With `x-starts-during-install`, an install also
+the programs in the packages it names that `uninstall` took away, or fail if `apt-get-fails` exists or the package
+lists lack one of them. With `x-starts-during-install`, an install also
 brings up the image's own X server, `Xvnc`, as PID 25."""
 
 
@@ -361,6 +379,15 @@ class FakeDocker:
 
     def fail_installs(self) -> None:
         (self.bin_dir / 'apt-get-fails').touch()
+
+    def set_image_env(self, name: str, value: str) -> None:
+        """Set `name` in every container command's environment, as an image's `ENV` line would."""
+        with (self.bin_dir / 'image-env').open('a') as file:
+            file.write(f'export {name}={shlex.quote(value)}\n')
+
+    def lack_packages(self, *packages: str) -> None:
+        """Have the package lists lack `packages`, as a distribution without them does."""
+        (self.bin_dir / 'apt-get-lacks').write_text(''.join(f'{package}\n' for package in packages))
 
     @property
     def apt_get_calls(self) -> list[str]:
