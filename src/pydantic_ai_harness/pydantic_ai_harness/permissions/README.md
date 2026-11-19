@@ -148,3 +148,12 @@ permissions = Permissions(lambda ctx: current)
 - [Approval Reviewer](https://pydantic.dev/docs/ai/harness/approval-reviewer/): let a second model approve the low-risk calls that need approval.
 - [Tool Call Judge](https://pydantic.dev/docs/ai/harness/tool-call-judge/): let a second model block calls.
 - [Ask User](https://pydantic.dev/docs/ai/harness/ask-user/): let the model ask a person multiple-choice questions.
+
+
+## API reference
+
+- [`Permissions`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/_capability.py) configures permission modes and rules for an agent.
+- [`PermissionRule`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/_rules.py) defines an allow, ask, or deny rule.
+- [`PermissionRuleSpec`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/_rules.py) is the serializable mapping form for a rule.
+
+Import them from `pydantic_ai_harness.permissions`.
