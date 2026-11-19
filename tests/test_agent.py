@@ -106,6 +106,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
@@ -219,11 +220,6 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
-
-# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
-# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
-# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
-READINESS_WAIT_TIMEOUT = 10
 
 
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):

@@ -86,7 +86,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest
     ('argv', 'expected'),
     [
         ([sys.executable, '-c', 'pass'], True),
-        (['python3.13', '-m', 'pydantic_clai2'], True),
+        (['python3.13', '-m', 'pydantic_ai_pax'], True),
         (['/usr/bin/python3'], True),
         (['pytest', '--version'], True),
         (['sh', '-c', 'python -c pass'], True),
