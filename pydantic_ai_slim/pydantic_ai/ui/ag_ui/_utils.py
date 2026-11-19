@@ -443,10 +443,10 @@ def rehydrate_tool_return_content(content: Any) -> Any:
     Only a parsed mapping or sequence is run back through the union, since nested multimodal items can
     only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
     `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
-    from a string on the wire and rehydrating it would silently turn `'123'` into `123`. JSON nested
-    deeper than the request body itself may be is returned as the original string too: it is parsed with
-    the same parser and depth limit as `RunAgentInput.model_validate_json`. An already-structured
-    (non-string) `content` is validated directly.
+    from a string on the wire and rehydrating it would silently turn `'123'` into `123`. JSON nested past
+    the depth limit of `pydantic_core.from_json` is returned as the original string too, the same limit
+    `RunAgentInput.model_validate_json` applies to the request body. An already-structured (non-string)
+    `content` is validated directly.
     """
     if isinstance(content, str):
         try:

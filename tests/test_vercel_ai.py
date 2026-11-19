@@ -118,6 +118,7 @@ from .conftest import (
     IsList,
     IsSameStr,
     IsStr,
+    call_on_fixed_stack,
     conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
@@ -8921,22 +8922,19 @@ async def test_adapter_load_messages_json_list_args():
     assert tool_call.args == '[1, 2, 3]'
 
 
-async def test_adapter_load_messages_deeply_nested_json_args():
+def test_adapter_load_messages_deeply_nested_json_args():
     """Args nested past the recursion limit are kept as the string, like any other non-JSON args."""
-    args = '[' * 100_000 + ']' * 100_000  # deeper than `json.loads` can parse on every supported Python
-    messages = VercelAIAdapter.load_messages(
-        [
-            UIMessage(
-                id='msg1',
-                role='assistant',
-                parts=[
-                    DynamicToolOutputAvailablePart(
-                        tool_name='my_tool', tool_call_id='tc1', input=args, output='result', state='output-available'
-                    )
-                ],
+    args = '[' * 100_000 + ']' * 100_000
+    ui_message = UIMessage(
+        id='msg1',
+        role='assistant',
+        parts=[
+            DynamicToolOutputAvailablePart(
+                tool_name='my_tool', tool_call_id='tc1', input=args, output='result', state='output-available'
             )
-        ]
+        ],
     )
+    messages = call_on_fixed_stack(lambda: VercelAIAdapter.load_messages([ui_message]))
 
     tool_call = message(messages, ModelResponse).parts[0]
     assert isinstance(tool_call, ToolCallPart)

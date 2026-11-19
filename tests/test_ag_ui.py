@@ -6727,14 +6727,12 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
 @pytest.mark.parametrize(
     'content',
     [
-        # deeper than `json.loads` can parse on every supported Python
-        pytest.param('[' * 100_000 + ']' * 100_000, id='past-the-recursion-limit'),
-        # valid JSON, nested deeper than the request body itself may be
-        pytest.param('{"a":' * 5_000 + '1' + '}' * 5_000, id='past-the-request-depth-limit'),
+        pytest.param('[' * 100_000 + ']' * 100_000, id='list'),
+        pytest.param('{"a":' * 5_000 + '1' + '}' * 5_000, id='object'),
     ],
 )
 async def test_tool_return_deeply_nested_json_string_stays_string(content: str) -> None:
-    """A deeply nested tool return reaches the model as the string, like any other plain-text return."""
+    """A tool return nested past the request body's depth limit reaches the model as the string, like plain text."""
     received: list[ToolReturnPart] = []
 
     async def stream_function(messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:

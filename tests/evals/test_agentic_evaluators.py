@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from ..conftest import try_import
+from ..conftest import call_on_fixed_stack, try_import
 
 with try_import() as imports_successful:
     from pydantic_evals.evaluators import (
@@ -835,7 +835,6 @@ def test_argument_correctness_include_content_false(span_builder: Any):
     'args',
     [
         pytest.param('not-json', id='invalid-json'),
-        # deeper than `json.loads` can parse on every supported Python
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
     ],
 )
@@ -845,7 +844,7 @@ def test_argument_correctness_invalid_json(args: str):
         tool_name='search',
         expected_arguments={'q': 'cats'},
     )
-    result = evaluator.evaluate(_ctx(tree=tree))
+    result = call_on_fixed_stack(lambda: evaluator.evaluate(_ctx(tree=tree)))
     assert result.value is False
     assert result.reason is not None
     assert 'could not be parsed as JSON' in result.reason

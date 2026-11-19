@@ -9,8 +9,10 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import warnings
 from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -902,6 +904,21 @@ def with_native_system_role(profile: ModelProfile) -> ModelProfile:
     it keep it this way, as an application that opts back into the role would.
     """
     return {**profile, 'supports_inline_system_prompts': True, 'needs_sealed_system_blocks': False}
+
+
+def call_on_fixed_stack(fn: Callable[[], T]) -> T:
+    """Call `fn` on a thread with a 4 MiB stack, so `json.loads` raises `RecursionError` on 100,000 levels of nesting.
+
+    From Python 3.14 the depth at which it raises follows the stack size, which differs between machines:
+    with an unlimited stack, the main thread parses millions of levels.
+    """
+    previous = threading.stack_size(4 * 2**20)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(fn)
+    finally:
+        threading.stack_size(previous)
+    return future.result()
 
 
 @contextmanager
