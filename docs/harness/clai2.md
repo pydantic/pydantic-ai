@@ -3,6 +3,12 @@
 A separately installable terminal client for Pydantic AI, using `Coder(unrestricted_filesystem=True)` by default.
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
+!!! note
+    CLAI is now the `pydantic-ai-pax` package, and its command is `pax`. The former `pydantic-clai2` package and
+    `clai2` command still work, printing a deprecation note. A plugin that imports `pydantic_clai2` needs the
+    `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`, as in
+    `from pydantic_ai_pax.plugins import Plugin`.
+
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
 CLAI attaches the launch directory as the agent's workspace, so relative paths
@@ -20,7 +26,7 @@ bracketed-paste support.
 Paste errors clear from the footer after 30 seconds, even without keyboard input,
 without losing your draft, attachments, or queued input.
 
-See the [image-paste reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#pasting-images)
+See the [image-paste reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#pasting-images)
 for Linux clipboard setup, remote bridges, error guidance, and attachment limits.
 
 ## Word deletion
@@ -81,12 +87,12 @@ Model responses and tool results are not saved to this file.
 
 ## Start chatting
 
-Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
+Launch `pax`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
-From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
+From a source checkout, launch with `uv run --package pydantic-ai-pax pax`.
 
 For API-key providers, export the provider's API key before starting, or put it in
 a `.env` in the launch directory. See [Environment variables](#environment-variables)
@@ -121,11 +127,11 @@ values. Keep `.env` files containing credentials out of version control.
 ## Git worktrees
 
 ```bash
-py-cli clai2 --worktree my-task
+py-cli pax --worktree my-task
 ```
 
 ```bash
-py-cli clai2 -w
+py-cli pax -w
 ```
 
 A Git worktree is another checkout of the same repository with its own branch
@@ -161,11 +167,11 @@ You can register a user-only `worktrees.remove_commands` entry for a repository.
 After confirmation, that command runs instead of Git and may delete the branch
 and uncommitted files. Automatic removal and
 `/workspaces destroy` continue to use Git. See
-[the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+[the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#register-a-worktree-removal-command)
 for configuration and shell-function examples.
 
 Headless runs, piped input, and startup errors keep the checkout without asking.
-Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to
+Enter a retained directory and run `pax --continue` or `pax --resume` to
 continue a saved session. `--worktree` cannot be combined with `--resume`,
 `--continue`, `config`, or `plugins`.
 
@@ -225,7 +231,7 @@ an awaitable string.
 From a source checkout:
 
 ```bash
-uv run --project pydantic-clai2 clai2
+uv run --package pydantic-ai-pax pax
 ```
 
 Run `/login github-copilot`. Login adds every model your account's catalog lists
@@ -381,13 +387,13 @@ missing from the Python CLAI runs on fails right away, naming the install comman
 of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
 
 ```bash
-pip/uv-add "pydantic-clai2[typesafe]"
+pip/uv-add "pydantic-ai-pax[typesafe]"
 ```
 
 From a pydantic-ai checkout, run CLAI with the extra instead:
 
 ```bash
-uv run --package pydantic-clai2 --extra typesafe clai2
+uv run --package pydantic-ai-pax --extra typesafe pax
 ```
 
 Tab completes setting names, boolean values, and model names from Pydantic AI's
@@ -420,7 +426,7 @@ Unknown slash commands are not sent to the model. Up/down recall prompt history
 /reload
 ```
 
-After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
+After editing `pydantic_ai_pax` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
@@ -447,7 +453,7 @@ does not rerun the CLI or recursively reload third-party packages. Use
 import asyncio
 from pathlib import Path
 
-from pydantic_clai2 import open_stock_agent
+from pydantic_ai_pax import open_stock_agent
 
 
 async def main() -> None:
@@ -460,12 +466,12 @@ asyncio.run(main())
 ```
 
 The agent has the `coder`, `repo_context`, and `compaction` built-ins,
-configured as in `clai2`, except that `coder`'s `task_control` is off: pass
+configured as in `pax`, except that `coder`'s `task_control` is off: pass
 `plugin_settings={'coder': {'task_control': True}}` to give the model the task
 tools and background delegation. The file and shell tools work in `workspace`,
 unless a capability you pass supplies a workspace, and `AGENTS.md` or
-`CLAUDE.md` is read from it. Model names resolve as in `clai2`, with CLAI's
-per-model defaults. Nothing else you saved for `clai2` applies: no saved,
+`CLAUDE.md` is read from it. Model names resolve as in `pax`, with CLAI's
+per-model defaults. Nothing else you saved for `pax` applies: no saved,
 drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
 no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
 merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
@@ -486,7 +492,7 @@ a delegated task cannot yet pass an approval up to the client
 ```python
 import asyncio
 from pydantic_ai import Agent
-from pydantic_clai2 import chat
+from pydantic_ai_pax import chat
 
 agent = Agent('test')  # No capabilities required.
 asyncio.run(chat(agent, deps=None))
@@ -694,7 +700,7 @@ reading or changing unrelated settings. A future-only list shows no figures.
 Explicit layout replacement or reset replaces the whole saved value. Missing
 settings use the default; older builds that do not know this setting ignore it
 and preserve its saved value. Other invalid saved values remain errors.
-`clai2 config reset display.footer_fields` removes the saved override.
+`pax config reset display.footer_fields` removes the saved override.
 
 The optional `assistant_age` field reads `last text: 2m 3s`. Only a nonempty
 main-assistant text part start or text delta resets it. Empty text, thinking,
@@ -740,7 +746,7 @@ lifecycle moments, add `/commands`, give the agent capabilities, draw its own
 output, and take validated settings.
 
 ```python
-from pydantic_clai2.plugins import Plugin, TurnEnd
+from pydantic_ai_pax.plugins import Plugin, TurnEnd
 
 
 class Bell(Plugin):
@@ -753,7 +759,7 @@ importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
 repository with `/plugins add https://github.com/your-org/my-plugin.git` inside
 CLAI. Git repositories need an `__init__.py` or `plugin.py` at their root; install
 any dependencies in CLAI's Python environment first. See
-[where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
+[where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md#where-plugins-live)
 for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`, and `d`
@@ -767,7 +773,7 @@ host, the URL you open it at, or its MCP URL. The one you last picked in either 
 remembered, and the other plugin's picker starts there until it has a Logfire of
 its own.
 
-[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
+[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md) has every method, event, and rule.
 
 ## Telemetry and references
 
