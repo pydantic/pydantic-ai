@@ -21,6 +21,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 try:
     import pixeltable as pxt
+    import pixeltable.runtime as _pxt_runtime
     from pixeltable.exprs.expr import Expr
 except ImportError as _import_error:
     raise ImportError(
@@ -29,6 +30,29 @@ except ImportError as _import_error:
 
 _MEDIA = frozenset({'Image', 'Video', 'Audio', 'Document'})
 ALL_TABLES = '*'
+
+
+def _close_thread_runtime() -> None:
+    """Close the Pixeltable runtime on the current worker thread after a tool call.
+
+    Each sync tool runs on an AnyIO worker thread. Pixeltable lazily creates a
+    per-thread :class:`~pixeltable.runtime.Runtime` (with its own event loop) on
+    first use. Without an explicit close, the event loop is eventually reclaimed
+    by the garbage collector with ``ResourceWarning: unclosed event loop``, and
+    under strict runtimes this can surface as ``ValueError: Invalid file
+    descriptor: -1``.
+
+    This helper is called from every public tool method in a ``try/finally``
+    block so that cleanup happens whether the call succeeds or raises.  If no
+    runtime was created on this thread yet -- for example when a request is
+    rejected by the allowlist before any Pixeltable API is called -- the call to
+    ``get_runtime()`` initialises one that is immediately closed, which is
+    harmless.
+    """
+    try:
+        _pxt_runtime.get_runtime().close()
+    except Exception:
+        pass  # best-effort; never mask the original result or raise during teardown
 
 
 DEFAULT_MAX_ROWS = 20
@@ -278,10 +302,13 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
     def list_tables(self) -> TableNames:
         """List the allowed Pixeltable table and view paths."""
         try:
-            tables = pxt.list_tables()
-        except pxt.Error as exc:
-            _retry_or_raise(exc)
-        return TableNames(tables=sorted(_norm(path) for path in tables if _allowed(path, self._tables)))
+            try:
+                tables = pxt.list_tables()
+            except pxt.Error as exc:
+                _retry_or_raise(exc)
+            return TableNames(tables=sorted(_norm(path) for path in tables if _allowed(path, self._tables)))
+        finally:
+            _close_thread_runtime()
 
     def describe_table(self, table: str) -> TableDescription:
         """Describe a table's columns and indexes.
@@ -292,23 +319,29 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Kind, comment, columns, and indexes.
         """
-        t = self._open_table(table)
-        metadata = self._metadata(t)
-        return TableDescription(
-            table=_norm(metadata['path']),
-            kind=metadata['kind'],
-            comment=metadata['comment'],
-            columns=[
-                ColumnDescription(
-                    name=info['name'], type=info['type_'], is_computed=info['is_computed'], is_stored=info['is_stored']
-                )
-                for info in metadata['columns'].values()
-            ],
-            indexes=[
-                IndexDescription(name=info['name'], index_type=info['index_type'], columns=info['columns'])
-                for info in metadata['indexes'].values()
-            ],
-        )
+        try:
+            t = self._open_table(table)
+            metadata = self._metadata(t)
+            return TableDescription(
+                table=_norm(metadata['path']),
+                kind=metadata['kind'],
+                comment=metadata['comment'],
+                columns=[
+                    ColumnDescription(
+                        name=info['name'],
+                        type=info['type_'],
+                        is_computed=info['is_computed'],
+                        is_stored=info['is_stored'],
+                    )
+                    for info in metadata['columns'].values()
+                ],
+                indexes=[
+                    IndexDescription(name=info['name'], index_type=info['index_type'], columns=info['columns'])
+                    for info in metadata['indexes'].values()
+                ],
+            )
+        finally:
+            _close_thread_runtime()
 
     def query_table(
         self,
@@ -330,14 +363,17 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Matching rows, with `truncated` set when the row or character cap applied.
         """
-        t = self._open_table(table)
-        metadata = self._metadata(t)
         try:
-            query = self._project(t, columns, metadata)
-        except (pxt.Error, TypeError, ValueError) as exc:
-            _retry_or_raise(exc)
-        query = self._where(query, t, where, metadata)
-        return self._collect(table, query, limit)
+            t = self._open_table(table)
+            metadata = self._metadata(t)
+            try:
+                query = self._project(t, columns, metadata)
+            except (pxt.Error, TypeError, ValueError) as exc:
+                _retry_or_raise(exc)
+            query = self._where(query, t, where, metadata)
+            return self._collect(table, query, limit)
+        finally:
+            _close_thread_runtime()
 
     def similarity_search(
         self,
@@ -364,29 +400,32 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             Rows ordered by similarity, each with a `score` field. If the table has a column by
             that name, the field takes `similarity_` prefixes until it is free.
         """
-        if not query.strip():
-            raise ModelRetry('similarity_search query must be non-empty')
-        t = self._open_table(table)
-        metadata = self._metadata(t)
-        column_md = metadata['columns']
-        if column not in column_md:
-            raise ModelRetry(f'Unknown column {column!r} on {_norm(metadata["path"])!r}. Call describe_table.')
-        selected = self._default_columns(metadata) if columns is None else list(columns)
-        if column not in selected and not (
-            _is_skipped_type(column_md[column]['type_']) or _is_media_type(column_md[column]['type_'])
-        ):
-            selected = [column, *[name for name in selected if name != column]]
-        # A real column named `score` must not be shadowed by the similarity score.
-        score_name = 'score'
-        while score_name in column_md:
-            score_name = f'similarity_{score_name}'
         try:
-            search = t[column].similarity(string=query, idx=idx)  # pyright: ignore[reportUnknownMemberType]
-            query_obj = self._project(t, selected, metadata, **{score_name: search}).order_by(search, asc=False)
-            assert isinstance(query_obj, pxt.Query)
-            return self._collect(table, query_obj, limit)
-        except pxt.Error as exc:
-            _retry_or_raise(exc)
+            if not query.strip():
+                raise ModelRetry('similarity_search query must be non-empty')
+            t = self._open_table(table)
+            metadata = self._metadata(t)
+            column_md = metadata['columns']
+            if column not in column_md:
+                raise ModelRetry(f'Unknown column {column!r} on {_norm(metadata["path"])!r}. Call describe_table.')
+            selected = self._default_columns(metadata) if columns is None else list(columns)
+            if column not in selected and not (
+                _is_skipped_type(column_md[column]['type_']) or _is_media_type(column_md[column]['type_'])
+            ):
+                selected = [column, *[name for name in selected if name != column]]
+            # A real column named `score` must not be shadowed by the similarity score.
+            score_name = 'score'
+            while score_name in column_md:
+                score_name = f'similarity_{score_name}'
+            try:
+                search = t[column].similarity(string=query, idx=idx)  # pyright: ignore[reportUnknownMemberType]
+                query_obj = self._project(t, selected, metadata, **{score_name: search}).order_by(search, asc=False)
+                assert isinstance(query_obj, pxt.Query)
+                return self._collect(table, query_obj, limit)
+            except pxt.Error as exc:
+                _retry_or_raise(exc)
+        finally:
+            _close_thread_runtime()
 
     def _metadata(self, t: pxt.Table) -> pxt.TableMetadata:
         try:

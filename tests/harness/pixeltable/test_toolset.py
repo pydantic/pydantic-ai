@@ -492,3 +492,71 @@ class TestPixeltableToolsetSimilarity:
             tools.similarity_search(f'{catalog}.chunks', 'x', 'nope')
         with pytest.raises(ModelRetry, match='No embedding index'):
             tools.similarity_search(f'{catalog}.chunks', 'x', 'vec', columns=['text'])
+
+
+class TestPixeltableToolsetThreadCleanup:
+    """Verify that the per-thread Pixeltable Runtime is closed after every tool call."""
+
+    def test_cleanup_runs_after_successful_call(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_close_thread_runtime is called even when the tool call succeeds."""
+        import pydantic_ai_harness.pixeltable._toolset as toolset_mod
+
+        closed: list[str] = []
+        monkeypatch.setattr(toolset_mod, '_close_thread_runtime', lambda: closed.append('closed'))
+
+        tools = _tools([f'{catalog}.chunks'])
+        tools.list_tables()
+        assert closed == ['closed'], 'cleanup not called after list_tables'
+        closed.clear()
+
+        tools.describe_table(f'{catalog}.chunks')
+        assert closed == ['closed'], 'cleanup not called after describe_table'
+        closed.clear()
+
+        tools.query_table(f'{catalog}.chunks', columns=['text'])
+        assert closed == ['closed'], 'cleanup not called after query_table'
+
+    def test_cleanup_runs_after_model_retry(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_close_thread_runtime is called even when the tool raises ModelRetry."""
+        import pydantic_ai_harness.pixeltable._toolset as toolset_mod
+
+        closed: list[str] = []
+        monkeypatch.setattr(toolset_mod, '_close_thread_runtime', lambda: closed.append('closed'))
+
+        tools = _tools([f'{catalog}.chunks'])
+        with pytest.raises(ModelRetry):
+            tools.query_table(f'{catalog}.nope')  # allowlist rejection
+        assert closed == ['closed'], 'cleanup not called after allowlist-rejected query_table'
+        closed.clear()
+
+        with pytest.raises(ModelRetry):
+            tools.similarity_search(f'{catalog}.chunks', '  ', 'text')  # empty query
+        assert closed == ['closed'], 'cleanup not called after rejected similarity_search'
+
+    def test_no_unclosed_event_loop_warning_after_tool_call(self, catalog: str) -> None:
+        """No ResourceWarning for an unclosed event loop is raised when a tool call returns.
+
+        Each tool runs on an AnyIO worker thread. Without the fix, Pixeltable's
+        per-thread Runtime holds an event loop that is closed by GC, triggering
+        ``ResourceWarning: unclosed event loop`` when the thread is collected.
+        """
+        import gc
+        import threading
+        import warnings
+
+        tools = _tools([f'{catalog}.chunks'])
+
+        def run() -> None:
+            tools.query_table(f'{catalog}.chunks', columns=['text'])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always', ResourceWarning)
+            t = threading.Thread(target=run, daemon=True)
+            t.start()
+            t.join()
+            # Collect objects that were released when the thread exited so their
+            # __del__ methods run now, inside the catch_warnings block.
+            gc.collect()
+
+        unclosed = [w for w in caught if 'event loop' in str(w.message).lower()]
+        assert not unclosed, f'Unclosed event loop ResourceWarning after tool call: {unclosed}'
