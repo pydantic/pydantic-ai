@@ -341,9 +341,11 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
-            # The desktop writes to `_DESKTOP_LOG`, or to nowhere when that can't be opened, so the log never stops it.
-            # Tried in a subshell, since a failed redirection would end the script itself in `dash`.
-            f'desktop_log={_DESKTOP_LOG}; ( : >>"$desktop_log" ) 2>/dev/null || desktop_log=/dev/null; '
+            # The desktop writes to `_DESKTOP_LOG` when it's missing or a file that can be written, and to nowhere
+            # otherwise, so the log never stops it. Anything else there isn't opened: a named pipe would wait for a
+            # reader. The write is tried in a subshell, since a failed redirection would end the script itself in dash.
+            f'desktop_log={_DESKTOP_LOG}; {{ [ ! -e "$desktop_log" ] || [ -f "$desktop_log" ]; }} && '
+            '( : >>"$desktop_log" ) 2>/dev/null || desktop_log=/dev/null; '
             if desktop
             else 'wanted=; '
         )
