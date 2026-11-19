@@ -19,26 +19,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai_pax import pkce
 from pydantic_ai_pax.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_ai_pax.pkce import REFRESH_MARGIN, PKCEFlow, PKCESignIn, PublicClient, Tokens, refresh
+from tests._ports import reserve_loopback_port
 
 pytestmark = pytest.mark.anyio
 
 ACCOUNT = 'test-oauth'
-
-
-def free_port() -> int:
-    """A port left in `TIME_WAIT`, which the kernel hands to no other `bind(0)` or `connect()` but a server can bind.
-
-    A port merely probed free goes back to the pool, where another xdist worker can take it before the sign-in binds
-    it. The sign-in's callback server, like `busy` below, sets `SO_REUSEADDR`, so it binds past `TIME_WAIT`.
-    """
-    with socket.socket() as server:
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind(('127.0.0.1', 0))
-        server.listen()
-        with socket.create_connection(server.getsockname()):
-            accepted, _ = server.accept()
-            accepted.close()  # The side that closes first holds the port in `TIME_WAIT`.
-        return server.getsockname()[1]
 
 
 def client(*, client_id: str = 'app-1', scopes: tuple[str, ...] = ('read', 'write')) -> PublicClient:
@@ -46,7 +31,7 @@ def client(*, client_id: str = 'app-1', scopes: tuple[str, ...] = ('read', 'writ
         authorize_url='https://auth.example/authorize',
         token_url='https://auth.example/token',
         client_id=client_id,
-        redirect_uri=f'http://127.0.0.1:{free_port()}/callback',
+        redirect_uri=f'http://127.0.0.1:{reserve_loopback_port()}/callback',
         scopes=scopes,
         scope_separator=',',
     )

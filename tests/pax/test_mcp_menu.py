@@ -45,7 +45,7 @@ def rows(menu: SettingsMenu) -> dict[str, tuple[FieldRow, str]]:
 
 
 def stdio(command: str = 'python', **env: str) -> StdioServer:
-    return StdioServer(type='stdio', command=command, args=['server.py'], env=env or None)
+    return StdioServer(type='stdio', command=command, args=['server.py'], env=env or None, defer_loading=False)
 
 
 async def sign_in_to(name: str) -> None:
@@ -219,7 +219,7 @@ async def test_project_servers_are_trusted_from_the_menu(tmp_path: Path) -> None
     assert f'{project.resolve()} (untrusted)\n' in description and '"command": "team-server"' in description
     shown = rows(menu)
     assert shown['trust'][1] == 'trusted' and list(shown) == ['server.team', 'trust', 'add']
-    assert shown['server.team'][0].note == f'Connects on your next prompt · From {project.resolve()}'
+    assert shown['server.team'][0].note == f'on demand (not loaded) · From {project.resolve()}'
 
     dialogs = ScriptedDialogs([Back()])
     await menu.actions['server.team'](dialogs)

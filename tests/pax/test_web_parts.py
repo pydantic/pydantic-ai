@@ -113,7 +113,7 @@ from pydantic_ai_pax.runtime.sandbox_calls import SandboxCallFinishedEvent, Sand
 from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.rendering.status import Status
 from pydantic_ai_pax.ui.rendering.usage_report import session_usage
-from tests.conftest import _reserve_loopback_port  # pyright: ignore[reportPrivateUsage]
+from tests._ports import reserve_loopback_port
 from tests.pax.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -859,7 +859,7 @@ async def test_run_web_on_a_launchers_port_and_token(
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
     # A port bound and closed again stays free until `run_web` binds it, so another worker's port-0 server can be
     # handed it and listen first, and the request below would reach that server.
-    port = _reserve_loopback_port()
+    port = reserve_loopback_port()
     token = 'b' * 43 if launcher_token else None
     output = io.StringIO()
     with anyio.fail_after(30):

@@ -27,7 +27,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/model settings [NAME]` | Edit a saved model's request and thinking settings |
 | `/model chains` | Open the `/model` picker on its fallback chains (alias `/chain`) |
 | `/effort [VALUE\|reset]` | View or set the active model's reasoning effort |
-| `/fast [on\|off]` | Codex priority processing, shown only for `openai-codex:` models |
+| `/fast [on\|off\|ultrafast]` | Codex speed (ultrafast by default where offered), shown only for `openai-codex:` models |
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
@@ -95,6 +95,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep CLAI colours, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
+| `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
 | `display.tool_calls` | `detailed` | How tool calls print: detailed gives each call its own line with arguments; grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output and display.tool_arg_chars; file diffs still print. |
 | `display.tool_output` | `false` | Show shell and grep output below tool summaries. File diffs are always shown. |
@@ -428,7 +429,7 @@ ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
 Display settings (the `display.*` keys: `thinking`, `task_models`, `theme`, `spinner`,
-`splash`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
+`footer_fields`, `splash`, `tool_calls`, `tool_output`, `shell_lines`, `grep_lines`, `tool_arg_chars`,
 `smooth_seconds`) apply as soon as CLAI finds the file. Every other key asks you
 first, as project plugins do: `model`, `request_limit`, `tool_retries`, `code_mode`,
 `speculative_code_mode`, `permissions`, `instructions`, `pool_accounts`,
@@ -599,7 +600,8 @@ skipped over. While running with a draft or a queued message, the input box
 shows both shortcuts. If Option+Enter queues like Enter, see
 [Option keys on macOS](#option-keys-on-macos).
 Shift-Enter inserts a newline when the terminal reports it separately from Enter.
-Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
+Ctrl-J inserts a newline in the editor (it steers on Windows, see
+[Windows Terminal](#windows-terminal)); plain Enter submits. Some terminals, including
 GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
 Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
 Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
@@ -719,22 +721,26 @@ does the same, with a file list and the drafts to edit first. A plugin's own
 by them, and CLAI says so.
 
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
-(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
-**Fast (priority)** to request fast processing, or **Standard (default)** to
-turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
-uses more ChatGPT credits and depends on model and account availability. It does
-not lower reasoning effort. Reset restores the existing model default; it does
-not enable fast mode. The stored values remain `service_tier=priority` and
-`service_tier=default`, so older CLAI versions can read them. A custom
-`service_tier` body parameter still takes precedence.
+(or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
+GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
+[Ultrafast](https://developers.openai.com/codex/speed), default to
+**ultrafast**. Choose **fast** for priority processing, or **standard** to turn
+both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
+not lower reasoning effort. Reset restores the model's default. Picking a tier in
+the **Service Tier** row replaces the speed, and a custom `service_tier` body
+parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+service tier, `priority` for fast and ultrafast, and a different tier they save picks
+the speed here.
 
 While the active model starts with `openai-codex:`, `/fast` toggles between
-priority and standard processing. `/fast on` and `/fast off` select explicitly.
-It saves the active model's service tier for subsequent prompts and sessions,
-without changing reasoning effort or other preferences. It is absent from help
-and Tab completion on other models, and typing it there reports an unknown command.
-If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model settings` rather than saving an ineffective change.
+standard and the model's default speed: ultrafast where it is offered, fast
+elsewhere. `/fast on` selects fast, `/fast off` standard, and
+`/fast ultrafast` ultrafast. It saves the active model's speed for subsequent
+prompts and sessions, without changing reasoning effort or other preferences. It
+is absent from help and Tab completion on other models, and typing it there
+reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
+asks you to remove it first with `/model settings` rather than saving an
+ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
@@ -894,6 +900,10 @@ The built-in model catalog and `/set model` completions include
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes.
+Login adds every model your account's Codex catalog lists to `/model`
+(`openai-codex@PROFILE:ID` for a profile), skipping models the catalog hides. If
+listing the models fails, the login stays saved, CLAI reports why, and it adds the
+built-in Codex models instead.
 
 If the browser cannot reach that callback on the machine running CLAI (for
 example over SSH), the redirect fails in the browser. Copy the URL from the
@@ -1234,7 +1244,7 @@ previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting. This is a read-only preview, not a queue editor. Control bytes in completion-derived
+the number waiting when the `queued` footer field is visible. This is a read-only preview, not a queue editor. Control bytes in completion-derived
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
@@ -1373,9 +1383,11 @@ so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
 CLAI treats a session as Windows when it runs on Windows or when `WT_SESSION`
 is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
 wherever it reaches CLAI, and elsewhere Ctrl+Enter works like Enter.
-Ctrl+Enter needs a terminal that reports modified keys, such as Windows
-Terminal 1.25 or later. Older versions send Ctrl+Enter as Ctrl-J, which inserts
-a newline.
+Terminals that do not report modified keys send Ctrl+Enter as Ctrl-J, so on
+Windows Ctrl-J steers too. Shift+Enter inserts a newline when the terminal
+reports it separately from Enter, such as Windows Terminal 1.25 or later.
+Older terminals send Shift+Enter as Enter, so there a newline needs a paste or
+a terminal that reports modified keys.
 SSH does not forward `WT_SESSION`, so a remote session started from Windows
 Terminal has no working steer chord. Set `WT_SESSION` on the remote host, for
 example with `export WT_SESSION=1` in the shell you start CLAI from.
@@ -1670,7 +1682,67 @@ Plain shell output stays dim. ANSI generated by Termflow itself is retained.
 
 ### Status line
 
-The terminal footer shows the selected model, activity, latest reported
+Open `/set`, then select `display.footer_fields` to open **Main footer layout**.
+It uses the shared settings submenu in the terminal and web settings. Each field
+shows whether it is shown or hidden. Enter on a field offers **Show** or **Hide**,
+**Move earlier**, and **Move later**. Changes save immediately and persist across
+sessions. The visible **Reset layout** row restores only the shipped footer
+layout, not other display or run settings. Moving a shown field skips hidden
+neighbours. Show a hidden field before moving it; moving does not change visibility.
+
+`display.footer_fields` is an ordered JSON list of visible field names. Omitted
+fields are hidden; `[]` hides the footer figures, not the prompt or task panel.
+The default order is:
+
+```json
+["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
+```
+
+Every field is independently selectable and reorderable:
+
+| Field | Shows |
+|---|---|
+| `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
+| `workspace` | Working directory, abbreviated to fit; hidden when empty |
+| `context` | Used and maximum context tokens, with `?` for unknown figures |
+| `output` | Streamed output estimate, then reported output tokens |
+| `cost` | Retained-history cost; hidden until priced usage exists |
+| `activity` | Current activity, including the tool name while one runs |
+| `plugins` | All plugin status fragments as one group, in registration order; hidden when empty |
+| `updates` | Available-update notice; hidden when none is available |
+| `live` | Live-session indicator; hidden with only one live session |
+| `queued` | Queued-input count; hidden when zero |
+| `assistant_age` | Time since the main assistant last emitted nonempty text; hidden until text exists, and off by default |
+
+Reordering preserves each field's colours and conditional visibility. Plugin
+fragments move and hide together through `plugins`, not as individual fields.
+To set the list directly, keep the JSON in one quoted argument:
+
+```text
+/set display.footer_fields '["model", "context", "assistant_age", "activity"]'
+/set display.footer_fields '[]'
+```
+
+New writes reject unknown field names, duplicates, non-string entries, and values
+other than a JSON list. Saved and project layouts may include names from a newer
+build: this build skips unsupported names, preserving their raw values when
+reading or changing unrelated settings. A future-only list shows no figures.
+Explicit layout replacement or reset replaces the whole saved value. Missing
+settings use the default; older builds that do not know this setting ignore it
+and preserve its saved value. Other invalid saved values remain errors.
+`pax config reset display.footer_fields` removes the saved override.
+
+The optional `assistant_age` field reads `last text: 2m 3s`. Only a nonempty
+main-assistant text part start or text delta resets it. Empty text, thinking,
+tool calls and results, user messages, and descendant activity do not. It keeps
+tracking the main assistant even when the footer shows a focused subagent.
+While `assistant_age` is enabled, CLAI saves the observed live text time in
+response metadata and restores it on resume, rewind, or conversation switch.
+Disabling the field stops those metadata writes without erasing existing history.
+Histories without that metadata fall back to the last nonempty textual response's timestamp. No textual response
+means no age figure. It uses the existing editor refresh cycle, not another timer.
+
+By default, the terminal footer shows the selected model, activity, latest reported
 context tokens, and streamed output estimate, including text, thinking, and
 string tool-argument deltas. The estimate is characters divided by four, not a
 provider tokenizer count. On completion it is replaced by reported run output
@@ -1681,7 +1753,8 @@ window before the first request or for a model with no known window. As each req
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
-output count, updated after each model response and hidden until a response has price data.
+output count in the default layout, updated after each model response and hidden
+until a response has price data.
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
@@ -1700,8 +1773,8 @@ The shell owns a pinned editor below a Termflow live transcript panel. It uses
 Termflow's cell buffer and changed-cell painter, not a second terminal canvas or
 a prompt-toolkit renderer. The hardware cursor stays hidden during input; a
 nonblinking reverse-video cell marks the editing position. Status checks run ten
-times per second. Terminals shorter than six rows or narrower than six columns
-omit the border. Below three rows, the draft is retained but hidden until the
+times per second while working and once a second while idle. Terminals shorter
+than six rows or narrower than six columns omit the border. Below three rows, the draft is retained but hidden until the
 terminal grows. Resizing repaints the panel at the new size and preserves the
 draft and scroll position. It never erases terminal scrollback.
 
@@ -1725,9 +1798,9 @@ output-token count, and purple tool names. Colours follow the selected `/theme`;
 context warnings keep the warning colour. The same styling applies while idle
 and working.
 
-A plugin can append its own fragment to the row from `get_status_segments`, such
-as the working directory or a branch name; fragments are muted and dropped when
-the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
+A plugin can contribute its own fragment from `get_status_segments`, such
+as a branch name. Fragments are muted, grouped under the configurable `plugins`
+field, and dropped when the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
 rules.
 
 ### Themes
@@ -2285,7 +2358,12 @@ reporting a model gets its start row without one, just before that row. Set `/se
 start rows immediately without the model name instead.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
-counts. The footer shows the context of the newest foreground child; see
+counts. Task durations in the panel, completion rows, and `/tasks` use at most
+three nonzero units, such as `1h 2m 3s` or `2d 4h 5m`. Zero and negative durations
+show `0s`; seconds are omitted when days are shown. From 30 days, a known start
+time displays its local date as `%b %d`, such as `Jan 02`, instead of elapsed
+units. A completed task's duration stops at its finish time. This changes only
+the labels, not task expiry or lifecycle clocks. The footer shows the context of the newest foreground child; see
 [Status line](#status-line). Successful rows disappear on completion; failed
 and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The view retains
 completed tasks for inspection. Live previews retain the latest 65,536 characters
@@ -3187,8 +3265,9 @@ with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
 connect is marked `error` and left out rather than failing the prompt. An OAuth
 server signs in only with `/mcp auth NAME`, never in the middle of a prompt.
-Switch on **On demand** (`"defer_loading": true`) to keep a server's tools out of
-prompts until the agent loads them by the server's description; see
+Servers are on demand by default: their tools stay out of prompts until the agent
+loads them by the server's description. Switch off **On demand**
+(`"defer_loading": false`) to put a server's tools in every prompt; see
 [Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See

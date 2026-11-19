@@ -84,9 +84,13 @@ def make_plugin(tmp_path: Path) -> Loaded:
     return Loaded(loaded=collect(plugin), servers=plugin.servers, store=store, host=host)
 
 
-def server(*, defer_loading: bool = False, description: str | None = None) -> StdioServer:
-    """The command is never run: `in_process` connects the server instead."""
-    return StdioServer(type='stdio', command='unused', defer_loading=defer_loading, description=description)
+def server(*, description: str | None = None) -> StdioServer:
+    """An on-demand server, the default, saved without `defer_loading`. `in_process` connects it instead of the command."""
+    return StdioServer(type='stdio', command='unused', description=description)
+
+
+EAGER = StdioServer(type='stdio', command='unused', defer_loading=False)
+"""A server opted out of on-demand loading."""
 
 
 class Scripted:
@@ -116,11 +120,11 @@ def call(tool: str, **args: str) -> ModelResponse:
     ],
 )
 def test_settings_accept_on_demand_for_every_type(config: dict[str, JsonValue]) -> None:
-    eager = MCPSettings.model_validate({'servers': {'a': config}}).servers['a']
-    assert not eager.defer_loading and eager.description is None, 'eager stays the default'
-    on_demand = {**config, 'defer_loading': True, 'description': 'Docs.'}
-    parsed = MCPSettings.model_validate({'servers': {'a': on_demand}}).servers['a']
-    assert parsed.defer_loading and parsed.description == 'Docs.'
+    default = MCPSettings.model_validate({'servers': {'a': config}}).servers['a']
+    assert default.defer_loading and default.description is None, 'on demand is the default'
+    eager = {**config, 'defer_loading': False, 'description': 'Docs.'}
+    parsed = MCPSettings.model_validate({'servers': {'a': eager}}).servers['a']
+    assert not parsed.defer_loading and parsed.description == 'Docs.'
     with pytest.raises(ValidationError):
         MCPSettings.model_validate({'servers': {'a': {**config, 'description': ''}}})
 
@@ -128,8 +132,8 @@ def test_settings_accept_on_demand_for_every_type(config: dict[str, JsonValue]) 
 async def test_eager_and_on_demand_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     in_process(monkeypatch, docs_and_lint())
     plugin = make_plugin(tmp_path)
-    plugin.store.put('docs', server(defer_loading=True, description='Team docs search.'))
-    plugin.store.put('lint', server())
+    plugin.store.put('docs', server(description='Team docs search.'))
+    plugin.store.put('lint', EAGER)
     servers, run = plugin.servers, plugin.run
     docs, lint = servers.get('docs'), servers.get('lint')
 
@@ -182,7 +186,7 @@ async def test_a_loaded_server_that_cannot_connect_does_not_fail_the_prompt(
 
     monkeypatch.setattr(MCPToolset, '__aenter__', refuse)
     plugin = make_plugin(tmp_path)
-    plugin.store.put('broken', server(defer_loading=True))
+    plugin.store.put('broken', server())
     model = Scripted(call('load_capability', id='mcp_broken'), call('load_capability', id='mcp_broken'))
     result = await plugin.agent(model).run('Load it.')
     assert result.output == 'done'
@@ -202,7 +206,7 @@ async def test_description_falls_back_to_the_server_then_its_name(
     in_process(monkeypatch, servers_by_name)
     plugin = make_plugin(tmp_path)
     for name in servers_by_name:
-        plugin.store.put(name, server(defer_loading=True))
+        plugin.store.put(name, server())
     servers = plugin.servers
     assert servers.description(servers.get('docs')) == 'Tools from the docs MCP server.', (
         'nothing to ask before connecting'
@@ -240,9 +244,9 @@ async def test_changing_on_demand_settings_keeps_the_connection(
 ) -> None:
     in_process(monkeypatch, docs_and_lint())
     plugin = make_plugin(tmp_path)
-    plugin.store.put('docs', server())
+    plugin.store.put('docs', EAGER)
     assert 'Started docs' in await plugin.run('/mcp start docs')
-    plugin.store.put('docs', server(defer_loading=True, description='Docs.'))
+    plugin.store.put('docs', server(description='Docs.'))
     await plugin.servers.sync()
     assert plugin.servers.state(plugin.servers.get('docs')) == 'running'
     await plugin.servers.close()
@@ -251,21 +255,23 @@ async def test_changing_on_demand_settings_keeps_the_connection(
 def test_form_toggles_on_demand_and_its_description(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config')
     form = ServerForm(store)
-    assert 'Turn on On demand' in form.preview()
-    assert 'Description: (from the server)' not in [option.label for option in form.options()]
-    form.toggle_on_demand()
     labels = [option.label for option in form.options()]
     assert 'On demand: on' in labels and 'Description: (from the server)' in labels
-    assert json.loads(form.config)['defer_loading'] is True and 'until the agent loads them' in form.preview()
+    assert 'defer_loading' not in json.loads(form.config), 'on is the default, so the JSON leaves it out'
+    assert 'until the agent loads them' in form.preview()
     form.set_description('  Team docs.  ')
     assert form.description == 'Team docs.' and 'Description: Team docs.' in [option.label for option in form.options()]
     form.set_description('')
     assert 'description' not in json.loads(form.config), "empty uses the server's own"
     form.toggle_on_demand()
-    assert 'defer_loading' not in json.loads(form.config), 'off is the default, so the JSON leaves it out'
+    labels = [option.label for option in form.options()]
+    assert 'On demand: off' in labels and 'Description: (from the server)' not in labels
+    assert json.loads(form.config)['defer_loading'] is False and 'turn on On demand' in form.preview()
+    form.toggle_on_demand()
+    assert 'defer_loading' not in json.loads(form.config)
     form.config = 'broken'
     form.toggle_on_demand()
-    assert form.status == 'Fix the JSON before changing on-demand loading' and not form.on_demand
+    assert form.status == 'Fix the JSON before changing on-demand loading' and form.on_demand
     assert form.description == ''
 
 
@@ -279,7 +285,6 @@ async def test_install_and_edit_round_trip_on_demand(tmp_path: Path) -> None:
             Pick(value='http'),
             Pick(value='target'),
             Type(text='https://mcp.example.com/mcp'),
-            Pick(value='on_demand'),
             Pick(value='description'),
             Type(text='Issue tracker: search and update tickets.'),
             Pick(value='name'),
@@ -291,21 +296,22 @@ async def test_install_and_edit_round_trip_on_demand(tmp_path: Path) -> None:
     saved = store.load().servers['tracker']
     assert isinstance(saved, HTTPServer) and saved.url == HttpUrl('https://mcp.example.com/mcp')
     assert saved.defer_loading and saved.description == 'Issue tracker: search and update tickets.'
-    assert json.loads(store.path.read_text())['servers']['tracker']['defer_loading'] is True
+    assert 'defer_loading' not in json.loads(store.path.read_text())['servers']['tracker']
 
     edit = ScriptedDialogs([Pick(value='description'), Back(), Pick(value='on_demand'), Pick(value='save')])
     assert (await command.run(['edit', 'tracker'], dialogs=edit, editor=None)).startswith('Updated tracker.')
-    assert '"defer_loading": true' in edit.asked[0].description, 'the edit form starts from the saved JSON'
+    assert '"description": "Issue tracker' in edit.asked[0].description, 'the edit form starts from the saved JSON'
     edited = store.load().servers['tracker']
     assert not edited.defer_loading and edited.description == 'Issue tracker: search and update tickets.'
+    assert json.loads(store.path.read_text())['servers']['tracker']['defer_loading'] is False
 
 
 async def test_menu_rows_show_the_on_demand_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     in_process(monkeypatch, docs_and_lint())
     plugin = make_plugin(tmp_path)
-    plugin.store.put('docs', server(defer_loading=True))
-    plugin.store.put('lint', server(defer_loading=True))
-    plugin.store.put('off', server(defer_loading=True).model_copy(update={'enabled': False}))
+    plugin.store.put('docs', server())
+    plugin.store.put('lint', server())
+    plugin.store.put('off', server().model_copy(update={'enabled': False}))
     history: list[ModelMessage] = []
     menu = servers_menu(MCPCommand(servers=plugin.servers, history=lambda: history))
 

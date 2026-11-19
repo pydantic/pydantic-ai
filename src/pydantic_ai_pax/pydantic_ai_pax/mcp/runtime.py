@@ -1,12 +1,11 @@
 """Server lifecycle: which servers exist, which the agent may use, and which hold a connection.
 
-Enabled servers are offered to every run. The first prompt (or `/mcp start`) connects a `ready`
-server and holds the connection open between prompts, which the dashboard reports as `running`.
+Enabled servers are offered to every run, by default as the on-demand capability `mcp_NAME`: the model
+sees one catalog line until it loads it, and only then does a run connect the server and list its tools.
+A server with `"defer_loading": false` is eager instead: the first prompt (or `/mcp start`) connects it.
+A connected server holds the connection open between prompts, which the dashboard reports as `running`.
 A server that fails to connect is marked `error` and left out, so it cannot fail the prompt.
 `stop` releases the connection and disables the server.
-
-A server with `defer_loading` is offered as the on-demand capability `mcp_NAME` instead: the model sees
-one catalog line until it loads it, and only then does a run connect the server and list its tools.
 
 An OAuth server connects with its stored sign-in only; `/mcp auth NAME` is the one place that opens the browser.
 Signed out, it is marked `error` with that hint instead of holding the prompt up for a sign-in.

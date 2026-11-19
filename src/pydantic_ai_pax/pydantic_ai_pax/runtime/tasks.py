@@ -56,6 +56,7 @@ from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.task_prompts import is_delegate_tool
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.status import Status
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
@@ -133,7 +134,9 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
     return result
 
 
-def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
+def task_row(
+    event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True, started_at: float | None = None
+) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
     if isinstance(event, DelegationStartedEvent):
         name = _display_name(event.agent_name)
@@ -148,7 +151,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
         return question_row(event)
     if isinstance(event, DelegationFinishedEvent) and event.outcome != 'ok':
         return Text(
-            f'  └ {event.outcome} · {event.duration_ms / 1000:.1f}s · /tasks to inspect',
+            f'  └ {event.outcome} · {format_duration(event.duration_ms / 1000, started_at=started_at)} · /tasks to inspect',
             style=theme.color(theme.WARNING),
         )
     return None
@@ -423,7 +426,17 @@ class Tasks:
         model_name = (
             self._row_models.get(event.task_id) if isinstance(event, DelegationStartedEvent) and event.task_id else None
         )
-        return task_row(event, model_name=model_name, show_model=self.show_task_models())
+        record = (
+            self.owner.records.get(event.task_id)
+            if isinstance(event, DelegationFinishedEvent) and event.task_id is not None
+            else None
+        )
+        return task_row(
+            event,
+            model_name=model_name,
+            show_model=self.show_task_models(),
+            started_at=record.started_at if record is not None else None,
+        )
 
     def waiting(self, conversation_id: str) -> bool:
         """Whether the main run of `conversation_id` has a task report to read, or a task question to answer."""
@@ -499,7 +512,8 @@ class Tasks:
         activity = self.progress.get(record.id, Status(activity='starting')).activity
         state = activity.removeprefix('running: ').removeprefix('tool: ')
         state = state if record.status == 'running' else record.outcome
-        elapsed = (record.finished_at or now) - record.started_at
+        end = now if record.finished_at is None else record.finished_at
+        elapsed = format_duration(end - record.started_at, started_at=record.started_at)
         name = _display_name(record.agent_name)
         mode = 'background' if record.background else 'foreground'
         suffix = f' · {descendants} descendants' if descendants else ''
@@ -510,7 +524,7 @@ class Tasks:
         muted = theme.sgr(theme.MUTED)
         return (
             f'{"  " * depth}{theme.sgr(state_color)}{marker} {theme.sgr(theme.INFO)}{name} '
-            f'{muted}[{record.id[:8]}] {elapsed:.0f}s · {mode} · '
+            f'{muted}[{record.id[:8]}] {elapsed} · {mode} · '
             f'{theme.sgr(state_color)}{terminal_text(state or "")}{muted}{suffix}\x1b[0m'
         )
 

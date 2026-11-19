@@ -27,7 +27,7 @@ from pydantic_ai_pax.config.credential_store import (
     save_codex_credentials,
 )
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.models import LOGIN_ALIASES, github_copilot, login_names
+from pydantic_ai_pax.models import LOGIN_ALIASES, codex as codex_models, github_copilot, login_names
 from pydantic_ai_pax.models.accounts import remember
 from pydantic_ai_pax.models.profiles import ALL, DEFAULT, account, parse_model, split_profile, with_profile
 from pydantic_ai_pax.plugins import PluginLogin
@@ -42,6 +42,8 @@ from pydantic_ai_pax.ui.rendering.rendering import markdown_style
 CODEX = 'openai-codex'
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
+_CANCELLED = 'sign-in cancelled.'
+"""How a cancelled Codex sign-in's message ends; `login_command` adds no models after one."""
 
 ReadLine = Callable[[str], Awaitable[str | None]]
 """Read one line after showing a prompt; `None` when the user cancels."""
@@ -63,6 +65,7 @@ async def login_command(
     take an API key or a connection (`openrouter`, `vllm`, `openai`, ...) sign in to a profile too.
     A plugin sign-in that succeeds saves its `models` to `store`. So does a GitHub Copilot sign-in, with every
     model the account serves, and `select_default` decides whether its preferred one becomes current.
+    A Codex sign-in saves every model its catalog lists, or `CODEX_MODELS` when the catalog cannot be read.
     `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
     screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
@@ -88,9 +91,43 @@ async def login_command(
     # A plugin keeps its own tokens; for the rest, a saved login is what tells success from a cancelled prompt.
     if store is not None and (plugin is not None or has_credentials(account=account(name, profile))):
         remember(store, login=name, profile=profile, plugin=plugin)
-        if name == github_copilot.ACCOUNT and message != github_copilot.CANCELLED:
-            message += ' ' + await _add_copilot_models(store, profile=profile, select_default=select_default)
+        message += await _add_subscription_models(
+            name, message=message, store=store, codex=codex, profile=profile, select_default=select_default
+        )
     return message
+
+
+async def _add_subscription_models(
+    name: str,
+    *,
+    message: str,
+    store: SettingsStore,
+    codex: 'CodexAuth',
+    profile: str | None,
+    select_default: Callable[[str], bool],
+) -> str:
+    """After a subscription sign-in that was not cancelled, save its models; the text to add to `message`."""
+    if name == github_copilot.ACCOUNT and message != github_copilot.CANCELLED:
+        return ' ' + await _add_copilot_models(store, profile=profile, select_default=select_default)
+    if name == CODEX and not message.endswith(_CANCELLED):
+        return ' ' + await _add_codex_models(store, codex=codex, profile=profile)
+    return ''
+
+
+async def _add_codex_models(store: SettingsStore, *, codex: 'CodexAuth', profile: str | None) -> str:
+    """Save every model a Codex login can use, or the built-in list when its catalog cannot be read."""
+    try:
+        names = await codex_models.discover(codex.account_provider(account(CODEX, profile)))
+        models = [with_profile(f'{CODEX}:{name}', profile) for name in names]
+        added = f'Added {len(models)} Codex models.'
+    except UserError as exc:
+        from pydantic_ai_pax.models.model_catalog import CODEX_MODELS
+
+        models = [with_profile(model, profile) for model in CODEX_MODELS]
+        added = f'{exc} Added the {len(models)} built-in Codex models.'
+    for model in models:
+        store.add_model(name=model)
+    return added
 
 
 async def _add_copilot_models(
@@ -272,7 +309,7 @@ class CodexAuth:
             except TimeoutError:
                 raise UserError(f'Codex login timed out. Run /login {name} to try again.') from None
             if credentials is None:
-                return f'{who} sign-in cancelled.'
+                return f'{who} {_CANCELLED}'
             await source.save_login(credentials)
             self.forget(name)
             return await anyio.to_thread.run_sync(self._connected, name, profile)

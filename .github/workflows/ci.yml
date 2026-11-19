@@ -303,6 +303,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_pr_guard.py
+          .github/scripts/test_lint_exemptions.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_douwebot_usage_limit.py
@@ -332,11 +333,11 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
 
-      # The `complexity` job runs this script with only the `lint` group installed, so its tests run here.
-      - name: Test the cognitive complexity check
+      # The `complexity` job runs these scripts with only the `lint` group installed, so their tests run here.
+      - name: Test the cognitive complexity and test waits checks
         env:
           UV_NO_SYNC: "1"
-        run: uv run pytest scripts/test_check_complexity.py
+        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -414,8 +415,9 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          # `complexity` checks only staged changes, and a checkout stages none; the `complexity` job runs it.
-          SKIP: no-commit-to-branch,complexity
+          # `complexity` and `test-waits` check only staged changes, and a checkout stages none; the `complexity`
+          # job runs them.
+          SKIP: no-commit-to-branch,complexity,test-waits
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
@@ -604,6 +606,11 @@ jobs:
       - name: Check cognitive complexity against the base
         run: uv run --only-group lint scripts/check_complexity.py --base HEAD^1 --format github
 
+      # Fails when a change adds a real-clock wait, a private readiness timeout or a probed port to a test.
+      - name: Check test waits against the base
+        if: ${{ !cancelled() }}
+        run: uv run --only-group lint scripts/check_test_waits.py --base HEAD^1 --format github
+
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
@@ -735,7 +742,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity,test-waits
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
@@ -1028,12 +1035,12 @@ jobs:
   # `all-extras` is the slowest install shape by a wide margin -- it alone pulls in every
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
-  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/pax` here, in one
-  # shard per version.
+  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/pax` here, keeping
+  # three shards on 3.11 for its legacy coverage tracer and one shard on every other version.
   test-all-extras:
     name: >-
       test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{
-        needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2
+        matrix.python-version == '3.11' && 3 || needs.classify.outputs.harness_only == 'true' && 1 || 2
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
@@ -1048,7 +1055,7 @@ jobs:
         # so a pull request skips only 3.12 (see the `test` job's matrix).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         include: >-
-          ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[]' || '[{"python-version": "3.11", "shard": 3}]') }}
+          ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[{"python-version": "3.11", "shard": 2}, {"python-version": "3.11", "shard": 3}]' || '[{"python-version": "3.11", "shard": 3}]') }}
         exclude:
           - pull_request: "true"
             python-version: "3.12"
@@ -1059,7 +1066,7 @@ jobs:
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.11' }}
       # Computed from `classify`'s output, so passed to the shell through the environment.
       SHARD: ${{ matrix.shard }}
-      SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || matrix.python-version == '3.11' && 3 || 2 }}
+      SPLITS: ${{ matrix.python-version == '3.11' && 3 || needs.classify.outputs.harness_only == 'true' && 1 || 2 }}
       TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/pax' || '' }}
       DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-all-extras-
       DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-all-extras.json
@@ -1901,11 +1908,15 @@ jobs:
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
       # is the only BlockBuster-on lane that uploads coverage.
+      # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
+      # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
+      # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
+      # combine step drops it too, so it doesn't sync it back in.
       - name: run tests
         shell: bash
         run: |
           run=(
-            uv run --all-extras --no-extra mcp-tasks --all-packages
+            uv run --all-extras --no-extra mcp-tasks --no-extra sentence-transformers --all-packages
             --with "fastmcp${{ matrix.fastmcp.spec }}"
             --with "fastmcp-slim${{ matrix.fastmcp.spec }}"
             coverage run -m pytest -n logical --dist=loadgroup
@@ -1932,10 +1943,10 @@ jobs:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           SKIP: ${{ matrix.fastmcp.skip }}
 
-      # See the matching step in the `test` job. Plain `uv run`: combining is
-      # environment-independent, so the FastMCP 3 `--with` overlay isn't needed.
+      # See the matching step in the `test` job. No `--with`: combining is
+      # environment-independent, so the FastMCP 3 overlay isn't needed.
       - name: combine coverage files
-        run: uv run --all-extras --all-packages coverage combine
+        run: uv run --all-extras --no-extra sentence-transformers --all-packages coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-3-${{ matrix.fastmcp.name }}
 
@@ -2278,10 +2289,9 @@ jobs:
 
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
-  # SDK we cannot drive (the `anthropic` 1.0.0 case). `check` allows its failure below. Tag refs
-  # only — on every other event the job skips, which `check` also allows. It runs alongside the
-  # test matrix rather than after it, so it lands well before `coverage` and adds nothing to the
-  # critical path.
+  # SDK we cannot drive (the `anthropic` 1.0.0 case). Tag refs only. No job needs it, so a
+  # failure turns the tag run red without delaying or stopping `check`, `deploy-docs` or the
+  # release jobs.
   latest-versions-canary:
     name: latest versions canary
     if: startsWith(github.ref, 'refs/tags/')
@@ -2379,7 +2389,6 @@ jobs:
       - harness-azure-durable-task-integration
       - harness-kubernetes-integration
       - harness-bubblewrap-integration
-      - latest-versions-canary
       - coverage
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
 
@@ -2387,8 +2396,6 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          # The canary is advisory because it tests dependency versions we do not lock; its failures
-          # signal upstream drift rather than release blockers. It runs on tag refs only, and
           # `docs-only` covers published docs and assets; `content-checks` covers other
           # non-test content. Workflow and configuration changes keep the full test matrix.
           # Each reduced path must run its selected checks.
@@ -2397,25 +2404,24 @@ jobs:
           # a change reaches `pydantic-ai-pax` (always on pushes to `main`), and never on tags.
           # `test-clai2-web` also follows its workflow, `pyproject.toml`, and `uv.lock`; it runs on tags.
           # A `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
-          allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              || 'docs-only,content-checks,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

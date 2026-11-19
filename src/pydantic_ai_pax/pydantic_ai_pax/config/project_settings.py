@@ -198,7 +198,7 @@ def load_project_settings(workspace: Path, *, store: SettingsStore | None = None
             if name in raw:
                 raise ValueError(f'`{name}` is user-only and cannot be set in a project file')
         overrides = {SETTING_KEYS[name]: value for name, value in raw.items() if name in SETTING_KEYS}
-        resolve_settings(overrides)
+        resolve_settings(overrides, stored=True)
     except (OSError, ValueError) as exc:
         raise ValueError(f'{path}: {exc}') from exc
     root = path.parent.parent
