@@ -4,10 +4,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, cast
+from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, cast
 
 from pydantic import JsonValue
 
+from ._json_schema_keywords import SUBSCHEMA_KEYWORDS
 from ._utils import contains_ref
 from .exceptions import UserError
 
@@ -92,23 +93,25 @@ def _is_sequence(value: Any) -> bool:
     return isinstance(value, list | tuple)
 
 
-# The keywords the walker and the provider `transform()`s read, grouped by the shape they expect.
+# The keywords the walker and the provider `transform()`s read.
 # Tool schemas that come from outside Pydantic AI (`Tool.from_schema`, `ExternalToolset`, MCP `inputSchema`,
 # AG-UI frontend tools) are plain dicts, so a node that is not a schema can reach the walker. `_check_schema_shape`
 # checks these keywords and nothing more: keywords not listed here are passed through to the provider untouched,
 # so provider extensions are unaffected. If a transformer starts reading a new keyword, add it here.
-_SCHEMA_KEYWORDS = ('additionalProperties', 'items', 'propertyNames', 'contains')
-"""Keywords whose value is a schema (or, for `items` in older drafts, a list of schemas)."""
-_SCHEMA_CONTAINER_KEYWORDS: dict[str, type[dict[str, Any]] | type[list[Any]]] = {
-    'properties': dict,
-    'patternProperties': dict,
-    '$defs': dict,
-    'prefixItems': list,
-    'allOf': list,
-    'anyOf': list,
-    'oneOf': list,
-}
-"""Keywords whose value is an object or a list of schemas."""
+_CHECKED_SUBSCHEMA_KEYWORDS = (
+    'additionalProperties',
+    'items',
+    'propertyNames',
+    'contains',
+    'properties',
+    'patternProperties',
+    '$defs',
+    'prefixItems',
+    'allOf',
+    'anyOf',
+    'oneOf',
+)
+"""The `SUBSCHEMA_KEYWORDS` the transformers read, each checked for the shape the table gives it."""
 _VALUE_KEYWORDS: dict[str, tuple[Callable[[Any], bool], str]] = {
     # keyword: (is the value well-formed, what a well-formed value is)
     '$ref': (lambda value: isinstance(value, str), 'must be a string'),
@@ -134,13 +137,19 @@ def _check_schema_shape(node: Any, path: str = '') -> None:
     schema = cast(dict[str, Any], node)
     prefix = f'{path}.' if path else ''
 
-    for key in _SCHEMA_KEYWORDS:
+    for key in _CHECKED_SUBSCHEMA_KEYWORDS:
         # `None` is skipped like an absent key, as the walker and OpenAI's `transform()` do.
-        if (value := schema.get(key)) is not None:
-            _check_subschema(value, f'{prefix}{key}', allow_list=key == 'items')
-    for key, container in _SCHEMA_CONTAINER_KEYWORDS.items():
-        if (value := schema.get(key)) is not None:
-            _check_schema_container(key, container, value, f'{prefix}{key}')
+        if (value := schema.get(key)) is None:
+            continue
+        match shape := SUBSCHEMA_KEYWORDS[key]:
+            case 'schema' | 'schema_or_list':
+                _check_subschema(value, f'{prefix}{key}', allow_list=shape == 'schema_or_list')
+            case 'schema_map':
+                _check_schema_container(key, dict, value, f'{prefix}{key}')
+            case 'schema_list':
+                _check_schema_container(key, list, value, f'{prefix}{key}')
+            case _:
+                assert_never(shape)
     for key, (is_well_formed, what) in _VALUE_KEYWORDS.items():
         if (value := schema.get(key)) is not None and not is_well_formed(value):
             _invalid_schema(f'{prefix}{key}', f'`{key}` {what}', value)
