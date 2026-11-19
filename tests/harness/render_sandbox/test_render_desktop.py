@@ -122,6 +122,23 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(
     assert RenderSandbox(client=client, working_dir=working_dir).backend(ref).display is None
 
 
+async def test_a_desktop_capability_reattaches_with_its_display(
+    workspace_harness: WorkspaceHarness, display: FakeDisplay
+) -> None:
+    created = workspace_harness.backend()
+    await created.working_dir()
+    ref = created.ref
+    assert ref is not None
+    capability = RenderSandbox(
+        desktop=(1440, 900), client=workspace_harness.client, working_dir=str(workspace_harness.root)
+    )
+
+    await screen(capability.backend(ref)).display_size()
+
+    (start,) = display.starts
+    assert start.endswith(' sh 1440x900')
+
+
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
     workspace_harness: WorkspaceHarness, display: FakeDisplay, tmp_path: Path
 ) -> None:
