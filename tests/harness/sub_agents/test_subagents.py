@@ -456,7 +456,7 @@ class TestDelegation:
 
         @dataclass
         class _ToolCapability(AbstractCapability[object]):
-            def get_toolset(self) -> Any:
+            def get_toolset(self) -> FunctionToolset[object]:
                 def cap_tool() -> str:
                     return 'CT'  # pragma: no cover - never offered to the sub-agent
 

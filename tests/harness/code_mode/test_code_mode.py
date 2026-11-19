@@ -5491,7 +5491,7 @@ class TestCodeModeOSAccess:
         assert result.return_value == "os.getenv('A', None)"
 
     async def test_positional_os_callback_is_deprecated_but_still_works(self) -> None:
-        def os_cb(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+        def os_cb(fn: OsFunction, args: tuple[object, ...], kwargs: dict[str, object]) -> str:
             return f'positional {fn}'
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
