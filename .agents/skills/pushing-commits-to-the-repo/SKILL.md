@@ -130,7 +130,7 @@ All of these must hold:
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
-- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
 - The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
 
 If any condition fails, hand the PR to a maintainer.

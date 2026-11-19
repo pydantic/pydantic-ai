@@ -305,6 +305,12 @@ The suite runs on every push across a matrix of Python versions and install shap
 
 When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget. `tests/cost_guards.py` imports the dependencies in its `SHARED_DEPENDENCIES` before collection, so no module is charged for being the first to import one. When a module is over the budget only because it is the first to import a dependency that other test modules also import at module level, add that dependency there rather than moving the import, which only moves the charge to the next module.
 
+`scripts/check_test_waits.py` runs in pre-commit and CI. It fails a change that adds one of these to a file under `tests/`:
+
+- A module-level `READINESS_WAIT_TIMEOUT`. Import the shared one from `tests/_timeouts.py`
+- A port read from a socket bound to port 0 and used after that socket closes. Take one from `reserve_loopback_port()` in `tests/_ports.py`, or hand the bound socket to the server
+- A wait on the real clock whose delay or timeout is a number written in the test module, or a loop that sleeps. When the real wait is what the test proves, mark the line with `# real-wait: <reason>`, at its end or on the line above
+
 ## Garbage from earlier tests
 
 `tests/gc_isolation.py` freezes every existing object before each test, so a test's collections, including explicit `gc.collect()` calls, only reach objects created since. Garbage in a reference cycle from an earlier test therefore can't be finalized by this test's collections, or land in its `pytest.warns` record or raise under its `simplefilter('error')`. Don't add per-test `gc.freeze()` calls or filter `ResourceWarning`s out of a record to work around that kind of failure.
