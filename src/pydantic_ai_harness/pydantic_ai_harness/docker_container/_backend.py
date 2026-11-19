@@ -243,9 +243,10 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
 _DESKTOP_DOCKERFILE_FILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile')
 
 DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_FILE.read_text()
-"""The image `DockerContainer(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
-Firefox and a terminal, and fonts for most scripts and emoji. Firefox starts without first-run pages. The window
-manager's and panel's settings, such as new windows filling the screen, are written when the display starts."""
+"""The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
+manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages and for emoji. Firefox
+starts without its first-run pages. The window manager's and panel's settings, such as new windows filling the screen,
+are written when the display starts."""
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
@@ -283,14 +284,14 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     which the first use installs with `apt-get` if it can.
 
     Args:
-        image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
+        image: The image for a new container. Pass it or `ref`, not both. With `desktop=True`, leave both out to
             use an image built from `DESKTOP_DOCKERFILE` on first use.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
-        env: Environment variables for every command, on top of the image's (and `DISPLAY`, with a desktop); the
-            per-call `env` goes on top.
+        env: Environment variables for every command, on top of the image's. With a desktop, `DISPLAY` is set too.
+            The per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
@@ -387,11 +388,12 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             return self._resolved_working_dir
 
     async def _check_network(self) -> None:
-        """Refuse a desktop on the host's network, however the container got there.
+        """Refuse a desktop on the host's network, however the container got onto it.
 
-        Its X clients could then reach an X server on the host through Linux's shared abstract socket, and drive
-        the host's screen. A `container:<id>` network is that container's, so it is followed. Podman's `ns:<path>`
-        joins whatever namespace the path names, such as the host's at `ns:/proc/1/ns/net`, so it is refused too.
+        On the host's network, programs in the container could connect to an X server on the host through Linux's
+        abstract socket, and control the host's screen. A `container:<id>` network is that other container's network,
+        so it is checked in turn. Podman's `ns:<path>` joins whatever network the path names, such as the host's at
+        `ns:/proc/1/ns/net`, so it is refused too.
         """
         container = self._name
         while True:
@@ -402,8 +404,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             mode = result.stdout.strip()
             if mode == 'host' or mode.startswith('ns:'):
                 raise UserError(
-                    "a desktop can't use the host's network: its X clients could reach an X server on the host "
-                    "through Linux's shared abstract socket, and drive the host's screen"
+                    "a desktop can't use the host's network: programs in the container could connect to the host's X "
+                    'server, which draws its screen, and control that screen'
                 )
             kind, _, container = mode.partition(':')
             if kind != 'container':
@@ -493,7 +495,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         """Run `argv` in the container without starting its display, as the display's own commands do.
 
-        `env`'s names are already checked: `run` checks a caller's, and the display's own are valid.
+        The names in `env` are already checked. `run` checks the names a caller passes, and the display's own names
+        are valid.
         """
         merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:

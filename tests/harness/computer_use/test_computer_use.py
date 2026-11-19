@@ -110,7 +110,7 @@ def no_real_waits(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(params=['in-process', 'durable'])
 def durability(request: pytest.FixtureRequest) -> list[AbstractCapability[object]]:
-    """Nothing, or a durability that runs each `computer` call as one durable unit in this process."""
+    """No durability, or one that runs each `computer` call as one durable step in this process."""
     return [RecordingDurability()] if request.param == 'durable' else []
 
 
@@ -571,7 +571,8 @@ The `computer` tool shows and controls this computer's screen.
         await agent.run('Go on.', message_history=earlier_screen)
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, COMPUTER_KIND.id)
-        # The call's display work is its own durable unit with its own policy, so no engine wraps the whole tool.
+        # The call's work on the screen is its own durable step with its own retry policy, so no engine wraps the
+        # whole tool.
         assert tool.durable is False
         # A model with a native computer tool sends it in this tool's place, declaring the latest screenshot's size,
         # which its positions are scaled from, even after the display changed size. With `native=False`, every model
@@ -612,7 +613,7 @@ The `computer` tool shows and controls this computer's screen.
         async with agent.run_stream_events('Go.') as stream:
             events = [e async for e in stream if isinstance(e, ActionsPerformedEvent)]
             messages = stream.all_messages()
-        # Once each, even when the call is a durable unit, and carrying the record the history keeps.
+        # One event per call, even when the call is a durable step, carrying the same record the history keeps.
         results = [
             part.result for message in messages for part in message.parts if isinstance(part, ComputerReturnPart)
         ]
@@ -643,8 +644,8 @@ The `computer` tool shows and controls this computer's screen.
 
     @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
     async def test_a_durable_run_without_a_display_fails_at_its_first_display_read(self, native: bool) -> None:
-        # Durable workflow code can't reach the backend, so the read inside its durable unit reports it: the native
-        # tool's size before the request, or the call's own read.
+        # Durable workflow code can't reach the backend, so the read inside its durable step reports the error: either
+        # the native tool's size read before the request, or the call's own read.
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
             name='computer',
@@ -852,7 +853,7 @@ The `computer` tool shows and controls this computer's screen.
         message: str,
         durability: list[AbstractCapability[object]],
     ) -> None:
-        # The display would otherwise move the pointer to its edge and click there.
+        # Otherwise the display would move the pointer to the screen's edge and click there.
         provider = ScreenProvider()
         agent = Agent(
             _scripted(actions, profile=profile),
@@ -861,13 +862,13 @@ The `computer` tool shows and controls this computer's screen.
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
-        # The model can fix its call, so it's asked to, and a model that keeps missing uses up the tool's retries.
+        # The model can fix its call, so it's asked to. A model that keeps missing uses up the tool's retries.
         assert tool_return.outcome == 'retried'
         assert tool_return.content == message
         assert provider.actions == []
 
     async def test_a_durable_call_that_did_not_finish_says_some_of_its_actions_may_have_run(self) -> None:
-        # The unit failed, timed out or lost its worker, after any number of its actions.
+        # The durable step failed, timed out or lost its worker, after any number of its actions ran.
         durability = RecordingDurability(fail_operations=frozenset({'computer__capability__computer_use.call'}))
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
@@ -887,7 +888,7 @@ The `computer` tool shows and controls this computer's screen.
         [('the-engine', r'computer_use\.call failed'), ('the-display', 'the display is misconfigured')],
     )
     async def test_a_configuration_error_ends_a_durable_run(self, where: str, message: str) -> None:
-        # Rather than telling the model to look again, which would meet the same error.
+        # The run ends instead of telling the model to look again, which would hit the same error.
         class Misconfigured(ScreenBackend):
             async def act(self, action: DisplayAction) -> None:
                 raise UserError('the display is misconfigured')
@@ -896,7 +897,7 @@ The `computer` tool shows and controls this computer's screen.
             def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
                 return Misconfigured(self, ref) if where == 'the-display' else super().backend(ref)
 
-        # As DBOS or Prefect refuse a unit in this process, such as for a model they don't know.
+        # As DBOS or Prefect refuse a durable step in this process, such as one for a model they don't know.
         durability = RecordingDurability(
             fail_operations=frozenset({'computer__capability__computer_use.call'} if where == 'the-engine' else ()),
             failure=UserError,
@@ -925,7 +926,7 @@ The `computer` tool shows and controls this computer's screen.
             capabilities=[provider.capability(), ComputerUse(), recorded],
         )
         await agent.run('Go.')
-        # Only the call's display work is a unit, not the whole tool call.
+        # Only the call's work on the screen is a durable step, not the whole tool call.
         assert [name for name, _ in recorded.calls if 'computer_use' in name] == snapshot(
             [
                 'computer__capability__computer_use.display_size',
@@ -960,7 +961,7 @@ The `computer` tool shows and controls this computer's screen.
         capabilities = [provider.capability(read_only=True), ComputerUse(), Hooks(before_model_request=record)]
         refused, looked = _returns((await Agent(model, capabilities=capabilities).run('Go.')).all_messages())
 
-        # The schema offers only the actions that look; a call that acts anyway, as a native tool's can, is refused.
+        # The schema offers only the actions that look. A call that acts anyway, as a provider's tool can, is refused.
         assert offered[0] == {'screenshot', 'zoom', 'wait', 'cursor_position'}
 
         assert refused.content == snapshot(
@@ -1341,7 +1342,7 @@ The `computer` tool shows and controls this computer's screen.
     async def test_a_button_stays_pressed_across_calls_until_mouse_up(
         self, durability: list[AbstractCapability[object]]
     ) -> None:
-        # Claude's earlier computer tools press, move and release in separate calls.
+        # Claude's older computer tools press, move and release the button in separate calls.
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'mouse_down'}], [{'type': 'mouse_move', 'x': 5, 'y': 5}], [{'type': 'mouse_up'}]),
@@ -1443,7 +1444,7 @@ The `computer` tool shows and controls this computer's screen.
         )
         await agent.run('Go.')
 
-        # The run's end releases it again, as a call that never reported may have left it pressed.
+        # The run's end releases the button again, because a call that never reported back may have left it pressed.
         assert provider.actions == [MouseDown(), MouseUp(), MouseMove(x=5, y=5), MouseUp()]
 
     async def test_a_call_refused_before_it_acts_leaves_nothing_to_release(
@@ -1688,8 +1689,8 @@ The `computer` tool shows and controls this computer's screen.
         assert provider.actions == [MouseUp()]
 
     async def test_a_replayed_run_whose_environment_was_lost_takes_the_same_durable_steps(self) -> None:
-        # A durable engine replays a run by its steps' order, so the replay must schedule the steps the run did, such
-        # as the run end's release of a button pressed before the environment was lost.
+        # A durable engine replays a run by the order of its steps, so the replay must schedule the same steps the run
+        # did, such as the release at the run's end of a button pressed before the environment was lost.
         class Lost(ScreenBackend):
             async def screenshot(self) -> bytes:  # first taken after the button is pressed
                 raise WorkspaceUnavailableError('the environment is gone')

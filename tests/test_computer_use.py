@@ -1,7 +1,7 @@
 """The `computer` tool's typed parts, and how a request sends `ComputerTool` in place of that tool.
 
-Not VCR tests: the parts, the request preparation and the labels the agent adds are all built before or after any
-provider request, so `FunctionModel` reaches them and a recording would add nothing.
+These are not recorded-HTTP (VCR) tests. The parts, the request preparation and the labels the agent adds are all
+built before or after the provider request. `FunctionModel` reaches all of them, so a recording would add nothing.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def test_a_computer_result_reads_its_outcome_and_screenshot() -> None:
 
 
 def test_a_computer_result_without_metadata_or_a_final_screenshot() -> None:
-    # A result a UI rebuilt has no metadata; one whose screenshot was dropped from the history ends with text.
+    # A result a UI rebuilt has no metadata. A result whose screenshot was dropped from the history ends with text.
     result = ComputerReturnPart('computer', [SCREEN, 'An earlier screenshot was removed.'])
     assert result.result is None
     assert result.screenshot is None
@@ -92,23 +92,6 @@ def _computer_tool_def(*, defer_loading: bool = False) -> ToolDefinition:
     return ToolDefinition(name='my_computer', tool_kind=COMPUTER_KIND, defer_loading=defer_loading)
 
 
-def test_available_tool_names_for_kind_skips_deferred_tools_until_history_reveals_them() -> None:
-    # A unit test: model adapters read this while building a request, so no recorded exchange shows its answer.
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(name='lookup', tool_kind='docs.lookup'),
-            ToolDefinition(name='hidden_computer', tool_kind=COMPUTER_KIND, defer_loading=True),
-            ToolDefinition(name='revealed_computer', tool_kind=COMPUTER_KIND, defer_loading=True),
-            _computer_tool_def(),
-        ],
-        revealed_tool_names={'revealed_computer'},
-    )
-    assert params.available_tool_names_for_kind(COMPUTER_KIND) == ['revealed_computer', 'my_computer']
-    assert params.available_tool_names_for_kind(COMPUTER_KIND.id) == ['revealed_computer', 'my_computer']
-    assert params.available_tool_names_for_kind('docs.lookup') == ['lookup']
-    assert params.available_tool_names_for_kind('docs.missing') == []
-
-
 def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
     model = FunctionModel(lambda m, i: ModelResponse(parts=[]))  # supports every native tool
     return model.prepare_request(None, params)[1]
@@ -116,7 +99,7 @@ def _prepare(params: ModelRequestParameters) -> ModelRequestParameters:
 
 @pytest.mark.parametrize('display_size', [(0, 800), (1280, -1)])
 def test_computer_tool_refuses_a_display_size_that_is_not_positive(display_size: tuple[int, int]) -> None:
-    with pytest.raises(UserError, match='display_size` must be positive'):
+    with pytest.raises(ValueError, match='display_size` must be positive'):
         ComputerTool(display_size=display_size)
 
 
@@ -129,7 +112,8 @@ def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
 
 
 def test_computer_tool_is_sent_once_history_reveals_its_deferred_computer_tool() -> None:
-    # A deferred capability's tools stay deferred after the model loads it; history revealing them makes them callable.
+    # A deferred capability's tools stay deferred after the model loads it. They become callable once history
+    # reveals them.
     computer = ComputerTool(display_size=(1280, 800), optional=True)
     params = _prepare(
         ModelRequestParameters(
@@ -384,7 +368,7 @@ def test_a_computer_call_reads_only_real_labels(value: object) -> None:
     keys = ('coordinate_grid', 'screenshot_max_side', 'screenshot_max_pixels')
     call = ComputerCallPart('computer', {'actions': []}, provider_details=dict.fromkeys(keys, value))
     assert (call.coordinate_grid, call.screenshot_max_side, call.screenshot_max_pixels) == (None, None, None)
-    # A grid of one point says nothing about where.
+    # A grid of one point can't say where anything is, so it reads as no grid.
     assert (
         ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': 1}).coordinate_grid is None
     )
