@@ -248,7 +248,7 @@ result = agent.run_sync('Open python.org in Firefox and tell me the latest relea
 print(result.output)
 ```
 
-The screen needs [`xdotool`, `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server is already running](../computer_use/#what-the-display-needs) in the sandbox image, plus `fluxbox`, `tint2` and `xterm` for a desktop with a panel and a terminal; without those three the screen works but stays black. The template above runs as a non-root user, so nothing is installed for you: without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Build them into an image along with the programs the agent should use. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
+The screen needs [`xdotool`, `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server is already running](../computer_use/#what-the-display-needs) in the sandbox image. The template above runs as a non-root user, so nothing is installed for you: without `xdotool`, `xwininfo`, `scrot`, `setsid` or Xvfb, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. `fluxbox`, `tint2` and `xterm` are optional: they add a desktop with a panel and a terminal, and without them the screen still works, with no panel. Build them into an image along with the programs the agent should use. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
 
 ```dockerfile
 FROM python:3.12

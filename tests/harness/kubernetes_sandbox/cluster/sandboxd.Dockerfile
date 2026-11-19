@@ -14,14 +14,14 @@ WORKDIR /workspace
 # Ports and root are set by each `SandboxTemplate`, so one image serves every pool.
 ENTRYPOINT ["/usr/local/bin/sandboxd"]
 
-# `--target desktop`: the same image with the programs `desktop=True` needs, installed at build time because
-# pods run as a non-root user. `DESKTOP_EXTRA_PACKAGES` adds programs for the agent to use, such as `firefox-esr`.
+# `--target desktop`: the same image with the programs `desktop=True` needs and its desktop's window manager, panel
+# and terminal, installed at build time because pods run as a non-root user. `DESKTOP_EXTRA_PACKAGES` adds programs for the agent to use, such as `firefox-esr`.
 FROM base AS desktop
 ARG DESKTOP_EXTRA_PACKAGES=""
 USER root
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    xvfb xdotool x11-utils scrot util-linux ${DESKTOP_EXTRA_PACKAGES} \
+    xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm ${DESKTOP_EXTRA_PACKAGES} \
  && rm -rf /var/lib/apt/lists/*
 USER 1000
 

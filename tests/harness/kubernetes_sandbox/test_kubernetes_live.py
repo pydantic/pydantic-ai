@@ -377,11 +377,14 @@ async def test_an_in_cluster_connection_follows_a_recreated_pod(pool: str, conne
 
 
 async def test_a_desktop_pool_serves_the_display() -> None:
-    """An image with the X programs gives a non-root pod a working display, which a shell command also sees."""
+    """An image with the X programs gives a non-root pod a working desktop, which a shell command also sees."""
     backend = _new_backend(warm_pool='desktop-pool', desktop=True)
     try:
         await check_display_contract(screen(backend))
         assert (await backend.run('xwininfo -root | grep -c Width', shell=True)).stdout == '1\n'
+        # The window manager and the panel run, not only the display. Read from `/proc`, since the image has no `pgrep`.
+        running = await backend.run('cat /proc/[0-9]*/comm 2>/dev/null | sort -u', shell=True)
+        assert {'fluxbox', 'tint2'} <= set(running.stdout.split())
     finally:
         await _destroy(backend)
 
