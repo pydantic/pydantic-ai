@@ -1316,6 +1316,12 @@ TEST_MODEL_SCHEMAS: dict[str, JsonSchema] = {
     'multipleOf-within-exclusive': {'type': 'integer', 'multipleOf': 5, 'exclusiveMinimum': 5, 'exclusiveMaximum': 11},
     'multipleOf-below-maximum': {'type': 'integer', 'multipleOf': 5, 'maximum': 8},
     'multipleOf-fractional-integer': {'type': 'integer', 'multipleOf': 2.5, 'minimum': 0, 'maximum': 10},
+    'multipleOf-fractional-integer-off-the-adjacent-multiples': {
+        'type': 'integer',
+        'multipleOf': 1.5,
+        'minimum': 1,
+        'maximum': 4,
+    },
     'multipleOf-integer-too-large-for-a-float': {'type': 'integer', 'multipleOf': 3, 'minimum': 10**400},
     'format-longer-than-maxLength': {'type': 'string', 'format': 'uri', 'maxLength': 3},
     'not': {'type': 'string', 'not': {'const': 'a'}},

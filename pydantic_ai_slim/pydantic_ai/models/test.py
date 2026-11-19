@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, I
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime
+from fractions import Fraction
 from typing import Any, ClassVar, Literal, TypeVar, assert_never, cast
 from uuid import UUID
 
@@ -788,6 +789,11 @@ class _JsonSchemaTestData:
                 candidates = ((lower + 1) * step, lower * step)
             elif math.isfinite(quotient := value / step):
                 candidates = (math.ceil(quotient) * step, math.floor(quotient) * step)
+                if isinstance(value, int):
+                    # The integer multiples of a fractional step p/q in lowest terms are the multiples of p.
+                    numerator = Fraction(step).numerator
+                    lower = value // numerator
+                    candidates += ((lower + 1) * numerator, lower * numerator)
             else:
                 # A step so small that the quotient overflows has no multiple to move to.
                 return value
