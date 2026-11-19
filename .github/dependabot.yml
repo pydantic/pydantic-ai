@@ -1,5 +1,5 @@
 updates:
-- directory: /src/pydantic_clai2/web-ui
+- directory: /src/pydantic_ai_pax/web-ui
   labels:
   - dependencies
   - area:clai2-web-ui
