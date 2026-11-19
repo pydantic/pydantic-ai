@@ -388,7 +388,7 @@ async def test_a_desktop_log_that_isnt_a_file_still_starts_the_desktop(
         _hide_host_programs(docker)
         docker.run_as(0)
 
-    with anyio.fail_after(10):
+    with anyio.fail_after(10):  # real-wait: a start that opens the named pipe by name blocks forever, so fail fast
         assert await screen(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.panel_starts == 1
     assert target.read_text() == 'kept'
