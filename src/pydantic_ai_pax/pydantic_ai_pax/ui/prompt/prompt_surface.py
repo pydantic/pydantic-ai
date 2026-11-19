@@ -335,11 +335,8 @@ class PromptSurface(io.StringIO):
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
-        if not self.full_screen and not self._inline_moved(width=width, height=height):
-            pinned = self._rows[-(height - 2) :] if height > 2 else ()
-            if (shown := self._unprinted(width=width, limit=height - len(pinned))) is not None:
-                self._paint_inline([*shown, *pinned], modes=modes, width=width, height=height)
-                return
+        if not self.full_screen and self._paint_compact(modes=modes, width=width, height=height):
+            return
         self.full_screen = True
         parts: list[str] = []
         if not self._screen:
@@ -369,6 +366,19 @@ class PromptSurface(io.StringIO):
         if text := ''.join(parts):
             self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
             self.output.flush()
+
+    def _paint_compact(self, *, modes: bool, width: int, height: int) -> bool:
+        """Paint the inline panel, or print a released one, unless it has to move to the alternate screen."""
+        if self._inline_moved(width=width, height=height):
+            return False
+        if not self._rows:
+            self._print_released(width=width)
+            return True
+        pinned = self._rows[-(height - 2) :] if height > 2 else ()
+        if (shown := self._unprinted(width=width, limit=height - len(pinned))) is None:
+            return False
+        self._paint_inline([*shown, *pinned], modes=modes, width=width, height=height)
+        return True
 
     def _inline_moved(self, *, width: int, height: int) -> bool:
         """Whether a resize may have moved the inline rows, so erasing them by count would guess.
@@ -402,6 +412,21 @@ class PromptSurface(io.StringIO):
         self._painted_at = self.clock()
         self._painted_as = (width, height, theme.name())
 
+    def _print_released(self, *, width: int) -> None:
+        """Erase the inline rows and print the settled transcript into scrollback, while nothing is pinned.
+
+        A command run meanwhile may write to the terminal itself, so no rows stay that a later erase would
+        count.
+        """
+        parts = [self._erase_inline() + INLINE_OFF] if self._inline_rows else []
+        if printed := self.transcript.printed(width=width):
+            parts.append(printed.replace('\n', '\r\n') if self.output.isatty() else printed)
+        if parts:
+            self.output.write(''.join(parts))
+            self.output.flush()
+        self._dirty = False
+        self._painted_at = self.clock()
+
     def _erase_inline(self) -> str:
         """Return to the inline panel's first row and clear it and everything below, or nothing without one."""
         rows, self._inline_rows = self._inline_rows, 0
@@ -424,15 +449,16 @@ class PromptSurface(io.StringIO):
             self.output.write(''.join(parts))
             self.output.flush()
 
-    def release(self) -> None:
+    def release(self, *, turn_running: bool = False) -> None:
         """Drop the editor rows and input modes before a menu, command, or shell takes over.
 
         The transcript stays on screen, and output the command prints still appears. An inline panel
-        moves to the alternate screen first: what takes over may write to the terminal itself, below
-        the rows the panel would later erase by count.
+        prints it into scrollback instead, keeping no rows: what takes over may write to the terminal
+        itself, below rows the panel would later erase by count. While `turn_running`, the turn may
+        still extend what it streamed, so an inline panel moves to the alternate screen instead.
         """
         with self._lock:
-            if self._inline_rows:
+            if turn_running and not self.full_screen:
                 self.full_screen = self._dirty = True
             if self._partial:
                 self.transcript.write('\n')

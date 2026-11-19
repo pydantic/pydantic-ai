@@ -104,3 +104,11 @@ class SurfaceTerminal(io.StringIO):
                 row[:] = [' '] * self.width
         elif token in ('\x1b[?7h', '\x1b[?7l'):
             self.wrap = code == 'h'
+
+
+def scrollback(output: str) -> str:
+    """What reached the terminal outside the live panel's synchronized frames, so its own scrollback keeps it.
+
+    That is the startup output, what a released compact panel prints, and the exit printout.
+    """
+    return re.sub(r'\x1b\[\?2026h.*?\x1b\[\?2026l', '', output, flags=re.DOTALL)

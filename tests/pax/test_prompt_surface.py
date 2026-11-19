@@ -946,17 +946,29 @@ def test_a_taller_terminal_keeps_the_panel_inline_and_a_shorter_one_moves_it_to_
     assert screen.lines()[-4:] == list(ROWS)
 
 
-def test_releasing_the_inline_panel_moves_it_to_full_screen_before_others_write() -> None:
+def test_releasing_the_inline_panel_prints_it_so_others_can_write_below() -> None:
     """A command such as `/update now` may write to the terminal itself, below rows the panel erases by count."""
     screen = Screen(width=40, height=10, inline=True)
     screen.terminal.write('$ clai2\r\n')
     screen.surface.paint(ROWS)
     screen.write('answer\n')
     screen.surface.release()
-    assert screen.terminal.alternate
-    screen.terminal.write('written by a command\r\n')
-    screen.surface.paint(ROWS)
-    screen.surface.restore()
     assert not screen.terminal.alternate
-    assert screen.lines() == ['$ clai2', 'answer', *[''] * 8], 'no panel rows stay behind in the scrollback'
-    assert screen.terminal.history == []
+    assert screen.lines()[:3] == ['$ clai2', 'answer', ''], 'the transcript is in scrollback; the editor is gone'
+    screen.write('command output\n')
+    screen.terminal.write('written by the command itself\r\n')
+    screen.surface.paint(ROWS)
+    assert not screen.terminal.alternate, 'the panel comes back inline below it'
+    assert screen.lines()[:9] == ['$ clai2', 'answer', 'command output', 'written by the command itself', '', *ROWS]
+    screen.surface.restore()
+    assert screen.lines()[:5] == ['$ clai2', 'answer', 'command output', 'written by the command itself', '']
+
+
+def test_releasing_the_inline_panel_mid_turn_moves_it_to_full_screen() -> None:
+    """The turn may still extend a part it streamed, so it cannot be printed into scrollback yet."""
+    screen = Screen(width=40, height=10, inline=True)
+    screen.surface.paint(ROWS)
+    screen.write('streamed\n')
+    screen.surface.release(turn_running=True)
+    assert screen.terminal.alternate
+    assert screen.lines()[0] == 'streamed'

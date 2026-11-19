@@ -1226,10 +1226,12 @@ cycle and disappears when work finishes, fails, or is cancelled. It is not part
 of your draft or submitted message. CLAI starts compact, below what your shell already
 printed, and grows with the session as output arrives. Until then the terminal keeps its
 own scrolling and text selection, and Ctrl+L forgets the transcript but leaves your
-shell's output above it. Once the session fills the terminal, you change the
-terminal's width or make it shorter, or a slash command, `!` command, menu, or question
-takes over the editor, the editor sits below a Termflow live transcript panel on the
-alternate screen, for the rest of the session. `/set display.full_screen true` starts
+shell's output above it. A slash command or `!` command run between turns prints the
+conversation so far into the terminal's scrollback, where it stays even after `/clear` or
+`/resume`, and the compact editor comes back below the command's output. Once the
+session fills the terminal, you change the terminal's width or make it shorter, or a
+command, menu, or question takes over the editor during a turn, the editor sits below
+a Termflow live transcript panel on the alternate screen, for the rest of the session. `/set display.full_screen true` starts
 there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
@@ -2064,9 +2066,8 @@ whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
 preserved, and the question and your picks are printed to the transcript afterwards.
-Once the panel is full screen, drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too. While the panel is
-still compact, the terminal's own selection works instead.
+Drag over the question, its header, or an option to select text; releasing copies it
+to the clipboard without choosing an answer. Transcript text remains selectable too.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for

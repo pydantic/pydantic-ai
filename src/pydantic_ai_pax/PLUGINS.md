@@ -1452,9 +1452,8 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-Once the panel is full screen, drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too. While the panel is
-still compact, the terminal's own selection works instead.
+Drag over the question, its header, or an option to select text; releasing copies it
+to the clipboard without choosing an answer. Transcript text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `pax --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.

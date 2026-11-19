@@ -687,7 +687,7 @@ class LivePrompt:
         try:
             async with self._completion_owner:
                 await self.output.drain()
-                self.output.release()
+                self.output.release(turn_running=self.interrupts.active)
                 yield
         finally:
             self._suspended = False
