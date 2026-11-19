@@ -11,7 +11,7 @@ import stat
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
@@ -70,7 +70,7 @@ class ExaAgentRuns:
         output_schema: dict[str, object] | type[BaseModel] | None = None,
         effort: AgentEffort | None = None,
         previous_run_id: str | None = None,
-    ) -> AgentRun | Any:
+    ) -> AgentRun:
         from exa_py.agent.types import AgentRun
 
         REQUESTS['exa_agent.create'] += 1
