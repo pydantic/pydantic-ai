@@ -1899,7 +1899,9 @@ jobs:
       # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
-      # is the only BlockBuster-on lane that uploads coverage.
+      # is the only BlockBuster-on lane that uploads coverage. `tests/test_history_append_only.py`
+      # builds the core `MCP` case, whose FastMCP import lives in `tests/capability_cases.py`, where
+      # the pattern doesn't look.
       # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
       # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
       # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
@@ -1918,6 +1920,7 @@ jobs:
             git grep -lE "$pattern" -- 'tests/**/test_*.py' 'tests/test_*.py'
             git grep -lE "$pattern" -- 'tests/**/conftest.py' | sed 's|/conftest\.py$||'
             echo tests/test_conftest.py
+            echo tests/test_history_append_only.py
           } | sort -u)
           durable=() other=()
           for module in "${modules[@]}"; do
