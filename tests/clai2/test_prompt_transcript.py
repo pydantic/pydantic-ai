@@ -472,6 +472,15 @@ def test_palette_output_repaints_in_another_palette_or_the_default_theme() -> No
     ]
 
 
+def test_a_retained_prompt_background_repaints_in_the_theme_now_selected() -> None:
+    """A palette's prompt tint becomes another palette's, and goes under the default theme, which has none."""
+    with theme.use(lambda: 'tokyo_night'):
+        buffer = _painted(_printed([Style(bold=True, bgcolor=theme.prompt_background())]))
+    with theme.use(lambda: 'github_light'):
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(None, '#f6f6f7')]
+    assert _colours(buffer.frame(width=80, height=24).rows) == [(None, 'default')]
+
+
 def test_recolor_accepts_spans_styled_by_name() -> None:
     text = Text('muted', spans=[Span(0, 5, f'bold {theme.GREY}')])
     themed = recolor(text, source='default', target='tokyo_night')

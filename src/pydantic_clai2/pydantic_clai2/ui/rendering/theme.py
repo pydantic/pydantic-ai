@@ -161,6 +161,20 @@ def diff_renderer() -> DiffRenderer:
     return DiffRenderer(highlighter=highlighter, theme=diff_theme())
 
 
+def prompt_background() -> str | None:
+    """The background of the user's own messages: the palette's, moved towards its text.
+
+    `None` under the default theme, which leaves colours to a terminal whose background CLAI does not know.
+    """
+    from termflow.themes.palette import blend_hex
+
+    palette = current()
+    if palette is None:
+        return None
+    # A darker tint stands out more than a lighter one, so a light background moves less.
+    return blend_hex(palette.bg, palette.fg, 0.04 if _is_light(palette) else 0.12)
+
+
 def _is_light(palette: TerminalPalette) -> bool:
     red, green, blue = (int(palette.bg[index : index + 2], 16) for index in (1, 3, 5))
     return 0.299 * red + 0.587 * green + 0.114 * blue > 128
@@ -169,18 +183,21 @@ def _is_light(palette: TerminalPalette) -> bool:
 def roles(name: str) -> tuple[tuple[str, str], ...]:
     """The Rich colour `name` paints each role with; where roles share a colour, the earlier one claims it.
 
-    Roles are the background and foreground, diff lines and markers, CLAI's brand colours, and the
-    16 ANSI slots. The default theme leaves the background, foreground, and slots to the terminal.
+    Roles are the background and foreground, the user's messages' background, diff lines and markers,
+    CLAI's brand colours, and the 16 ANSI slots. The default theme leaves the background, foreground,
+    and slots to the terminal, and has no message background.
     Output painted in one theme repaints in another by translating its colours role by role.
     """
     with use(lambda: name):
         palette = current()
         diff = diff_theme()
         brands = tuple((f'brand {brand}', color(brand)) for brand in _SLOTS)
+        prompt = prompt_background() or 'default'
     surface = (palette.bg, palette.fg) if palette is not None else ('default', 'default')
     return (
         ('background', surface[0]),
         ('foreground', surface[1]),
+        ('prompt background', prompt),
         ('diff addition', diff.addition),
         ('diff deletion', diff.deletion),
         ('diff addition marker', diff.addition_marker),
