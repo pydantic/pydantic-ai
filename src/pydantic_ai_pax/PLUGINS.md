@@ -3519,7 +3519,10 @@ menu or a command, and runs use only what is already stored.
   what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
   message to show: signed in, cancelled, or why it failed. Pass the `Dialogs` your
   settings menu action receives, so the screen shows wherever the menu was opened;
-  without one, it shows in the terminal.
+  without one, it shows in the terminal. In the terminal, each URL in that text is a
+  clickable link, and a line that holds one is folded at the pane's width, so put the
+  URL on its own line. URLs over 2,048 characters, or with control characters, stay
+  plain text.
 - `sign_in_command('NAME', method)` is `/NAME [login | logout | status]`.
   `run_subcommand(method, args)` handles the same words inside a command that has
   more of its own.
