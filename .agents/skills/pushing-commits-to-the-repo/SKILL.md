@@ -36,8 +36,8 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
-| M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
+| S | CI green, `PR Review Checks` passed, `Gate: review findings dispositioned` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green, `PR Review Checks` passed and `Gate: review findings dispositioned` passed only. |
+| M, L, XL | CI green, `PR Review Checks` passed, `Gate: review findings dispositioned` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
@@ -58,8 +58,9 @@ Associate inline comments with the `head=` in their parent review's receipt, or 
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
-`PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
-Size S remains a manual judgment; review enforcement skips merge groups after admission.
+`PR Review Gates` enforces the douwebot approval on M/L/XL against the recomputed size and exactly one matching label.
+On size S the douwebot approval remains a manual judgment. `Gate: review findings dispositioned` applies at every size.
+Review enforcement skips merge groups after admission.
 On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
 Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
@@ -67,6 +68,7 @@ If douwebot already reviewed the head, triage its findings in step 4; otherwise 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
 [`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
 A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
+The label passes only the `PR Review Checks` status: each finding still needs its reply for `Gate: review findings dispositioned`.
 Never apply `pr-review-checks:accepted` yourself.
 `PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
 
