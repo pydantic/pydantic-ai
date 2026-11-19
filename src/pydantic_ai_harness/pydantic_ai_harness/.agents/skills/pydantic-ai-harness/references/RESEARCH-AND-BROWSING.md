@@ -220,10 +220,10 @@ from pydantic_ai import Agent
 
 from pydantic_ai_harness import KeenableSearch
 
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[KeenableSearch(num_results=5)])
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[KeenableSearch(max_results=5)])
 ```
 
-Fields: `num_results=5` (1 to 50, sent as Keenable's `max_results`), `max_snippet_chars=500`
+Fields: `max_results=5` (1 to 50; `num_results` is its deprecated name), `max_snippet_chars=500`
 (per-hit excerpt cap), `max_page_chars=10_000` (`get_page` cap; the truncation marker counts
 against it, and a budget too small to hold the marker ends the page with `…` instead),
 `guidance=None`, `client=None`.
@@ -232,7 +232,7 @@ Gotchas:
 
 - Keenable's snippets run to thousands of characters, so `max_snippet_chars` is what keeps
   `web_search` small; `get_page` is how the model opts into a full page.
-- Budgets must be positive integers, and `num_results` at most 50; anything else raises `ValueError`
+- Budgets must be positive integers, and `max_results` at most 50; anything else raises `ValueError`
   when the capability is built.
 - `KEENABLE_API_KEY` switches to the keyed endpoints; `KEENABLE_API_URL` overrides the base URL and must
   be `https://` (plain `http` only on loopback), or `UserError` is raised.

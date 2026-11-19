@@ -12,7 +12,9 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, Tool
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness.keenable._toolset import (
+    KEENABLE_DEFAULT_MAX_RESULTS,
     KEENABLE_MAX_RESULTS,
     HttpKeenableClient,
     KeenableClient,
@@ -60,11 +62,8 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    num_results: int = 5
-    """Number of results `web_search` returns per query, from 1 to 50.
-
-    Sent to Keenable as `max_results`, the API's own limit.
-    """
+    max_results: int = KEENABLE_DEFAULT_MAX_RESULTS
+    """Number of results `web_search` returns per query, from 1 to 50."""
 
     max_snippet_chars: int = 500
     """Maximum characters of excerpt `web_search` returns per result.
@@ -103,9 +102,17 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     id: str | None = 'keenable_search'
     """Stable identity for durable execution, which records each Keenable request under it."""
 
+    num_results: int | None = None
+    """Deprecated: renamed to `max_results`."""
+
     def __post_init__(self) -> None:
         """Validate the output budgets, so a bad one fails here and not mid-run."""
-        validated_budget('num_results', self.num_results, limit=KEENABLE_MAX_RESULTS)
+        if self.num_results is not None:
+            if self.max_results != KEENABLE_DEFAULT_MAX_RESULTS:
+                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
+            warn_argument_renamed('KeenableSearch', 'num_results', 'max_results', stacklevel=4)
+            self.max_results, self.num_results = self.num_results, None
+        validated_budget('max_results', self.max_results, limit=KEENABLE_MAX_RESULTS)
         validated_budget('max_snippet_chars', self.max_snippet_chars)
         validated_budget('max_page_chars', self.max_page_chars)
 
@@ -156,7 +163,7 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     ) -> KeenableSearchToolset[AgentDepsT]:
         return KeenableSearchToolset[AgentDepsT](
             client=self._client,
-            num_results=self.num_results,
+            max_results=self.max_results,
             max_snippet_chars=self.max_snippet_chars,
             max_page_chars=self.max_page_chars,
             id=id,
@@ -167,13 +174,14 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     def from_spec(
         cls,
         *,
-        num_results: int = 5,
+        max_results: int = KEENABLE_DEFAULT_MAX_RESULTS,
         max_snippet_chars: int = 500,
         max_page_chars: int = 10_000,
         guidance: str | None = None,
         id: str | None = 'keenable_search',
         description: str | None = None,
         defer_loading: bool = False,
+        num_results: int | None = None,
     ) -> KeenableSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -181,11 +189,12 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
         always build the default `HttpKeenableClient`.
         """
         return cls(
-            num_results=num_results,
+            max_results=max_results,
             max_snippet_chars=max_snippet_chars,
             max_page_chars=max_page_chars,
             guidance=guidance,
             id=id,
             description=description,
             defer_loading=defer_loading,
+            num_results=num_results,
         )

@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.keenable import (
     HttpKeenableClient,
     KeenableSearch,
@@ -46,7 +47,7 @@ def keyless_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _Budgets(TypedDict, total=False):
-    num_results: int
+    max_results: int
     max_snippet_chars: int
     max_page_chars: int
 
@@ -147,7 +148,7 @@ class TestKeenableSearch:
                 return ModelResponse(parts=[ToolCallPart('get_page', {'url': 'https://example.com/'})])
             return ModelResponse(parts=[TextPart('Done.')])
 
-        agent = Agent(FunctionModel(research), capabilities=[KeenableSearch(num_results=2, max_snippet_chars=80)])
+        agent = Agent(FunctionModel(research), capabilities=[KeenableSearch(max_results=2, max_snippet_chars=80)])
 
         result = await agent.run('Research Pydantic AI.')
 
@@ -200,7 +201,7 @@ class TestKeenableSearch:
     @pytest.mark.parametrize(('native_web_search', 'sent_tools'), [(False, ['web_search']), (True, [])])
     async def test_web_search_tool_is_a_core_web_search_fallback(self, native_web_search: bool, sent_tools: list[str]):
         client = FakeClient(results=[_result('https://example.com/one', 'One')])
-        keenable = KeenableSearch[object](num_results=3, client=client)
+        keenable = KeenableSearch[object](max_results=3, client=client)
         sent: list[list[str]] = []
 
         def search_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -237,17 +238,17 @@ class TestKeenableSearch:
     @pytest.mark.parametrize(
         ('budgets', 'message'),
         [
-            ({'num_results': 0}, '`num_results` must be a positive integer'),
-            ({'num_results': 51}, '`num_results` must be at most 50, got 51'),
+            ({'max_results': 0}, '`max_results` must be a positive integer'),
+            ({'max_results': 51}, '`max_results` must be at most 50, got 51'),
             ({'max_snippet_chars': 0}, '`max_snippet_chars` must be a positive integer'),
             ({'max_page_chars': 0}, '`max_page_chars` must be a positive integer'),
             # The annotation is advisory; a config-driven caller can pass a float,
             # a string, or a bool, which would otherwise only fail later as a
             # slice bound, or in the bool's case, not fail at all.
-            ({'num_results': 1.5}, '`num_results` must be a positive integer, got 1.5'),
+            ({'max_results': 1.5}, '`max_results` must be a positive integer, got 1.5'),
             ({'max_page_chars': '10'}, "`max_page_chars` must be a positive integer, got '10'"),
             ({'max_page_chars': True}, '`max_page_chars` must be a positive integer, got True'),
-            ({'num_results': True}, '`num_results` must be a positive integer, got True'),
+            ({'max_results': True}, '`max_results` must be a positive integer, got True'),
         ],
     )
     def test_budgets_are_validated(self, budgets: _Budgets, message: str):
@@ -266,11 +267,20 @@ class TestKeenableSearch:
         assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
     def test_from_spec_builds_the_default_client(self):
-        capability = KeenableSearch[None].from_spec(num_results=2, max_snippet_chars=10, max_page_chars=20)
+        capability = KeenableSearch[None].from_spec(max_results=2, max_snippet_chars=10, max_page_chars=20)
 
         assert capability.client is None
-        assert capability.num_results == 2
+        assert capability.max_results == 2
         assert isinstance(capability.get_toolset(), KeenableSearchToolset)
+
+    def test_num_results_is_a_deprecated_alias(self):
+        with pytest.warns(HarnessDeprecationWarning, match=r'`KeenableSearch\(num_results=\.\.\.\)` has been renamed'):
+            capability = KeenableSearch[None](num_results=3)
+        assert (capability.max_results, capability.num_results) == (3, None)
+        with pytest.warns(HarnessDeprecationWarning, match=r'`KeenableSearch\(num_results=\.\.\.\)` has been renamed'):
+            assert KeenableSearch[None].from_spec(num_results=3).max_results == 3
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            KeenableSearch[None](max_results=4, num_results=3)
 
 
 class TestKeenableSearchToolset:
@@ -281,13 +291,33 @@ class TestKeenableSearchToolset:
     cannot be relied on to produce.
     """
 
-    async def test_web_search_requests_num_results_and_trims_to_it(self):
+    async def test_web_search_requests_max_results_and_trims_to_it(self):
         client = FakeClient(results=[_result(f'https://example.com/{i}') for i in range(10)])
 
-        returned = await _toolset(client, num_results=3).web_search('cats')
+        returned = await _toolset(client, max_results=3).web_search('cats')
 
         assert client.max_results == [3]
         assert len(returned.metadata['sources']) == 3
+
+    async def test_toolset_num_results_is_a_deprecated_alias(self):
+        client = FakeClient(results=[_result('https://example.com/one')])
+        with pytest.warns(HarnessDeprecationWarning, match=r'`KeenableSearchToolset\(num_results=\.\.\.\)`'):
+            toolset = KeenableSearchToolset[None](
+                client=client, num_results=2, max_snippet_chars=500, max_page_chars=10_000
+            )
+        await toolset.web_search('cats')
+        assert client.max_results == [2]
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            KeenableSearchToolset[None](
+                client=client, max_results=5, num_results=2, max_snippet_chars=500, max_page_chars=10_000
+            )
+
+    async def test_toolset_max_results_defaults_to_five(self):
+        client = FakeClient(results=[_result('https://example.com/one')])
+        await KeenableSearchToolset[None](client=client, max_snippet_chars=500, max_page_chars=10_000).web_search(
+            'cats'
+        )
+        assert client.max_results == [5]
 
     async def test_web_search_collapses_whitespace_and_caps_the_excerpt(self):
         # Snippets are raw page text, newlines included, and far longer than the
@@ -353,7 +383,7 @@ class TestKeenableSearchToolset:
         # entry ahead of good ones cost a result slot.
         client = FakeClient(results=[{'title': 'No URL'}, *(_result(f'https://example.com/{i}') for i in range(3))])
 
-        returned = await _toolset(client, num_results=2).web_search('cats')
+        returned = await _toolset(client, max_results=2).web_search('cats')
 
         assert [source['url'] for source in returned.metadata['sources']] == [
             'https://example.com/0',
@@ -450,8 +480,8 @@ class TestKeenableSearchToolset:
     @pytest.mark.parametrize(
         ('budgets', 'message'),
         [
-            ({'num_results': -1}, '`num_results` must be a positive integer'),
-            ({'num_results': 51}, '`num_results` must be at most 50'),
+            ({'max_results': -1}, '`max_results` must be a positive integer'),
+            ({'max_results': 51}, '`max_results` must be at most 50'),
             ({'max_snippet_chars': 0}, '`max_snippet_chars` must be a positive integer'),
             ({'max_page_chars': -10}, '`max_page_chars` must be a positive integer'),
         ],
@@ -463,7 +493,7 @@ class TestKeenableSearchToolset:
         with pytest.raises(ValueError, match=message):
             KeenableSearchToolset[None](
                 client=FakeClient(),
-                num_results=budgets.get('num_results', 5),
+                max_results=budgets.get('max_results', 5),
                 max_snippet_chars=budgets.get('max_snippet_chars', 500),
                 max_page_chars=budgets.get('max_page_chars', 10_000),
             )
@@ -541,7 +571,7 @@ class TestHttpKeenableClient:
         _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json={'results': []}))
         client = HttpKeenableClient(api_key='k\u00e9y')
         toolset = KeenableSearchToolset[None](
-            client=client, num_results=5, max_snippet_chars=500, max_page_chars=10_000
+            client=client, max_results=5, max_snippet_chars=500, max_page_chars=10_000
         )
 
         with pytest.raises(UnicodeEncodeError):
@@ -579,7 +609,7 @@ class TestHttpKeenableClient:
         # Keenable always sends `results` with a 2xx, so reporting an empty
         # search here would hand the model a false negative.
         _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, json=payload))
-        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+        toolset = KeenableSearchToolset[None](client=None, max_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match=r'malformed response: `results` is missing or not a list$'):
             await toolset.web_search('cats')
@@ -599,7 +629,7 @@ class TestHttpKeenableClient:
         # A 2xx that is not JSON is neither an `httpx2.HTTPError` nor a deliberate
         # exception; without this it would kill the run as a bare decode error.
         _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, content=body))
-        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+        toolset = KeenableSearchToolset[None](client=None, max_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='malformed response'):
             await toolset.web_search('cats')
@@ -609,7 +639,7 @@ class TestHttpKeenableClient:
     async def test_oversized_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(HttpKeenableClient, '_MAX_RESPONSE_BYTES', 32)
         _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, content=b'{"results": []}' + b' ' * 64))
-        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+        toolset = KeenableSearchToolset[None](client=None, max_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='response body exceeds 32 bytes'):
             await toolset.web_search('cats')
@@ -620,7 +650,7 @@ class TestHttpKeenableClient:
         stream = _StalledStream()
         monkeypatch.setattr(HttpKeenableClient, '_TIMEOUT_SECONDS', 0.001)
         _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, stream=stream))
-        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+        toolset = KeenableSearchToolset[None](client=None, max_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         with pytest.raises(ModelRetry, match='timed out'):
             await toolset.web_search('cats')
@@ -631,7 +661,7 @@ class TestHttpKeenableClient:
         # that cancels the response's close too unless the close is shielded.
         stream = _StalledStream()
         _capture_requests(monkeypatch, lambda _request: httpx2.Response(200, stream=stream))
-        toolset = KeenableSearchToolset[None](client=None, num_results=5, max_snippet_chars=500, max_page_chars=10_000)
+        toolset = KeenableSearchToolset[None](client=None, max_results=5, max_snippet_chars=500, max_page_chars=10_000)
 
         async def cancel_once_streaming(scope: anyio.CancelScope) -> None:
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):

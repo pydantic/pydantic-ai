@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._warn import warn_argument_renamed
 
 try:
     import pixeltable as pxt
@@ -273,7 +274,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.list_tables, name='list_tables')
         self.add_function(self.describe_table, name='describe_table')
         self.add_function(self.query_table, name='query_table')
-        self.add_function(self.similarity_search, name='similarity_search')
+        self.add_function(self._similarity_search, name='similarity_search')
 
     def list_tables(self) -> TableNames:
         """List the allowed Pixeltable table and view paths."""
@@ -346,6 +347,8 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         column: str,
         columns: list[str] | None = None,
         limit: int = 5,
+        index_name: str | None = None,
+        *,
         idx: str | None = None,
     ) -> RowsResult:
         """Nearest-neighbor search on a column that has an embedding index.
@@ -358,7 +361,40 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
                 default columns; indexed media is never returned. Explicit media, array, binary,
                 and unstored computed or iterator columns are rejected.
             limit: Maximum rows to return, capped by the capability.
-            idx: Embedding index name. Required when the column has more than one index.
+            index_name: Embedding index name. Required when the column has more than one index.
+            idx: Deprecated name of `index_name`.
+
+        Returns:
+            Rows ordered by similarity, each with a `score` field. If the table has a column by
+            that name, the field takes `similarity_` prefixes until it is free.
+        """
+        if idx is not None:
+            if index_name is not None:
+                raise TypeError('Pass `index_name` only: `idx` is its deprecated name.')
+            warn_argument_renamed('PixeltableToolset.similarity_search', 'idx', 'index_name')
+            index_name = idx
+        return self._similarity_search(table, query, column, columns, limit, index_name)
+
+    def _similarity_search(
+        self,
+        table: str,
+        query: str,
+        column: str,
+        columns: list[str] | None = None,
+        limit: int = 5,
+        index_name: str | None = None,
+    ) -> RowsResult:
+        """Nearest-neighbor search on a column that has an embedding index.
+
+        Args:
+            table: Pixeltable table path.
+            query: Text to embed and search for.
+            column: Column with an embedding index.
+            columns: Extra columns to return with the match and score. Omit to return the
+                default columns; indexed media is never returned. Explicit media, array, binary,
+                and unstored computed or iterator columns are rejected.
+            limit: Maximum rows to return, capped by the capability.
+            index_name: Embedding index name. Required when the column has more than one index.
 
         Returns:
             Rows ordered by similarity, each with a `score` field. If the table has a column by
@@ -381,7 +417,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         while score_name in column_md:
             score_name = f'similarity_{score_name}'
         try:
-            search = t[column].similarity(string=query, idx=idx)  # pyright: ignore[reportUnknownMemberType]
+            search = t[column].similarity(string=query, idx=index_name)  # pyright: ignore[reportUnknownMemberType]
             query_obj = self._project(t, selected, metadata, **{score_name: search}).order_by(search, asc=False)
             assert isinstance(query_obj, pxt.Query)
             return self._collect(table, query_obj, limit)

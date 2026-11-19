@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai_harness import HarnessDeprecationWarning
 from tests.conftest import try_import
 
 with try_import() as imports_successful:
@@ -462,15 +463,34 @@ class TestPixeltableToolsetSimilarity:
         named = tools.similarity_search(f'{catalog}.chunks', 'dogs run in parks', 'text', columns=['score', 'pos'])
         assert list(named['rows'][0]) == ['text', 'pos', 'score']
 
-    def test_similarity_idx_disambiguation(self, catalog: str) -> None:
+    def test_similarity_index_name_disambiguation(self, catalog: str) -> None:
         t = get_table(f'{catalog}.chunks')
         t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_a')
         t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_b')
         tools = _tools([f'{catalog}.chunks'])
         with pytest.raises(ModelRetry, match='multiple embedding indices'):
             tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text')
-        result = tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', idx='e_a')
+        result = tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', index_name='e_a')
         assert result['rows'][0]['text'] == 'cats sit on mats'
+
+    def test_similarity_idx_is_a_deprecated_alias(self, catalog: str) -> None:
+        t = get_table(f'{catalog}.chunks')
+        t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_a')
+        t.add_embedding_index('text', string_embed=tiny_embed, idx_name='e_b')
+        tools = _tools([f'{catalog}.chunks'])
+        assert set(tools.tools['similarity_search'].function_schema.json_schema['properties']) == {
+            'table',
+            'query',
+            'column',
+            'columns',
+            'limit',
+            'index_name',
+        }
+        with pytest.warns(HarnessDeprecationWarning, match=r'`PixeltableToolset.similarity_search\(idx=\.\.\.\)`'):
+            result = tools.similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', idx='e_a')
+        assert result['rows'][0]['text'] == 'cats sit on mats'
+        with pytest.raises(TypeError, match='`idx` is its deprecated name'):
+            tools.similarity_search(f'{catalog}.chunks', 'cats', 'text', index_name='e_a', idx='e_b')
 
     def test_similarity_score_does_not_shadow_real_columns(self, catalog: str) -> None:
         scored = create_table(
