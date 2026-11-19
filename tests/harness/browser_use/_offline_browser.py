@@ -21,14 +21,14 @@ class _Finished:
         return 'The Pro plan costs $20 a month.'
 
     def errors(self) -> list[str | None]:
-        return [None, None]
+        return [None, None]  # pragma: no cover
 
     def is_successful(self) -> bool:
         return True
 
     @property
     def structured_output(self) -> None:
-        return None
+        return None  # pragma: no cover
 
 
 @dataclass

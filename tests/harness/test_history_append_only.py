@@ -644,10 +644,10 @@ def test_every_table_entry_names_a_capability():
 @pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - UNBUILDABLE))
 def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """`Coder` is the one capability that turns `RepairToolArguments` on; every other one leaves arguments as sent."""
-    if (case := CASES.get(name)) is not None:
-        skip_unless_installed(name, case.requires)
-        for key, value in case.env.items():
-            monkeypatch.setenv(key, value)
+    case = CASES[name]
+    skip_unless_installed(name, case.requires)
+    for key, value in case.env.items():
+        monkeypatch.setenv(key, value)
     if name in CONVERSATIONS:
         capabilities = CONVERSATIONS[name](tmp_path)[0]
     else:

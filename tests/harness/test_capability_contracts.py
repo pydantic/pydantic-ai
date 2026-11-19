@@ -20,12 +20,13 @@ import pytest
 from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, Toolset
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from .. import capability_cases as core
@@ -39,6 +40,8 @@ from ..capability_cases import (
     RENAMED,
     UNSET_ID,
     WORKSPACE_FROM_FUNCTION,
+    Anonymous,
+    Calls,
     CapabilityCase,
     Combines,
     Contract,
@@ -172,13 +175,9 @@ async def test_tools_behave_the_same_under_a_prefix(name: str, tmp_path: Path) -
     _assert_holds(RENAMED, name, [] if prefixed == plain else [f'under a prefix the calls end {prefixed}, not {plain}'])
 
 
-@pytest.mark.parametrize('name', _cases(FORWARDS_USAGE))
-async def test_every_request_counts_toward_the_run_usage(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Run unlimited, then with a `request_limit` one below the requests that sent, counting every request a model
-    receives, a nested run's included."""
-    case = CASES[name]
+async def _usage_breaks(case: CapabilityCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """How `case`'s calls break `forwards_usage`, run unlimited, then with a `request_limit` one below the requests
+    that sent, counting every request a model receives, a nested run's included."""
     recorder = RequestRecorder()
     patch_models(monkeypatch, recorder)
     used = (await _run_calls(case, tmp_path / 'unlimited')).usage.requests
@@ -198,15 +197,45 @@ async def test_every_request_counts_toward_the_run_usage(
             )
     if len(recorder.requests) > limit:
         breaks.append(f'with `request_limit={limit}`, {len(recorder.requests)} requests reached a model')
-    _assert_holds(FORWARDS_USAGE, name, breaks)
+    return breaks
+
+
+@pytest.mark.parametrize('name', _cases(FORWARDS_USAGE))
+async def test_every_request_counts_toward_the_run_usage(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_holds(FORWARDS_USAGE, name, await _usage_breaks(CASES[name], tmp_path, monkeypatch))
+
+
+async def test_a_nested_run_that_drops_its_usage_breaks_forwards_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool whose own run leaves out `usage=ctx.usage`, as `BrowserUse`'s did before #11860, breaks every clause."""
+
+    async def ask() -> str:
+        return (await Agent(TestModel()).run('nested')).output
+
+    case = CapabilityCase(
+        Anonymous('built only here'), calls=Calls((('ask', {}),), lambda _: Toolset(FunctionToolset[None]([ask])))
+    )
+    assert await _usage_breaks(case, tmp_path, monkeypatch) == [
+        '3 requests reached a model, but `usage.requests` is 2',
+        'with `request_limit=2`, 3 requests reached a model, but `usage.requests` is 2',
+        'with `request_limit=2`, 3 requests reached a model',
+    ]
+
+
+def _prepare(name: str, case: CapabilityCase, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the case of `name` unless its dependency is installed, and set the credentials it checks."""
+    skip_unless_installed(name, case.requires)
+    for key, value in case.env.items():
+        monkeypatch.setenv(key, value)
 
 
 def _build(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[AbstractCapability[Any]]:
     """Everything the case of `name` builds: the capability and what it runs with."""
     case = CASES[name]
-    skip_unless_installed(name, case.requires)
-    for key, value in case.env.items():
-        monkeypatch.setenv(key, value)
+    _prepare(name, case, monkeypatch)
     return build_capabilities(name, PUBLIC[name].load, case.fixture, tmp_path)
 
 
@@ -226,8 +255,8 @@ def _toolset_ids(capability: AbstractCapability[Any]) -> list[str | None] | None
     if toolset is None:
         return None
     if not isinstance(toolset, AbstractToolset):
-        # The agent wraps a toolset function in one `DynamicToolset`, with no id of its own.
-        return [None]
+        # The agent wraps a toolset function in one `DynamicToolset`, with no id of its own. No case returns one yet.
+        return [None]  # pragma: no cover
     leaves: list[AbstractToolset[Any]] = []
     # Pyright can't narrow the toolset function out of `AgentToolset`, as core's `CombinedCapability` notes.
     toolset.apply(leaves.append)  # pyright: ignore[reportUnknownMemberType]
@@ -311,9 +340,7 @@ async def test_stating_a_configuration_twice_states_it_once(
 ) -> None:
     case = CASES[name]
     assert isinstance(case.combine, Combines)
-    skip_unless_installed(name, case.requires)
-    for key, value in case.env.items():
-        monkeypatch.setenv(key, value)
+    _prepare(name, case, monkeypatch)
     # Built off the event loop, as an app builds them: a capability may read files when constructed.
     first, second = await anyio.to_thread.run_sync(case.combine.make)
     merged = await anyio.to_thread.run_sync(type(first).combine, [first, second])
