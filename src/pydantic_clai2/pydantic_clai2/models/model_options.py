@@ -2,6 +2,7 @@
 
 import re
 
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_clai2.models.model_settings import ModelSettingsForm, gpt_defaults
@@ -56,15 +57,15 @@ def _anthropic_options(*, name: str) -> dict[str, tuple[str, ...]]:
         options[key] = ()
     claude = anthropic_model_profile(name) or {}
     adaptive = claude.get('anthropic_supports_adaptive_thinking', False)
-    options['anthropic_thinking_mode'] = ('adaptive', 'disabled') if adaptive else ('enabled', 'disabled')
+    options['anthropic_thinking_mode'] = _anthropic_thinking_modes(claude=claude)
     if not adaptive:
         options['anthropic_thinking_budget'] = ()
     if claude.get('anthropic_supports_effort', False):
         options['anthropic_effort'] = _anthropic_efforts(name=name)
     if adaptive:
         options['anthropic_preserved_thinking'] = ()
-    if any(tag in name.lower() for tag in _FABLE_5_1_TAGS):
-        options['anthropic_thinking_display'] = ('updates', 'summarized')
+    if display := _anthropic_displays(name=name):
+        options['anthropic_thinking_display'] = display
     if not adaptive and re.match(r'claude-(?:opus|sonnet|haiku)-4', name.lower()):
         options['anthropic_interleaved_thinking'] = ()
     if claude.get('anthropic_disallows_sampling_settings', False):
@@ -73,10 +74,30 @@ def _anthropic_options(*, name: str) -> dict[str, tuple[str, ...]]:
     return options
 
 
+def _anthropic_thinking_modes(*, claude: ModelProfile) -> tuple[str, ...]:
+    """Only the modes the API accepts: some models always think, Sonnet 5.5 turns off with `between_tools`."""
+    modes = ('adaptive',) if claude.get('anthropic_supports_adaptive_thinking', False) else ('enabled',)
+    if claude.get('anthropic_disables_thinking_with_between_tools', False):
+        return (*modes, 'between_tools')
+    if claude.get('thinking_always_enabled', False):
+        return modes
+    return (*modes, 'disabled')
+
+
+def _anthropic_displays(*, name: str) -> tuple[str, ...]:
+    if any(tag in name.lower() for tag in _FABLE_5_1_TAGS):
+        return ('updates', 'summarized')
+    if any(tag in name.lower() for tag in _NOTES_BETWEEN_TOOLS_TAGS):
+        return ('summarized',)
+    return ()
+
+
 def _openai_options(*, provider: str, name: str, family_defaults: bool) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     options['top_p'] = ()
     options['service_tier'] = ()
+    if provider == 'openai-codex':
+        options['codex_speed'] = ()
     if provider != 'openai-chat':
         options.pop('seed')
     profile = openai_model_profile(name)
@@ -111,11 +132,11 @@ def validate_model_options(*, model: str, form: ModelSettingsForm) -> None:
         profile = anthropic_model_profile(model.partition(':')[2]) or {}
         if (
             profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False)
-            and form.anthropic_thinking_mode == 'disabled'
+            and form.anthropic_thinking_mode in ('disabled', 'between_tools')
             and form.anthropic_effort in ('xhigh', 'max')
         ):
             raise ValueError('This model requires thinking for xhigh or max effort.')
-    if form.anthropic_thinking_mode == 'disabled' and (
+    if form.anthropic_thinking_mode in ('disabled', 'between_tools') and (
         form.anthropic_thinking_display is not None or form.anthropic_preserved_thinking is not None
     ):
         raise ValueError('Set extended thinking to enabled or adaptive before using its display or binding.')
@@ -142,6 +163,9 @@ def _validate_classic_thinking(*, form: ModelSettingsForm) -> None:
 
 # Fable 5.1 surfaces its inter-tool progress updates; both spellings appear in the wild.
 _FABLE_5_1_TAGS: tuple[str, ...] = ('fable-5-1', '5-1-fable', 'fable-5.1', '5.1-fable')
+# Opus 5.5 and Sonnet 5.5 return the notes they write between tool calls as thinking blocks, empty
+# at Anthropic's default `display: 'omitted'`; `summarized` shows them.
+_NOTES_BETWEEN_TOOLS_TAGS: tuple[str, ...] = ('opus-5-5', 'sonnet-5-5')
 
 
 def _glm_version(*, name: str) -> tuple[int, int] | None:

@@ -3881,6 +3881,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             id='http-request-rejected',
         ),
         pytest.param(
+            ModelHTTPError.for_category(ModelTimeoutError, status_code=408, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-timeout',
+        ),
+        pytest.param(
             ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
             'ModelAPIError',
             id='not-found',

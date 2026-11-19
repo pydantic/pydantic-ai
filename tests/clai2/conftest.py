@@ -2,10 +2,11 @@
 
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
+from threading import Thread
 
 import keyring
 import pytest
@@ -13,6 +14,7 @@ from keyring.errors import PasswordDeleteError
 from rich.style import Style
 
 from pydantic_ai import models
+from pydantic_clai2 import warm_imports
 from pydantic_clai2.config import Settings, credential_store
 from tests.clai2.cli_runner import CliRunner
 
@@ -71,6 +73,26 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
 def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
     """Copy out through OSC 52 only: the local clipboard command would replace the developer's clipboard."""
     monkeypatch.setattr('pydantic_clai2.ui.prompt.text_clipboard.copy_command', lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def finished_import_warming(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Wait for the import warm-up a test starts: left running, it imports during the tests after it on the worker.
+
+    An import that lands while pytester's teardown iterates `sys.modules` fails that test with `dictionary keys changed
+    during iteration`.
+    """
+    started: list[Thread] = []
+    start = warm_imports.start
+
+    def start_and_record(modules: Sequence[str] = warm_imports.FIRST_USE_MODULES) -> Thread:
+        started.append(thread := start(modules))
+        return thread
+
+    monkeypatch.setattr(warm_imports, 'start', start_and_record)
+    yield
+    for thread in started:
+        thread.join()
 
 
 @pytest.fixture(autouse=True)

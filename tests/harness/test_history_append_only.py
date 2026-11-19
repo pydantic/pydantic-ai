@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import pytest
-from mcp.server.fastmcp import FastMCP
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
@@ -51,6 +50,7 @@ from pydantic_ai_harness import (
     DeduplicateFileReads,
     FallbackCompaction,
     FileSystem,
+    Goal,
     Grain,
     InputGuardrail,
     Macroscope,
@@ -63,6 +63,8 @@ from pydantic_ai_harness import (
     Pylon,
     RelevanceCompaction,
     RepoContext,
+    ReportStaleFiles,
+    RequireVerification,
     Researcher,
     Shell,
     Skills,
@@ -85,6 +87,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
+from pydantic_ai_harness.report_stale_files import StaleFilesPart
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import (
@@ -115,20 +118,16 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
+from ._mcp_server import MCPServer
 from .display_fakes import ScreenProvider
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
 
-
-def _hosted_server() -> FastMCP:
+def _hosted_server() -> MCPServer:
     """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
-    server = FastMCP('hosted', instructions='Hosted service instructions.')
+    server = MCPServer('hosted', instructions='Hosted service instructions.')
 
     @server.tool()
     def search() -> str:
@@ -180,6 +179,10 @@ def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
 
 def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
+
+
+def _bridge_look_up(topic: str) -> tuple[str, dict[str, str]]:
+    return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
 
 
 class _PruneLatestReturn(AbstractCapability[None]):
@@ -333,6 +336,10 @@ def _time_reminder(ctx: RunContext[Any]) -> str:
     return f'It is now {CLOCK.now:%H:%M} UTC.'
 
 
+async def _goal_met(ctx: RunContext[None], output: object) -> None:
+    return None
+
+
 FIXTURES: dict[str, Fixture] = {
     **{cls.__name__: _hosted(cls) for cls in _HOSTED_MCP},
     'Advisor': lambda _: Advisor(TestModel()),
@@ -354,6 +361,7 @@ FIXTURES: dict[str, Fixture] = {
         fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
     ),
     'FileSystem': _workspace(FileSystem),
+    'Goal': lambda _: Goal(goal='Report the weather.', verify=_goal_met),
     'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
     # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
     # launching a kernel process for every provider.
@@ -366,6 +374,12 @@ FIXTURES: dict[str, Fixture] = {
     'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
     'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
     'RepoContext': _repo_context,
+    'RequireVerification': lambda tmp_path: [
+        RequireVerification(verification_commands=[r'true\b']),
+        FileSystem(),
+        Shell(denied_commands=[]),
+        LocalWorkspace(tmp_path),
+    ],
     'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
     'Shell': _workspace(Shell),
@@ -506,6 +520,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
     # A button pressed in one step stays held into the run's next step, which releases it.
     'ComputerUse': Scenario(
@@ -549,6 +564,17 @@ SCENARIOS: dict[str, Scenario] = {
             Turn(text='Here is more, checked.'),
         )
     ),
+    # The first run edits, is sent back to verify, and passes a check; the second makes no edit.
+    'RequireVerification': Scenario(
+        turns=(
+            Turn(calls=(('write_file', {'path': 'weather.py', 'content': 'FORECAST = "sunny"\n'}),)),
+            Turn(text='Saved the forecast.'),
+            Turn(calls=(('run_command', {'command': 'true'}),)),
+            Turn(text='Saved and verified the forecast.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        )
+    ),
     'RepoContext': Scenario(
         state_calls=(
             ('edit_file', {'path': 'AGENTS.md', 'old_text': 'short', 'new_text': 'very short'}),
@@ -563,6 +589,9 @@ EXEMPT: dict[str, Exempt] = {
     'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
     'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
     'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
+    'ModelRouter': Exempt(
+        "Replaces the run's model with one from its menu, so the scenario's provider model is never requested."
+    ),
     'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
     'RenderWorkflows': Exempt('Durable engine: needs a Render Workflows app.'),
     'SSHWorkspace': Exempt('Needs an SSH host to attach a workspace to.'),
@@ -630,6 +659,22 @@ ALLOWED: dict[str, Allowed] = {
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
+    'ReportRemainingBudget': Allowed(
+        f'Request-scoped system prompt ({_ISSUES}9019): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
+    'ReportStaleFiles': Allowed(
+        'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
+        '`clear_at`; elsewhere it is a request-only tail',
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
@@ -809,8 +854,38 @@ def _peer_message(
     return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
 
 
+def _stale_files(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[None]], Scenario, Callable[[ConversationResult], None]]:
+    """A file the model read and edited changes from outside between the runs, so the second run gets notices."""
+    notes = tmp_path / 'notes.md'
+    notes.write_text('Sunny.\n')
+
+    async def change() -> None:
+        notes.write_text('Snowy.\n')
+
+    def notified(result: ConversationResult) -> None:
+        parts = [
+            part
+            for message in result.history
+            for part in getattr(message, 'parts', ())
+            if isinstance(part, StaleFilesPart)
+        ]
+        assert parts, 'expected a stale-file notice in the second run'
+
+    scenario = Scenario(
+        state_calls=(
+            ('read_file', {'path': 'notes.md'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+        ),
+        between_runs=change,
+    )
+    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)], scenario, notified
+
+
 CONVERSATIONS = {
     'Peers': _peer_message,
+    'ReportStaleFiles': _stale_files,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
