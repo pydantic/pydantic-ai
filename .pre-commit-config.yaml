@@ -93,6 +93,15 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: test-waits
+        name: Real-clock waits in tests
+        # Like `complexity`, `--staged` checks only what is staged, against `HEAD` and during a merge `MERGE_HEAD`.
+        entry: uv
+        args: [run, --no-sync, scripts/check_test_waits.py, --staged]
+        files: ^tests/
+        types: [python]
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv

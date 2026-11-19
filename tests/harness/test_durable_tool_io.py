@@ -42,6 +42,7 @@ from pydantic_ai_harness.planning import (
     SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 from .capability_cases import CASES
@@ -245,9 +246,6 @@ async def test_dbos_recovery_reports_the_same_shell_job(dbos: DBOS) -> None:
     assert (_SHELL_DIRECTORY / 'side-effects.txt').read_text().splitlines() == ['one']
 
 
-_READINESS_WAIT_TIMEOUT = 5.0
-
-
 class _SlowReadPlanStore(InMemoryPlanStore):
     """A plan store whose `get_item` waits, once a plan tool has emitted `last_event`, until it's handled.
 
@@ -268,7 +266,7 @@ class _SlowReadPlanStore(InMemoryPlanStore):
         return isinstance(event, event_type) and event.item.id == task_id
 
     async def get_item(self, item_id: str) -> PlanItem | None:
-        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await self.released.wait()
         return await super().get_item(item_id)
 
