@@ -370,6 +370,15 @@ CASES = [
         expect_warning='XHIGH is not a valid ThinkingLevel',
         match_body=True,
     ),
+    WireCase(
+        id='google-gemini-4-neon-xhigh',
+        provider='google',
+        model_name='gemini-4-neon',
+        thinking='xhigh',
+        present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
+        expect_warning='XHIGH is not a valid ThinkingLevel',
+        match_body=True,
+    ),
     # Gemma 4 on the Gemini API takes only `MINIMAL` and `HIGH`, and 400s on any `thinking_budget` or other level.
     WireCase(
         id='google-gemma-4-disable-sends-minimal',
