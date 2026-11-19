@@ -1,7 +1,6 @@
 """`Dialogs` and `SettingsMenu` in the terminal: termflow widgets, one `run_worker` each, under one hold."""
 
 import asyncio
-import re
 import textwrap
 import threading
 from collections.abc import Awaitable, Callable, Sequence
@@ -15,14 +14,12 @@ from termflow.tui.pager import Pager
 from pydantic_clai2.plugins.menus import Action, Option, SettingsMenu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, Runners, run_flow_async
 from pydantic_clai2.ui.menus.menu_worker import full_terminal, menu_key, run_worker
-from pydantic_clai2.ui.rendering.rendering import markdown_style
+from pydantic_clai2.ui.prompt.prompt_selection import URL, trim_url
+from pydantic_clai2.ui.rendering.rendering import MAX_LINK, markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 _REDRAW = 'dialogs:changed'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing the new text."""
-_URL = re.compile(r'https?://[^\s\x00-\x1f\x7f]+')
-_MAX_LINK = 2048
-"""The longest URL the waiting screen links, as `LinkOutput` caps a streamed link: each folded row repeats it."""
 
 
 class TerminalDialogs:
@@ -177,7 +174,11 @@ class TerminalDialogs:
 
 
 def _preview_width() -> int:
-    """The width of the preview pane termflow lays out beside a list of its default width."""
+    """The width of the preview pane termflow lays out beside a list of its default width.
+
+    This mirrors `Menu._frame` and `layout.two_columns` in termflow-md 1.0.0, which pass the preview no
+    width; `test_wait_folds_urls_to_the_pane_termflow_draws` paints a real frame to catch a change.
+    """
     columns = max(10, terminal_size()[0] - 1)
     return max(1, columns - max(20, columns // 2) - 3)
 
@@ -190,19 +191,26 @@ def _linked(text: str, *, width: int) -> str:
     """
     lines: list[str] = []
     for line in text.split('\n'):
-        urls = [(match.start(), match.end(), match[0]) for match in _URL.finditer(line) if len(match[0]) <= _MAX_LINK]
-        if not urls:
-            lines.append(line)
-            continue
-        for start in range(0, len(line), width):
-            end, row, done = start + width, '', start
-            for first, last, url in urls:
-                label_start, label_end = max(first, start), min(last, end)
-                if label_start < label_end:
-                    row += line[done:label_start] + make_link(url, line[label_start:label_end])
-                    done = label_end
-            lines.append(row + line[done:end])
+        urls = [
+            (match.start(), match.start() + len(url), url)
+            for match in URL.finditer(line)
+            if (url := trim_url(match[0])).isprintable() and len(url) <= MAX_LINK
+        ]
+        lines += (
+            [_linked_row(line, start, start + width, urls) for start in range(0, len(line), width)] if urls else [line]
+        )
     return '\n'.join(lines)
+
+
+def _linked_row(line: str, start: int, end: int, urls: list[tuple[int, int, str]]) -> str:
+    """`line[start:end]`, with the parts of `urls` (start, end, URL) in it linked to their whole URL."""
+    row, done = '', start
+    for first, last, url in urls:
+        label_start, label_end = max(first, start), min(last, end)
+        if label_start < label_end:
+            row += line[done:label_start] + make_link(url, line[label_start:label_end])
+            done = label_end
+    return row + line[done:end]
 
 
 def wrap(text: str, width: int) -> list[str]:

@@ -480,8 +480,12 @@ async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monke
     console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         assert 'connected' in await CodexAuth(console, read_line=never_pasted).login([])
-    assert opened == urls
-    assert set(hyperlinks(output.getvalue())) == set(urls), 'every wrapped line of the URL links to all of it'
+    [url] = urls
+    assert opened == [url]
+    rows = [row for row in output.getvalue().splitlines() if hyperlinks(row)]
+    assert len(rows) > 1, 'Rich wraps the URL'
+    assert all(hyperlinks(row) == [url] for row in rows), 'every wrapped row links to the whole URL'
+    assert ''.join(re.sub(r'\x1b\]8;[^\x1b]*\x1b\\', '', row) for row in rows) == url
 
 
 async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyPatch) -> None:
