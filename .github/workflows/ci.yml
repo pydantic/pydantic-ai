@@ -2281,10 +2281,9 @@ jobs:
 
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
-  # SDK we cannot drive (the `anthropic` 1.0.0 case). `check` allows its failure below. Tag refs
-  # only — on every other event the job skips, which `check` also allows. It runs alongside the
-  # test matrix rather than after it, so it lands well before `coverage` and adds nothing to the
-  # critical path.
+  # SDK we cannot drive (the `anthropic` 1.0.0 case). Tag refs only. No job needs it, so a
+  # failure turns the tag run red without delaying or stopping `check`, `deploy-docs` or the
+  # release jobs.
   latest-versions-canary:
     name: latest versions canary
     if: startsWith(github.ref, 'refs/tags/')
@@ -2382,7 +2381,6 @@ jobs:
       - harness-azure-durable-task-integration
       - harness-kubernetes-integration
       - harness-bubblewrap-integration
-      - latest-versions-canary
       - coverage
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
 
@@ -2390,8 +2388,6 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          # The canary is advisory because it tests dependency versions we do not lock; its failures
-          # signal upstream drift rather than release blockers. It runs on tag refs only, and
           # `docs-only` covers published docs and assets; `content-checks` covers other
           # non-test content. Workflow and configuration changes keep the full test matrix.
           # Each reduced path must run its selected checks.
@@ -2400,25 +2396,24 @@ jobs:
           # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
           # `test-clai2-web` also follows its workflow, `pyproject.toml`, and `uv.lock`; it runs on tags.
           # A `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
-          allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              || 'docs-only,content-checks,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
