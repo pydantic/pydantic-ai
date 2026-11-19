@@ -2,7 +2,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Generator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from importlib import import_module
@@ -293,6 +293,54 @@ def test_arguments_changed_by_hooks_reach_the_activity_as_changed(durable_worker
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
     assert observed == [(Order(qty=99), 'hook'), 2]
+
+
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = field(compare=False)
+
+
+def test_field_a_hook_pinned_reaches_the_activity_as_pinned_where_eq_ignores_it(
+    durable_worker: 'InMemoryWorker',
+) -> None:
+    """A field a hook pinned reaches the activity as pinned, even where `==` ignores it.
+
+    `token` makes the dump lossy, so the model's arguments would be sent if they validated to the hook's; they do
+    under `==`, which skips `tenant_id`. Their JSON form doesn't, so the call keeps the dump, as on main, and the
+    `SecretStr` arrives masked.
+    """
+    observed: list[tuple[int, str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.after_tool_validate(tools=['act'])
+    async def pin_tenant(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return {**args, 'account': replace(args['account'], tenant_id=1)}
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[ToolCallPart('act', {'account': {'name': 'acme', 'tenant_id': 2}, 'token': 'hunter2'})]
+        )
+
+    agent = Agent(
+        FunctionModel(model),
+        name='pinned-tenant',
+        deps_type=type(None),
+        capabilities=[hooks, AzureDurableTaskDurability()],
+    )
+
+    @agent.tool_plain
+    def act(account: Account, token: SecretStr) -> str:
+        observed.append((account.tenant_id, token.get_secret_value()))
+        return 'acted'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [(1, '**********')]
 
 
 def test_validator_that_mutates_its_input_runs_once_in_the_activity(

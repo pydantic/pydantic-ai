@@ -334,6 +334,50 @@ async def test_arguments_changed_by_hooks_reach_the_task_as_changed() -> None:
     assert seen == [(Order(qty=99), 'hook'), 2]
 
 
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = dataclasses.field(compare=False)
+
+
+def pinned_tenant_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    args = {'account': {'name': 'acme', 'tenant_id': 2}, 'token': 'hunter2'}
+    return ModelResponse(parts=[ToolCallPart('act', args, tool_call_id='act')])
+
+
+async def test_field_a_hook_pinned_reaches_the_task_as_pinned_where_eq_ignores_it() -> None:
+    """A field a hook pinned reaches the task as pinned, even where `==` ignores it.
+
+    `token` makes the dump lossy, so the model's arguments would be sent if they validated to the hook's; they do
+    under `==`, which skips `tenant_id`. Their JSON form doesn't, so the call keeps the dump, as on main, and the
+    `SecretStr` arrives masked.
+    """
+    seen: list[tuple[int, str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.after_tool_validate(tools=['act'])
+    async def pin_tenant(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return {**args, 'account': dataclasses.replace(args['account'], tenant_id=1)}
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(pinned_tenant_model), name='pinned-tenant', deps_type=type(None), capabilities=[hooks, runtime]
+    )
+
+    @agent.tool_plain
+    async def act(account: Account, token: SecretStr) -> str:
+        seen.append((account.tenant_id, token.get_secret_value()))
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [(1, '**********')]
+
+
 async def test_invalid_typed_arguments_follow_normal_model_retry_control_flow() -> None:
     seen: list[TypedPayload] = []
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))

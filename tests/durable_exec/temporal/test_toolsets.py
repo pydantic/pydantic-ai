@@ -7,7 +7,7 @@ import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
@@ -1586,6 +1586,75 @@ async def test_arguments_changed_by_hooks_reach_the_activity_as_changed(client: 
 
     assert output == 'Done.'
     assert sorted(_received_hook_args, key=repr) == sorted([(Order(qty=99), 'hook'), 2], key=repr)
+
+
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = field(compare=False)
+
+
+_received_tenants: list[tuple[int, str]] = []
+"""The tenant and token `act` ran with, recorded in the activity."""
+
+
+def act(account: Account, token: SecretStr) -> str:
+    """Act for an account."""
+    _received_tenants.append((account.tenant_id, token.get_secret_value()))
+    return 'Acted.'
+
+
+_pin_hooks = Hooks[None]()
+
+
+@_pin_hooks.on.after_tool_validate(tools=['act'])
+async def _pin_tenant(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    return {**args, 'account': replace(args['account'], tenant_id=1)}
+
+
+def _pinned_tenant_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    args = {'account': {'name': 'acme', 'tenant_id': 2}, 'token': 'hunter2'}
+    return ModelResponse(parts=[ToolCallPart('act', args, tool_call_id='c1')])
+
+
+_pinned_tenant_agent = Agent(
+    FunctionModel(_pinned_tenant_model),
+    name='pinned_tenant_durable',
+    deps_type=type(None),
+    tools=[act],
+    capabilities=[_pin_hooks, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PinnedTenantWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _pinned_tenant_agent.run('Act for acme.')
+        return result.output
+
+
+async def test_field_a_hook_pinned_reaches_the_activity_as_pinned_where_eq_ignores_it(client: Client):
+    """A field a hook pinned reaches the activity as pinned, even where `==` ignores it.
+
+    `token` makes the dump lossy, so the model's arguments would be sent if they validated to the hook's; they do
+    under `==`, which skips `tenant_id`. Their JSON form doesn't, so the call keeps the dump, as on main, and the
+    `SecretStr` arrives masked.
+    """
+    _received_tenants.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[PinnedTenantWorkflow], plugins=[AgentPlugin(_pinned_tenant_agent)]
+    ):
+        output = await client.execute_workflow(
+            PinnedTenantWorkflow.run, id=f'{PinnedTenantWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    assert output == 'Done.'
+    assert _received_tenants == [(1, '**********')]
 
 
 _received_folds: list[object] = []
