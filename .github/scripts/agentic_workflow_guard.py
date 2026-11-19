@@ -1750,7 +1750,7 @@ def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> l
 
 
 def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """The same-repo @claude job must run only on maintainers' threads and read only maintainers' comments."""
+    """The same-repo @claude job must run only on maintainers' threads, with context from maintainers' comments only."""
     source = workflows_dir / 'at-claude.yml'
     if not source.is_file():
         return [Violation(str(source), 'at-claude-maintainer-threads', '@claude workflow is missing.')]

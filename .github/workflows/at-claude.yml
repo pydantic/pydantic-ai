@@ -85,8 +85,8 @@ jobs:
           author_permission=none
           if [ "$THREAD_AUTHOR_TYPE" = User ]; then
             author_permission=$(permission "$THREAD_AUTHOR")
+            echo "Thread author ${THREAD_AUTHOR} has ${author_permission} access."
           fi
-          echo "Thread author ${THREAD_AUTHOR} has ${author_permission} access."
           included=("$GITHUB_ACTOR")
           case "$author_permission" in
             write | admin)
@@ -109,7 +109,7 @@ jobs:
               done
               ;;
             *)
-              echo "::notice::@claude runs only on issues and pull requests a maintainer opened; ${THREAD_AUTHOR} has ${author_permission} access."
+              echo "::notice::@claude runs only on issues and pull requests a maintainer opened; ${THREAD_AUTHOR} is not a maintainer."
               ;;
           esac
 
