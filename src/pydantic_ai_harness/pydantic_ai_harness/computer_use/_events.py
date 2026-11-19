@@ -1,7 +1,8 @@
 """Events the `computer` tool sends, so an application can follow the screen without reading tool results.
 
-One event is sent for each call that finishes with a screenshot. It's sent outside the call's durable step, so durable
-execution doesn't send it again on replay. The events add no tracing spans, because the tool call is already traced.
+One event is sent for each call that finishes with a screenshot. It's sent from workflow code, not from the call's
+durable step, so a retried step doesn't send it twice. The events add no tracing spans, because the tool call is
+already traced.
 """
 
 from dataclasses import dataclass
