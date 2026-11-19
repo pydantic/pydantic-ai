@@ -18,7 +18,8 @@ with try_import() as shim_installed:
     import pydantic_clai2
     from pydantic_clai2 import __main__ as clai2_main
 
-# The `pydantic-ai-pax` test cell installs no `pydantic-clai2`; the cells with every workspace package do.
+# The `pydantic-ai-pax` test cell installs no `pydantic-clai2`, except on its 3.11 leg for a
+# `pydantic-ai-pax`-only change; the cells with every workspace package do.
 requires_shim = pytest.mark.skipif(not shim_installed(), reason='pydantic-clai2 not installed')
 SOURCES = Path(__file__).parents[2] / 'src'
 

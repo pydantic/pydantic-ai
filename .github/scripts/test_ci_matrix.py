@@ -367,6 +367,25 @@ def test_all_extras_shards_match_the_partition(event_name: str, route: str):
                 assert _Expression(str(step['if']), step_context).evaluate() is (version in ('3.11', '3.14'))
 
 
+@pytest.mark.parametrize('event_name', ('pull_request', 'merge_group'))
+@pytest.mark.parametrize('route', ROUTES)
+def test_pax_coverage_covers_the_clai2_shim_and_pax_without_it(event_name: str, route: str):
+    """Coverage on `tests/pax/test_rename.py` needs a leg with the `pydantic-clai2` shim and one without it."""
+    env = _mapping(_job('test')['env'])
+    installs: dict[str, set[str]] = {}
+    for leg in _expand('test', event_name, route):
+        context = {**_context(event_name, route), 'matrix': leg}
+        install = _text(_render(env['INSTALL_COMMAND'], context))
+        if route != 'clai2_only':
+            assert install == _text(_lookup(context, 'matrix.install.command'))
+        if _render(env['COLLECT_COVERAGE'], context) is True:
+            installs.setdefault(install, set()).add(_text(leg['python-version']))
+    if route == 'clai2_only':
+        assert installs == {'--package pydantic-clai2': {'3.11'}, '--package pydantic-ai-pax': {'3.14'}}
+    else:
+        assert '--package pydantic-clai2' not in installs
+
+
 def test_every_dependency_resolution_runs_on_a_pull_request():
     resolutions = {_text(leg['resolution']) for leg in _expand('test-durable-exec', 'pull_request')}
     assert resolutions == {'locked', 'lowest'}
