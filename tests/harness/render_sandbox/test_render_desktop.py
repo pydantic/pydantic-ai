@@ -112,9 +112,9 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(
     client, working_dir = workspace_harness.client, str(workspace_harness.root)
 
     # Attaching installs nothing it can't, so the network setting for new sandboxes doesn't stop it.
-    desktop = RenderSandbox(
-        client=client, working_dir=working_dir, desktop=(1440, 900), allow_internet_access=False
-    ).backend(ref)
+    desktop = RenderSandboxBackend(
+        client=client, ref=ref, working_dir=working_dir, desktop=(1440, 900), allow_internet_access=False
+    )
     await screen(desktop).display_size()
 
     (start,) = display.starts
