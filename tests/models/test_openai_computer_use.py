@@ -911,7 +911,10 @@ async def test_a_profile_that_turns_it_on_gets_the_native_tool(
 
 
 def test_azure_the_gateway_and_openrouter_keep_the_function_tool() -> None:
-    """The native tool isn't verified on Azure or the gateway. OpenRouter answers it with only a reasoning item."""
+    """The native tool isn't verified on Azure or the gateway. OpenRouter answers it with only a reasoning item.
+
+    `OpenRouterProvider` isn't an `OpenAIProvider`, so `_instance_profile_defaults` removes the tool for it.
+    """
     from openai import AsyncAzureOpenAI
 
     from pydantic_ai.providers.gateway import gateway_provider

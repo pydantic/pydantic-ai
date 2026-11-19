@@ -729,18 +729,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     return profile
 
 
-def _is_computer_use_model(model_name: str) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether OpenAI offers its native computer tool on this model.
-
-    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
-    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
-    is added here.
-    """
-    return model_name.startswith(
-        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
-    ) and not model_name.startswith('gpt-5.4-nano')
-
-
 def _gpt_oss_schema_profile(model_name: str) -> ModelProfile:  # pyright: ignore[reportUnusedFunction]
     """The gpt-oss schema fix alone, for providers that serve gpt-oss without `openai_model_profile`.
 
@@ -756,6 +744,18 @@ def is_openai_live_model(model_name: str) -> bool:
     them — see [`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel].
     """
     return model_name.startswith('gpt-live')
+
+
+def is_openai_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI offers its native computer tool on this model.
+
+    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
+    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
+    is added here.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
 
 
 def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
