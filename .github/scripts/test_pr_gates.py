@@ -240,7 +240,10 @@ def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_pr
 def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
     workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     assert set(workflow.on) == {'workflow_run', 'merge_group'}
-    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events']
+    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events', 'PR Review Checks']
+    assert workflow.jobs['review-target'].condition == (
+        "github.event_name != 'workflow_run' || github.event.workflow_run.event != 'merge_group'"
+    )
     publisher = workflow.jobs['review-statuses']
     assert publisher.permissions['statuses'] == 'write'
     assert all(step.condition == "steps.pending.outputs.active == 'true'" for step in publisher.steps[1:])
@@ -323,6 +326,7 @@ def test_observer_cannot_choose_the_status_target():
         ('empty-event-prs', 'active'),
         ('pull-request', 'active'),
         ('producer', 'active'),
+        ('checks-producer', 'active'),
         ('group', 'active'),
         ('foreign-pr', 'error'),
         ('wrong-sha', 'error'),
@@ -388,6 +392,10 @@ if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.event = 'pull_request_target';
 }
 if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
+if (data.scenario === 'checks-producer') {
+  serverRun.name = 'PR Review Checks'; serverRun.path = '.github/workflows/pr-review-checks.yml';
+  serverRun.event = 'pull_request_target';
+}
 // GitHub reports the base repository as a review run's head repository, even for a fork PR.
 if (['pull_request_review', 'pull_request_review_comment'].includes(serverRun.event)) {
   serverRun.head_repository = {id: 1, owner: {login: 'pydantic'}};
@@ -487,7 +495,7 @@ console.log(JSON.stringify(results));
                         'per_page': 100,
                     },
                 ]
-                if scenario in {'pull-request', 'producer'}
+                if scenario in {'pull-request', 'producer', 'checks-producer'}
                 else ['branch', {'owner': 'pydantic', 'name': 'pydantic-ai', 'branch': 'attacker-branch'}]
             )
             assert output['calls'][:2] == [['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}], lookup]
@@ -1017,9 +1025,9 @@ def test_findings_on_every_head_and_size_need_an_answer(size: review_gates.Size)
 @pytest.mark.parametrize(
     ('posted', 'resolved', 'passes'),
     [
-        (review_gates.DISPOSITIONS_FROM.replace(hour=1), True, False),
-        (review_gates.DISPOSITIONS_FROM.replace(day=18), True, True),
-        (review_gates.DISPOSITIONS_FROM.replace(day=18), False, False),
+        (review_gates.RESOLUTION_SETTLES_BEFORE.replace(hour=1), True, False),
+        (review_gates.RESOLUTION_SETTLES_BEFORE.replace(day=18), True, True),
+        (review_gates.RESOLUTION_SETTLES_BEFORE.replace(day=18), False, False),
     ],
 )
 def test_only_threads_resolved_before_the_cutoff_need_no_answer(posted: datetime, resolved: bool, passes: bool):
@@ -1033,7 +1041,7 @@ def test_unregistered_bot_fails_even_with_an_answer():
     assert verdicts(github)['dispositions'].failures[1:] == [
         'https://github.com/o/r/pull/7#discussion_r40: no registered reviewer started this `new-reviewer[bot]` thread.'
     ]
-    github.comments = [finding(stranger, posted=review_gates.DISPOSITIONS_FROM.replace(day=18))]
+    github.comments = [finding(stranger, posted=review_gates.RESOLUTION_SETTLES_BEFORE.replace(day=18))]
     github.resolved = {40}
     assert not verdicts(github)['dispositions'].failures
 
