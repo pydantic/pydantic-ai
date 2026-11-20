@@ -101,6 +101,9 @@ _PARTIAL_OUTPUT_LIMIT = 65_536
 # Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
 # process's memory, so reading stops once combined stdout and stderr pass this.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+# Like the local backend: seconds that output is still read after the command exits, since a
+# background child can hold the output streams open.
+_OUTPUT_DRAIN_GRACE = 2.0
 logger = logging.getLogger(__name__)
 
 
@@ -687,7 +690,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
             async def collect() -> None:
                 try:
-                    results.append(await _collect_output(process, snapshots, exit_event))
+                    # Without a timeout, nothing else bounds reading after the command exits.
+                    results.append(await _collect_output(process, snapshots, exit_event, bound_drain=timeout is None))
                 except Exception as error:
                     errors.append(error)
                     exit_event.set()
@@ -706,7 +710,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 group.cancel_scope.cancel()
             else:
                 # Once the process exits, output gets a short grace past its command deadline to drain.
-                with anyio.move_on_after(_remaining(timeout, started_at, at_least=2)) as drain_scope:
+                with anyio.move_on_after(_remaining(timeout, started_at, at_least=_OUTPUT_DRAIN_GRACE)) as drain_scope:
                     await done_event.wait()
                 if drain_scope.cancelled_caught:
                     group.cancel_scope.cancel()
@@ -780,48 +784,53 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
 
 async def _collect_output(
-    process: modal.container_process.ContainerProcess[bytes], snapshots: list[str], exit_event: anyio.Event
+    process: modal.container_process.ContainerProcess[bytes],
+    snapshots: list[str],
+    exit_event: anyio.Event,
+    *,
+    bound_drain: bool,
 ) -> tuple[str, str, int, float]:
-    """Drain both streams and wait as one owned operation."""
+    """Drain both streams and wait as one owned operation.
+
+    With `bound_drain`, stop reading `_OUTPUT_DRAIN_GRACE` seconds after the process exits and return what was read.
+    """
     pieces: tuple[list[str], list[str]] = ([], [])
     received = 0
 
-    async def read(reader: modal.io_streams.StreamReader[bytes], index: int) -> str:
+    async def read(reader: modal.io_streams.StreamReader[bytes], index: int) -> None:
         nonlocal received
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-        async for chunk in reader:
-            text = decoder.decode(chunk)
-            pieces[index].append(text)
-            # Keep a bounded snapshot even when Modal interrupts a streaming read.
-            snapshots[index] = (snapshots[index] + text)[-_PARTIAL_OUTPUT_LIMIT:]
-            received += len(chunk)
-            if received > _MAX_OUTPUT_BYTES:
-                raise WorkspaceOutputLimitError(
-                    "Modal command output exceeded the 10 MiB limit; redirect the command's output to a "
-                    'file and read part of it instead',
-                    limit=_MAX_OUTPUT_BYTES,
-                    stdout=''.join(pieces[0])[:_PARTIAL_OUTPUT_LIMIT],
-                    stderr=''.join(pieces[1])[:_PARTIAL_OUTPUT_LIMIT],
-                )
-        tail = decoder.decode(b'', final=True)
-        pieces[index].append(tail)
-        snapshots[index] = (snapshots[index] + tail)[-_PARTIAL_OUTPUT_LIMIT:]
-        return ''.join(pieces[index])
+        try:
+            async for chunk in reader:
+                text = decoder.decode(chunk)
+                pieces[index].append(text)
+                # Keep a bounded snapshot even when Modal interrupts a streaming read.
+                snapshots[index] = (snapshots[index] + text)[-_PARTIAL_OUTPUT_LIMIT:]
+                received += len(chunk)
+                if received > _MAX_OUTPUT_BYTES:
+                    raise WorkspaceOutputLimitError(
+                        "Modal command output exceeded the 10 MiB limit; redirect the command's output to a "
+                        'file and read part of it instead',
+                        limit=_MAX_OUTPUT_BYTES,
+                        stdout=''.join(pieces[0])[:_PARTIAL_OUTPUT_LIMIT],
+                        stderr=''.join(pieces[1])[:_PARTIAL_OUTPUT_LIMIT],
+                    )
+        finally:
+            # Also when the drain grace cuts the read short: a split character becomes U+FFFD, not dropped.
+            tail = decoder.decode(b'', final=True)
+            pieces[index].append(tail)
+            snapshots[index] = (snapshots[index] + tail)[-_PARTIAL_OUTPUT_LIMIT:]
 
-    stdout, stderr, exit_code = '', '', 0
+    exit_code = 0
     exited_at = math.inf
     read_error: Exception | None = None
 
     async with anyio.create_task_group() as group:
 
         async def collect(reader: modal.io_streams.StreamReader[bytes], index: int) -> None:
-            nonlocal stdout, stderr, read_error
+            nonlocal read_error
             try:
-                result = await read(reader, index)
-                if index == 0:
-                    stdout = result
-                else:
-                    stderr = result
+                await read(reader, index)
             except Exception as error:
                 # Cancel the other reader and wait together; preserve the SDK error
                 # without wrapping a single failure in an ExceptionGroup.
@@ -838,6 +847,10 @@ async def _collect_output(
             except Exception as error:
                 read_error = error
                 group.cancel_scope.cancel()
+            else:
+                if bound_drain:
+                    # A background child can hold the streams open past the exit; read on briefly.
+                    group.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
 
         group.start_soon(collect, process.stdout, 0)
         group.start_soon(collect, process.stderr, 1)
@@ -845,7 +858,7 @@ async def _collect_output(
     if read_error is not None:
         raise read_error
 
-    return stdout, stderr, exit_code, exited_at
+    return ''.join(pieces[0]), ''.join(pieces[1]), exit_code, exited_at
 
 
 def _remaining(timeout: float | None, started_at: float, *, at_least: float) -> float | None:

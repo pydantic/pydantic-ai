@@ -131,11 +131,19 @@ class _HangingAioCall:
 class _FakeStream:
     """Mimics the async-iterable output stream the backend reads with `async for`."""
 
-    def __init__(self, data: bytes, hangs: bool = False, delay: float = 0.0, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        data: bytes,
+        hangs: bool = False,
+        delay: float = 0.0,
+        error: Exception | None = None,
+        held_open: bool = False,
+    ) -> None:
         self._data = data
         self._hangs = hangs
         self._delay = delay
         self._error = error
+        self._held_open = held_open
 
     async def __aiter__(self) -> AsyncGenerator[bytes, None]:
         if self._hangs:
@@ -146,6 +154,8 @@ class _FakeStream:
         if self._error is not None:
             raise self._error
         yield self._data
+        if self._held_open:
+            await anyio.sleep_forever()
 
 
 class _FakeProcess:
@@ -159,8 +169,9 @@ class _FakeProcess:
         stdout_hangs: bool = False,
         stdout_delay: float = 0.0,
         stdout_error: Exception | None = None,
+        stdout_held_open: bool = False,
     ) -> None:
-        self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay, stdout_error)
+        self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay, stdout_error, stdout_held_open)
         self.stderr = _FakeStream(stderr)
         self._returncode = returncode
         self._wait_error = wait_error
@@ -583,6 +594,7 @@ class FakeSandbox:
             self._control.stdout_hangs and not probing_kind,
             self._control.stdout_delay,
             self._control.stdout_error,
+            self._control.stdout_held_open and not probing_kind,
         )
 
     def _poll(self) -> int | None:
@@ -626,6 +638,8 @@ class FakeModal:
         self.stdout_delay = 0.0
         # Raised by the stdout reader while the process keeps running.
         self.stdout_error: Exception | None = None
+        # Stdout stays open after its output, as when a background child inherits it.
+        self.stdout_held_open = False
         # When set, sandboxes run commands and file operations on the host under this directory.
         self.host_root: Path | None = None
         self.module = self._build_module()
