@@ -32,6 +32,8 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..display_contract_live import check_display_contract
+from ..display_fakes import screen
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT
 
 pytestmark = pytest.mark.modal_live
@@ -231,6 +233,13 @@ async def test_coder_tools_run_in_the_sandbox_modal_sandbox_supplies() -> None:
         for backend in supplied:
             if backend.ref is not None:
                 await (await backend.get_sandbox()).terminate.aio()
+
+
+async def test_a_desktop_meets_the_display_contract() -> None:
+    """The fakes keep the X server's state between commands: a plain Xvfb resets each time its last client exits, so
+    without `-noreset` the pointer went back to the middle after every action."""
+    async with owned_backend(desktop=True) as backend:
+        await check_display_contract(screen(backend))
 
 
 async def test_commands_get_a_usable_environment() -> None:

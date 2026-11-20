@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
@@ -192,6 +193,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`."""
+
     client: modal.Client | None = None
     """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
     Modal's client from the environment or config when `None`. A spec cannot set it.
@@ -203,7 +208,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     warn_if_no_tools: bool = True
     """Warn, once per `ModalSandbox` instance, when none of a run's tools has a `Shell` or `FileSystem` tool name.
 
-    Only tool names are checked, so custom tools that reach the sandbox under other names do not count.
+    Only tool names are checked, so custom tools that reach the sandbox under other names do not count. With
+    `desktop`, the `computer` tool of `ComputerUse` counts too.
 
     Set it to `False` for agents that reach the sandbox only from their own tools or hooks.
     This flag and its warning go away in the stable harness release.
@@ -238,6 +244,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
         warn_if_no_tools: bool = True,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
@@ -271,6 +278,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
         check_path_authority(path_authority)
+        desktop_size(desktop)
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
@@ -282,6 +290,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.working_dir = working_dir
         self.env = env
         self.client = client
+        self.desktop = desktop
         self.warn_if_no_tools = warn_if_no_tools
         self.authority = authority
         self.path_authority = path_authority
@@ -301,6 +310,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
         warn_if_no_tools: bool = True,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
@@ -325,6 +335,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=idle_timeout,
             working_dir=working_dir,
             env=env,
+            desktop=desktop,
             warn_if_no_tools=warn_if_no_tools,
             **kwargs,
             authority=authority,
@@ -333,7 +344,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
-        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env, client=self.client)
+        return ModalSandboxBackend(
+            ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop, client=self.client
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Terminate a sandbox by ID without running commands or restoring its workspace.
@@ -362,20 +375,18 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             client=self.client,
+            desktop=self.desktop,
         )
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its
         # own still builds but now leaves the model without the sandbox. This is the earliest hook
         # that sees the run's tools; it warns once per instance and never changes the tools.
+        names = _WORKSPACE_TOOL_NAMES | {'computer'} if self.desktop else _WORKSPACE_TOOL_NAMES
         if (
             self.warn_if_no_tools
             and not self._warned_no_tools
-            and not any(
-                tool.name == name or tool.name.endswith(f'_{name}')
-                for tool in tool_defs
-                for name in _WORKSPACE_TOOL_NAMES
-            )
+            and not any(tool.name == name or tool.name.endswith(f'_{name}') for tool in tool_defs for name in names)
         ):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None
