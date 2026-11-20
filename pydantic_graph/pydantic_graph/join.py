@@ -192,7 +192,11 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         return self._initial_factory
 
     def reduce(self, ctx: ReducerContext[StateT, DepsT], current: OutputT, inputs: InputT) -> OutputT:
-        n_parameters = len(inspect.signature(self.reducer).parameters)
+        # Keyword-only parameters carry optional configuration on a plain reducer; they never
+        # stand in for the ReducerContext that distinguishes a context reducer.
+        n_parameters = sum(
+            p.kind is not inspect.Parameter.KEYWORD_ONLY for p in inspect.signature(self.reducer).parameters.values()
+        )
         if n_parameters == 2:
             return cast(PlainReducerFunction[InputT, OutputT], self.reducer)(current, inputs)
         else:
