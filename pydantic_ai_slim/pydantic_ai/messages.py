@@ -2352,9 +2352,6 @@ def _check_declared_shape(
             # The type arguments of a generic subclass between this class and the base are its own. Exactly one is
             # read as the payload's shape.
             continue
-        if origin is base:
-            # Python 3.10 drops an omitted type argument instead of filling in its `Any` default.
-            declared += (Any,) * (len(shapes) - len(declared))
         for (label, shape), declared_shape in zip(shapes.items(), declared):
             if isinstance(declared_shape, TypeVar) or (
                 declared_shape is Any if shape is None else _same_shape(declared_shape, shape)
