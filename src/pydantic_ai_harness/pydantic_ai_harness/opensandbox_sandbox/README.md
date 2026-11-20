@@ -229,6 +229,37 @@ Pass the backend as `workspace=`, as in [Prepare a sandbox before the run](#prep
 - The vault is kept in memory next to the sandbox. Pausing and resuming a Kubernetes sandbox, or restarting the server's network proxy, empties it, so fill it again after you reattach. To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
 - `allow_internet_access=False` already means a deny-all policy, so pass one or the other: `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError` for both.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse, Shell
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[OpenSandbox(image='debian:bookworm-slim', desktop=True), Shell(), ComputerUse()])
+
+result = agent.run_sync(
+    'Install Firefox with `apt-get install -y firefox-esr`, open python.org in it and tell me the latest release.'
+)
+print(result.output)
+```
+
+The agent sees [a desktop](../computer_use/#what-the-display-needs): a panel along the bottom with a button that opens a terminal, and no web browser. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+
+The image needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server is already running, and `fluxbox`, `tint2` and `xterm` for the desktop. When the image's user is root, [the first use installs](../computer_use/#what-the-display-needs) any that are missing with `apt-get`, which needs the sandbox to reach the package repositories. Passwordless `sudo` works only where the server allows it: the Docker runtime's default `no_new_privileges = true` blocks it. Otherwise build them into the image: without the screen's programs the first use raises `WorkspaceUnavailableError` naming what is missing, and without the desktop's the screen works but stays black.
+
+To give the agent a browser or other programs, install them in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `OpenSandboxBackend(..., desktop=True)`, or let the agent install them with `Shell`.
+
+Every screen action is a command, so use execd 1.2 or later: older versions take about a second per command.
+
+On the Docker runtime, set `network_mode = "bridge"` under `[docker]` in the server's configuration. The default, `"host"`, shares the host's network namespace, where the screen's programs can reach an X server on the host that also uses display `:1`; see [Security model](#security-model).
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+The screen opens no port and no endpoint, and its X server accepts no network connections. There's no live viewer; to watch a run, save each screenshot as it arrives, as in [Watching a run](../computer_use/#watching-a-run).
+
 ## Clean up
 
 A run never destroys its sandbox. Destroy it, files included, with the ref you stored:
@@ -276,11 +307,12 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 - Requests to the server's API carry the server API key. Command and file requests carry commands, file contents and `env` values. Over plain `http` all of them are unencrypted. Without a `connection`, an `https://` domain in `OPEN_SANDBOX_DOMAIN` sends every request over HTTPS. A `ConnectionConfig` you pass is used as given, so set both an `https://` domain and `protocol='https'` on it; see [Run on Kubernetes](#run-on-kubernetes).
 - The server API key, set as `api_key` under `[server]`, controls every sandbox on that server and can fetch their Secure Access tokens. Keep it out of the sandbox's `env`.
 - Without the server proxy, command and file requests go straight to the sandbox's endpoint, and the SDK does not send the server API key there. The endpoint checks only what the server configures for it, such as Secure Access at a Kubernetes gateway; see [Endpoint authentication](#endpoint-authentication). With `use_server_proxy=True`, they go through the server, which checks the API key.
+- With `desktop` on the Docker runtime, the default `network_mode = "host"` puts every sandbox on the host's network. If the host or another sandbox runs a second X server (a program that draws a screen) on display `:1`, the agent's clicks and screenshots can reach that screen instead of its own. Set `network_mode = "bridge"` under `[docker]` in the server's configuration to give each sandbox its own network.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
 
-[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir`, `env`, `authority` and `path_authority`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
+[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir`, `env`, `desktop`, `authority` and `path_authority`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
 
 | Option | What it does |
 | --- | --- |
@@ -293,6 +325,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The first use installs the screen's programs with `apt-get` when the image's user is root; passwordless `sudo` works only where the server allows it. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Default: `False`. |
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
