@@ -204,6 +204,33 @@ if __name__ == '__main__':
 
 The `finally` deletes the box even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `BoxLiteSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own. `backend.get_sandbox()` returns the SDK's `boxlite.Box`, for BoxLite features the workspace API doesn't cover, such as `copy_in`, `snapshot` or `stop`.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a box with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
+
+box = BoxLiteSandbox(desktop=True, allow_internet_access=True)
+agent = Agent('{{ anthropic:large }}', capabilities=[box, Coder(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open a terminal from the panel, run `uname -a` in it, and tell me what it printed.')
+    print(result.output)
+```
+
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use as a desktop: a panel along the bottom with a button that opens a terminal, and no web browser. Each window the agent opens fills the screen. Commands get `DISPLAY` set for it, so apps the agent starts from the shell open there too.
+
+Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs [the desktop's programs](computer-use.md#what-the-display-needs), which needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with any `allowed_hosts` including the Debian mirrors; creating a new box without it raises `UserError`, while attaching to an existing box works. For a box without network access, pass an `image` that already has them. A new box's disk is too small for a browser: pass `box_options={'disk_size_gb': 4}` to install one.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
+
 ## Clean up
 
 A run never deletes its box, and a box keeps its disk in BoxLite's home directory until it is deleted. Delete it with the ref you stored:
@@ -260,7 +287,7 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 
 | Option | What it does |
 | --- | --- |
-| `image` | OCI image for a new box. Default: `None`, BoxLite's default, Alpine Linux. |
+| `image` | OCI image for a new box. Default: `None`, BoxLite's default, Alpine Linux, or `debian:bookworm-slim` with `desktop`. |
 | `cpus` | vCPUs for a new box. Default: `None`, BoxLite's default. |
 | `memory_mb` | Memory for a new box in MiB. Default: `None`, BoxLite's default. |
 | `allow_internet_access` | Whether a new box has outbound network access, from this machine's network. Default: `False`. |
@@ -268,6 +295,7 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the box's own (`/` on Alpine). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. Kept out of the capability's `repr`. |
+| `desktop` | Give the box a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
