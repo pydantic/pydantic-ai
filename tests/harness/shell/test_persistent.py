@@ -456,7 +456,7 @@ class TestShellTool:
             await wait_for_exit(pid)
         finally:
             # A job already gone with its status file is reported lost, with no `kill` command: nothing is left to stop.
-            if 'kill -- -' in output:  # pragma: no branch
+            if 'kill -- -' in output:  # pragma: lax no cover
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(int(output.split('kill -- -')[1].split('`')[0]), signal.SIGKILL)
 

@@ -1922,7 +1922,9 @@ class TestSignalling:
         # Past `Job.alive`'s check (named `alive`), only the signal ran: no zombie check.
         assert [argv[:3] for argv in backend.argv if argv[3] != 'alive'] == [['sh', '-c', _KILL_SCRIPT]]
 
-    async def test_a_group_left_with_only_zombies_is_stopped(self, shell_dir: Path) -> None:
+    async def test_a_group_left_with_only_zombies_is_stopped(
+        self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Between a wrapper's exit and its reap, the job's process group holds only zombies, and macOS refuses
         # a signal to such a group with EPERM, where Linux answers 0. The test holds that state open with a
         # zombie of its own, and answers each signal as macOS does.
@@ -1946,6 +1948,12 @@ class TestSignalling:
                 ):
                     await anyio.sleep(0.01)  # pragma: lax no cover
             (Path(job.directory) / 'handle').write_text(f'{job.pid} {zombie.pid}\n')
+
+            # As if a member was still running when `Job.alive` checked, and only zombies are left by the signal.
+            async def alive(job: Job) -> bool:
+                return True
+
+            monkeypatch.setattr(Job, 'alive', alive)
             assert await ts.stop_command(ctx, command_id) == '[stdout]\ndone\n\n[stopped]\n[exit code: 0]'
         finally:
             zombie.wait()
