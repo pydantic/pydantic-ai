@@ -304,16 +304,6 @@ class UnwalkedRefWriter:
         self.wrote_out = True
         return self.write_out(merged, unwalked=True, stack=(*stack, key))
 
-    def kept_definitions(self) -> dict[str, JsonSchema]:
-        """Each definition in `kept`, written out the same way, keeping the `$ref`s that lead back into it."""
-        written: dict[str, JsonSchema] = {}
-        # `write_out` adds each definition it keeps to `kept`, and the loop reaches those too.
-        for name in self.kept:
-            definition = merge_definition(self.defs[name], {})
-            self.inlined.add_copy(definition)
-            written[name] = self.write_out(definition, unwalked=True, stack=(name,))
-        return written
-
 
 class UseEnumMemberDocstrings:
     """Mix into an `Enum` to describe each of its members by the docstring written under it.
@@ -409,7 +399,14 @@ class JsonSchemaTransformer(ABC):
 
         defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
         if (writer := self._unwalked_ref_writer) is not None and writer.kept:
-            self._add_referenced_definitions(defs, handled, writer.kept_definitions())
+            # Each kept definition, written out the same way, keeping the `$ref`s that lead back into it.
+            kept: dict[str, JsonSchema] = {}
+            # `write_out` adds each definition it keeps to `writer.kept`, and the loop reaches those too.
+            for name in writer.kept:
+                definition = merge_definition(writer.defs[name], {})
+                writer.inlined.add_copy(definition)
+                kept[name] = writer.write_out(definition, unwalked=True, stack=(name,))
+            self._add_referenced_definitions(defs, handled, kept)
         if not defs:
             return handled
 
