@@ -2042,9 +2042,7 @@ class TestCodeMode:
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        # Ordinary tools are still sandboxed, with their signatures in `run_code`'s description...
         assert 'async def get_user' in description
-        # ...but `computer` isn't among them: it stays a tool of its own.
         assert 'async def computer' not in description
         assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
 

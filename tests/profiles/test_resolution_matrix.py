@@ -854,7 +854,6 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -949,14 +948,6 @@ def test_google_gemini_3_pro_image_strict_tool_definition():
 
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
-def test_google_gemini_3_pro_image_has_no_computer_use_grid():
-    # The computer-use grid is set for Gemini 3 models that aren't image models.
-    profile = GoogleProvider.model_profile('gemini-3-pro-image')
-    assert profile is not None
-    assert 'computer_use_coordinate_grid' not in profile
-
-
-@pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_3_7_flash_thinking_levels():
     # The level set must survive the provider `model_profile()` path, not just `google_model_profile()`.
     profile = GoogleProvider.model_profile('gemini-3.7-flash')
@@ -983,7 +974,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -1963,7 +1953,6 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2025,7 +2014,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2272,7 +2260,6 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -3919,7 +3906,6 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',

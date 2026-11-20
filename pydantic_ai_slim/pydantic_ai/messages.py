@@ -2088,10 +2088,9 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
                 return type that fits it, and its successful return parts are only promoted when their content
                 validates against it.
             metadata: The shape of the `metadata` the tool returns through
-                [`ToolReturn`][pydantic_ai.messages.ToolReturn], typically a `TypedDict`. It is never sent to the
-                model. Typed return parts read it with
-                [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which gives `None` for
-                metadata that doesn't fit. Metadata that doesn't fit still lets a return part become its typed part.
+                [`ToolReturn`][pydantic_ai.messages.ToolReturn], typically a `TypedDict`. Typed return parts read it
+                as [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which is `None` for
+                metadata that doesn't fit. Such metadata doesn't stop a return part from becoming its typed part.
         """
         if not namespace or not all(namespace.split('.')):
             raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
@@ -2343,7 +2342,6 @@ def _check_declared_shape(
 
     Type checkers already catch this through `__init_subclass__`'s signature; this catches it at runtime too.
     """
-    # A call part is parameterized with the args shape; a return part with the content and metadata shapes.
     shapes = {'args': kind.args} if payload_field == 'args' else {'content': kind.content, 'metadata': kind.metadata}
     for orig_base in cls.__dict__.get('__orig_bases__', ()):
         origin = get_origin(orig_base)
@@ -2351,24 +2349,15 @@ def _check_declared_shape(
             continue
         declared = get_args(orig_base)
         if origin is not base and len(declared) != 1:
-            # A generic subclass between this class and the base has type arguments of its own. When it has exactly
-            # one, that one is read as the payload's shape.
+            # The type arguments of a generic subclass between this class and the base are its own. Exactly one is
+            # read as the payload's shape.
             continue
-        if origin is base:
-            # Python 3.10 drops an omitted type argument instead of filling in its `Any` default.
-            declared += (Any,) * (len(shapes) - len(declared))
         for (label, shape), declared_shape in zip(shapes.items(), declared):
-            if isinstance(declared_shape, TypeVar) or (
-                declared_shape is Any if shape is None else _same_shape(declared_shape, shape)
-            ):
+            # Leaving out the metadata type leaves `typed_metadata` typed `Any`, as on a bare `ToolReturnPart`.
+            if isinstance(declared_shape, TypeVar) or (label == 'metadata' and declared_shape is Any):
                 continue
-            if declared_shape is Any:
-                expected = ', '.join(_shape_name(s) if s is not None else 'Any' for s in shapes.values())
-                raise UserError(
-                    f'Typed tool part {cls.__qualname__} does not give the {label} type {_shape_name(shape)} that its '
-                    f'kind {kind.id!r} declares, so its `typed_{label}` would be typed `Any`. '
-                    f'Write `{base.__name__}[{expected}]`.'
-                )
+            if declared_shape is Any if shape is None else _same_shape(declared_shape, shape):
+                continue
             raise UserError(
                 f'Typed tool part {cls.__qualname__} parameterizes {base.__name__} with '
                 f'{_shape_name(declared_shape)}, but its kind {kind.id!r} declares '
