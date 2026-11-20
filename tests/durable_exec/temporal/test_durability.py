@@ -71,6 +71,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._telemetry import open_span, set_content_attribute
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
@@ -8716,6 +8717,7 @@ _content_free_worker_agent = Agent(
 
 _WORKSPACE_PATH_MARKER = 'workspace-path-marker-41c7'
 _WORKSPACE_COMMAND_MARKER = 'workspace-command-marker-41c7'
+_CTX_CONTENT_MARKER = 'ctx-content-marker-41c7'
 _activity_content_flags: list[bool] = []
 """`ctx.trace_include_content` as each `probe_workspace_content` call saw it inside its activity."""
 
@@ -8723,6 +8725,8 @@ _activity_content_flags: list[bool] = []
 @_content_free_worker_agent.tool
 async def probe_workspace_content(ctx: RunContext[WorkspaceProbeDeps]) -> str:
     _activity_content_flags.append(ctx.trace_include_content)
+    with open_span(ctx, 'capability probe', content={'probe.content': _CTX_CONTENT_MARKER}) as span:
+        set_content_attribute(ctx, span, 'probe.later_content', _CTX_CONTENT_MARKER)
     path = f'{_WORKSPACE_PATH_MARKER}.txt'
     await ctx.workspace.write_text(path, 'hello')
     await ctx.workspace.read_text(path)
@@ -8746,10 +8750,9 @@ class ContentRunOnContentFreeWorkerWorkflow:
 async def test_temporal_workspace_activity_keeps_the_workers_content_setting(
     client_with_logfire: Client, capfire: CaptureLogfire
 ):
-    """A run that records content keeps it out of an activity whose worker agent doesn't.
+    """A run that records content keeps it out of the workspace spans of an activity whose worker agent doesn't.
 
-    The activity sees the narrower setting on `ctx` too, so code reading `ctx.trace_include_content`
-    follows the same policy as the workspace spans.
+    `ctx.trace_include_content` inside the activity still reads the run's own flag.
     """
     _workspace_probe_backends.clear()
     _activity_content_flags.clear()
@@ -8773,7 +8776,10 @@ async def test_temporal_workspace_activity_keeps_the_workers_content_setting(
     assert {span['name'] for span in spans} >= {'workspace write_bytes', 'workspace read_bytes', 'workspace run'}
     assert _WORKSPACE_PATH_MARKER not in exported
     assert _WORKSPACE_COMMAND_MARKER not in exported
-    assert _activity_content_flags == [False]
+    # Spans a capability opens from `ctx` follow the worker's policy too, though `ctx` reads the run's flag.
+    assert 'capability probe' in {span['name'] for span in spans}
+    assert _CTX_CONTENT_MARKER not in exported
+    assert _activity_content_flags == [True]
 
 
 _untraced_workspace_probe_agent = Agent(
