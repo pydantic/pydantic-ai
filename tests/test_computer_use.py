@@ -11,6 +11,8 @@ from collections.abc import AsyncIterator, Callable
 import pytest
 
 from pydantic_ai import Agent, Tool, capture_run_messages
+from pydantic_ai._computer_use import UnservableRequestError
+from pydantic_ai.capabilities import BatchModelRequests, ModelFallback
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
@@ -38,6 +40,8 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+
+from .batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 
 SCREEN = BinaryImage(data=b'png', media_type='image/png')
 
@@ -449,6 +453,46 @@ async def test_a_model_is_refused_a_screenshot_larger_than_it_can_see(
             await agent.run('Click.')
 
 
+def _look_at_a_big_screen(answered: list[str], name: str, max_side: int) -> FunctionModel:
+    """A model that can see screenshots up to `max_side` long, which clicks once on a 1280x800 screen, then stops."""
+    respond, stream = _click_then_stop([])
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answered.append(name)
+        return respond(messages, info)
+
+    async def answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        answered.append(name)
+        async for chunk in stream(messages, info):
+            yield chunk
+
+    return FunctionModel(answer, stream_function=answer_stream, model_name=name, profile=_limited(max_side, None))
+
+
+def _big_screen(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+    """Act on the screen."""
+    return ['Done.', _screenshot(1280, 800)]
+
+
+def _fallback_agent(fallback: str, models: list[FunctionModel]) -> Agent[None, str]:
+    # A refusal is passed over whatever `fallback_on` says, so it's set to an error no model raises.
+    if fallback == 'FallbackModel':
+        return Agent(
+            FallbackModel(*models, fallback_on=(ValueError,)),
+            tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
+        )
+    return Agent(
+        models[0],
+        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
+        capabilities=[ModelFallback(*models[1:], fallback_on=(ValueError,))],
+    )
+
+
+FALLBACKS = pytest.mark.parametrize('fallback', ['FallbackModel', 'ModelFallback'])
+
+
+@pytest.mark.parametrize('streamed', [False, True])
+@FALLBACKS
 @pytest.mark.parametrize(
     'limits, answered',
     [
@@ -457,44 +501,92 @@ async def test_a_model_is_refused_a_screenshot_larger_than_it_can_see(
     ],
 )
 async def test_a_fallback_moves_on_from_a_model_that_cant_see_the_screenshot(
-    limits: list[int], answered: list[str]
+    limits: list[int], answered: list[str], fallback: str, streamed: bool
 ) -> None:
+    # The first request has no screenshot yet, so `small` only refuses the second, after the click.
     calls: list[str] = []
-
-    def model(name: str, max_side: int) -> FunctionModel:
-        respond, _ = _click_then_stop([])
-
-        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            calls.append(name)
-            return respond(messages, info)
-
-        return FunctionModel(answer, model_name=name, profile=_limited(max_side, None))
-
-    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
-        """Act on the screen."""
-        return ['Done.', _screenshot(1280, 800)]
-
     names = {1000: 'small', 2000: 'big'}
-    fallback = FallbackModel(*(model(names[limit], limit) for limit in limits))
-    agent = Agent(fallback, tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
-    assert (await agent.run('Click.')).output == 'ok'
+    agent = _fallback_agent(fallback, [_look_at_a_big_screen(calls, names[limit], limit) for limit in limits])
+    messages = await _run(agent, streamed=streamed)
+    assert messages[-1].parts == [TextPart('ok')]
     assert calls == answered
 
 
-async def test_a_fallback_whose_models_all_cant_see_the_screenshot_raises_the_last_refusal() -> None:
-    respond, _ = _click_then_stop([])
-
-    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
-        """Act on the screen."""
-        return ['Done.', _screenshot(1280, 800)]
-
-    fallback = FallbackModel(
-        FunctionModel(respond, model_name='first', profile=_limited(1000, None)),
-        FunctionModel(respond, model_name='second', profile=_limited(1200, None)),
+@pytest.mark.parametrize('streamed', [False, True])
+@FALLBACKS
+async def test_a_fallback_whose_models_all_cant_see_the_screenshot_raises_the_last_refusal(
+    fallback: str, streamed: bool
+) -> None:
+    calls: list[str] = []
+    agent = _fallback_agent(
+        fallback, [_look_at_a_big_screen(calls, 'first', 1000), _look_at_a_big_screen(calls, 'second', 1200)]
     )
-    agent = Agent(fallback, tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
-    with pytest.raises(UserError, match=r"larger than 'second' can see\. Start the display at 1200x750 or smaller"):
-        await agent.run('Click.')
+    with pytest.raises(UnservableRequestError, match=r"larger than 'second' can see\. Start the display at 1200x750"):
+        await _run(agent, streamed=streamed)
+    # Each model made the click, then refused the next request without being called.
+    assert calls == ['first']
+
+
+async def test_model_fallback_moves_on_from_a_refusal_after_a_provider_error() -> None:
+    # The primary looks, then fails; the first fallback can't see the screenshot, so the second answers.
+    calls: list[str] = []
+    looked = False
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal looked
+        calls.append('primary')
+        if looked:
+            raise ModelAPIError('primary', 'Unavailable.')
+        looked = True
+        return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
+
+    small = _look_at_a_big_screen(calls, 'small', 1000)
+    big = _look_at_a_big_screen(calls, 'big', 2000)
+    agent = Agent(
+        FunctionModel(primary),
+        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
+        capabilities=[ModelFallback(small, big)],
+    )
+    assert (await agent.run('Look.')).output == 'ok'
+    assert calls == ['primary', 'primary', 'big']
+
+
+class _BatchModel(SlowBatchTestModel):
+    """A model whose requests go through the batch API, with `profile`."""
+
+    def __init__(self, model_name: str, profile: ModelProfile) -> None:
+        super().__init__(model_name=model_name)
+        self._profile = profile
+
+
+async def test_a_batched_call_records_the_grid_of_its_model() -> None:
+    agent = Agent(
+        _BatchModel('grid', GRID_PROFILE),
+        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    result = await agent.run('Look.')
+    # `TestModel`'s made-up actions aren't valid ones, so the call stays a plain `ToolCallPart`, with the labels.
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [call.provider_details for call in calls] == [{'coordinate_grid': 1000}]
+
+
+async def test_a_batched_request_the_model_cant_serve_is_refused_before_it_is_submitted() -> None:
+    model = _BatchModel('blind', ModelProfile(supports_image_input=False))
+    agent = Agent(
+        model,
+        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    with pytest.raises(UnservableRequestError, match="'blind' does not"):
+        await agent.run('Look.')
+    assert (model.encoded, model.created) == (0, [])
 
 
 @pytest.mark.parametrize('value', [True, 0, '1000'])

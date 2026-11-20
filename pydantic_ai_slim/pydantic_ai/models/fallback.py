@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import anyio
 from opentelemetry.trace import Span, get_current_span
@@ -22,7 +22,6 @@ from pydantic_ai._model_request_attempts import AttemptStart, carry_attempts
 from pydantic_ai._run_context import RunContext
 
 from .._canonical_system import stateless_artifact_system
-from .._computer_use import UnservableRequestError
 from .._fallback import (
     FALLBACK_MODEL_PIN_KEY,
     ExceptionHandler,
@@ -271,7 +270,7 @@ class FallbackModel(Model):
                 with enforce_request_deadline(deadline):
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                if not await _falls_back(chain, exc):
+                if not await chain.falls_back(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
                 failure: Exception | ModelResponse = exc
@@ -330,7 +329,7 @@ class FallbackModel(Model):
                 with enforce_request_deadline(deadline):
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                if await _falls_back(chain, exc):
+                if await chain.falls_back(exc):
                     self._record_failed_attempt(chain, model, exc, start)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
@@ -350,7 +349,7 @@ class FallbackModel(Model):
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        _exhausted(chain)
+        chain.exhausted()
 
     @asynccontextmanager
     async def request_stream(
@@ -399,7 +398,7 @@ class FallbackModel(Model):
                         )
                     )
                 except Exception as exc:
-                    if not await _falls_back(chain, exc):
+                    if not await chain.falls_back(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
                         raise
                     # Best-effort cancel the suspended server-side job we're abandoning before
@@ -442,7 +441,7 @@ class FallbackModel(Model):
                             )
                         )
                     except Exception as exc:
-                        if await _falls_back(chain, exc):
+                        if await chain.falls_back(exc):
                             self._record_failed_attempt(chain, model, exc, start)
                             continue
                         self._set_span_attributes(model, prepared_parameters)
@@ -465,7 +464,7 @@ class FallbackModel(Model):
                     _stamp_if_suspended(streamed_response, model, deadline)
                     return
 
-            _exhausted(chain)
+            chain.exhausted()
         except BaseException as error:
             _annotate_stream_error(error, chain, rewound=rewound, handed_over=handed_over)
             raise
@@ -627,22 +626,6 @@ class FallbackModel(Model):
             # agent's attempt loop.
             rejected_status='Response rejected by `fallback_on`',
         )
-
-
-async def _falls_back(chain: FallbackChain, error: Exception) -> bool:
-    """Whether the chain moves on from `error`: by `fallback_on`, or because the model can't serve the request."""
-    if isinstance(error, UnservableRequestError):
-        chain.exceptions.append(error)
-        return True
-    return await chain.falls_back(error)
-
-
-def _exhausted(chain: FallbackChain) -> NoReturn:
-    """Raise for a chain with no model left: the last refusal if every model refused, else the group."""
-    refused = [error for error in chain.exceptions if isinstance(error, UnservableRequestError)]
-    if refused and len(refused) == len(chain.exceptions) and not chain.rejected_responses:
-        raise refused[-1]
-    chain.exhausted()
 
 
 def _pinned_request_deadline(
