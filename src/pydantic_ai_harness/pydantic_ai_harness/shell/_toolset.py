@@ -580,8 +580,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         if job is None:
             return f'[Error: unknown command ID {command_id!r}]'
 
-        lost = await job.lost()
         running, exit_code = await job.status()
+        lost = False
+        if running and not await job.alive():
+            # The wrapper publishes its exit code before it exits, so only a status read after finding it gone is final.
+            running, exit_code = await job.status()
+            lost = running
         stdout, stderr = await self._read_bg_output(job)
 
         status = _LOST_STATUS if lost else f'[status: {"running" if running else "finished"}]'
