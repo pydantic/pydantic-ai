@@ -34,7 +34,7 @@ One agent that does everything accumulates many tools and a long context. Specia
 
 ## The solution
 
-`SubAgents` takes a sequence of `SubAgent` entries and exposes one `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run, which never sees the parent conversation, and returns its output to the parent. The system prompt lists the sub-agents by name and `description` (the agent's own, or `SubAgent(description=...)`), so the listing stays in the cached prefix; a change between runs of the same conversation is [appended](../agent.md#appending-instruction-changes) instead of rewriting the prefix.
+`SubAgents` takes a sequence of `SubAgent` entries and exposes one `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run, which never sees the parent conversation, and returns its output to the parent. The system prompt lists the sub-agents by name and `description` (the agent's own, or `SubAgent(description=...)`; one without a description is listed by name alone), so the listing stays in the cached prefix; a change between runs of the same conversation is [appended](../agent.md#appending-instruction-changes) instead of rewriting the prefix.
 
 ```python
 from pydantic_ai import Agent
@@ -233,7 +233,7 @@ Both are notifications. A start and its end share the `tool_call_id` core stamps
 `outcome` follows [Failure handling](#failure-handling):
 
 - `ok`: the child's output went back to the parent.
-- `timeout`, or `budget` (the child's own `usage_limits`).
+- `timeout` or `budget`: the child hit its `timeout_seconds` or its own `usage_limits`.
 - `failed`: a soft model error, returned or raised per `on_model_error`, or a run that ended with `DeferredToolRequests` or `PendingModelResponse`.
 - `contained`: a crash `contain_errors` caught.
 
