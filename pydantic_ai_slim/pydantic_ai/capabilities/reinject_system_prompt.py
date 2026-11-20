@@ -36,8 +36,8 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     must win. `SystemPromptPart`s added during the run (by a capability, a history processor,
     or [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue]) are kept.
 
-    The UI adapters automatically add this capability in `manage_system_prompt='server'` mode
-    with `replace_existing=True`. Add it explicitly with
+    The UI adapters automatically add this capability in `manage_system_prompt='server'` mode.
+    Add it explicitly with
     `Agent(..., capabilities=[ReinjectSystemPrompt()])` or per-run via the `capabilities=`
     argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to get the same behavior
     anywhere.
