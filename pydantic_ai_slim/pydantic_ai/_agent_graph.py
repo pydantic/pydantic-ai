@@ -81,7 +81,6 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import (
-    _computer_labels,
     _content_filter,
     _display,
     _enqueue,
@@ -2468,7 +2467,6 @@ async def _after_streamed_model_request(
     response: _messages.ModelResponse,
 ) -> _messages.ModelResponse:
     """Run `after_model_request` on a streamed response, which can no longer be re-attempted."""
-    _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, response)
     try:
         with _after_model_request_load_window(run_context, response):
             return await root_capability.after_model_request(
@@ -2688,8 +2686,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
-        # The context the stream is requested with. Once `wrap_model_request` calls the handler, it is the one passed.
-        _handler_request_context = request_context
+        _handler_request_context: ModelRequestContext | None = None
         _handler_called = False
         _handler_usage_recorded = False
         _stream_cut_short = False
@@ -2833,7 +2830,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # a stream stopped after it was handed over, there's no job left to cancel here.
                 partial = primed.get()
                 recorded = _interrupted_stream_response(exc, partial)
-                self._commit_interrupted_response(ctx, partial, recorded, _handler_request_context)
+                request_messages = (_handler_request_context or wrap_request_context).messages
+                self._commit_interrupted_response(ctx, partial, recorded, request_messages)
             raise
 
         # `_prepare_request` ran in this task before wrap hooks were added. Preserve that
@@ -2930,7 +2928,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         if partial.state == 'suspended' and recorded.state == 'interrupted':
                             # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
                             await _cancel_interrupted_job(wrap_request_context, partial)
-                        self._commit_interrupted_response(ctx, partial, recorded, _handler_request_context)
+                        self._commit_interrupted_response(
+                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
+                        )
                 else:
                     try:
                         try:
@@ -2987,21 +2987,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
-        request_context: ModelRequestContext,
+        request_messages: Sequence[_messages.ModelMessage],
     ) -> None:
         """Commit the response an interrupted stream produced so far, without checking usage limits.
 
         `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
-        `request_context` is the context the stream was requested with, whose messages end in the suspended response
-        it resumed, if any. Its `computer` calls get the same labels as a completed stream's calls, because a resumed
-        run executes them.
+        `request_messages` are the messages the stream was requested with, which end in the suspended response it
+        resumed, if any.
         """
-        _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, recorded)
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
-        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_context.messages))
+        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
         if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
@@ -3201,7 +3199,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = failed.log.attach(recovered)
         state.response = response
         capture_model_response_span_context(request_context, response)
-        _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, response)
         try:
             with _after_model_request_load_window(run_context, response):
                 return await ctx.deps.root_capability.after_model_request(
@@ -3766,8 +3763,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
             model_settings,
         )
-        # Done on every attempt, because the grid depends on the model that serves it.
-        model_request_parameters = _computer_labels.add_grid_hint(model, model_request_parameters)
         request_context.model_request_parameters = model_request_parameters
 
         run_context.model_settings = model_settings
