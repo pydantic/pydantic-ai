@@ -172,12 +172,14 @@ def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | 
     # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
     if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
         return None
-    # The telemetry published for the same tracer is this run's, with the policy actually in force: a durable
-    # worker that doesn't record content publishes that, while `ctx` still carries the run's own flag.
+    # Telemetry published for the same tracer can only narrow content: a durable worker that doesn't record
+    # content publishes that, while `ctx` still carries the run's own flag. Agents sharing a tracer provider
+    # share tracers too, so a parent's published telemetry must not turn on a child's content.
     published = _current.get()
+    include_content = ctx.trace_include_content
     if published is not None and published.tracer is ctx.tracer:
-        return published
-    return _run_telemetry(ctx.tracer, ctx.trace_include_content)
+        include_content = include_content and published.include_content
+    return _run_telemetry(ctx.tracer, include_content)
 
 
 def _with_content(
