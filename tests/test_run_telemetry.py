@@ -1,4 +1,8 @@
-"""`pydantic_ai._telemetry`: spans that follow the right run's tracer and content policy."""
+"""`pydantic_ai._telemetry`: spans that follow the right run's tracer and content policy.
+
+These are unit tests, not VCR tests: what they check is span attributes and the `INVALID_SPAN` and
+`NoOpTracer` branches, which no provider response can show, so the runs use `TestModel` or no model.
+"""
 
 from __future__ import annotations
 
