@@ -135,7 +135,13 @@ class TestCreate:
         await started()
         call = fake_e2b.create_calls[-1]
         # The most E2B's Hobby plan allows, pausing rather than killing at the end of it.
-        assert (call.template, call.timeout, call.envs, call.lifecycle) == (None, 3_600, None, {'on_timeout': 'pause'})
+        assert (call.template, call.timeout, call.envs, call.lifecycle) == (
+            None,
+            3_600,
+            None,
+            # Any later request wakes the paused sandbox, so a held backend keeps working.
+            {'on_timeout': 'pause', 'auto_resume': True},
+        )
         assert call.allow_internet_access is True
         assert call.network is None
 
@@ -268,6 +274,29 @@ class TestConnect:
         assert backend.ref == WorkspaceRef(provider='e2b', id='sbx-gone')
         assert not fake_e2b.create_calls
         assert not fake_e2b.sandboxes
+
+    async def test_a_paused_attached_sandbox_is_reconnected_on_the_next_operation(self, fake_e2b: FakeE2B) -> None:
+        # One created without `auto_resume` answers nothing while paused; only `connect` wakes it.
+        backend = await started(ref=WorkspaceRef(provider='e2b', id='sbx-keep'))
+        fake_e2b.run_error = TimeoutException('The sandbox was not found')
+        fake_e2b.sandbox_is_running = False
+        with pytest.raises(WorkspaceUnavailableError, match="'sbx-keep' is no longer running"):
+            await backend.run(['true'])
+        fake_e2b.run_error = None
+        fake_e2b.sandbox_is_running = True
+        assert (await backend.run(['echo', 'hi'])).exit_code == 0
+        assert fake_e2b.connect_calls == [('sbx-keep', 3_600), ('sbx-keep', 3_600)]
+
+    async def test_a_paused_sandbox_the_caller_passed_is_not_reconnected(self, fake_e2b: FakeE2B) -> None:
+        # Reconnecting needs the caller's credentials, which the backend does not have.
+        sandbox = fake_e2b.new_sandbox('sbx-mine')
+        backend = E2BSandboxBackend(sandbox=sandbox)  # pyright: ignore[reportArgumentType]
+        fake_e2b.run_error = TimeoutException('The sandbox was not found')
+        fake_e2b.sandbox_is_running = False
+        with pytest.raises(WorkspaceUnavailableError, match="'sbx-mine' is no longer running"):
+            await backend.run(['true'])
+        assert await backend.get_sandbox() is sandbox
+        assert not fake_e2b.connect_calls
 
 
 class TestRun:
