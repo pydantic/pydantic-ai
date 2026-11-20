@@ -131,6 +131,7 @@ async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
     await capability.destroy(backend.ref)
 
 
+@posix_only
 async def test_the_sandboxes_lifecycle_is_traced(
     workspace_harness: WorkspaceHarness, instrumented: Instrumented
 ) -> None:
