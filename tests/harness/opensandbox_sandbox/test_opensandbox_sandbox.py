@@ -103,6 +103,7 @@ class TestConfiguration:
             ({'working_dir': 'relative'}, UserError, 'working_dir must be an absolute POSIX path'),
             ({'sandbox_timeout': 0}, UserError, 'sandbox_timeout must be an integer of at least 1'),
             ({'env': {'A=B': 'x'}}, ValueError, 'env keys must be non-empty without `=`'),
+            ({'desktop': (0, 800)}, UserError, r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'),
             (
                 {'network_policy': NetworkPolicy(), 'allow_internet_access': False},
                 UserError,
