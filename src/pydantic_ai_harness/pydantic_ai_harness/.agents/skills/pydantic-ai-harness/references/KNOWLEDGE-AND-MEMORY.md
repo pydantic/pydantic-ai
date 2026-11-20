@@ -4,7 +4,8 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
 Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). `Skills` and the optional Pixeltable integration require extras.
+demand), and `CurrentTime` (today's date or hour in the instructions). `Skills` and the optional Pixeltable
+integration require extras.
 
 | Need | Use |
 |---|---|
@@ -12,6 +13,7 @@ demand). `Skills` and the optional Pixeltable integration require extras.
 | Exact details from earlier turns or past runs of a conversation | `ConversationSearch` + `StepPersistence` |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
+| Answers that depend on today's date | `CurrentTime` |
 
 ## Memory
 
@@ -29,8 +31,9 @@ a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
 it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
-loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
-`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
+loaded mid-run waits for the next prompt. Snapshots are `MemorySnapshotPart`s (a `DataCapabilityPart` from
+`pydantic_ai_harness.memory`, `<memory>` frame, `scope_hash` and `memory_id` fields); find them by type. List
+compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent
@@ -351,10 +354,12 @@ from pydantic_ai_harness import PydanticAIDocs
 agent = Agent('test', capabilities=[PydanticAIDocs()])
 ```
 
-Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run).
+Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run),
+keyword-only `remote_ref: str | None = None` (git ref to fetch from; `None` is the installed
+`pydantic_ai` release's tag, `main` for a dev build).
 Resolution per call: `{local_docs_path}/{topic}.md` in the run workspace (falling back to the
 `PYDANTIC_AI_HARNESS_DOCS_PATH` env var), then
-`https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`, else an error.
+`https://raw.githubusercontent.com/pydantic/pydantic-ai/{remote_ref}/docs/{topic}.md`, else an error.
 
 Gotchas: the local path is read through the run workspace only, with no `workspace=` override (in
 a sandbox the checkout must be in the sandbox); with a local path set and no workspace, the run fails at start. With no
@@ -362,11 +367,29 @@ local path, the first read of each topic in a run fetches it from GitHub (every 
 `cache=False`). `~` is not expanded. It never runs git, so keep a local checkout current yourself. Use `pydantic_ai_harness.pydantic_ai_docs`; the old `docs`
 module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old specs).
 
+## CurrentTime
+
+Adds one instruction stating the weekday and date (`precision='date'`, the default) or the hour
+(`precision='hour'`) in `timezone` (an IANA name or a `tzinfo`, default UTC; a name needs the system
+time zone database or the `tzdata` package, which Windows lacks by default). The time comes from the
+timestamp of the request being sent, so it reads no clock and is safe in durable workflow code. A new
+value is appended to the history (`on_change='append'`, keyed by `id='current_time'`), so the prompt
+cache holds; there is no finer precision than the hour.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import CurrentTime
+
+agent = Agent('test', capabilities=[CurrentTime(timezone='Europe/Amsterdam')])
+```
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/memory/
 - https://pydantic.dev/docs/ai/harness/conversation-search/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
+- https://pydantic.dev/docs/ai/harness/current-time/
 - https://pydantic.dev/docs/ai/harness/step-persistence/
 - https://pydantic.dev/docs/ai/capabilities/on-demand/

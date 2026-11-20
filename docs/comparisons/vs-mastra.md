@@ -13,7 +13,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | TypeScript | Python |
 | License | Apache-2.0 (core); EE for some features | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md); [90+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, processors, scorers, workflows | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Mastra Code, or your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | With [Mastra Platform Enterprise](https://mastra.ai/pricing#enterprise-support) | [For the framework itself](../enterprise-support.md), no platform required |
@@ -33,7 +33,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Token limit: truncate or abort | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | Yes | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 *Last checked: 2026-09-24*

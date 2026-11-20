@@ -31,12 +31,11 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     _host as host_module,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 pytestmark = [
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend tests drive POSIX shell commands'),
 ]
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 async def _process_running(pid: int) -> bool:

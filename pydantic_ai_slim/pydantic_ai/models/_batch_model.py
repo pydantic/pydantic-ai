@@ -8,6 +8,7 @@ same capability instance share one pool.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import threading
 import time
@@ -37,7 +38,7 @@ from typing_extensions import TypedDict
 from .._instrumentation import model_attributes, open_request_policy
 from .._run_context import RunContext
 from .._utils import cancel_and_drain
-from ..exceptions import ModelAPIError, ModelHTTPError, SuspendedResponseExpired, UserError
+from ..exceptions import AgentRunError, ModelAPIError, ModelHTTPError, SuspendedResponseExpired, UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
@@ -297,6 +298,28 @@ def _submitted_trace_context(span: Span | None, batch: Batch) -> dict[str, str] 
     return carrier or None
 
 
+def _fail_each(requests: Sequence[_Queued], error: Exception) -> None:
+    """Fail every request of a batch that failed to submit with `error`, each with its own copy of an `AgentRunError`.
+
+    A run gives the `AgentRunError` it raises its conversation, so runs sharing one instance would see each other's.
+    """
+    for index, queued in enumerate(requests):
+        queued.future.set_exception(error if index == 0 else _own_copy(error))
+
+
+def _own_copy(error: BaseException) -> BaseException:
+    if not isinstance(error, AgentRunError):
+        return error
+    try:
+        copied = copy.copy(error)
+    except Exception:
+        # A subclass whose `__init__` doesn't take what its `__reduce__` gives can't be copied; sharing the
+        # error beats leaving the other requests' runs waiting forever.
+        return error
+    copied.__cause__, copied.__context__ = error.__cause__, error.__context__
+    return copied.with_traceback(error.__traceback__)
+
+
 class BatchPool:
     """Queues, submissions and checks shared by every model a [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] wraps."""
 
@@ -485,8 +508,7 @@ class BatchPool:
                 batch = await queue.model.batch_create([queued.request for queued in requests])
                 trace_context = _submitted_trace_context(span, batch)
         except Exception as error:
-            for queued in requests:
-                queued.future.set_exception(error)
+            _fail_each(requests, error)
         else:
             with self._lock:
                 self._submitted[_batch_key(batch)] = frozenset(queued.request.custom_id for queued in requests)
@@ -610,7 +632,9 @@ class BatchPool:
                 return checked, None
         loop = asyncio.get_running_loop()
         key = (loop, check_key)
-        if (poll := self._polls.get(key)) is None:
+        poll = self._polls.get(key)
+        joined = poll is not None
+        if poll is None:
             poll = self._polls[key] = loop.create_task(
                 self._fetch(model, batch, check_key, ticket.get('trace_context'), requester)
             )
@@ -619,6 +643,9 @@ class BatchPool:
         await asyncio.wait((poll,))
         if poll.cancelled():
             raise UserError(_EXITED_MESSAGE)
+        if joined and (error := poll.exception()) is not None:
+            # A run that joined another's check gets its own error, like the requests of a batch that failed to submit.
+            raise _own_copy(error)
         return poll.result()
 
     def _poll_done(

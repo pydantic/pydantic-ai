@@ -48,6 +48,7 @@ from typing import Annotated, Any, assert_never
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
+from .._deferred_capabilities import CAPABILITY_LOAD_KIND
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE, TOOL_SEARCH_KIND  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
@@ -68,7 +69,12 @@ from ..native_tools._tool_search import (
     ToolSearchReturnContent,
     ToolSearchTool,
 )
-from ..tools import Tool, ToolDefinition
+from ..tools import (
+    Tool,
+    ToolDefinition,
+    ToolSelector,
+    matches_tool_selector,
+)
 from ._capability_owned import is_gated_by_deferred_capability
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -77,6 +83,9 @@ _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+
+# The framework's own discovery tools; `ToolSearch(tools=...)` never defers them.
+_FRAMEWORK_TOOL_KINDS = frozenset({TOOL_SEARCH_KIND.id, CAPABILITY_LOAD_KIND.id})
 
 
 class _LegacyDiscoveryMetadata(TypedDict):
@@ -108,15 +117,12 @@ def _tokenize(text: str) -> set[str]:
     return set(_SEARCH_TOKEN_RE.findall(text.lower()))
 
 
-def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
-    """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc].
+def keywords_search(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    """Rank tools by how many of the query words appear in their name or description.
 
-    Score each tool by how many query keywords appear in its name or description, then
-    return matching names ordered by descending score. Used both as the default
-    algorithm when `ToolSearch` was constructed without an explicit strategy AND as
-    the explicit `strategy='keywords'` choice — the difference is that the explicit
-    choice routes through the same dispatch path as a user-supplied callable, which
-    enables client-executed-native wire on supporting providers (cache benefit).
+    Matching is case-insensitive and word by word. Returns the names of the tools that match at least one
+    word, best match first. This is the [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc] behind
+    `ToolSearch(strategy='keywords')`, so a custom search function can wrap it or fall back to it.
     """
     terms = _tokenize(' '.join(queries))
     if not terms:
@@ -313,6 +319,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `queries` parameter shown to the model."""
 
+    tools: ToolSelector[AgentDepsT] | None = field(default=None, kw_only=True)
+    """Which tools to defer in addition to those marked `defer_loading`; see
+    [`ToolSearch.tools`][pydantic_ai.capabilities.ToolSearch.tools]."""
+
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
     capability commits to a named-native strategy that has no local equivalent (e.g.
@@ -348,6 +358,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for name, tool in all_tools.items():
             if tool.tool_def.defer_loading:
                 deferred[name] = tool
+            elif (
+                self.tools is not None
+                and tool.tool_def.kind != 'output'
+                and tool.tool_def.tool_kind not in _FRAMEWORK_TOOL_KINDS
+                and await matches_tool_selector(self.tools, ctx, tool.tool_def)
+            ):
+                deferred[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=True))
             else:
                 visible[name] = tool
 

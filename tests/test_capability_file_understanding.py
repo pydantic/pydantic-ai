@@ -38,6 +38,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
@@ -47,8 +48,6 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.google import GoogleProvider
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 class Describer:

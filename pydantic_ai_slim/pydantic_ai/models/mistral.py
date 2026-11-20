@@ -17,6 +17,7 @@ from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
+    has_yaml_structured_suffix as _has_yaml_structured_suffix,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
@@ -287,7 +288,7 @@ class MistralModel(Model[Mistral]):
     _unsupported_file_inputs = frozenset({'audio', 'video'})
     # Tool results are text-only here, so a tool's files go on the user channel, framed.
     _relocates_tool_files = True
-    _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
+    _supported_media_types = {'document': frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})}
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
@@ -889,7 +890,10 @@ class MistralModel(Model[Mistral]):
         return MistralImageURLChunk(image_url=image_url, type='image_url')
 
     def _map_binary_content(self, item: BinaryContent) -> MistralContentChunk:
-        if _is_text_like_media_type(item.media_type):
+        # An `image/*+yaml` type is an image, and keeps its image chunk.
+        if _is_text_like_media_type(item.media_type) or (
+            _has_yaml_structured_suffix(item.media_type) and not item.is_image
+        ):
             return MistralTextChunk(
                 text=self._format_inlined_text_file(
                     item.data.decode('utf-8'),
