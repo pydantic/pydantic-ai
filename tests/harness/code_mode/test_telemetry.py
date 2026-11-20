@@ -8,6 +8,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
+import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
@@ -29,7 +30,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._monty_turns import MontyFailure, exceeded_sandbox_limit
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.conftest import Instrumented
 
 # Patched to make a feed fail outside the snippet the way a dead worker or a host-binding bug does.
@@ -146,7 +149,7 @@ async def diverged_prefix_attributes(
 
         async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
             pass
-        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
         # Dispatched outside any span, so its own outcome is not recorded.
         sync_ctx = dataclasses.replace(ctx, tool_call_id='c2', tool_name='run_code')
         try:
@@ -324,7 +327,7 @@ class TestRunCodeFailureTelemetry:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 8):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
-                await asyncio.sleep(0)
+                await anyio.lowlevel.checkpoint()
 
         instrumentation, exporter = instrumented(False)
         agent = Agent(
@@ -348,7 +351,7 @@ class TestRunCodeFailureTelemetry:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 8):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
-                await asyncio.sleep(0)
+                await anyio.lowlevel.checkpoint()
 
         instrumentation, exporter = instrumented(False)
         agent = Agent(
@@ -402,3 +405,7 @@ class TestRunCodeFailureTelemetry:
         assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
             ('app request', {})
         ]
+
+
+def test_a_failure_that_is_not_a_runtime_crash_or_disconnect_names_no_limit() -> None:
+    assert exceeded_sandbox_limit(MontyFailure(kind='syntax')) is None
