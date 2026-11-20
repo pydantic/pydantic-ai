@@ -30,8 +30,8 @@ RESPONSES_FINISH_REASON_MAP: dict[
 def report_input_transformations(transformations: list[InputTransformation]) -> list[dict[str, object]]:
     """Report the reasoning items OpenAI withheld on the current span, and return them for `provider_details`.
 
-    On GPT-6.2 and later, the Responses API drops a replayed reasoning item whose earlier conversation
-    changed, or that came from another model, and lists it in `input_transformations`. Nothing else in
+    On newer models, the Responses API drops a replayed reasoning item whose earlier conversation changed
+    (in testing, also one from another model) and lists it in `input_transformations`. Nothing else in
     the response says the model answered without that reasoning. `provider_details` keeps it inspectable
     after the run; the span event surfaces it in the trace, on the model request that lost it.
     """
