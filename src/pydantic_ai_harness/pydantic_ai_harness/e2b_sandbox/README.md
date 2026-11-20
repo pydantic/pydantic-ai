@@ -280,7 +280,7 @@ A new sandbox uses E2B's `desktop` template: Ubuntu with the XFCE desktop, a ter
 
 XFCE keeps some keys for itself, so the window in front never receives them. `printscreen` opens XFCE's screenshot tool. The media and volume keys also go to XFCE.
 
-If you pass your own `template`, it must include these programs: Xvfb draws the screen, `xdotool` moves the mouse and types, `xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen running after the command that started it ends. For the XFCE desktop, it also needs `startxfce4`.
+A custom `template` needs `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, and Xvfb when no X server is running already. [The first use installs them](../computer_use/#what-the-display-needs) if it can. For the XFCE desktop it also needs `startxfce4`, which it doesn't install; without it, the screen stays black until a program opens a window.
 
 The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
 

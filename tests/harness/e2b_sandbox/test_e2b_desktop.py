@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import os
 import shlex
 import shutil
@@ -19,34 +18,9 @@ from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
+from .._fake_x_display import FakeDisplay
 from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
 from .fake_e2b import FakeE2B
-
-
-class FakeDisplay:
-    """Answer the start script and `xdotool` the way a sandbox does when its X server is running or not running."""
-
-    def __init__(self) -> None:
-        self.up = False
-        self.starts: list[str] = []
-        self.xdotool: list[str] = []
-
-    def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
-        if 'Xvfb' in command:
-            self.starts.append(command)
-            self.up = True
-            return '', '', 0
-        elif 'xwininfo -root' in command:
-            # The backend reads the screen size only from a display it started itself.
-            assert self.up, 'xwininfo before the display started'
-            return '  Width: 1280\n  Height: 800\n', '', 0
-        elif 'scrot' in command:
-            return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
-        elif (
-            command.startswith('xdotool ') or ' xdotool ' in command
-        ):  # mouse and keyboard input runs `xdotool` through a script
-            self.xdotool.append(command)
-        return '', '', 0
 
 
 @pytest.fixture
@@ -78,18 +52,21 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
+    # XFCE is the template's desktop, so fluxbox is neither installed nor started on top of it.
+    assert 'fluxbox' not in start
 
 
 async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs(fake_e2b: FakeE2B) -> None:
     def responder(command: str, timeout: float | None) -> tuple[str, str, int]:
-        return ('', 'Xvfb: not found', 1) if 'Xvfb' in command else ('', '', 0)
+        needs = "the display needs Xvfb, and there's no apt-get to install them with"
+        return ('', needs, 1) if 'Xvfb' in command else ('', '', 0)
 
     fake_e2b.responder = responder
 
     with pytest.raises(
         WorkspaceUnavailableError,
-        match=r'^Could not start the display in E2B sandbox sbx-1: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
-        r'\(Xvfb: not found\)$',
+        match=r"^Could not start the display in E2B sandbox sbx-1: the display needs Xvfb, and there's no apt-get to "
+        r'install them with$',
     ):
         await screen(E2BSandboxBackend(desktop=True)).display_size()
 
@@ -133,6 +110,11 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
 _STUBS = {
     'setsid': 'exec "$@"',  # macOS has no `setsid`
     'Xvfb': ':',  # the `xdotool` stub plays the X server
+    # The start script checks these are installed; the display answers, so they don't run.
+    **dict.fromkeys(['xwininfo', 'scrot'], 'exit 1'),
+    # The start script runs as root and makes the X socket directory, which these keep off the host's `/tmp`.
+    'id': 'echo 0',
+    **dict.fromkeys(['mkdir', 'chmod'], ':'),
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # X answers; XFCE's window shows once started
     # Shows its window, then keeps running past the script's next 0.1-second check, so the start succeeds and no
     # process is left behind. A `startxfce4-fails` flag file makes it exit with an error instead.
@@ -158,7 +140,7 @@ async def _start_script(fake_e2b: FakeE2B) -> str:
     return start
 
 
-_TOOLS = ('cat', 'rm', 'sleep', 'tail', 'touch', 'tr')
+_TOOLS = ('cat', 'grep', 'rm', 'sleep', 'tail', 'touch', 'tr')
 """Host programs the script and the stubs may use. Every other program is a stub or missing, never the host's."""
 
 
@@ -219,4 +201,20 @@ class TestStartScript:
         result = _run(start, stubs, '1280x800')
 
         assert result.returncode == 0, result.stderr
+        assert not (stubs / 'xfce-starts').exists()
+
+    async def test_an_x_server_outside_the_sandbox_on_its_display_stops_the_start(
+        self, fake_e2b: FakeE2B, stubs: Path
+    ) -> None:
+        """In a network namespace shared with the host, the host's X server listens on the abstract socket."""
+        start = await _start_script(fake_e2b)
+        (stubs.parent / 'proc' / 'net').mkdir(parents=True)
+        (stubs.parent / 'proc' / 'net' / 'unix').write_text(
+            f'0000000000000000: 00000002 00000000 00010000 0001 01 12345 @{stubs.parent}/.X11-unix/X1\n'
+        )
+
+        result = _run(start, stubs, '1280x800')
+
+        assert result.returncode == 1
+        assert 'another X server, outside this sandbox, already uses display :1' in result.stderr
         assert not (stubs / 'xfce-starts').exists()

@@ -40,6 +40,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
+from ..display_fakes import screen
 from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
 
 posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
@@ -453,6 +454,25 @@ class TestRun:
         finally:
             for handle in commands.handles:
                 handle.close()
+
+    async def test_a_display_call_after_a_start_that_installs_setsid_uses_it(self, fake_e2b: FakeE2B) -> None:
+        # The display start installs `setsid`, after its own launch found it missing.
+        installed = False
+
+        def responder(command: str, timeout: float | None) -> tuple[str, str, int]:
+            nonlocal installed
+            if 'command -v setsid' in command:
+                return '', '', 0 if installed else 127
+            if 'Xvfb' in command:
+                installed = True
+            return '  Width: 1280\n  Height: 800\n', '', 0
+
+        fake_e2b.responder = responder
+        backend = await started(template='minimal', desktop=True)
+        await screen(backend).display_size()
+        calls = fake_e2b.sandboxes[0].commands.calls
+        assert 'xwininfo' in calls[-1].command
+        assert calls[-1].command.startswith('setsid ')
 
     async def test_missing_setsid_uses_leader_stop_and_caches_probe(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.responder = lambda command, timeout: ('', '', 127) if 'command -v setsid' in command else ('ok', '', 0)

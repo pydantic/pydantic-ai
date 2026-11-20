@@ -7,6 +7,7 @@ there, like the real one runs it in the container. Removing a container kills th
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -96,6 +97,10 @@ exec)
         [ "$name" != readonly ] || tmp=/nonexistent-pydantic-ai-dir
         mkdir -p "$state/$name.tmp"
         export FAKE_TMP="$tmp"
+        # The container's home, so the desktop's settings never land in the host's.
+        export HOME="$tmp/home"
+        # Variables the image sets, as its `ENV` lines would.
+        [ ! -f "$bin/image-env" ] || . "$bin/image-env"
         for arg; do
             shift
             case $arg in */run/pydantic-ai/* | */tmp/.X* | */tmp/.pydantic-ai-* | */tmp/pydantic-ai-*)
@@ -116,7 +121,8 @@ exec)
     # One file per exec, removed when it finishes, so `rm` only ever sees live commands.
     mkdir -p "$state/$name.pids"
     echo $$ > "$state/$name.pids/$$"
-    "$@"
+    # With `container-path`, the command finds only the programs on it, as in an image that lacks the host's.
+    ( [ ! -f "$bin/container-path" ] || PATH=$(cat "$bin/container-path"); "$@" )
     status=$?
     rm -f "$state/$name.pids/$$"
     exit "$status"
@@ -205,7 +211,7 @@ Also keeps a host's real Xvfb from starting.
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager and `xprop`, so a host's real ones never run."""
+"""Stands in for the window manager, `xprop` and the terminal, so a host's real ones never run."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
@@ -218,6 +224,56 @@ fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX)
 """
 """Stands in for `flock FD`, which macOS lacks: locks the file the shell opened on that descriptor until the shell
 closes it."""
+
+
+_FAKE_ID = """#!/bin/sh
+[ "$1" = -u ] || exec /usr/bin/id "$@"
+cat "$(dirname "$0")/uid"
+"""
+"""Stands in for `id -u`, reporting the user in `uid`, so a test picks whether the start script runs as root."""
+
+_FAKE_SUDO = """#!/bin/sh
+bin=$(dirname "$0")
+[ -e "$bin/sudo-allowed" ] || { echo 'sudo: a password is required' >&2; exit 1; }
+[ "$1" != -n ] || shift
+export FAKE_SUDO=1
+exec "$@"
+"""
+"""Stands in for `sudo -n`: runs the command if `sudo-allowed` exists, so a host's real one never runs, and marks it as
+run through sudo for the fake `apt-get`."""
+
+_FAKE_APT_GET = """#!/bin/sh
+bin=$(dirname "$0")
+echo "${FAKE_SUDO:+sudo }$*" >> "$bin/apt-get-calls"
+if [ "$1" = install ] && [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
+if [ "$1" = update ] && [ -e "$bin/apt-get-update-fails" ]; then
+    echo 'E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease' >&2; exit 100
+fi
+if [ "$1" = install ]; then
+    # Like apt-get, nothing is installed when one package can't be found.
+    for package; do
+        if grep -qx -- "$package" "$bin/apt-get-lacks" 2>/dev/null; then
+            echo "E: Unable to locate package $package" >&2; exit 100
+        fi
+    done
+    for package; do
+        case $package in
+            xvfb) programs=Xvfb ;; x11-utils) programs='xwininfo xprop' ;; util-linux) programs=setsid ;;
+            *) programs=$package ;;
+        esac
+        for program in $programs; do mv "$bin/uninstalled/$program" "$bin/" 2>/dev/null; done
+    done
+fi
+if [ "$1" = install ] && [ -e "$bin/x-starts-during-install" ]; then
+    printf '%10d\\n' 25 > "$FAKE_TMP/.X1-lock" && mkdir -p "$FAKE_TMP/proc/25" && echo Xvnc > "$FAKE_TMP/proc/25/comm"
+    rm -f "$bin/no-display"
+fi
+exit 0
+"""
+"""Stands in for `apt-get`: logs each call, prefixed `sudo` when run through the fake `sudo`, and has `install` put back
+the programs in the packages it names that `uninstall` took away, or fail if `apt-get-fails` exists or the package
+lists lack one of them. `update` fails if `apt-get-update-fails` exists. With `x-starts-during-install`, an install also
+brings up the image's own X server, `Xvnc`, as PID 25."""
 
 
 class FakeDocker:
@@ -298,6 +354,54 @@ class FakeDocker:
     def close_panel(self) -> None:
         (self.bin_dir / 'panel-shows').unlink()
 
+    def uninstall(self, *programs: str) -> None:
+        """Take `programs` off `PATH` until the fake `apt-get` installs them."""
+        (self.bin_dir / 'uninstalled').mkdir(exist_ok=True)
+        for program in programs:
+            (self.bin_dir / program).rename(self.bin_dir / 'uninstalled' / program)
+
+    def run_as(self, uid: int, *, sudo: bool = False) -> None:
+        """Run commands as `uid`, with passwordless `sudo` if `sudo` is true."""
+        (self.bin_dir / 'uid').write_text(f'{uid}\n')
+        if sudo:
+            (self.bin_dir / 'sudo-allowed').touch()
+
+    def hide_host_programs(self, *keep: str) -> None:
+        """Let container commands find only the fakes and the host's `keep`, so an `uninstall`ed program is missing
+        even where the host has it."""
+        host = self.bin_dir / 'host'
+        host.mkdir()
+        for program in ('sh', *keep):
+            path = shutil.which(program)
+            assert path is not None, f'the host has no {program}'
+            (host / program).symlink_to(path)
+        (self.bin_dir / 'container-path').write_text(f'{self.bin_dir}{os.pathsep}{host}')
+
+    def start_x_during_install(self) -> None:
+        """Have the next install bring up the image's own X server, as one the image starts at boot may."""
+        (self.bin_dir / 'x-starts-during-install').touch()
+
+    def fail_installs(self) -> None:
+        (self.bin_dir / 'apt-get-fails').touch()
+
+    def fail_updates(self) -> None:
+        """Have `apt-get update` fail, as it does when the package mirror can't be reached."""
+        (self.bin_dir / 'apt-get-update-fails').touch()
+
+    def set_image_env(self, name: str, value: str) -> None:
+        """Set `name` in every container command's environment, as an image's `ENV` line would."""
+        with (self.bin_dir / 'image-env').open('a') as file:
+            file.write(f'export {name}={shlex.quote(value)}\n')
+
+    def lack_packages(self, *packages: str) -> None:
+        """Have the package lists lack `packages`, as a distribution without them does."""
+        (self.bin_dir / 'apt-get-lacks').write_text(''.join(f'{package}\n' for package in packages))
+
+    @property
+    def apt_get_calls(self) -> list[str]:
+        path = self.bin_dir / 'apt-get-calls'
+        return path.read_text().splitlines() if path.exists() else []
+
     @property
     def xvfb_starts(self) -> int:
         path = self.bin_dir / 'xvfb-starts'
@@ -324,13 +428,19 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
         ('fluxbox', _FAKE_FLUXBOX),
         ('tint2', _FAKE_TINT2),
         ('xprop', _FAKE_FLUXBOX),
+        ('xterm', _FAKE_FLUXBOX),
         ('setsid', _FAKE_SETSID),
         ('scrot', _FAKE_SCROT),
         ('xwininfo', _FAKE_XWININFO),
+        ('id', _FAKE_ID),
+        ('sudo', _FAKE_SUDO),
+        ('apt-get', _FAKE_APT_GET),
         # Only where the host has no `flock`, as on macOS, since the stand-in starts a Python interpreter.
         *([('flock', _FAKE_FLOCK)] if shutil.which('flock') is None else []),
     ]:
         (bin_dir / name).write_text(script)
         (bin_dir / name).chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
-    return FakeDocker(bin_dir)
+    docker = FakeDocker(bin_dir)
+    docker.run_as(1000)
+    return docker

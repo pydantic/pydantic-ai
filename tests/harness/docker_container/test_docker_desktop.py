@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import shutil
 from pathlib import Path
 
 import anyio
@@ -13,6 +15,7 @@ from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.computer_use import Click, Point
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai_harness._x11 import DESKTOP_PACKAGES
 from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE, DockerContainer, DockerContainerBackend
 
 from ..display_fakes import FAKE_SCREENSHOT, screen
@@ -55,6 +58,15 @@ async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: Fa
 
     await _desktop(container_dir).working_dir()
     assert len([call for call in docker.calls if call.startswith('build ')]) == 1
+
+
+def test_the_desktop_image_installs_every_package_the_desktop_needs() -> None:
+    """A Dockerfile can't import `DESKTOP_PACKAGES`, so this keeps its package list in step. It may add more, such as
+    Firefox."""
+    installs = re.findall(r'--no-install-recommends(.*?)&&', DESKTOP_DOCKERFILE, re.DOTALL)
+    # With a second install, this test would need to read them all.
+    assert len(installs) == 1, f'expected one `apt-get install --no-install-recommends`, found {len(installs)}'
+    assert set(DESKTOP_PACKAGES) <= set(installs[0].replace('\\', ' ').split())
 
 
 async def test_a_custom_image_is_not_built(docker: FakeDocker, container_dir: Path) -> None:
@@ -223,10 +235,18 @@ async def test_the_start_opens_the_panel_unless_it_shows(docker: FakeDocker, con
     await screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 2
 
-    docker.close_panel()
+
+async def test_a_panel_that_exits_leaves_a_working_display(docker: FakeDocker, container_dir: Path) -> None:
+    # As tint2 does when it can't read its settings, such as under a home that doesn't exist.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
     docker.fail_panel()
-    with pytest.raises(WorkspaceUnavailableError, match='the panel did not start:\ntint2: could not open the config'):
-        await screen(_desktop(container_dir, image='my-desktop')).display_size()
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.panel_starts == 1
+    log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
+    assert 'tint2: could not open the config' in log.read_text()
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
@@ -242,10 +262,344 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     docker.remove_display(can_start=False)
     workspace = screen(_desktop(container_dir, image='my-desktop'))
 
-    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xwininfo, scrot and setsid') as error:
+    with pytest.raises(WorkspaceUnavailableError, match='the X server did not start') as error:
         await workspace.screenshot()
-    assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
+
+
+_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux'
+
+# The fake docker hides a program only from its own bin directory, so a host that has it would skip the install.
+_HOST_TOOLS = (
+    'base64',
+    'cat',
+    'cp',
+    'dirname',
+    'env',
+    'grep',
+    'mkdir',
+    'mv',
+    'rm',
+    'sleep',
+    'tail',
+    'touch',
+    'tr',
+    'true',
+)
+"""The host programs the start script and the fakes use, for `hide_host_programs`."""
+
+
+def _hide_host_programs(docker: FakeDocker) -> None:
+    docker.hide_host_programs(*_HOST_TOOLS, *(['flock'] if shutil.which('flock') else []))
+
+
+@pytest.mark.parametrize(('uid', 'sudo'), [(0, ''), (1000, 'sudo ')])
+async def test_missing_display_programs_are_installed_on_first_use(
+    docker: FakeDocker, container_dir: Path, uid: int, sudo: str
+) -> None:
+    # A user other than root installs with passwordless sudo; root installs without it.
+    docker.remove_display()
+    docker.uninstall('xdotool', 'scrot')
+    _hide_host_programs(docker)
+    docker.run_as(uid, sudo=uid != 0)
+
+    assert await screen(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
+    assert docker.apt_get_calls == [f'{sudo}update -qq', f'{sudo}{_INSTALL}']
+
+
+async def test_one_missing_program_makes_the_first_start_install_them_all(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    docker.uninstall('scrot')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+
+    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+
+
+async def test_missing_display_programs_without_root_say_what_is_missing(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    docker.remove_display()
+    docker.uninstall('xdotool', 'scrot')
+    _hide_host_programs(docker)
+
+    with pytest.raises(
+        WorkspaceUnavailableError, match="the display needs xdotool scrot, and there's no root or passwordless sudo"
+    ):
+        await screen(_desktop(container_dir, image='my-desktop')).screenshot()
+    assert docker.apt_get_calls == []
+
+
+async def test_missing_display_programs_without_apt_get_say_what_is_missing(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    # As in an image that isn't Debian's, such as Alpine.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    docker.remove_display()
+    docker.uninstall('xdotool', 'apt-get')
+    docker.hide_host_programs('cat', 'tr', 'dirname', *(['flock'] if shutil.which('flock') else []))
+    docker.run_as(0)
+
+    with pytest.raises(
+        WorkspaceUnavailableError, match="the display needs xdotool, and there's no apt-get to install them with"
+    ):
+        await screen(backend).screenshot()
+
+
+async def test_a_running_x_server_needs_no_xvfb(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.leave_x_lock(backend.ref.id, owner='Xvnc')
+    docker.uninstall('Xvfb')
+    _hide_host_programs(docker)
+
+    assert await screen(backend).display_size() == (1280, 800)
+    assert docker.apt_get_calls == []
+
+
+async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+    docker.uninstall('xdotool')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.start_x_during_install()
+
+    assert await screen(backend).display_size() == (1280, 800)
+    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.xvfb_starts == 0
+    assert docker.x_lock_exists(backend.ref.id)
+
+
+@pytest.mark.parametrize('kind', ['directory', 'named-pipe', 'symlink'])
+async def test_a_desktop_log_that_isnt_a_file_still_starts_the_desktop(
+    docker: FakeDocker, container_dir: Path, kind: str
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    # Something other than a file where the log goes. Opening a named pipe would wait forever for a reader. Writing
+    # through a symlink as root would truncate the file it points to.
+    log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
+    target = log.with_name('target')
+    target.write_text('kept')
+    if kind == 'directory':
+        log.mkdir()
+    elif kind == 'named-pipe':
+        os.mkfifo(log)
+    else:
+        log.symlink_to(target)
+        docker.uninstall('tint2')
+        _hide_host_programs(docker)
+        docker.run_as(0)
+
+    with anyio.fail_after(10):  # real-wait: a start that opens the named pipe by name blocks forever, so fail fast
+        assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.panel_starts == 1
+    assert target.read_text() == 'kept'
+
+
+async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_working(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    # The display's own programs are installed on their own, so the missing panel can't stop them.
+    docker.remove_display()
+    docker.uninstall('xdotool', 'tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.lack_packages('tint2')
+
+    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', _INSTALL, 'install -y -qq --no-install-recommends tint2']
+    assert docker.panel_starts == 0
+
+
+async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.lack_packages('tint2', 'xterm')
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    install_tint2 = ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.apt_get_calls == install_tint2
+    marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
+    assert marker.read_text() == ' tint2'
+
+    # A later start, with the same program missing, doesn't run `apt-get` again.
+    starts = docker.xvfb_starts
+    docker.remove_display()
+    await screen(backend).display_size()
+    assert docker.xvfb_starts == starts + 1
+    assert docker.apt_get_calls == install_tint2
+
+    # With another one missing, it tries again.
+    docker.uninstall('xterm')
+    docker.remove_display()
+    await screen(backend).display_size()
+    assert docker.apt_get_calls == [*install_tint2, 'update -qq', 'install -y -qq --no-install-recommends tint2 xterm']
+    assert marker.read_text() == ' tint2 xterm'
+
+
+async def test_a_working_desktop_install_removes_the_record_of_a_failed_one(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
+    marker.write_text(' xterm')
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert not marker.exists()
+
+
+async def test_a_failed_desktop_install_is_not_recorded_through_a_symlink(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path
+) -> None:
+    # A start as root would write through it, to whatever file it points to.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    target = tmp_path / 'target'
+    target.write_text('kept')
+    marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
+    marker.symlink_to(target)
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.lack_packages('tint2')
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert target.read_text() == 'kept'
+
+
+async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    # Only the panel is missing, so the update is the desktop's, and starting Xvfb must not wipe why it failed.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.fail_updates()
+    docker.lack_packages('tint2')
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.panel_starts == 0
+    # The install failed only because the update did, so it isn't recorded, and the next start tries again.
+    assert not (docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed').exists()
+    log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
+    assert log.read_text().splitlines() == [
+        'E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease',
+        'E: Unable to locate package tint2',
+    ]
+
+
+async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.leave_x_lock(backend.ref.id, owner='Xvnc')
+    docker.uninstall('scrot')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == [
+        'update -qq',
+        'install -y -qq --no-install-recommends xdotool x11-utils scrot util-linux',
+    ]
+
+
+async def test_without_root_a_missing_desktop_is_skipped(docker: FakeDocker, container_dir: Path) -> None:
+    # An image with the display programs but no window manager, panel or terminal, and no way to install them.
+    docker.uninstall('fluxbox', 'tint2', 'xterm')
+    _hide_host_programs(docker)
+
+    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == []
+    assert docker.panel_starts == 0
+
+
+async def test_the_desktop_settings_are_written_for_the_user_unless_present(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    home = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'home'
+    (home / '.config' / 'tint2').mkdir(parents=True)
+    (home / '.config' / 'tint2' / 'tint2rc').write_text('panel_position = top\n')
+
+    await screen(backend).display_size()
+
+    # New windows fill the screen, the panel aside.
+    assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
+    assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
+    # The terminal uses a large, clear font, however it's opened.
+    assert (home / '.Xdefaults').read_text() == 'XTerm*faceName: Monospace\nXTerm*faceSize: 14\n'
+
+
+async def test_the_panel_settings_go_where_tint2_reads_them(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path
+) -> None:
+    # tint2 reads its settings under `XDG_CONFIG_HOME` when the image sets it.
+    config = tmp_path / 'config'
+    docker.set_image_env('XDG_CONFIG_HOME', str(config))
+
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+
+    settings = (config / 'tint2' / 'tint2rc').read_text().splitlines()
+    assert 'panel_position = bottom left horizontal' in settings
+    # The terminal opens from a button labelled with words, which models find sooner than an icon.
+    assert {'button_text = Terminal', 'button_lclick_command = xterm'} <= set(settings)
+
+
+async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path) -> None:
+    docker.remove_display()
+    docker.uninstall('xdotool')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.fail_installs()
+
+    with pytest.raises(WorkspaceUnavailableError, match='could not install xdotool:') as error:
+        await screen(_desktop(container_dir, image='my-desktop')).screenshot()
+    assert 'Unable to locate package' in str(error.value)
+    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+
+
+async def test_the_socket_directory_is_made_for_a_user_without_root(docker: FakeDocker, container_dir: Path) -> None:
+    # Xvfb makes `/tmp/.X11-unix` only when it runs as root.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+
+    await screen(backend).display_size()
+
+    socket_dir = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / '.X11-unix'
+    assert socket_dir.stat().st_mode & 0o7777 == 0o1777
 
 
 async def test_a_desktop_refuses_the_host_network(docker: FakeDocker, container_dir: Path) -> None:
