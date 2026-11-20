@@ -1,9 +1,9 @@
 """Reasoning items the OpenAI Responses API withheld from the input, from `Response.input_transformations`.
 
 On newer models, `gpt-6.2-sol` among them, the API drops a replayed reasoning item whose earlier
-conversation changed, and lists it in `input_transformations`. Changing the output format between runs is such a change:
-https://developers.openai.com/api/docs/guides/keep-prefix-unchanged lists `text.format`. The
-recordings use `openai_store=False`.
+conversation changed, and lists it in `input_transformations`. Changing the output format between
+runs is such a change: https://developers.openai.com/api/docs/guides/keep-prefix-unchanged lists
+`text.format`. The recordings use `openai_store=False`.
 """
 
 from __future__ import annotations as _annotations
