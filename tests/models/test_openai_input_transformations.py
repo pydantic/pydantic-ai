@@ -9,7 +9,7 @@ runs is such a change: https://developers.openai.com/api/docs/guides/keep-prefix
 from __future__ import annotations as _annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from opentelemetry import trace
@@ -21,15 +21,16 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from ..conftest import message, try_import
 
-if TYPE_CHECKING:
-    from logfire.testing import CaptureLogfire
-
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed'),
     pytest.mark.vcr,
     pytest.mark.moves_cache_prefix(reason='the second run changes the output format, which is the edit under test'),
 ]
