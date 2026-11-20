@@ -167,6 +167,23 @@ async def test_a_timeout_is_an_error(tmp_path: Path) -> None:
     )
 
 
+async def test_a_run_in_a_missing_directory_is_an_error(tmp_path: Path) -> None:
+    """Only file lookups treat a missing file as an answer: a command that never started is a failure."""
+    instrumentation, exporter = instrumented(include_content=False)
+    agent = Agent(TestModel(call_tools=['run_elsewhere']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
+
+    @agent.tool
+    async def run_elsewhere(ctx: RunContext[Any]) -> str:
+        with pytest.raises(FileNotFoundError):
+            await ctx.workspace.run(['true'], cwd='missing')
+        return 'not started'
+
+    await agent.run('go')
+
+    [span] = [span for span in exporter.get_finished_spans() if span.name == 'workspace run']
+    assert span.status.status_code.name == 'ERROR'
+
+
 async def test_nothing_is_traced_without_instrumentation_or_outside_the_run(tmp_path: Path) -> None:
     """A sub-agent without instrumentation emits nothing, even inside an instrumented run, and neither does the workspace afterwards."""
     instrumentation, exporter = instrumented(include_content=False)

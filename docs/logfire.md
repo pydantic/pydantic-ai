@@ -551,7 +551,7 @@ The run's own instrumentation decides what is traced and whether content is reco
 | `file.size` | On `read_bytes` and `write_bytes` |
 | `logfire.msg` | On a shell command behind a file operation, its step, such as `workspace run (read_chunk)`, so it can't pass for a command the agent ran. Paths and commands stay out of it, as Logfire does not scrub it |
 
-An exception records an error status, except a missing file, which is often an expected answer. Under [durable execution](durable_execution/overview.md), calls are traced where they run; with Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) and instrumentation on the agent itself.
+An exception records an error status, except a missing file on `stat`, `read_bytes`, `list_dir`, `remove` or `realpath`, which is often an expected answer. Under [durable execution](durable_execution/overview.md), calls are traced where they run; with Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) and instrumentation on the agent itself.
 
 ### Adding Custom Metadata
 

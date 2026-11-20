@@ -162,8 +162,12 @@ _TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})
 
 
 def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | None:
-    if ctx is None or isinstance(ctx, RunTelemetry):
-        return ctx
+    if ctx is None:
+        return None
+    if isinstance(ctx, RunTelemetry):
+        # Built by hand, as a durable worker does, it may wrap an uninstrumented run's `NoOpTracer`.
+        # Returned as given otherwise, since a published value is compared by identity.
+        return None if isinstance(ctx.tracer, NoOpTracer) else ctx
     # A context rebuilt inside a durable unit has only the fields its engine carried, and reading any
     # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
     if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
