@@ -75,9 +75,9 @@ def publish_run_telemetry(tracer: Tracer, *, include_content: bool) -> None:
 
 
 @contextmanager
-def run_telemetry_scope(ctx: RunContext[Any] | RunTelemetry | None) -> Generator[None]:
-    """Publish `ctx`'s telemetry, or the given telemetry, for a block that starts and ends in one `Context`."""
-    token = _current.set(_telemetry_of(ctx))
+def run_telemetry_scope(telemetry: RunTelemetry | None) -> Generator[None]:
+    """Publish `telemetry` for a block that starts and ends in one `Context`, for code that has no `RunContext`."""
+    token = _current.set(_telemetry_of(telemetry))
     try:
         yield
     finally:
