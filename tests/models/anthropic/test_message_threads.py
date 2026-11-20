@@ -276,9 +276,8 @@ async def test_continue_within_a_tool_call_loop(allow_model_requests: None, stre
 
 
 async def test_continue_after_a_computer_call_is_labelled(allow_model_requests: None):
-    """The model labels its `computer` call with its screenshot limits, which the response's digest leaves out.
-
-    The labels are never sent, so the request that answers the call still continues the thread.
+    """A `computer` call's labels are never sent and the response digest leaves them out, so the request that
+    answers the call still continues the thread.
     """
     api = _Api(replies=[{'type': 'tool_use', 'id': 'toolu_1', 'name': 'computer', 'input': {'actions': []}}])
     screen = BinaryImage(data=b'png', media_type='image/png')

@@ -790,7 +790,7 @@ def _legacy_error_agent(name: str, model: FunctionModel, streamed: bool = False)
     )
 
 
-# It can't take images, so it refuses any request with a `computer` tool, in its activity, before it's called.
+# It can't take images, so it refuses any request with a `computer` tool, in its activity.
 _blind_legacy_model = FunctionModel(
     lambda messages, info: ModelResponse(parts=[]),  # pragma: no cover
     model_name='blind',
@@ -830,9 +830,8 @@ _REFUSED = (
         # A refusal isn't retried, whatever the retry policy says.
         pytest.param('refused', _REFUSED, 1, id='refused'),
         pytest.param('refused-streamed', _REFUSED, 1, id='refused-streamed'),
-        # Other errors reach the retry policy, and the workflow, as they did before refusals crossed: a rate limit
-        # under its own class name, which the policy names, and a subclass of `UserError` retried, as the policy
-        # doesn't name it.
+        # Other errors keep their class name for the retry policy: it names the rate limit as non-retryable, and
+        # doesn't name the `UserError` subclass, which is retried.
         pytest.param('rate-limited', 'ActivityError: ModelRateLimitError', 1, id='rate-limited'),
         pytest.param('app-user-error', 'ActivityError: _AppUserError', 3, id='app-user-error'),
     ],

@@ -480,7 +480,7 @@ def _computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # p
 
 
 def _blind_model() -> FunctionModel:
-    # It can't take images, so it refuses any request with a `computer` tool, in its activity, before it's called.
+    # It can't take images, so it refuses any request with a `computer` tool, in its activity.
     return FunctionModel(_fallback_target_fn, model_name='blind', profile=ModelProfile(supports_image_input=False))
 
 

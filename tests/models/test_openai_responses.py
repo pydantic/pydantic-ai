@@ -5849,12 +5849,11 @@ async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_
 async def test_openai_previous_response_id_auto_continues_after_a_computer_call_is_labelled(
     allow_model_requests: None,
 ):
-    """A `computer` call is labelled with its model's grid and screenshot limits, which the response's digest leaves out.
+    """A `computer` call's labels are never sent and the response digest leaves them out, so the next request still
+    continues from the response.
 
-    The labels are never sent, so the next request still continues from the response.
-
-    This is not a recorded-HTTP (VCR) test. This adapter doesn't send `ComputerTool` yet, so no recording can produce
-    a `computer` call that the agent runs.
+    Not a VCR test: this adapter doesn't send `ComputerTool`, so no recording can produce a `computer` call the agent
+    runs.
     """
     call = response_message([_function_call_item('fc_1', '{"actions": []}', name='computer')]).model_copy(
         update={'id': 'resp_1'}
