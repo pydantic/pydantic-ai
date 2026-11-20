@@ -6619,9 +6619,10 @@ class _ToolCallStarted(Exception):
 
 
 async def _stop_at_tool_call(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
-    async for event in events:
-        if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
-            raise _ToolCallStarted
+    """Stop at the response's first event, which starts its function call."""
+    event = await anext(aiter(events))
+    assert isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
+    raise _ToolCallStarted
 
 
 async def test_openai_conversation_id_continues_from_cut_off_response_the_conversation_holds(
