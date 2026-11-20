@@ -120,7 +120,7 @@ async def main():
     print(result.output)
 ```
 
-Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). Add `Coder` to give the agent the sandbox's shell and files too.
+Daytona's default snapshot has an XFCE desktop, a terminal and Chromium, which its dock's Web Browser button opens. Chromium can't use its own sandbox there, so the desktop start adds `--no-sandbox` to it in `/etc/chromium.d`, with the `daytona` user's passwordless `sudo`. That turns off the browser's own sandbox, which keeps a web page that breaks into the browser away from the rest of the sandbox. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). Add `Coder` to give the agent the sandbox's shell and files too.
 
 Daytona's desktop can't press F13 to F24, keypad Enter, the keypad's `+`, `-`, `*`, `/` and `.` keys, print screen, pause, scroll lock, the menu key or media keys. It can't use the side mouse buttons. It can't type characters beyond U+FFFF, such as most emoji. When the agent asks for one of these, it is told the desktop can't do it. On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`. Its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 

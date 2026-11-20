@@ -35,7 +35,6 @@ from pydantic_ai.messages import (
     ToolPartKind,
 )
 
-from ._computer_use import COMPUTER_KIND_ID, label_calls as label_computer_calls
 from ._special_tokens import StreamRestorer
 from ._utils import generate_tool_call_id as _generate_tool_call_id
 
@@ -73,8 +72,6 @@ class ModelResponsePartsManager:
 
     special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
     """Removes the joiner from the special tokens in the response, for a model whose requests have them."""
-    computer_call_labels: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
-    """The grid and screenshot limits of the model streaming the response, recorded on each of its `computer` calls."""
 
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
@@ -141,7 +138,6 @@ class ModelResponsePartsManager:
         for part_index in tuple(self._string_buffers):
             if not isinstance(self._parts[part_index], ToolCallPartDelta):
                 self._materialize_and_cache_part(part_index)
-        self._label_computer_calls()
         restorer = self.special_token_restorer
         if restorer is None:
             return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
@@ -150,11 +146,6 @@ class ModelResponsePartsManager:
             for index, p in enumerate(self._parts)
             if not isinstance(p, ToolCallPartDelta)
         ]
-
-    def _label_computer_calls(self) -> None:
-        if self.computer_call_labels:
-            names = {name for name, kind in self._tool_kind_by_name.items() if kind == COMPUTER_KIND_ID}
-            label_computer_calls(self._parts, names, self.computer_call_labels)
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.

@@ -48,10 +48,8 @@ class DisplayDriver(Display, SupportsZoom, SupportsCursorPosition, Protocol):
 class LazyDisplay:
     """The display a backend hands out for its whole life. It starts on first use, and again after a failure.
 
-    Creating it does nothing. `start` starts the display, and does nothing if the display already runs. `driver` then
-    controls it. `scope` wraps every call, including the start. For example, a backend uses it to turn a provider's
-    errors into workspace errors. The backend also calls `start` before each shell command, so a program the command
-    opens shows on the screen.
+    `scope` wraps every call, including the start, for example to turn a provider's errors into workspace errors. The
+    backend also calls `start` before each shell command, so a program the command opens shows on the screen.
 
     A call that only looks, such as a screenshot, is retried once after a failure, and the retry restarts a lost
     display. An action is never retried, so nothing is done twice.
@@ -70,14 +68,10 @@ class LazyDisplay:
         self._start = start
         self._scope = scope
         self._running = False
-        """Whether the display is known to be running, so a call needn't start it first."""
         self._lock = anyio.Lock()
 
     def reset(self) -> None:
-        """Forget that the display is running, such as when the environment may have restarted.
-
-        The next call starts it.
-        """
+        """Forget that the display runs, so the next call starts it, such as after the environment restarted."""
         self._running = False
 
     async def start(self) -> None:
@@ -102,8 +96,8 @@ class LazyDisplay:
             except UnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
             except Exception as error:
-                # The display may have stopped, or the environment restarted. The next call starts it again. Starting a
-                # display that still runs does nothing.
+                # The display may have stopped or the environment restarted, so the next call starts it again. Starting
+                # one that still runs does nothing.
                 self._running = False
                 # Retrying can't help an unavailable environment, and would double a timeout.
                 if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):

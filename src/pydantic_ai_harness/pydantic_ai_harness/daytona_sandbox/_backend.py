@@ -64,7 +64,12 @@ except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
 from pydantic_ai_harness._display import LazyDisplay, desktop_size
-from pydantic_ai_harness.daytona_sandbox._desktop import DISPLAY, REQUEST_TIMEOUT as _REQUEST_TIMEOUT, DaytonaDesktop
+from pydantic_ai_harness.daytona_sandbox._desktop import (
+    ALLOW_CHROMIUM,
+    DISPLAY,
+    REQUEST_TIMEOUT as _REQUEST_TIMEOUT,
+    DaytonaDesktop,
+)
 
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
@@ -726,7 +731,6 @@ class DaytonaSandboxBackend(
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self.get_sandbox()
             if self._display is not None:
-                # Started first, so a program the command opens shows on the screen.
                 await self._display.start()
             process = _DaytonaProcess(sandbox)
             line = process.command_line(argv, cwd=self._working_dir, env={**self._env, **(env or {})})
@@ -894,18 +898,16 @@ class DaytonaSandboxBackend(
                     except (WorkspaceUnavailableError, UnsupportedActionError):
                         raise
                     except WorkspaceError as error:
-                        # A failure the desktop reports, such as keys it couldn't let go of, may come from a lost
-                        # sandbox.
+                        # Such as keys it couldn't let go of, which may come from a lost sandbox.
                         if (gone := await _probe(sandbox)) is not None:
                             raise gone from error
                         raise
             except daytona.DaytonaTimeoutError as error:
                 raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
             except daytona.DaytonaRateLimitError:
-                raise  # temporary, so a durable execution engine can retry it, as for the workspace's other operations
+                raise  # temporary, so a durable execution engine can retry it
             except daytona.DaytonaError as error:
-                # A server error, such as one from a desktop that stopped with its sandbox, fails only this call. The
-                # next call starts the display again.
+                # Such as a desktop that stopped with its sandbox. The next call starts the display again.
                 raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
 
     def _attached_computer_use(self) -> AsyncComputerUse:
@@ -914,7 +916,6 @@ class DaytonaSandboxBackend(
         return self._sandbox.computer_use
 
     async def _start_display(self) -> None:
-        """Start the desktop unless it's running."""
         sandbox = await self.get_sandbox()
         computer_use = sandbox.computer_use
         try:
@@ -928,6 +929,7 @@ class DaytonaSandboxBackend(
                 f'The desktop of the Daytona sandbox {sandbox.id!r} stopped answering. Stop and start the sandbox '
                 f'to bring it back. ({error})'
             ) from error
+        await sandbox.process.exec(ALLOW_CHROMIUM, timeout=_REQUEST_TIMEOUT)
 
 
 def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:

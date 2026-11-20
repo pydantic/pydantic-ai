@@ -50,9 +50,7 @@ in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
 To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
 On a [read-only](../workspace.md#read-only-access) workspace, the `computer` tool offers only the actions that change
-nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`. Some models use their provider's own
-computer tool instead, and its list of actions can't be narrowed. On a read-only workspace, a call from that tool that
-clicks or types is refused, and none of its actions run.
+nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`.
 
 ## What the model is told
 
@@ -108,7 +106,7 @@ missing; delete `/tmp/pydantic-ai-desktop-install-failed` to retry it.
 
 ## Models
 
-The model must accept images.
+The model must accept images. A model that can't gets a note in place of each screenshot, saying it wasn't sent.
 
 - Claude models on `AnthropicModel` get Anthropic's own computer use tool on the clients and models listed under
   [Anthropic](../models/anthropic.md#computer-use). Other Claude models and clients get the function tool.
@@ -116,16 +114,14 @@ The model must accept images.
   through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-By default, OpenAI's computer tool is sent only through `OpenAIProvider` and `BedrockMantleProvider`, except with an Azure client.
-The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets the tool too. Pydantic AI checks the provider class, not the server it calls. If you point
-`OpenAIProvider(base_url=...)` at another server, such as Ollama or vLLM, that doesn't support the computer tool,
-remove `ComputerTool` in the model's `profile=` argument, starting from the profile the model already has:
-`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Every other provider
-gets the function tool. If its server supports OpenAI's computer tool, add it the same way, with `| {ComputerTool}`.
-Passing a new `supported_native_tools` set instead replaces all of the model's native tools, so web search and the
-others would be dropped. Setting it in the provider's profile has no effect.
-
-Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
+An Azure client gets the function tool too. The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets
+OpenAI's tool. Pydantic AI checks the provider class, not the server it calls. If you point
+`OpenAIProvider(base_url=...)` at a server that doesn't support the computer tool, such as Ollama or vLLM, remove it in
+the model's `profile=` argument:
+`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. To send it through
+another provider whose server supports it, use `| {ComputerTool}` instead. Start from the model's profile like this,
+since a new `supported_native_tools` set replaces all of the model's native tools. Setting it in the provider's profile
+has no effect.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -172,21 +168,26 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 
 ## Screen size
 
-Some models accept screenshots only up to a set size. Their profile sets it with
-[`computer_use_screenshot_max_side`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side] and
-`computer_use_screenshot_max_pixels`. Claude models get these limits only on `AnthropicModel`:
+A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
+screen shows more at once, but each screenshot costs more tokens, and every request sends every earlier screenshot
+again: a 1920x1080 screenshot costs about twice as much as a 1280x800 one. Below about 1024x768, models start to miss
+detail.
 
-- Claude Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and about 3.75 megapixels (2576x1456).
-- Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
-- Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels on the longer side and about 1.15 megapixels.
+The providers' own advice:
 
-`ComputerUse` sends every screenshot at the screen's full size and doesn't shrink it. If the screen is larger than the
-model accepts, the run stops with a `UserError` that names the largest size that fits. A 1280x800 screen fits every
-model.
+- Anthropic: "For general desktop tasks, use 1024x768 or 1280x720; for web applications, use 1280x800 or 1366x768"
+  ([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)). For each
+  model's image size limits, see [Vision](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+- OpenAI: 1440x900 and 1600x900 work well
+  ([computer use](https://developers.openai.com/api/docs/guides/tools-computer-use-integration#capture-screenshots)).
+  For each model's image size limits, see
+  [Images and vision](https://developers.openai.com/api/docs/guides/images-vision#model-sizing-behavior).
 
-Claude's `computer_toolset_20260801` tool also caps a screenshot at 4784 image tokens, where one token covers 28x28
-pixels. It refuses a larger screenshot, such as 2549x1457, even when it fits the limits above, and the run stops with
-Anthropic's error.
+On `AnthropicModel`, Claude 4 models on the older computer use tools shrink a larger screenshot without saying so, and
+then give positions on the smaller image. Keep the screen at 1280x800 or smaller for them
+([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)). Claude's
+`computer_toolset_20260801` tool refuses a screenshot over 4784 image tokens, where one token covers 28x28 pixels,
+such as 2549x1457. The request fails with a `ModelHTTPError`, which a `FallbackModel` moves on from.
 
 GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
 they can miss what they click.
@@ -199,7 +200,7 @@ they can miss what they click.
   try again. Each such retry counts against the tool's retry limit.
 - If the workspace is gone, for example because its sandbox was deleted, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Several agents can share one screen, such as sub-agents running in parallel. If they run in the same `asyncio` event loop, they take turns one whole call at a time, so their clicks never mix. Agents in separate event loops or separate processes don't wait for each other.
-- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`. Each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends. So a drag must finish within one run, including any calls that wait for approval. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call instead, so a drag must happen within one call. If the release after a failed call fails too, that call's result says the button may still be pressed.
+- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button may still be pressed.
 
 ## Watching a run
 
@@ -220,11 +221,10 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
 
 ## Limitations
 
-- Screenshots are the main cost, because every request sends them all again. Prompt caching makes the repeats
-  cheaper.
-- Every request carries every earlier screenshot, so a long run reaches the provider's limits. For example, Claude
-  refuses a request with more than 100 images on its models with a 200k-token context. `ComputerUse` doesn't drop old
-  screenshots, and [`ClearToolResults`](compaction.md) doesn't clear `computer` results.
+- Every request sends every earlier screenshot again. They are the main cost, which prompt caching lowers, and a
+  long run reaches the provider's limits: Claude, for example, refuses a request with more than 100 images on its
+  models with a 200k-token context. `ComputerUse` doesn't drop old screenshots, and
+  [`ClearToolResults`](compaction.md) doesn't clear `computer` results.
 - Each `computer` call takes one model request, so a long task can reach the default [`request_limit`](../agent.md#usage-limits) of 50.
   To allow more, pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits].
 - If the screen restarts, the model isn't told. Its next screenshot shows the new screen.
@@ -232,12 +232,6 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   out, pass `InstrumentationSettings(include_binary_content=False)`.
 - [`Advisor(forward_history=True)`](advisor.md) sends every screenshot to the advisor model. Anthropic refuses an
   advisor request with more than 600 images.
-- With [`ModelFallback`](../capabilities/model-fallback.md) or a [`FallbackModel`](../models/overview.md#fallback-model), each model
-  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't serve the request,
-  because it can't take images or the latest screenshot is larger than it can see, is always skipped, whatever
-  `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's `UserError`;
-  when another model's failure was one `fallback_on` moves on from, with a `FallbackExceptionGroup`. Any other
-  failure is raised by itself. The `computer` call before that request has already run its actions on the screen.
 
 ## Durable execution
 
@@ -248,8 +242,11 @@ allow. When the engine stops retrying, the model is told that some actions may h
 
 On Temporal, those settings are `TemporalDurability`'s `activity_config`. By default it has a 60-second timeout and
 unlimited retries. Set `start_to_close_timeout` longer than your longest call. Set
-`retry_policy=RetryPolicy(maximum_attempts=1)` so a call is never run twice. After a few steps, the screenshots also
-pass Temporal's 2 MB payload limit, so configure [external storage](../durable_execution/temporal.md#large-payloads).
+`retry_policy=RetryPolicy(maximum_attempts=1)` so a call is never run twice. That also stops retries of model requests
+and other tools, so give model requests theirs back with
+`model_activity_config=ActivityConfig(retry_policy=RetryPolicy())`, and a toolset its own with
+`toolset_activity_config`. After a few steps, the screenshots also pass Temporal's 2 MB payload limit, so configure
+[external storage](../durable_execution/temporal.md#large-payloads).
 
 Use `TemporalDurability` or `PrefectDurability`. The deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't
 run `ComputerUse`.

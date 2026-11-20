@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models._computer_calls import UNFINISHED_COMPUTER_ARGS
 from pydantic_ai.native_tools import AdvisorTool, ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -74,9 +75,8 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    # If another thread uses `random` while Hypothesis draws an example, Hypothesis warns, as
-    # `tests/test_history_properties.py` explains. `filterwarnings = error` turns that warning into a flaky failure.
-    # No strategy here uses `random`.
+    # Hypothesis warns when another thread uses `random` mid-draw (see `tests/test_history_properties.py`), which
+    # `filterwarnings = error` makes a flaky failure. No strategy here uses `random`.
     pytest.mark.filterwarnings(
         'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
     ),
@@ -146,7 +146,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
 
     first, second = get_mock_chat_completion_kwargs(client)
     assert first['tools'] == [{'type': 'computer_toolset_20260801'}]
-    # The toolset calls go back unchanged, each with its own result. Both name the toolset.
+    # The toolset calls go back unchanged, each with its own result.
     calls = second['messages'][-2]['content']
     assert [(c['id'], c['name'], c['toolset_name']) for c in calls] == [
         ('toolu_1', 'left_click', 'computer'),
@@ -681,8 +681,6 @@ def test_the_newest_models_get_the_computer_toolset(model_name: str) -> None:
     profile = AnthropicProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('anthropic_computer_tool_version') == 'computer_toolset_20260801'
-    assert profile.get('computer_use_screenshot_max_side') == 2576
-    assert profile.get('computer_use_screenshot_max_pixels') == 2576 * 1456
 
 
 def _stream(*blocks: BetaContentBlock) -> list[BetaRawMessageStreamEvent]:
@@ -747,7 +745,7 @@ async def _streamed(events: list[BetaRawMessageStreamEvent], *function_tools: To
 async def test_a_streamed_member_call_whose_input_came_with_its_start_keeps_it(allow_model_requests: None) -> None:
     block = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
     events = _stream(block)
-    # No input deltas: the whole input comes with the block's start event, as an ordinary tool call's can.
+    # No input deltas: the whole input comes with the block's start event.
     events[1] = BetaRawContentBlockStartEvent(type='content_block_start', index=0, content_block=block)
     del events[2]
     (call,) = (await _streamed(events)).parts
@@ -917,7 +915,7 @@ async def test_a_streamed_computer_call_cut_off_mid_input_stops_the_run(
             await _agent(model, FakeComputer()).run(
                 'Go.', model_settings={'max_tokens': 60}, event_stream_handler=drain
             )
-    # The cut-off call is the response's last part, with arguments that don't parse. The run checks the last part.
+    # The cut-off call is the response's last part, with arguments that don't parse.
     *_, response = [message for message in messages if isinstance(message, ModelResponse)]
     assert response.finish_reason == 'length'
     last = response.parts[-1]
@@ -1051,8 +1049,8 @@ async def _sent_results(
     """The results a request sends for a toolset call whose tool result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    # The actions each call becomes. If `counts` gives a different number than the conversion, the count is used and
-    # the actions are screenshots. The kind of action doesn't affect how the result is split.
+    # Where `counts` differs from the conversion, the count is used and the actions are screenshots. The kind of
+    # action doesn't affect how the result is split.
     actions: list[dict[str, Any]] = []
     for block, count in zip(blocks, counts):
         mapped = await _mapped(block['name'], block['input'])
@@ -1134,7 +1132,6 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert all(block['type'] == 'text' for r in sent if r['is_error'] for block in r['content'])
     if unsuccessful:
-        # The text goes back once, on the last call. The other calls say the result is on the last call.
         *rest, last = [[block['text'] for block in r['content']] for r in sent]
         assert rest == [[ON_LAST]] * (members - 1)
         assert len(last) == 1 and last != [ON_LAST]
@@ -1297,6 +1294,37 @@ async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plai
     ] == [('toolu_1', False, ['Action 1 of 2 (click) failed: busy.', 'image'])]
 
 
+async def test_a_stored_blocked_call_without_toolset_calls_goes_back_plain(allow_model_requests: None) -> None:
+    """A blocked call always stores Claude's calls, so a history without any was changed elsewhere."""
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    call = ToolCallPart(
+        'computer',
+        UNFINISHED_COMPUTER_ARGS,
+        tool_call_id='toolu_1',
+        provider_name='anthropic',
+        provider_details={
+            'computer_blocks': [],
+            'computer_tool': 'computer_toolset_20260801',
+            'computer_action_counts': [],
+        },
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(parts=[call], provider_name='anthropic'),
+        ModelRequest(parts=[ToolReturnPart('computer', 'Not run.', tool_call_id='toolu_1')]),
+    ]
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (body,) = get_mock_chat_completion_kwargs(client)
+    (tool_use,) = body['messages'][1]['content']
+    assert (tool_use['id'], tool_use['name'], 'toolset_name' in tool_use) == ('toolu_1', 'computer', False)
+
+
 async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_member_calls(
     allow_model_requests: None,
 ) -> None:
@@ -1447,7 +1475,6 @@ async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_
     await agent.run('Go.')
 
     assert computer.actions == []
-    # Fixed text. Nothing in it comes from the history, which may come from storage or a UI.
     refusal = (
         'No computer action ran: they run together as one batch, and another tool call came between them. Make the '
         "computer calls before or after the other tools' calls, not between them."

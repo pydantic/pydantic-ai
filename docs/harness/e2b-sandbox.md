@@ -275,7 +275,7 @@ async def main():
 
 A new sandbox uses E2B's `desktop` template: Ubuntu with the XFCE desktop, a terminal and Google Chrome. The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. To also give the agent the sandbox's shell and files, add `Coder`.
 
-XFCE keeps some keys for itself, so the window in front never receives them. `printscreen` opens XFCE's screenshot tool. The media and volume keys also go to XFCE.
+XFCE keeps `printscreen` (it opens XFCE's screenshot tool) and the media and volume keys, so the window in front never gets them.
 
 A custom `template` needs `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, and Xvfb when no X server is running already. [The first use installs them](computer-use.md#what-the-display-needs) if it can. For the XFCE desktop it also needs `startxfce4`, which it doesn't install; without it, the screen stays black until a program opens a window.
 
