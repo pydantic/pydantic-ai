@@ -2742,10 +2742,15 @@ the worker.
 
 Naming is off by default, so no model request is made without your opt-in, and
 sessions keep their fallback titles. Once on, it uses the current model unless
-`sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider and incurs additional usage. It has no tools and does not
-inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
-results leave the existing name usable and do not interrupt foreground work.
+`sessions.naming_model` selects another model. Naming requests set `max_tokens`
+to 250. If a reasoning model spends that budget before returning a title, the
+session keeps its existing title. Use `sessions.naming_model` to select a model
+that can return a short structured response within that budget.
+
+Naming sends conversation excerpts to that model's provider and incurs
+additional usage. It has no tools and does not inherit coding plugins. Missing
+credentials, timeouts, invalid output, or stale results leave the existing name
+usable and do not interrupt foreground work.
 `/usage` and the browser preview show persisted naming token counts separately;
 `/cost` remains retained foreground-history cost.
 
