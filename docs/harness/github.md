@@ -165,3 +165,7 @@ A `client` is one connection shared by every run; see [Per-user credentials](#pe
 `GitHub` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each GitHub tool call as a tool span.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/github/)
+
+## API reference
+
+::: pydantic_ai_harness.github.GitHub
