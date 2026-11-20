@@ -67,14 +67,14 @@ The model must accept images.
   through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
-By default, OpenAI's computer tool is sent only through `OpenAIProvider` and `BedrockMantleProvider`, except with an Azure client.
-The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets the tool too. Pydantic AI checks the provider class, not the server it calls. If you point
-`OpenAIProvider(base_url=...)` at another server, such as Ollama or vLLM, that doesn't support the computer tool,
-remove `ComputerTool` in the model's `profile=` argument, starting from the profile the model already has:
-`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Every other provider
-gets the function tool. If its server supports OpenAI's computer tool, add it the same way, with `| {ComputerTool}`.
-Passing a new `supported_native_tools` set instead replaces all of the model's native tools, so web search and the
-others would be dropped. Setting it in the provider's profile has no effect.
+An Azure client gets the function tool too. The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets
+OpenAI's tool. Pydantic AI checks the provider class, not the server it calls. If you point
+`OpenAIProvider(base_url=...)` at a server that doesn't support the computer tool, such as Ollama or vLLM, remove it in
+the model's `profile=` argument:
+`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. To send it through
+another provider whose server supports it, use `| {ComputerTool}` instead. Start from the model's profile like this,
+since a new `supported_native_tools` set replaces all of the model's native tools. Setting it in the provider's profile
+has no effect.
 
 Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
 

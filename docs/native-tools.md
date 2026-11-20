@@ -854,9 +854,9 @@ _(This example is complete, it can be run "as is")_
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Models are trained to use that tool. As with the [Memory Tool](#memory-tool), the provider doesn't run the calls. Pydantic AI runs each call with the agent's `computer` tool and sends the result back in the provider's format. It finds that tool by its kind, `computer`, not by its name.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool, which models are trained to use. As with the [Memory Tool](#memory-tool), the provider doesn't run the calls: Pydantic AI runs each one with the agent's `computer` tool, found by its kind rather than its name, and sends the result back in the provider's format.
 
-Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both the `computer` tool and the `ComputerTool` for you. With `ComputerUse(native=False)`, it leaves out the `ComputerTool`, and the model gets `computer` as a regular function tool.
+Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both the `computer` tool and the `ComputerTool` for you. With `ComputerUse(native=False)`, the model gets `computer` as a regular function tool.
 
 The native tool is sent only when the request has exactly one `computer` tool the model can call. If there is none, an `optional` `ComputerTool` is left out, and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]. If there is more than one, the request raises `UserError`.
 

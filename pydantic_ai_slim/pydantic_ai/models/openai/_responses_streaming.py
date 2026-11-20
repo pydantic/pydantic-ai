@@ -99,10 +99,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
     _status: ResponseStatus | None = field(default=None, init=False)
-    """The response's latest status: first from `response.created`, then from the event that ended the stream.
-
-    It decides whether the response's computer calls may run.
-    """
+    """The response's latest status, which decides whether its computer calls may run."""
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -612,9 +609,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass
 
     def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
-        # The call's actions all arrive in its `done` event. OpenAI finishes each item before it starts the next, so
-        # the call is added here already complete, and keeps its place among the other parts.
-        # Its ID is stored the same way `_map_function_call_done` stores a function call's ID.
+        # OpenAI finishes each item before it starts the next, so the call keeps its place among the other parts.
         call_id = stored_tool_call_id(
             item.call_id,
             response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,

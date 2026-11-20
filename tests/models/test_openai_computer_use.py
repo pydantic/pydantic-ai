@@ -1,8 +1,7 @@
 """OpenAI Responses' native computer tool, sent in place of a tool of the `computer` kind.
 
-Most tests here use a mocked SDK client, not recordings. They pin the exact request items, cover actions and
-histories that GPT doesn't produce on demand, and check the errors raised before any request is sent. The recorded
-runs are in `tests/harness/computer_use/test_computer_use_live.py`, with the real capability.
+These tests use a mocked SDK client to pin exact request items and cover inputs GPT doesn't produce on demand. The
+recorded runs are in `tests/harness/computer_use/test_computer_use_live.py`.
 """
 
 from __future__ import annotations
@@ -64,8 +63,8 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    # If another thread uses `random` while Hypothesis draws, Hypothesis warns, as `tests/test_history_properties.py`
-    # explains, and `filterwarnings = error` turns that into a flaky failure. No strategy here uses `random`.
+    # Another thread using `random` while Hypothesis draws makes this warn, flakily (see
+    # `tests/test_history_properties.py`). No strategy here uses `random`.
     pytest.mark.filterwarnings(
         'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
     ),
@@ -525,8 +524,7 @@ _SCREEN_JSON = {
     [
         # As when a capability removed the screenshot from this request. The output still needs an image.
         pytest.param(['Ran 1 action.', _DROPPED], {'performed': 1}, None, f'Ran 1 action. {_DROPPED}', id='dropped'),
-        # The last image is the screen. An image before it, such as a zoom, goes in the message with the note,
-        # because the output can hold only one image.
+        # The last image is the screen. An earlier one, such as a zoom, goes in the message with the note.
         pytest.param(
             ['Ran 1 action.', _ZOOM, _SCREEN],
             {'performed': 1},
@@ -628,12 +626,10 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
         assert sent == image_url
     assert output['output']['detail'] == 'original'
     after = request['input'][request['input'].index(output) + 1 :]
-    # The note is the tool's result, wrapped in tool-result tags in a user message.
     framed = f'<pyai:tool_result tool_name="computer" tool_call_id="call_1">{note}</pyai:tool_result>'
     others = [item for item in content[:-1] if isinstance(item, BinaryImage)] if isinstance(content, list) else []
     expected: str | list[dict[str, Any]] = framed
     if others:
-        # Each image is wrapped in its own tags, as Pydantic AI does for any tool's files sent in a user message.
         expected = [{'type': 'input_text', 'text': framed}]
         for other in others:
             expected += [
@@ -731,11 +727,8 @@ async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
 ) -> None:
     """OpenAI says not to run a response that is incomplete, failed or refused, even when its computer call finished.
 
-    The call gets arguments that aren't valid JSON, so none of it runs, as `test_an_unfinished_call_runs_nothing`
-    shows. A refused response that isn't streamed has no parts at all, as for any other call. A stream that ends
-    before its final event still has the `in_progress` status from its `response.created` event. Calls to a deferred
-    `computer` tool are stopped too: tool search can reveal the tool in the same response, and the run then finds it
-    before it runs the response's calls.
+    A refused response that isn't streamed has no parts at all. A stream that ends before its final event keeps the
+    `in_progress` status from `response.created`.
     """
     native = tool == 'native'
     item: resp.ResponseOutputItem = (
@@ -913,8 +906,7 @@ async def test_a_profile_that_turns_it_on_gets_the_native_tool(
 def test_azure_and_openrouter_keep_the_function_tool_and_the_gateway_gets_the_native_tool() -> None:
     """The native tool isn't verified on Azure. OpenRouter answers it with only a reasoning item.
 
-    `OpenRouterProvider` isn't an `OpenAIProvider`, so `_instance_profile_defaults` removes the tool for it. The
-    gateway's OpenAI route is an `OpenAIProvider` that reaches OpenAI's own API, so it keeps the tool.
+    The gateway's OpenAI route is an `OpenAIProvider` that reaches OpenAI's own API, so it keeps the tool.
     """
     from openai import AsyncAzureOpenAI
 
@@ -996,7 +988,6 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
     assert [item.get('type') for item in request['input']] == snapshot(
         [None, 'function_call', 'function_call_output', None]
     )
-    # Full size, as in a `computer_call_output`, so OpenAI doesn't shrink the screenshot the model clicks on.
     [image] = [item for item in request['input'][2]['output'] if item['type'] == 'input_image']
     assert image['detail'] == detail
 
@@ -1079,7 +1070,7 @@ async def test_openai_actions_map_onto_the_computer_tool(
 ) -> None:
     """Every action OpenAI documents, including ones no recording has. A recorded test covers only what GPT sent."""
     response = _computer_call()
-    # Built without validation, as the SDK builds a response, so actions it would refuse reach the mapping too.
+    # Built without validation, as the SDK builds a response.
     response.output = [response.output[0].model_copy(update={'actions': [action]})]
     model = OpenAIResponsesModel(
         'gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
@@ -1341,8 +1332,7 @@ async def test_a_response_scoped_computer_call_id_is_stored_qualified(
     assert call.tool_call_id == 'call_1_f9rpvkyf'
 
 
-# Property tests over any value OpenAI could send or a history could hold. The SDK builds response items without
-# validating them, and a stored history can be edited or rebuilt by a UI, so the adapter can get any value.
+# Property tests: the SDK doesn't validate response items, and a stored history can be edited, so any value can arrive.
 
 _JSON = st.recursive(
     st.none() | st.booleans() | st.integers() | st.floats(allow_nan=False) | st.text(max_size=8),

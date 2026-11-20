@@ -1,8 +1,4 @@
-"""A fake `computer` tool for testing model adapters, without driving a screen.
-
-It behaves like Pydantic AI Harness's `ComputerUse` tool. It takes `ComputerToolAction`s, records the ones that act on
-the screen, and returns a summary and a screenshot, with the outcome in the result's metadata.
-"""
+"""A fake `computer` tool for testing model adapters without a screen. It behaves like Pydantic AI Harness's tool."""
 
 from __future__ import annotations as _annotations
 
