@@ -168,6 +168,34 @@ class TestConfirmation:
         (tool_return,) = _returns(resumed.all_messages())
         assert tool_return.metadata == {'performed': 1, 'confirmed': True}
 
+    async def test_an_approved_call_that_fails_before_it_runs_still_says_it_was_confirmed(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _flagged({'type': 'click', 'x': 5000, 'y': 5}),
+            capabilities=[provider.capability(), ComputerUse()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+        assert provider.actions == []
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.metadata == snapshot(
+            {
+                'performed': 0,
+                'error': 'Action 1 (click) at (5000, 5) is outside the 1280x800 screen, so no action ran.',
+                'confirmed': True,
+            }
+        )
+        assert tool_return.content_items() == snapshot(
+            ['Action 1 (click) at (5000, 5) is outside the 1280x800 screen, so no action ran.']
+        )
+
     async def test_a_denied_call_does_not_run(self) -> None:
         provider = ScreenProvider()
         agent = Agent(

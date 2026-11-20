@@ -683,7 +683,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         run.held, run.stray = [], [*stray, *plan.held]
         outcome = await self._call(ctx, actions, plan)
         if isinstance(outcome, _NotRun):
-            raise _not_run_error(outcome, run, stray, plan, actions)
+            error = _not_run_error(outcome, run, stray, plan, actions)
+            if plan.confirmed and isinstance(error, ToolFailed | ModelRetry):
+                # A person approved the call, so its result says so even though nothing ran. A provider that asked
+                # for the confirmation refuses a result that doesn't.
+                result = ComputerResult(performed=0, error=error.message, confirmed=True)
+                return ToolReturn([error.message], metadata=result)
+            raise error
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
         run.held, run.stray = held, stray
