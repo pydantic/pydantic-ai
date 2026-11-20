@@ -260,12 +260,13 @@ _START_DESKTOP = (
     f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi'
 )
-"""Starts an X display of the size given as `$1`, then a window manager, then the panel.
+"""Starts an X display of the size given as `$1`, then a window manager, then the panel, skipping an X server or
+panel that already runs.
 
-A second `fluxbox` exits when one already runs, so starting it every time brings back one that died. The script then
-waits up to 10 seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it
-lands on. It waits up to 10 more seconds for the panel window, so the first screenshot isn't black. It fails if the
-panel exits first, and goes on without the panel after 10 seconds.
+A second `fluxbox` exits when one already runs, so starting it every time brings back one that died. It waits up to 10
+seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it lands on, then
+up to 10 seconds for the panel, so the first screenshot isn't black. It fails if the panel exits first, and goes on
+without it after the wait. Starting the X server can fail as `start_x_server` says.
 """
 
 
@@ -273,9 +274,9 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
     if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
         return
-    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this.
-    # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile; not tried with podman
-    # yet. The runner gives a command no stdin, so `sh` pipes it in.
+    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -`; Podman's
+    # docs don't, but Podman 6.1.4 built the image this way in the live desktop test on 2026-11-20. The runner gives
+    # a command no stdin, so `sh` pipes it in.
     build = 'printf %s "$1" | "$2" build --tag "$3" -'
     result = await runner.run(['sh', '-c', build, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE])
     if result.exit_code != 0:
@@ -501,15 +502,13 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
         argv = command_argv(command, shell)
         checked_env = _checked_env(env or {})
         if self._display is not None:
-            # Started first, so a program the command opens shows on the screen.
             await self._display.start()
         return await self._run_argv(argv, env=checked_env, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
-        """Run `argv` in the container without starting its display, as the display's own commands do.
+        """Run `argv` in the container without starting its display, for the display's own commands.
 
-        The names in `env` are already checked. `run` checks the names a caller passes, and the display's own names
-        are valid.
+        The names in `env` must already be checked.
         """
         merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:

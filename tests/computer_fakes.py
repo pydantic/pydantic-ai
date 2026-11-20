@@ -1,8 +1,4 @@
-"""A fake `computer` tool for testing model adapters, without driving a screen.
-
-It behaves like Pydantic AI Harness's `ComputerUse` tool. It takes `ComputerToolAction`s, records the ones that act on
-the screen, and returns a summary and a screenshot, with the outcome in the result's metadata.
-"""
+"""A fake `computer` tool for testing model adapters without a screen. It behaves like Pydantic AI Harness's tool."""
 
 from __future__ import annotations as _annotations
 
@@ -52,9 +48,8 @@ _LOOKING = (Wait, Screenshot)
 class FakeComputer(AbstractCapability[Any]):
     """A `computer` tool that records the actions it runs. It refuses to act on a read-only workspace.
 
-    It refuses `hold_keys`, so tests can see an action refused. It returns what the zoom and screenshot actions before
-    the last one read, before its screenshot. With `native=True`, it also adds a `ComputerTool` that declares
-    `display_size`, as `ComputerUse` does.
+    It refuses `hold_keys`, and returns an image for each zoom and each screenshot before the last action. With
+    `native=True`, it also adds a `ComputerTool`, as `ComputerUse` does.
     """
 
     def __init__(

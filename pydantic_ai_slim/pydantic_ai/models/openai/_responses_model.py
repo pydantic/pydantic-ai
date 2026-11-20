@@ -734,10 +734,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off defaults that haven't been checked live on this provider.
 
-        Azure clients and the gateway lose the Batch API and Responses WebSockets. Every provider class except
-        `OpenAIProvider` and `BedrockMantleProvider` loses the native `ComputerTool`, and so do Azure clients. The
-        gateway's OpenAI route is an `OpenAIProvider` that reaches OpenAI's API, so it keeps the tool. The check is on
-        the provider class, so `OpenAIProvider(base_url=...)` keeps the tool on any server.
+        Azure clients and the gateway lose the Batch API and Responses WebSockets. Azure clients and every provider
+        class except `OpenAIProvider` and `BedrockMantleProvider` lose the native `ComputerTool`. The check is on the
+        provider class, so the gateway's OpenAI route and `OpenAIProvider(base_url=...)` keep the tool.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -752,13 +751,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # while HTTP succeeds (live, 2026-10-22).
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
         if azure_client or not isinstance(self._provider, OpenAIProvider | BedrockMantleProvider):
-            # OpenAI's computer tool has been checked live only on OpenAI's API and Bedrock Mantle, so only
-            # `OpenAIProvider` and `BedrockMantleProvider` keep it. The gateway's OpenAI route is an `OpenAIProvider`
-            # that reaches OpenAI's API, so it keeps it too. Every other provider class gets `ComputerUse`'s
-            # function tool, which works anywhere, even when the model's profile lists `ComputerTool` for its own
-            # provider's API (Claude's does). Other native tools stay as they were. `OpenAIProvider(base_url=...)`
-            # keeps the tool whatever server it calls. A user whose server doesn't support it removes `ComputerTool`
-            # in the model's `profile=`.
+            # Checked live only on OpenAI's API and Bedrock Mantle. Other providers get `ComputerUse`'s function
+            # tool, even when the model's profile lists `ComputerTool` for its own provider's API (Claude's does).
             profile = merge_profile(
                 profile,
                 OpenAIModelProfile(
@@ -867,9 +861,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             store=self._resolve_store(model_settings),
             allow_no_new_messages=True,
         )
-        # Find the computer calls the server holds. The compact endpoint gets the computer tool when an output needs
-        # it (see below). If the model doesn't support the native tool and an output answers a held call, the full
-        # history is sent instead.
+        # Without the native tool, an output that answers a held computer call needs the full history.
         calls = self._held_computer_calls(
             messages,
             new_messages,
@@ -901,8 +893,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if instructions_override is not None:
             instructions = instructions_override
         # The compact endpoint refuses a `computer_call_output` unless the request enables the computer tool, even
-        # after the run stopped using the native tool. The SDK's `compact` method has no `tools` argument, so the
-        # tool goes in `extra_body`.
+        # after the run stopped using it. The SDK's `compact` method has no `tools` argument.
         holds_computer_output = any(item.get('type') == 'computer_call_output' for item in openai_messages)
         computer_tools = {'tools': [{'type': 'computer'}]} if holds_computer_output else None
 
@@ -2254,7 +2245,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             Note: builtin tools are handled separately and should be added to this list.
         """
         openai_profile = self.profile
-        # A `ComputerTool` is sent in place of the `computer` tool, whose calls `map_computer_call` maps back.
         computer_name = self._native_computer_name(model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
@@ -2290,9 +2280,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             for t in model_request_parameters.declared_tool_defs.values()
             if not (client_tool_search and t.tool_kind == 'tool-search')
         ]
-        # A `computer` tool revealed through history, such as one from a deferred capability the model loaded, isn't in
-        # `declared_tool_defs`. The API accepts the computer tool only in `tools`: neither `additional_tools` nor a
-        # function named `computer` can declare it.
+        # A `computer` tool revealed through history, such as from a loaded deferred capability, isn't in
+        # `declared_tool_defs`. The API accepts the computer tool only in `tools`, not in `additional_tools`.
         if computer_name and computer_name not in model_request_parameters.declared_tool_defs:
             tools.append(responses.ComputerToolParam(type='computer'))
         return tools, tool_choice
@@ -2307,9 +2296,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         computer = model_request_parameters.declared_tool_defs.get(name or '')
         if computer is not None and computer.defer_loading:
             # Seen live: the API rejects `defer_loading` on its computer tool as an unknown parameter (pinned by
-            # `test_openai_rejects_defer_loading_on_its_computer_tool`). And when a `tool_search_output` held a
-            # computer tool, GPT searched again instead of calling it. An optional `ComputerTool` is left out, like any
-            # optional native tool the request can't send, and the deferred function tool is sent instead.
+            # `test_openai_rejects_defer_loading_on_its_computer_tool`), and a computer tool in a `tool_search_output`
+            # made GPT search again instead of calling it.
             if native.optional:
                 return None
             raise UserError(
@@ -2608,12 +2596,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> dict[str, ToolCallPart] | None:
         """The `computer_call`s the server holds from before `new_messages`, by tool call ID.
 
-        Their results go back as `computer_call_output` items, and those need the computer tool in the same request.
-        Without it, the API refuses a `computer_call_output`, and a function result for the call too ("No tool output
-        found for computer call"). So this returns `None` when `new_messages` answer a held call and the request
-        doesn't declare the tool. The caller then sends the whole history, with its `computer_call`s as function calls.
-        A held call that nothing answers needs no tool (live, 2026-11-18). An OpenAI conversation already holds the
-        items, and sending them again would duplicate them, so in a conversation this raises `UserError` instead.
+        Without the computer tool in the request, the API refuses any result for a held call ("No tool output found
+        for computer call"), though a held call nothing answers is fine (live, 2026-11-18). So this returns `None` when
+        `new_messages` answer a held call without the tool, and the caller sends the whole history instead. In an
+        OpenAI conversation that would duplicate the items, so it raises `UserError`.
         """
         restored = self._restore_response_scoped_tool_call_ids(messages)
         held_count = len(restored) - len(new_messages)
@@ -2638,11 +2624,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _held_computer_call(
         self, part: ToolCallPart, model_request_parameters: ModelRequestParameters
     ) -> dict[str, Any] | None:
-        """The `computer_call` item OpenAI stored for `part`, or `None` if the call no longer matches it.
+        """The `computer_call` item OpenAI stored for `part`, or `None` if a hook renamed the call or changed its actions.
 
-        The call matches when this provider made it, it still calls the `computer` tool sent as the native tool, and
-        it still has the item's actions. A hook may have renamed the call or changed its actions. Sending the item back
-        then would tell the model its original actions ran.
+        Sending the item back then would tell the model its original actions ran.
         """
         computer_name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
         if part.provider_name != self.system or part.tool_name != computer_name:
@@ -2841,9 +2825,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     async def _map_tool_return_part(self, part: ToolReturnPart, context: _ResponsesMapMessagesContext) -> None:
         call_id = _guard_tool_call_id(t=part)
         call_id, _ = split_combined_tool_call_id(call_id)
-        # Find the call by ID, whether it is sent again here or held by the server in a stored response or
-        # conversation. If this provider made it as a `computer_call`, its result goes back as a
-        # `computer_call_output`, whatever the tool is now.
+        # A `computer_call` this provider made gets a `computer_call_output`, whatever the tool is now.
         computer_call = context.computer_calls.get(part.tool_call_id)
         if computer_call is not None and computer_call.provider_name == self.system:
             changed = self._held_computer_call(computer_call, context.model_request_parameters) is None
@@ -3074,7 +3056,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None
         context.computer_calls[item.tool_call_id] = item
         replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
-        # Use the call ID its output is sent with, which may have been adjusted for this request.
+        # The call ID may have been adjusted for this request.
         replayed_call['call_id'] = call_id
         return cast(responses.ResponseComputerToolCallParam, replayed_call)
 
@@ -3388,7 +3370,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         dedupe.
         """
         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
-        # The `computer` tool is declared in `tools` instead, as the native computer tool.
         if computer_name := self._native_computer_name(model_request_parameters):
             rendered.add(computer_name)
         renderable: list[str] = []
@@ -3522,8 +3503,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(part, ComputerReturnPart) and ComputerTool in self.profile.get(
             'supported_native_tools', SUPPORTED_NATIVE_TOOLS
         ):
-            # Send images at full size, as in a `computer_call_output`. `auto` can shrink the screenshot that the
-            # model's click positions refer to.
+            # `auto` can shrink the screenshot that the model's click positions refer to.
             for content in output:
                 if content['type'] == 'input_image':
                     content['detail'] = 'original'
@@ -3533,8 +3513,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 def _tool_return_items(part: ToolReturnPart) -> Sequence[str | MultiModalContent] | None:
     """The items a tool result goes back as, or `None` when it goes back as text.
 
-    A `computer` result is read through its validated content, so a result stored as a JSON string keeps its
-    screenshot.
+    A `computer` result is read through its validated content, so one stored as a JSON string keeps its screenshot.
     """
     typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
     if typed is not None:
@@ -3553,10 +3532,7 @@ class _ResponsesMapMessagesContext:
     client_tool_search_active: bool
     client_replay_call_ids: set[str] = field(default_factory=set[str])
     computer_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
-    """The `computer_call`s by tool call ID, so their results go back as `computer_call_output`s.
-
-    It starts with the calls the server holds, and each call sent in this request is added.
-    """
+    """The `computer_call`s held by the server or sent in this request, by tool call ID."""
     computer_is_native: bool = False
     # Mirrors the Anthropic renderer's per-request `tool_addition` dedupe: several history
     # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta

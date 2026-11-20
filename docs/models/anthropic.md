@@ -974,8 +974,7 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 To let Claude use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
 the Claude API and on Amazon Bedrock (the `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` clients), it sends
-each Claude model the computer use tool that model was trained on. It sends the tool as a
-[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
+each Claude model the computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
 
 | Models | Tool |
 |---|---|

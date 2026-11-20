@@ -210,7 +210,6 @@ async def test_a_cancelled_action_waits_for_the_input_daytona_accepted(
 
     with pytest.raises(asyncio.CancelledError) if native else nullcontext():
         await acting
-    # The rest was never sent.
     assert sandbox.desktop_calls == [sent]
 
 

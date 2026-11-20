@@ -726,7 +726,6 @@ class DaytonaSandboxBackend(
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self.get_sandbox()
             if self._display is not None:
-                # Started first, so a program the command opens shows on the screen.
                 await self._display.start()
             process = _DaytonaProcess(sandbox)
             line = process.command_line(argv, cwd=self._working_dir, env={**self._env, **(env or {})})
@@ -894,18 +893,16 @@ class DaytonaSandboxBackend(
                     except (WorkspaceUnavailableError, UnsupportedActionError):
                         raise
                     except WorkspaceError as error:
-                        # A failure the desktop reports, such as keys it couldn't let go of, may come from a lost
-                        # sandbox.
+                        # Such as keys it couldn't let go of, which may come from a lost sandbox.
                         if (gone := await _probe(sandbox)) is not None:
                             raise gone from error
                         raise
             except daytona.DaytonaTimeoutError as error:
                 raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
             except daytona.DaytonaRateLimitError:
-                raise  # temporary, so a durable execution engine can retry it, as for the workspace's other operations
+                raise  # temporary, so a durable execution engine can retry it
             except daytona.DaytonaError as error:
-                # A server error, such as one from a desktop that stopped with its sandbox, fails only this call. The
-                # next call starts the display again.
+                # Such as a desktop that stopped with its sandbox. The next call starts the display again.
                 raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
 
     def _attached_computer_use(self) -> AsyncComputerUse:
@@ -914,7 +911,6 @@ class DaytonaSandboxBackend(
         return self._sandbox.computer_use
 
     async def _start_display(self) -> None:
-        """Start the desktop unless it's running."""
         sandbox = await self.get_sandbox()
         computer_use = sandbox.computer_use
         try:

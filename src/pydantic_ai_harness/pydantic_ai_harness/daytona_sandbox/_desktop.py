@@ -84,11 +84,9 @@ _SCROLLED_PER_REQUEST = 500
 """Wheel clicks scrolled by one request, well inside `REQUEST_TIMEOUT`: 1,000 take about 21 seconds."""
 
 _MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'cmd'})
-"""Daytona's names for the modifier keys."""
 
 _RENAMED_KEYS = {'super': 'cmd', **{f'numpad{n}': f'num{n}' for n in range(10)}, 'numlock': 'num_lock'}
-"""Key names, as `ComputerUse` spells them, that Daytona knows by another name. Other keys keep their name, or Daytona
-refuses them."""
+"""`ComputerUse` key names that Daytona spells differently."""
 
 _REFUSED_KEYS = frozenset(
     {
@@ -111,12 +109,9 @@ _REFUSED_KEYS = frozenset(
         'volumemute',
     }
 )
-"""Key names, as `ComputerUse` spells them, that Daytona gets wrong or refuses. `f13` to `f24` crash its desktop. Its
-keypad operator and Enter keys type other characters. It answers the rest with an error, and that error doesn't prove
-nothing was pressed.
-
-They are refused before they're sent, because a key that was sent counts as possibly held until its release is
-confirmed."""
+"""`ComputerUse` key names that Daytona gets wrong or refuses. `f13` to `f24` crash its desktop, its keypad operator
+and Enter keys type other characters, and it answers the rest with an error that doesn't prove nothing was pressed.
+They are refused before they're sent, because a sent key counts as possibly held until its release is confirmed."""
 
 _BUTTONS = frozenset({'left', 'right', 'middle'})
 """The mouse buttons Daytona has; it refuses the side buttons."""
@@ -130,9 +125,9 @@ async def _send_input(request: Callable[[], Awaitable[_T]]) -> _T:
 
     Daytona carries out a request it accepted, even if we stop waiting for it. So a cancel either stops before the
     request is sent, or waits for it to finish: the next action, perhaps from another run, must not reach the screen
-    first. Every input request goes through here. For the same reason, a request whose outcome is unknown ends the
-    run. Daytona still carries out a request after a timeout (including a 504), after a dropped connection, and after
-    the 502 its proxy returns when it loses the sandbox after passing the request on.
+    first. Every input request goes through here. A request whose outcome is unknown ends the run: Daytona still
+    carries out a request after a timeout (including a 504), a dropped connection, or the 502 its proxy returns when
+    it loses the sandbox after passing the request on.
     """
     await anyio.lowlevel.checkpoint_if_cancelled()
     try:
@@ -155,11 +150,10 @@ async def _let_go(error: BaseException, held: list[str], release: Callable[[str]
                 await _send_input(partial(release, name))
                 held.remove(name)
             except WorkspaceUnavailableError:
-                raise  # a release that may still be running ends the run, as any unconfirmed input does
+                raise
             except Exception:
                 pass
-    # An input that may still be running ends the run, so the model won't act while these are held. A credential
-    # failure is raised as is, so the backend can clean its text and end the run.
+    # A credential failure is raised as is, so the backend can clean its text.
     if (
         held
         and isinstance(error, Exception)
