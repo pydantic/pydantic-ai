@@ -130,6 +130,12 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
     session.model = 'anthropic:claude-sonnet-4-5'
     assert not await service.namer.name(conversation_id=same.id, client=service.naming)
     session.model = 'openai:gpt-5'
+    # Saving the setting, even back to its default through off and on, is the choice the description names.
+    context.set_setting(['sessions.naming', 'false'])
+    context.set_setting(['sessions.naming', 'true'])
+    assert service.naming_may_see(local)
+    context.reset_setting('sessions.naming')
+    assert not service.naming_may_see(local)
 
     chosen = Sessions(session=session, store=store, context=context, namer=SessionNamer(store=store))
     context.set_setting(['sessions.naming_model', 'openai:gpt-5-mini'])
