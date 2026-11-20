@@ -175,17 +175,7 @@ async def run_persistent_command(
         if output.ctx is not None:
             await output.ctx.emit(CommandStartedEvent(tool_call_id=ctx.tool_call_id, command=command, pid=job.pid))
         if mode == 'foreground':
-            interval = POLL_MIN
-            waited = 0.0
-            # A job killed with its process group, or lost to a workspace restart, never publishes the
-            # status this waits for, so once the log goes quiet each poll also checks its processes are left.
-            while waited < timeout and (await job.status())[0] and (interval < POLL_MAX or await job.alive()):
-                emitted = await output.emit()
-                pause = min(interval, timeout - waited)
-                await anyio.sleep(pause)
-                waited += pause
-                interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
-            await output.drain()
+            await _wait_in_foreground(job, output, timeout)
         await output.finish()
         # Checked before naming the `kill` command: a lost job's process group ID may now be someone else's.
         lost = await job.lost()
@@ -206,6 +196,21 @@ async def run_persistent_command(
         await _stop_failed_call(job, error)
         raise
     return result
+
+
+async def _wait_in_foreground(job: Job, output: _CommandOutput[AgentDepsT], timeout: float) -> None:
+    """Stream the job's output until it finishes, its processes are gone, or `timeout` seconds have been slept."""
+    interval = POLL_MIN
+    waited = 0.0
+    # A job killed with its process group, or lost to a workspace restart, never publishes the
+    # status this waits for, so once the log goes quiet each poll also checks its processes are left.
+    while waited < timeout and (await job.status())[0] and (interval < POLL_MAX or await job.alive()):
+        emitted = await output.emit()
+        pause = min(interval, timeout - waited)
+        await anyio.sleep(pause)
+        waited += pause
+        interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
+    await output.drain()
 
 
 async def _stop_failed_call(job: Job, error: BaseException) -> None:
