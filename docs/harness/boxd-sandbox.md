@@ -241,7 +241,11 @@ async def main():
     print(result.output)
 ```
 
-Machines on boxd's current default image come with a desktop, so nothing is installed first. The agent controls it through boxd's computer API. A fork or snapshot of an older image has no desktop, so use a fresh machine. The desktop starts on the agent's first action and takes a few seconds. It has no window manager, taskbar or launcher, so an app the agent starts from the shell opens at the top left of the screen, without a title bar. Commands get `DISPLAY` set, so the programs they start open on the desktop. boxd's default image has `xterm`. To open a browser, run `agent-browser open <url>`.
+Machines on boxd's current default image come with a desktop. The agent controls it through boxd's computer API. A fork or snapshot of an older image has no desktop, so use a fresh machine. The desktop starts on the agent's first action and takes a few seconds.
+
+The agent sees a panel along the top of the screen with a Terminal button, and a button for each open window. Terminal opens `xterm` below the panel, filling the rest of the screen, so an agent with `ComputerUse` alone, and no shell tool, can still run commands. `tint2` draws the panel. A new machine installs it, and `xterm`, as boxd boots it; on an attached machine, the first desktop action installs whichever is missing with `apt-get`, which takes about 30 seconds. If the panel doesn't start, the screen still works without it, a warning is logged, and `/tmp/pydantic-ai-desktop.log` in the machine says why.
+
+boxd's desktop places windows itself and draws no title bars, so a second window manager can't run on it. An app the agent starts from the shell opens where it asks to, or at the top left, and new windows open on top of older ones. Commands get `DISPLAY` set, so the programs they start open on the desktop. To open a browser, run `agent-browser open <url>`.
 
 The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. The agent can type any text, including accented letters and emoji.
 
