@@ -9,6 +9,7 @@ from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
+    _GPT_6_2_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
@@ -149,6 +150,16 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_tool_choice_accepts_additional_tools=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # GPT-6.2 and later put the top-level `instructions` after `input` and never cache them; OpenAI
+                # recommends leading input messages for reusable instructions. Measured live on gpt-6.2-sol and
+                # gpt-6.2-astra: leading input cached 97-99% of later requests' input and the top-level field none,
+                # with the same instruction-following, and an appended instruction change was followed 24/24 with the
+                # instructions leading the input against 0/24 with them in the top-level field after it
+                # (https://github.com/pydantic/pydantic-ai/issues/13923). Set here rather than in
+                # `openai_model_profile` because OpenAI-compatible endpoints that share it may render instructions
+                # differently.
+                # https://developers.openai.com/api/docs/guides/latest-model
+                openai_responses_stable_instructions_as_input=model_name.startswith(_GPT_6_2_MODEL_PREFIXES),
                 # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
                 # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
                 # the OpenAI-compatible endpoints that share it.
