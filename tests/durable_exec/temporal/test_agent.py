@@ -763,6 +763,14 @@ def _rate_limited(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
     raise ModelRateLimitError('limited', 'Slow down.')
 
 
+class _AppUserError(UserError):
+    """An application's own subclass of `UserError`, which a retry policy naming `UserError` doesn't cover."""
+
+
+def _app_user_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise _AppUserError('Not configured.')
+
+
 # Retries allowed, to show which errors are retried. A rate limit is named non-retryable, by its class name.
 _legacy_retrying_config = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
@@ -792,6 +800,7 @@ _legacy_error_agents = {
     'refused': _legacy_error_agent('temporal_refused_agent', _blind_legacy_model),
     'refused-streamed': _legacy_error_agent('temporal_refused_streamed_agent', _blind_legacy_model, streamed=True),
     'rate-limited': _legacy_error_agent('temporal_rate_limited_agent', FunctionModel(_rate_limited)),
+    'app-user-error': _legacy_error_agent('temporal_app_user_error_agent', FunctionModel(_app_user_error)),
 }
 
 
@@ -809,27 +818,27 @@ class TemporalAgentErrorWorkflow:
         return 'no error'  # pragma: no cover
 
 
+_REFUSED = (
+    "The `computer` tool needs a model that accepts images, and 'blind' does not: every `computer` call returns a "
+    'screenshot.'
+)
+
+
 @pytest.mark.parametrize(
-    'which, expected',
+    'which, expected, attempts',
     [
-        pytest.param(
-            'refused',
-            "The `computer` tool needs a model that accepts images, and 'blind' does not: every `computer` call "
-            'returns a screenshot.',
-            id='refused',
-        ),
-        pytest.param(
-            'refused-streamed',
-            "The `computer` tool needs a model that accepts images, and 'blind' does not: every `computer` call "
-            'returns a screenshot.',
-            id='refused-streamed',
-        ),
-        # Other model errors reach the retry policy, and the workflow, as they did before refusals crossed.
-        pytest.param('rate-limited', 'ActivityError: ModelRateLimitError', id='rate-limited'),
+        # A refusal isn't retried, whatever the retry policy says.
+        pytest.param('refused', _REFUSED, 1, id='refused'),
+        pytest.param('refused-streamed', _REFUSED, 1, id='refused-streamed'),
+        # Other errors reach the retry policy, and the workflow, as they did before refusals crossed: a rate limit
+        # under its own class name, which the policy names, and a subclass of `UserError` retried, as the policy
+        # doesn't name it.
+        pytest.param('rate-limited', 'ActivityError: ModelRateLimitError', 1, id='rate-limited'),
+        pytest.param('app-user-error', 'ActivityError: _AppUserError', 3, id='app-user-error'),
     ],
 )
-async def test_temporal_agent_model_activity_errors_reach_the_workflow_unretried(
-    client: Client, which: str, expected: str
+async def test_temporal_agent_model_activity_errors_reach_the_workflow_as_before(
+    client: Client, which: str, expected: str, attempts: int
 ) -> None:
     async with Worker(
         client,
@@ -846,12 +855,12 @@ async def test_temporal_agent_model_activity_errors_reach_the_workflow_unretried
         output = await handle.result()
         history = await handle.fetch_history()
     assert output == expected
-    attempts = [
+    # The history records the start of the last attempt only, with its number.
+    assert [
         event.activity_task_started_event_attributes.attempt
         for event in history.events
         if event.HasField('activity_task_started_event_attributes')
-    ]
-    assert attempts == [1]
+    ] == [attempts]
 
 
 async def test_temporal_agent_rejects_timeout() -> None:

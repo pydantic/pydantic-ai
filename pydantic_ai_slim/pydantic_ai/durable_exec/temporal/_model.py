@@ -43,7 +43,7 @@ from ._durability import (
 )
 from ._model_errors import rebuilt_model_errors, refusals_as_application_errors
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import model_response_payload_errors, non_retryable_subclasses_as_application_errors
+from ._toolset import model_response_payload_errors
 from ._transports import restore_telemetry_mcp_url_ids
 
 if TYPE_CHECKING:
@@ -118,7 +118,7 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            with durable_unit_scope(), _model_activity_errors():
+            with durable_unit_scope(), refusals_as_application_errors():
                 async with managed_model_scope(
                     model_for_request, owned=not self._is_registered_model(model_for_request)
                 ) as active_model:
@@ -149,7 +149,7 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            with durable_unit_scope(), _model_activity_errors():
+            with durable_unit_scope(), refusals_as_application_errors():
                 async with managed_model_scope(
                     model_for_request, owned=not self._is_registered_model(model_for_request)
                 ) as active_model:
@@ -619,14 +619,3 @@ class TemporalModel(WrapperModel):
             return models.infer_model(model_id)
 
         return models.infer_model(model_id, provider_factory=functools.partial(provider_factory, run_context))
-
-
-@contextmanager
-def _model_activity_errors() -> Generator[None]:
-    """In a model activity, raise a model's refusal of a request it can't serve as the workflow can rebuild it.
-
-    Other model errors reach the retry policy as they always have, under their own class names, which
-    `non_retryable_error_types` matches. A subclass of a non-retryable error isn't retried.
-    """
-    with non_retryable_subclasses_as_application_errors(), refusals_as_application_errors():
-        yield
