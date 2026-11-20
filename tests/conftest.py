@@ -636,6 +636,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax reads keys once the event loop reports the terminal readable, and writes output straight to it.
     ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
     ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', '_key'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', 'key'),
     ('os.write', 'pydantic_ai_pax/cli/shell_terminal.py', 'pass_through'),
     ('os.write', 'pydantic_ai_pax/cli/self_update.py', '_print_line'),
     # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
