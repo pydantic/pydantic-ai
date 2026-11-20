@@ -63,7 +63,7 @@ def without_ui_message_id(message: ModelMessage) -> ModelMessage:
 def without_internal_text_metadata(content: ToolReturnContent) -> ToolReturnContent:
     """Tool return `content` with the reserved namespace left out of the metadata of each `TextContent` in it.
 
-    For dumping to a client: the framework keeps state there, such as the mark on a frame a capability wrote, and it
+    For dumping to a client: the framework keeps state there, such as the mark an earlier version put on a frame a capability wrote, and it
     stays server-side like the reserved namespace of message metadata. Sequences and mappings are rebuilt as lists and
     dicts, which dump the same.
     """

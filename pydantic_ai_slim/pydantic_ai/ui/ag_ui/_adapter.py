@@ -29,6 +29,7 @@ from ...messages import (
     BinaryContent,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -685,8 +686,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     _dump_user_prompt_part(part, context)
                 case ToolReturnPart():
                     _dump_tool_return_part(part, context)
-                case InstructionDeltaPart() | InstructionBaselinePart():
-                    pass  # Operator instruction state stays in trusted server-side history.
+                case InstructionDeltaPart() | InstructionBaselinePart() | CapabilityPart():
+                    # Operator instruction state stays in trusted server-side history, and so do capability parts until
+                    # they have a carrier whose trust a client can't change (#11029).
+                    pass
                 case ModelSettingsDeltaPart():
                     _dump_request_activity(
                         context, MODEL_SETTINGS_DELTA_ACTIVITY_TYPE, model_settings_delta_payload(part)
@@ -1064,7 +1067,7 @@ def _load_reasoning_message(reasoning_msg: ReasoningMessage, builder: MessagesBu
         metadata: dict[str, Any] = json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
         if not isinstance(metadata, dict):
             metadata = {}
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         metadata = {}
     builder.add(
         ThinkingPart(

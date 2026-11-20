@@ -136,6 +136,20 @@ To mirror the official Codex client's prompt-cache affinity, [`OpenAICodexModel`
 
 The Codex backend caches prompts implicitly and rejects the explicit prompt caching fields of the OpenAI API, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, [`CachePoint`][pydantic_ai.messages.CachePoint]s, and `openai_cache_instructions` have no effect.
 
+## Speed
+
+The Codex CLI's [Fast and Ultrafast speeds](https://developers.openai.com/codex/speed) are service tiers, which you select with [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier]. The CLI's `/fast` sends `'priority'`, `/ultrafast` sends `'ultrafast'`, and Standard sends no tier. Faster speeds use more of your plan's usage. Ultrafast is only offered on some models, and whether you can use a speed depends on your plan.
+
+```python {title="codex_speed.py" test="skip - requires a ChatGPT sign-in"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+agent = Agent(
+    'openai-codex:gpt-6-astra',
+    model_settings=OpenAIResponsesModelSettings(openai_service_tier='ultrafast'),
+)
+```
+
 ## Continuing on the OpenAI API
 
 The Codex backend and the OpenAI API accept each other's encrypted reasoning and compaction items, so a conversation can move between [`OpenAICodexModel`][pydantic_ai.models.openai_codex.OpenAICodexModel] and an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] on the OpenAI API, in either direction, without losing them: both have the `openai` [canonical system](../message-history.md#sending-history-to-another-provider). After a compaction, the other model continues from the compaction item rather than from the full earlier history. Response and item IDs stay with the provider that issued them. The OpenAI API ignores reasoning encrypted for another organization, which a ChatGPT plan's usually is, without failing the request.
@@ -143,7 +157,7 @@ The Codex backend and the OpenAI API accept each other's encrypted reasoning and
 ## Limitations
 
 - The Codex backend is streaming-only; for non-streaming runs the library transparently drains a stream, so `agent.run_sync()` and friends work as usual.
-- Unsupported generic settings (`max_tokens`, `temperature`, and `top_p`) are dropped before sending. The Codex profile leaves explicit `openai_top_logprobs`, `openai_truncation`, and `openai_user` settings to the standard OpenAI handling, so backend incompatibilities surface as errors. The usual reasoning-related restrictions on log probabilities still apply.
+- Unsupported generic settings (`max_tokens`, `temperature`, and `top_p`) are dropped before sending. The Codex profile leaves explicit `openai_top_logprobs`, `openai_truncation`, `openai_user`, and `openai_safety_identifier` settings to the standard OpenAI handling, so backend incompatibilities surface as errors: the backend rejects `user` and `safety_identifier` with a 400 `Unsupported parameter` error. The usual reasoning-related restrictions on log probabilities still apply.
 - The backend requires `store=false`, so every request is sent with it and an explicit `openai_store=True` is silently overridden: responses are never persisted server-side. Consequently, resuming a suspended run raises [`UserError`][pydantic_ai.exceptions.UserError], since there is no stored response to continue from.
 - `count_tokens()` raises [`UserError`][pydantic_ai.exceptions.UserError]: the input-tokens endpoint is not served under subscription auth.
 - There is no device flow: the browser login above is the only login flow the Codex client supports.

@@ -40,11 +40,10 @@ from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsNow, IsStr
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 @dataclass

@@ -20,8 +20,17 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
 
     capability: AbstractCapability[AgentDepsT]
 
+    # The contributed toolset is the capability's code: a factory or hook in it that enqueues is held to the
+    # capability's authority, as its tools are through the `capability_id` stamped on their definitions.
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return await super().for_run(ctx._attributed_to(self.capability))  # pyright: ignore[reportPrivateUsage]
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return await super().for_run_step(ctx._attributed_to(self.capability))  # pyright: ignore[reportPrivateUsage]
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tools = await self.wrapped.get_tools(ctx)
+        tools = await self.wrapped.get_tools(ctx._attributed_to(self.capability))  # pyright: ignore[reportPrivateUsage]
         capability_id = resolve_capability_id(ctx, self.capability)
         defer_loading = self.capability.defer_loading is True
         result: dict[str, ToolsetTool[AgentDepsT]] = {}
@@ -45,7 +54,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         if self.capability.defer_loading is True:
             return None
-        return await super().get_instructions(ctx)
+        return await super().get_instructions(ctx._attributed_to(self.capability))  # pyright: ignore[reportPrivateUsage]
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         visitor(self)

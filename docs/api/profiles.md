@@ -4,6 +4,7 @@
     options:
       members:
         - ModelProfile
+        - ModelDeprecation
         - ModelProfileSpec
         - JsonSchemaTransformer
         - InlineDefsJsonSchemaTransformer
