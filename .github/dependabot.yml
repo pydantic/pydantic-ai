@@ -1,8 +1,8 @@
 updates:
-- directory: /src/pydantic_clai2/web-ui
+- directory: /src/pydantic_ai_pax/web-ui
   labels:
   - dependencies
-  - web-ui
+  - area:clai2-web-ui
   - pkg:clai2
   open-pull-requests-limit: 0
   package-ecosystem: npm # zizmor: ignore[dependabot-cooldown] -- Security-only updates; cooldown applies only to version updates.

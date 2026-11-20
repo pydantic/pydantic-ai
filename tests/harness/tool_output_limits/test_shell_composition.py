@@ -55,7 +55,9 @@ async def test_shell_stacking_recipe(tmp_path: Path, output_chars: int):
     assert part.content.endswith('[exit code: 7]')
     if output_chars == 6_000:
         assert len(part.content) == 4_000
-        assert part.content.startswith('[... output truncated, showing last 3952 chars]\n')
+        assert part.content.startswith(
+            '[... output truncated, showing last 3907 chars; rerun the original tool for the full output]\n'
+        )
         assert part.metadata is None
     else:
         assert 'read_tool_result' in part.content

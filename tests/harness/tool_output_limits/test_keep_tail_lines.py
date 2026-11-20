@@ -72,7 +72,7 @@ class TestKeepTailLines:
         text = 'x' * 500 + '\n' + suffix
         expected = (
             f'\n\n[truncated: {len(text) - len(suffix):,} chars omitted from the middle; '
-            f'showing first 0 + last {len(suffix):,} of {len(text):,} chars]\n\n{suffix}'
+            f'showing first 0 + last {len(suffix):,} of {len(text):,} chars; rerun the original tool for the full output]\n\n{suffix}'
         )
         result = await _truncate(text, Truncate(strategy, len(expected), keep_tail_lines=lines))
         assert result == expected
@@ -95,7 +95,7 @@ class TestKeepTailLines:
     @pytest.mark.parametrize('difference', [-1, 0, 1])
     async def test_marker_budget_boundary(self, strategy: TruncationStrategy, difference: int):
         text = 'x' * 500 + '\nexit=0'
-        marker = '\n\n[truncated: 501 chars omitted from the middle; showing first 0 + last 6 of 507 chars]\n\n'
+        marker = '\n\n[truncated: 501 chars omitted from the middle; showing first 0 + last 6 of 507 chars; rerun the original tool for the full output]\n\n'
         budget = len(marker) + 6 + difference
         result = await _truncate(text, Truncate(strategy, budget, keep_tail_lines=1))
         if difference < 0:
@@ -112,7 +112,7 @@ class TestKeepTailLines:
         head, tail = (100, 14) if strategy is TruncationStrategy.head else (40, 74)
         expected = (
             f'{text[:head]}\n\n[truncated: 901 chars omitted from the middle; '
-            f'showing first {head} + last {tail} of 1,015 chars]\n\n{text[-tail:]}'
+            f'showing first {head} + last {tail} of 1,015 chars; rerun the original tool for the full output]\n\n{text[-tail:]}'
         )
         assert await _truncate(text, Truncate(strategy, len(expected), keep_tail_lines=2)) == expected
 

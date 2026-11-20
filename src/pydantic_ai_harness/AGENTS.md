@@ -93,9 +93,14 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 ## Framing tags
 
-A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
-`<task_output>`, registers it once at module level with `pydantic_ai.framing.register_tag()` and
-renders it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
+A capability that tells the model something mid-conversation, such as `<memory>`, `<judge_feedback>` or
+`<task_output>`, defines a `DataCapabilityPart` kind with a declared `tag`. The framework renders it and never
+escapes its body, so don't escape it yourself: text in it that looks like its tag or a framework frame gets a
+note naming its author. See <https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts>.
+
+Only text that isn't a capability part, such as a transcript flattened for a second model, writes a tag into
+prompt text. It registers the tag once at module level with `pydantic_ai.framing.register_tag()` and renders
+it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
 `<pyai:tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
 `neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
 escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
@@ -117,10 +122,9 @@ structure. Tag names are lowercase snake_case. See
 - capabilities that add to or edit message history, instructions or tools follow core's
   `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
   matching who wrote it, framework records are found by type or metadata, never by their text, and
-  any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
-  escaping every opening and closing spelling of every registered framing tag, through
-  `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered (see "Framing tags"), never
-  a hand-rolled escaper, attributes, no preambles)
+  what a capability tells the model mid-conversation is a `CapabilityPart` kind (see "Framing tags"), with
+  `snake_case` tag names, attributes and no preambles; text that can't be one goes through
+  `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered, never a hand-rolled escaper
 
 ## Writing style
 
@@ -172,10 +176,10 @@ only from an author with write access; any other author asks a maintainer to add
 ### Workspace and Python versions
 
 ```bash
-uv sync --locked --all-packages --all-extras --no-extra mcp-tasks --group lint
+uv sync --locked --all-packages --all-extras --group lint
 ```
 
-Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
+Harness and `pydantic-ai-pax` share the root `uv.lock`, `.venv`, and Pyright
 configuration. Every workspace package requires Python 3.11 or newer.
 
 ## File structure

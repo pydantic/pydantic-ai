@@ -313,7 +313,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if isinstance(output, DeferredToolRequests):
             if output.approvals:
                 return RunFinishedInterruptOutcome(
-                    interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
+                    interrupts=[approval_to_interrupt(call, output) for call in output.approvals],
                 )
             if output.calls and self._emit_1_0_outcomes:
                 # Every call the run left for the client to execute has no `TOOL_CALL_RESULT` yet.
