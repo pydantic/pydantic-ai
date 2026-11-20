@@ -168,6 +168,33 @@ if __name__ == '__main__':
 
 The `finally` deletes the VM even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `SmolSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own. `backend.get_sandbox()` returns the SDK's `smol.AsyncMachine`, for smol features the workspace API doesn't cover.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a VM with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.smol_sandbox import SmolSandbox
+
+vm = SmolSandbox(desktop=True, allow_internet_access=True)
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[vm, Coder(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open a terminal from the panel, run `uname -a` in it, and tell me what it printed.')
+    print(result.output)
+```
+
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use as a desktop: a panel along the bottom with a button that opens a terminal, and no web browser. Each window the agent opens fills the screen. Commands get `DISPLAY` set for it, so apps the agent starts from the shell open there too.
+
+Without an `image`, a new VM runs `debian:bookworm-slim`, since smolvm's own Alpine has no `apt-get`. The first start installs [the desktop's programs](../computer_use/#what-the-display-needs), which needs `allow_internet_access=True`: creating a new VM without it raises `UserError`, while attaching to an existing VM works. For a VM without network access, pass an `image` that already has them.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
+
 ## Clean up
 
 A run never deletes its VM, and a VM keeps its disk on this machine until it is deleted. Delete it with the ref you stored:
@@ -226,12 +253,13 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 
 | Option | What it does |
 | --- | --- |
-| `image` | OCI image for a new VM. Default: `None`, smolvm's own Alpine Linux. |
+| `image` | OCI image for a new VM. Default: `None`, smolvm's own Alpine Linux, or `debian:bookworm-slim` with `desktop`. |
 | `cpus` | vCPUs for a new VM. Default: `None`, smolvm's default. |
 | `memory_mb` | Memory for a new VM in MiB. Default: `None`, smolvm's default. |
 | `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the VM's own (`/` without an image). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `desktop` | Give the VM a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
