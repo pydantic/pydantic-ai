@@ -71,6 +71,21 @@ DISPLAY = ':0'
 REQUEST_TIMEOUT = 30
 """Maximum time for one Daytona API request."""
 
+CHROMIUM_SETTINGS_DIR = '/etc/chromium.d'
+
+_NO_SANDBOX = f'{CHROMIUM_SETTINGS_DIR}/pydantic-ai-no-sandbox'
+
+ALLOW_CHROMIUM = (
+    f'if [ -d {CHROMIUM_SETTINGS_DIR} ] && [ ! -e {_NO_SANDBOX} ]; then '
+    'if [ "$(id -u)" = 0 ]; then tee=tee; elif ! unshare -Ur true 2>/dev/null; then tee="sudo -n tee"; else tee=; fi; '
+    f"""[ -z "$tee" ] || echo 'CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"' | $tee {_NO_SANDBOX} >/dev/null 2>&1; fi"""
+)
+"""Makes the desktop's own browser launchers work. The default snapshot's dock "Web Browser" and its menu's Chromium
+both run Debian's `/usr/bin/chromium`, which exits with "No usable sandbox!" as the `daytona` user, since the user
+can't make a user namespace there, and refuses to run as root. That script reads every file in `/etc/chromium.d`, so
+one file there adds `--no-sandbox`, as root or with the user's passwordless `sudo`. It does nothing where Chromium's
+sandbox works, where there's no Debian Chromium, or without root or `sudo`."""
+
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
