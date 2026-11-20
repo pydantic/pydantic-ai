@@ -546,8 +546,8 @@ def _fit_turn(turn: MontyTurn) -> MontyTurn:
     """`turn`, its longest text halved, pass after pass, until the encoded turn fits `TURN_PAYLOAD_BYTES`.
 
     Measured on the encoded turn, so JSON escaping and error text count. A result picked to cut first
-    becomes the text the model would read; a result that fits keeps its types. A nested call's arguments are never cut:
-    `_answer_in_turn` keeps them to half the budget, so the texts always hold the excess.
+    becomes the text the model would read; a result that fits keeps its types. A nested call is never cut:
+    `_answer_in_turn` keeps its name and arguments to half the budget, so the texts always hold the excess.
     """
     shown: str | None = None
     while len(to_json(turn)) > TURN_PAYLOAD_BYTES:
@@ -601,8 +601,8 @@ async def _answer_in_turn(
     A name lookup is left undefined, so the sandbox raises `NameError`. An OS call other than a sleep
     is answered from the mounts, as CodeMode does without an `os_access` handler, which this path
     never has. Its arguments, such as a `PurePosixPath`, need not then cross the activity boundary.
-    A call whose arguments `to_wire` cannot encode, or that take more than half of what a turn may
-    return, cannot reach the tool, so it raises `TypeError` at the call site.
+    A call whose arguments `to_wire` cannot encode, or whose name and arguments take more than half of
+    what a turn may return, cannot reach the tool, so it raises `TypeError` at the call site.
     """
     while True:
         if isinstance(snapshot, AsyncNameLookupSnapshot):
@@ -611,7 +611,7 @@ async def _answer_in_turn(
             return snapshot
         elif snapshot.is_os_function and snapshot.function_name not in SLEEP_FUNCTIONS:
             snapshot = pauses.seen(await snapshot.resume_auto())
-        elif not _args_cross(snapshot):
+        elif not _call_crosses(snapshot):
             message = (
                 f'{snapshot.function_name}() got arguments that cannot be sent to the tool: they need types '
                 f'the sandbox can hand the host and at most {TURN_PAYLOAD_BYTES // 2} bytes'
@@ -621,12 +621,13 @@ async def _answer_in_turn(
             return snapshot
 
 
-def _args_cross(snapshot: AsyncFunctionSnapshot) -> bool:
+def _call_crosses(snapshot: AsyncFunctionSnapshot) -> bool:
     try:
         # Encoded as `TurnCall` encodes them, so a value both share is counted twice, as it is sent.
-        return len(to_wire(snapshot.args)) + len(to_wire(snapshot.kwargs)) <= TURN_PAYLOAD_BYTES // 2
+        arguments = len(to_wire(snapshot.args)) + len(to_wire(snapshot.kwargs))
     except TypeError:
         return False
+    return len(snapshot.function_name.encode()) + arguments <= TURN_PAYLOAD_BYTES // 2
 
 
 async def _load(

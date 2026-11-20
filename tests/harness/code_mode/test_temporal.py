@@ -649,6 +649,10 @@ async def bad_csv() -> str:
 
 NEXT_SNIPPET = '\n# next snippet\n'
 
+# All 1000 bytes a call may take once `test_remote_turns_count_a_tool_name_with_its_arguments` limits a turn
+# to 2000.
+LONG_TOOL_NAME = f'echo_{"e" * 995}'
+
 
 def _snippet_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that runs each `NEXT_SNIPPET`-separated part of the prompt as a snippet, then returns the last result.
@@ -672,13 +676,14 @@ def _snippet_agent(
     monty_sandbox: Callable[[], AsyncMontyRemote] = stored_session_pool,
     resource_limits: Literal['unlimited'] | None = None,
     workflow_tools: tuple[Callable[..., Awaitable[object]], ...] = (bad_csv,),
+    tools: tuple[Tool[object], ...] = (),
 ) -> Agent[object, str]:
     """An agent whose `workflow_tools` run in the workflow, so their values cross only the turn boundary."""
     in_workflow = [Tool(function, metadata={'temporal': False}) for function in workflow_tools]
     return Agent(
         FunctionModel(_snippet_model),
         name=f'code_mode_temporal_snippet_{name}_agent',
-        toolsets=[FunctionToolset(tools=[echo, repeat, give_up, *in_workflow], id='echo')],
+        toolsets=[FunctionToolset(tools=[echo, repeat, give_up, *in_workflow, *tools], id='echo')],
         capabilities=[
             CodeMode(id='code', monty_sandbox=monty_sandbox, resource_limits=resource_limits),
             TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
@@ -696,6 +701,7 @@ snippet_agents = {
     'factory_error': _snippet_agent('factory_error', monty_sandbox=_refusing_factory),
     'types': _snippet_agent('types', workflow_tools=(type_names, echo_here, raw_bytes, frozen, same, enum_members)),
     'forgetful': _snippet_agent('forgetful', monty_sandbox=_forgetful_pool),
+    'long_tool_name': _snippet_agent('long_tool_name', tools=(Tool(echo, name=LONG_TOOL_NAME),)),
 }
 
 
@@ -1398,6 +1404,27 @@ async def test_remote_turns_count_a_shared_argument_as_it_is_sent(
     output = await _run(client, workflow_id, snippet_agents['types'], code)
     assert output == (
         'same() got arguments that cannot be sent to the tool: they need types the sandbox can hand'
+        ' the host and at most 1000 bytes'
+    )
+
+
+async def test_remote_turns_count_a_tool_name_with_its_arguments(
+    client: Client, workflow_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A call's name is sent with its arguments, so the argument limit counts it too.
+
+    Left out, the name and arguments each fit the limit, the call passed it, and the turn was then too large
+    to return after the snippet ran: it failed in a way the activity retry answers by running the snippet again.
+    """
+    monkeypatch.setattr('pydantic_ai_harness._monty_turns.TURN_PAYLOAD_BYTES', 2000)
+    # Only the first snippet carries the type-check stubs; with them, the call's snippet would be too large to send.
+    code = (
+        f'0{NEXT_SNIPPET}try:\n    await {LONG_TOOL_NAME}(value="x" * 650)\n'
+        'except TypeError as e:\n    error = str(e)\nerror'
+    )
+    output = await _run(client, workflow_id, snippet_agents['long_tool_name'], code)
+    assert output == (
+        f'{LONG_TOOL_NAME}() got arguments that cannot be sent to the tool: they need types the sandbox can hand'
         ' the host and at most 1000 bytes'
     )
 
