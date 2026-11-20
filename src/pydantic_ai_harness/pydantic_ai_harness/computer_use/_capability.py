@@ -15,7 +15,6 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
-from pydantic_ai._computer_labels import candidate_models, smallest_limit
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -47,13 +46,11 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
 )
-from pydantic_ai.models import AbstractModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._png import png_size
 from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent
 from pydantic_ai_harness.computer_use._protocol import (
@@ -67,7 +64,6 @@ from pydantic_ai_harness.computer_use._protocol import (
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.agent.abstract import AgentModelSettings
-    from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.run import AgentRunResult
 
 _INSTRUCTIONS = """\
@@ -220,7 +216,7 @@ class _Plan:
     changed: bool
     """Whether the actions to run differ from the ones the model asked for."""
     limit: _ScreenshotLimit
-    """The largest screenshot that both the calling model and the run's model accept. A larger screen is refused."""
+    """The largest screenshot the model that made the call accepts. A larger screen is refused."""
     held: list[MouseButton]
     """The mouse buttons the last call that succeeded said are still pressed."""
     keeps_held: bool
@@ -283,26 +279,12 @@ def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolA
         run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
 
 
-def _model_limit(model: AbstractModel, call: ComputerCallPart | None = None) -> _ScreenshotLimit:
-    """The largest screenshot that every model that may answer accepts, and that `call`'s model accepts, per `call`."""
-    # A realtime model's profile has no screenshot limits.
-    models = candidate_models(model) if is_request_response_model(model) else []
-    sides = [smallest_limit(models, 'computer_use_screenshot_max_side'), call and call.screenshot_max_side]
-    pixels = [smallest_limit(models, 'computer_use_screenshot_max_pixels'), call and call.screenshot_max_pixels]
-    return _ScreenshotLimit(
-        max_side=min(filter(None, sides), default=None), max_pixels=min(filter(None, pixels), default=None)
-    )
-
-
-def _check_fits(what: str, size: tuple[int, int], limit: _ScreenshotLimit, purpose: str = '') -> None:
-    """Refuse a screenshot of `size` larger than the model can see, naming it `what`.
-
-    `purpose` ends the advice to start the display smaller, such as `' to use this model on it'`.
-    """
+def _check_fits(size: tuple[int, int], limit: _ScreenshotLimit) -> None:
+    """Refuse a screen of `size` larger than the model can see."""
     if (fitted := limit.fit(size)) != size:
         raise UserError(
-            f'{what} is {size[0]}x{size[1]}, larger than the model can see. Start the display at '
-            f'{fitted[0]}x{fitted[1]} or smaller{purpose}.'
+            f'The screen is {size[0]}x{size[1]}, larger than the model can see. Start the display at '
+            f'{fitted[0]}x{fitted[1]} or smaller.'
         )
 
 
@@ -690,9 +672,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=call is not None and call.actions != actions,
-            # The next request goes to the run's model or, with a sticky `ModelFallback`, to the model that made the
-            # call. The screenshot must fit both. Any other model that can't take it is refused before its request.
-            limit=_model_limit(ctx.model, call),
+            # The screenshot the call ends with must fit the model that made the call. A model that answers next and
+            # can't take it refuses the request itself.
+            limit=_ScreenshotLimit(call.screenshot_max_side, call.screenshot_max_pixels)
+            if call
+            else _ScreenshotLimit(),
             held=list(run.held),
             keeps_held=keeps_held,
         )
@@ -755,7 +739,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 size = await _display_size(display)
                 # The call ends with a screenshot at the screen's size. If the model can't take a screenshot that
                 # size, the run ends before anything acts.
-                _check_fits('The screen', size, plan.limit)
+                _check_fits(size, plan.limit)
                 # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size.
                 space = (plan.grid, plan.grid) if plan.grid else plan.seen or size
                 mapping = _CoordinateMapping(space=space, display=size)
@@ -887,28 +871,3 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                     await _release(display, held)
         except WorkspaceUnavailableError:
             pass  # the workspace is gone, and its pressed buttons with it
-
-    async def prepare_model_request(
-        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        """Refuse the model about to answer if it can't take images, or would get the latest screenshot scaled down.
-
-        This runs before every attempt, because `ModelFallback` can change the model within a step. A `FallbackModel`
-        is refused if any of its models can't take images. A scaled-down screenshot is refused because the model would
-        give positions on a smaller image than the one `ComputerUse` scales them from.
-        """
-        model = request_context.model
-        blind = [
-            answering
-            for answering in candidate_models(model)
-            if not answering.profile.get('supports_image_input', True)
-        ]
-        if blind:
-            raise UserError(
-                f'`ComputerUse` needs a model that accepts images, and {blind[0].model_name!r} does not: every '
-                '`computer` call returns a screenshot.'
-            )
-        size = _last_screenshot_size(request_context.messages)
-        if size is not None:
-            _check_fits('The latest screenshot', size, _model_limit(model), ' to use this model on it')
-        return request_context

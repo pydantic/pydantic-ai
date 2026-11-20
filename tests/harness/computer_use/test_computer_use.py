@@ -655,15 +655,15 @@ The `computer` tool shows and controls this computer's screen.
             await agent.run('Go.')
 
     @pytest.mark.parametrize(
-        'fallback_grid,wrapped,click',
+        'fallback_grid,wrapped',
         [
-            pytest.param(1000, False, Click(x=640, y=400), id='models-on-one-grid-use-it'),
-            pytest.param(1000, True, Click(x=640, y=400), id='also-when-wrapped'),
-            pytest.param(None, False, Click(x=500, y=500), id='models-that-differ-use-pixels'),
+            pytest.param(1000, False, id='models-on-one-grid'),
+            pytest.param(1000, True, id='also-when-wrapped'),
+            pytest.param(None, False, id='models-that-differ'),
         ],
     )
-    async def test_a_fallback_model_points_on_a_grid_only_when_all_its_models_do(
-        self, fallback_grid: int | None, wrapped: bool, click: Click
+    async def test_a_fallback_model_points_on_the_grid_of_the_model_that_answers(
+        self, fallback_grid: int | None, wrapped: bool
     ) -> None:
         provider = ScreenProvider()
         grid = ModelProfile(computer_use_coordinate_grid=1000)
@@ -677,7 +677,7 @@ The `computer` tool shows and controls this computer's screen.
             capabilities=[provider.capability(), ComputerUse()],
         )
         assert (await agent.run('Go.')).output == 'done'
-        assert provider.actions == [click]
+        assert provider.actions == [Click(x=640, y=400)]
 
     async def test_a_fallback_model_is_told_its_own_coordinates_and_its_calls_run_in_them(self) -> None:
         provider = ScreenProvider()
@@ -696,13 +696,13 @@ The `computer` tool shows and controls this computer's screen.
         [
             pytest.param(
                 ModelProfile(supports_image_input=False),
-                "`ComputerUse` needs a model that accepts images, and 'fallback' does not: every `computer` call "
-                'returns a screenshot.',
+                "The `computer` tool needs a model that accepts images, and 'fallback' does not: every `computer` "
+                'call returns a screenshot.',
                 id='blind',
             ),
             pytest.param(
                 _SMALL,
-                'The latest screenshot is 1280x800, larger than the model can see. Start the display at 1000x625 or '
+                "The latest screenshot is 1280x800, larger than 'fallback' can see. Start the display at 1000x625 or "
                 'smaller to use this model on it.',
                 id='smaller-screenshots',
             ),

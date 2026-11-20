@@ -156,11 +156,9 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   out, pass `InstrumentationSettings(include_binary_content=False)`.
 - [`Advisor(forward_history=True)`](../advisor/) sends every screenshot to the advisor model. Anthropic refuses an
   advisor request with more than 600 images.
-- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told which coordinates it
-  uses: pixels, or Gemini 3's grid. If that model can't take images, or would get the latest screenshot scaled down,
-  the run ends with a `UserError` before the model is called. In a
-  [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every model in the
-  `FallbackModel` uses the grid.
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) or a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), each model
+  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. If that model can't take images, or would
+  get the latest screenshot scaled down, the run ends with a `UserError` before the model is called.
 
 ## Durable execution
 

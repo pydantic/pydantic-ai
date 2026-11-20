@@ -449,7 +449,7 @@ Gotchas:
   isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
 - Gemini 3 models give positions on a 0-999 grid (profile `computer_use_coordinate_grid`), which `ComputerUse`
-  converts to pixels. Under `ModelFallback`, each model that answers is told its own coordinates. A model that can't
+  converts to pixels. Under `ModelFallback` or a `FallbackModel`, each model that answers is told its own coordinates. A model that can't
   take images, or would get the latest screenshot scaled down, ends the run with a `UserError` before its request. A
   custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
   `ComputerCallPart`, not from the run's model.
