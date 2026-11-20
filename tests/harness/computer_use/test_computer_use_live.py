@@ -252,12 +252,11 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/v1/messages')
-    # The capability's `computer` tool was sent as Claude's toolset, which has no name or schema from us.
+    # Claude's toolset has no name or schema from us.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Claude took a screenshot before its click and typing, and the batch ran at once: one request after the first.
+    # Claude's screenshot, click and typing ran as one batch.
     assert len(request_capture.bodies('/v1/messages')) == 2
-    # Every toolset call got its own result, in order, marked with the toolset. The screenshot call got `OK` and the
-    # screen it saw. The last call got the screen after the batch.
+    # The screenshot call got `OK` and the screen it saw; the last call got the screen after the batch.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
@@ -384,7 +383,6 @@ async def test_claude_drives_the_screen_through_the_streamed_computer_toolset(
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     last = request_capture.bodies('/v1/messages')[-1]
-    # The streamed toolset calls went back unchanged, each with its result, in order.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert calls and all(call['toolset_name'] == 'computer' for call in calls)
@@ -582,10 +580,8 @@ async def test_claude_is_forced_to_call_the_computer(
     )
 
     first = request_capture.bodies('/v1/messages')[0]
-    # A function tool is listed by its name, and any other tool by its type.
     sent = [tool.get('type', tool.get('name')) for tool in _tools(first)]
     assert (sent, first['tool_choice']) == (tools, tool_choice)
-    # Claude's first response called the computer.
     assert any(isinstance(part, ComputerCallPart) for part in result.all_messages()[1].parts)
 
 
@@ -680,7 +676,6 @@ async def test_claude_on_bedrock_drives_the_screen_through_the_computer_toolset(
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
-    # Bedrock accepts the toolset, as the Claude API does.
     assert _tools(request_capture.bodies()[0]) == [{'type': 'computer_toolset_20260801'}]
 
 
