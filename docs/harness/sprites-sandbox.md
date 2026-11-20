@@ -128,7 +128,7 @@ The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN
 
 `runtime` only shapes a new Sprite, and an unknown one raises `WorkspaceUnavailableError` on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
 
-Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
+Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=`, `env=` and `desktop=` to the backend.
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `SPRITE_TOKEN`, not the Sprite, and a later operation opens a new one. A `client=` or `sandbox=` you passed is never closed.
 
@@ -159,6 +159,32 @@ async def run_in_prepared_sprite() -> str:
 ```
 
 The run uses the backend as it is, so `SpritesSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the Sprite instead, store `backend.ref` and pass it as `workspace=` to reattach later.
+
+## Give the agent a desktop
+
+Pass `desktop=True` for a Sprite with a screen, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
+
+agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(desktop=True), Coder(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open a terminal from the panel, run `uname -a` in it, and tell me what it printed.')
+    print(result.output)
+```
+
+The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, which installs [the desktop's programs](computer-use.md#what-the-display-needs) with `apt-get` and can take a minute: the agent sees a panel along the bottom with a button that opens a terminal, and no web browser. Each window it opens fills the screen. Commands get `DISPLAY` set for it, so apps the agent starts from the shell open there too.
+
+A cold wake stops the display and the apps on it (see [Sprite lifecycle](https://docs.fly.io/sprites/concepts/lifecycle.md)): the agent's open windows are lost, and the agent has to open its apps again. Files on disk are kept. Within the same run, the display restarts on the agent's next screenshot or action, and a program started from the shell before then can't open a window. A later run attaches with a new backend, so its first command starts the display.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](computer-use.md#watching-a-run).
 
 ## Clean up
 
@@ -214,6 +240,7 @@ Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists un
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
+| `desktop` | Give the Sprite a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
