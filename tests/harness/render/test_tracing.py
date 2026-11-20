@@ -122,7 +122,8 @@ class WorkerTaskContext(RecordingTaskContext):
             result = task.func(self, *json_round_trip(args), **json_round_trip(kwargs))
             if inspect.isawaitable(result):
                 return await result
-            return result
+            # Every task these tests run is async.
+            return result  # pragma: no cover
 
         return json_round_trip(await asyncio.create_task(run_task(), context=contextvars.Context()))
 
