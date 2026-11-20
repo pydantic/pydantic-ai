@@ -322,7 +322,7 @@ calls already start one at a time in dispatch order, and the `call_scheduler` fa
 
 The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.
 
-## Telemetry
+### Span attributes
 
 When the run is instrumented, each `run_workflow` call records how its script ended on the call's
 `execute_tool run_workflow` span. It opens no span of its own: the tool call and each sub-agent run

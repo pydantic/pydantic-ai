@@ -524,7 +524,9 @@ misses the operation and the script waits on it indefinitely. An exception that 
 itself reaches the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the
 calls already start one at a time in dispatch order, and the `call_scheduler` factory is not called.
 
-## Telemetry
+## Observability
+
+### Span attributes
 
 When the run is instrumented, each `run_workflow` call records how its script ended on the call's
 `execute_tool run_workflow` span. It opens no span of its own: the tool call and each sub-agent run
