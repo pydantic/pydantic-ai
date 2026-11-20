@@ -75,6 +75,15 @@ Dynamic schema at runtime?
 ### Choosing a Multi-Agent Pattern
 
 ```
+Workflow writes business data (refunds, record updates)?
+└── Yes → Use extract, decide, write: read-only agents return typed findings,
+          code (or one agent) turns them into a typed plan, code applies it
+          with a lock, a staleness check and an idempotency key
+
+Later steps need earlier delegates' results?
+└── Yes → Keep a typed case file in deps: each delegation tool stores the
+          delegate's typed output on it and returns a short summary to the parent
+
 Child agent returns result to parent?
 ├── Yes → Use agent delegation via tools
 └── No → Permanent hand-off to specialist?
@@ -84,6 +93,8 @@ Child agent returns result to parent?
         └── Complex state machine?
             └── Yes → Use Graph-based control
 ```
+
+See [extract, decide, write](https://pydantic.dev/docs/ai/guides/multi-agent-applications/#extract-decide-write) and [shared typed state](https://pydantic.dev/docs/ai/guides/multi-agent-applications/#shared-typed-state) for worked examples.
 
 ### Choosing How to Extend Agent Behavior
 

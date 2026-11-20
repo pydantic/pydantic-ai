@@ -15,6 +15,9 @@ To support these use cases, Pydantic AI provides the concept of deferred tools, 
 - tools that [require approval](#human-in-the-loop-tool-approval)
 - tools that are [executed externally](#external-tool-execution)
 
+!!! tip "Approving a business change rather than a tool call"
+    Before reaching for deferred approvals, consider whether the person is really reviewing a change to your data, such as a refund or a record update. If so, give the agent read-only tools, have it produce a typed plan, and let your code apply the plan once it's approved, as shown in [Extract, decide, write](multi-agent-applications.md#extract-decide-write).
+
 When the model calls a deferred tool, there are two ways to resolve it:
 
 - **Resolve it inline**, using a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] [capability](capabilities/overview.md) with a handler that resolves some or all of the pending calls. The agent run continues in a single call without needing to end and restart — use this when the resolver (e.g. an approval gate, an external service client) lives in the same process as the agent. See [Resolving deferred calls with a handler](#resolving-deferred-calls-with-a-handler).
