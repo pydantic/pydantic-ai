@@ -84,9 +84,8 @@ def continuation_digest(history: Hasher, parts: Sequence[ModelResponsePart]) -> 
 def call_as_sent(part: ToolCallPart) -> ToolCallPart:
     """`part` as the server holds it: a base call, without what's added to it after it arrives.
 
-    A call is promoted to its typed subclass and, on a `computer` call, the model adds its grid and screenshot limits
-    to `provider_details`, before or after the digest is taken. None of that is sent to the provider. Leaving it in
-    would change the digest, so a later response would never match.
+    The call is promoted to its typed subclass, and a `computer` call gets its model's limits in `provider_details`,
+    before or after the digest is taken. Neither is sent, so leaving them in would make a later response never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
     details = part.provider_details

@@ -393,8 +393,7 @@ class FallbackChain:
     async def falls_back(self, failure: Exception | ModelResponse) -> bool:
         """Whether the chain moves on from `failure`, an error or a response, noting it for the group if so.
 
-        It moves on from a model that refused a request it can't serve, like a screenshot larger than it can see,
-        whatever `fallback_on` says: another model may serve it. Otherwise `fallback_on` decides.
+        It always moves on from an `UnservableRequestError`, whatever `fallback_on` says: another model may serve it.
         """
         if not isinstance(failure, UnservableRequestError) and not await self.predicates.matches(failure):
             return False
@@ -407,8 +406,8 @@ class FallbackChain:
     def exhausted(self) -> NoReturn:
         """Raise the `FallbackExceptionGroup` for a chain with no model left to attempt.
 
-        When every model refused the request as one it can't serve, the last refusal is raised instead, as the
-        `UserError` the user can act on.
+        When every model refused the request as unservable, the last refusal is raised instead, as a `UserError`
+        the user can act on.
         """
         if (
             self.exceptions

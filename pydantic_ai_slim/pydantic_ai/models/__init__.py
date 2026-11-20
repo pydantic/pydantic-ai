@@ -555,9 +555,8 @@ class ModelRequestParameters:
     def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
         """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
 
-        A tool with `defer_loading=True` is included only once the message history has revealed it. This is how it
-        differs from [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], which also
-        returns a tool that is still deferred, so that instructions naming the tool don't change when it is revealed.
+        A tool with `defer_loading=True` is included only once the message history has revealed it, unlike in
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind].
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
@@ -1250,17 +1249,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _refuse_unservable_computer_request(
         self, messages: Sequence[ModelMessage] | None, model_request_parameters: ModelRequestParameters | None
     ) -> None:
-        """Refuse a request with a `computer` tool that this model can't serve, before anything is sent.
-
-        A model that hands its requests to other models, like `FallbackModel`, leaves it to them. A request whose
-        messages or parameters weren't found isn't checked.
-        """
+        """Refuse a request with a `computer` tool that this model can't serve, before anything is sent."""
         if messages is None or model_request_parameters is None or not self._answers_requests_itself:
             return
         try:
             profile = self.profile
         except NotImplementedError:
-            # A third-party router with no profile of its own, as for `_computer_call_labels`.
+            # A third-party router with no profile: the models it routes to check for themselves.
             return
         refuse_unservable_computer_request(messages, model_request_parameters, profile, self.model_name)
 
@@ -1272,20 +1267,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         try:
             return computer_call_labels(self.profile)
         except NotImplementedError:
-            # A third-party router with no profile of its own that doesn't set `_answers_requests_itself`: the models
-            # it answers through label their own calls.
+            # A third-party router with no profile: the models it routes to label their own calls.
             return {}
 
     @classmethod
     def _apply_computer_use_profile_at_the_model_boundary(cls) -> None:
-        """Have each method of `cls` that sends a request refuse one with a `computer` tool the model can't serve.
+        """Wrap the request methods of `cls` to refuse unservable `computer` requests and label `computer` calls.
 
-        And have each method that returns the model's output label its `computer` calls with the model's limits.
-
-        Done here, for every model class, so each call records the grid and screenshot limits of the model that made
-        it, which the `computer` tool scales its positions and screenshots by. Under a `FallbackModel` or the
-        `ModelFallback` capability, that's the model that answered, and a model that refuses is a failed attempt the
-        fallback moves on from.
+        Done for every model class, so each call records the limits of the model that made it, which the `computer`
+        tool scales positions and screenshots by. Under a fallback that's the model that answered.
         """
         request = cls.__dict__.get('request')
         if inspect.iscoroutinefunction(request):
@@ -1311,8 +1301,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             ) -> AsyncGenerator[StreamedResponse, None]:
                 self._refuse_unservable_computer_request(*_messages_and_parameters(args, kwargs))
                 async with request_stream(self, *args, **kwargs) as stream:
-                    # A model that hands over another model's stream, like `FallbackModel`, has no labels of its own
-                    # and leaves that model's in place.
+                    # A model that hands over another model's stream, like `FallbackModel`, keeps that model's labels.
                     if labels := self._computer_call_labels:
                         stream._parts_manager.computer_call_labels = labels
                     yield stream
@@ -1324,7 +1313,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
             @wraps(batch_encode)
             async def computer_use_batch_encode(self: Model, request: BatchRequest) -> EncodedBatchRequest:
-                # Before the request is encoded, so nothing is submitted for a model that can't serve it.
                 self._refuse_unservable_computer_request(request.messages, request.model_request_parameters)
                 return await batch_encode(self, request)
 
@@ -3047,10 +3035,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 def _messages_and_parameters(
     args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[list[ModelMessage] | None, ModelRequestParameters | None]:
-    """The messages and parameters of a call to `request` or `request_stream`, each `None` where it isn't found.
-
-    They're its first and third arguments, or passed by the names `Model` gives them.
-    """
+    """The messages and parameters of a `request` or `request_stream` call, by position or name, or `None`."""
     messages = args[0] if args else kwargs.get('messages')
     params = args[2] if len(args) > 2 else kwargs.get('model_request_parameters')
     return messages, params
@@ -4275,10 +4260,7 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
 def _natives_with_computer_tool(
     params: ModelRequestParameters, natives: list[AbstractNativeTool]
 ) -> list[AbstractNativeTool]:
-    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls.
-
-    An optional `ComputerTool` without one is dropped; a required one raises `UserError`, as does one with more than one.
-    """
+    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls."""
     # A tool that is left out because a native tool is sent in its place can't run any calls.
     sent_ids = {t.unique_id for t in natives}
     computer_tools = [
@@ -4289,7 +4271,6 @@ def _natives_with_computer_tool(
     kept: list[AbstractNativeTool] = []
     for native_tool in natives:
         if isinstance(native_tool, ComputerTool) and not computer_tools:
-            # Its calls would have no tool to run them.
             if native_tool.optional:
                 continue
             raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
@@ -4423,8 +4404,7 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
-    # Runs after the optional tool search is dropped above. A tool that is kept only while that tool search isn't
-    # sent can then run a `ComputerTool`'s calls.
+    # After the tool search drop, so a tool kept because tool search isn't sent can run a `ComputerTool`'s calls.
     supported_natives = _natives_with_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:

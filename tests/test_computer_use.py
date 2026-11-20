@@ -1,7 +1,7 @@
 """The `computer` tool's typed parts, and how a request sends `ComputerTool` in place of that tool.
 
-These are not recorded-HTTP (VCR) tests. The parts, the request preparation and the labels the agent adds are all
-built before or after the provider request. `FunctionModel` reaches all of them, so a recording would add nothing.
+Not VCR tests: the parts, the request preparation and the labels are all built before or after the provider request,
+which `FunctionModel` reaches, so a recording would add nothing.
 """
 
 from __future__ import annotations
@@ -116,8 +116,7 @@ def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
 
 
 def test_computer_tool_is_sent_once_history_reveals_its_deferred_computer_tool() -> None:
-    # A deferred capability's tools stay deferred after the model loads it. They become callable once history
-    # reveals them.
+    # A deferred tool becomes callable once history reveals it.
     computer = ComputerTool(display_size=(1280, 800), optional=True)
     params = _prepare(
         ModelRequestParameters(
@@ -328,8 +327,6 @@ async def test_a_model_not_known_to_point_on_a_grid_is_left_alone() -> None:
 async def test_a_fallback_call_has_the_grid_of_the_model_that_made_it(
     grids: tuple[int | None, int | None], streamed: bool, wrapped: bool
 ) -> None:
-    # Each model is told its own grid and labels its own calls, so a call made after a fallback points on the grid of
-    # the model that made it.
     down_saw: list[str | None] = []
     up_saw: list[str | None] = []
 
@@ -525,7 +522,7 @@ async def test_a_fallback_whose_models_all_cant_see_the_screenshot_raises_the_la
     )
     with pytest.raises(UnservableRequestError, match=r"larger than 'second' can see\. Start the display at 1200x750"):
         await _run(agent, streamed=streamed)
-    # Each model made the click, then refused the next request without being called.
+    # `first` made the click. Both then refused the next request without being called.
     assert calls == ['first']
 
 

@@ -135,10 +135,9 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
 
 @contextmanager
 def refusals_as_application_errors() -> Generator[None]:
-    """In a model activity, raise a model's refusal of a request it can't serve as one the workflow rebuilds it from.
+    """In a model activity, raise an `UnservableRequestError` as a non-retryable error the workflow rebuilds it from.
 
-    A fallback in the workflow moves on from it, and asking the same model again won't change the answer, so it isn't
-    retried.
+    Asking the same model again won't change its answer. A fallback in the workflow moves on from it.
     """
     try:
         yield
@@ -239,7 +238,7 @@ def _retry_policy_type(error: ModelAPIError) -> str:
 
 @contextmanager
 def rebuilt_model_errors() -> Generator[None]:
-    """In the workflow, re-raise a model error, or a model's refusal, a model activity failed with as its original type.
+    """In the workflow, re-raise a model error or refusal that a model activity failed with as its original type.
 
     Any other activity failure, including one from an error that wasn't a model error, is raised
     unchanged.
