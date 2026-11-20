@@ -17,6 +17,7 @@ from ._spec import TEMPORAL_ENGINE_SPEC
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.models.instrumented import InstrumentationSettings
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
@@ -83,13 +84,20 @@ def deserialize_run_context(
     know about the agent.
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
-    _restore_tracer(ctx, agent)
-    if agent is not None:
-        _publish_run_telemetry(ctx, agent)
+    settings = agent_instrumentation_settings(agent) if agent is not None else None
+    _restore_tracer(ctx, settings)
+    # The run's flag crossed the boundary, but this worker traces with its own settings: content is captured
+    # only if both allow it, so every reader of `ctx.trace_include_content` here follows the worker's policy.
+    # A context that doesn't carry the flag keeps raising on read, as for any field that didn't cross.
+    if 'trace_include_content' in ctx.__dict__ and not (settings is not None and settings.include_content):
+        ctx.trace_include_content = False
+    if settings is not None and get_current_span().is_recording():
+        # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them.
+        publish_run_telemetry(settings.tracer, include_content=ctx.trace_include_content)
     return ctx
 
 
-def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None) -> None:
+def _restore_tracer(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:
     """Give `ctx.tracer` the tracer the worker's agent would trace a run with.
 
     A run always has a tracer, a no-op one when it isn't instrumented, so tools open spans without checking
@@ -99,17 +107,6 @@ def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None)
     """
     if 'tracer' in ctx.__dict__:
         return
-    settings = agent_instrumentation_settings(agent) if agent is not None else None
     ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
     assert isinstance(ctx, DurableRunContext)
     ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]
-
-
-def _publish_run_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
-    """Publish the worker agent's tracer as the run's telemetry, as the run's tracer can't cross into the activity.
-
-    Content is captured only if the run captures it too.
-    """
-    settings = agent_instrumentation_settings(agent)
-    if settings is not None and get_current_span().is_recording():
-        publish_run_telemetry(settings.tracer, include_content=settings.include_content and ctx.trace_include_content)
