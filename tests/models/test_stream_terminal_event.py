@@ -266,3 +266,18 @@ async def test_anthropic_message_stop_without_stop_reason(allow_model_requests: 
 
     assert (final.state, final.finish_reason) == ('complete', None)
     assert (recorded.state, recorded.finish_reason) == ('complete', None)
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_stream_response_again_after_cut_off_stream(allow_model_requests: None):
+    """Calling `stream_response()` again after a cut-off stream ended yields its final snapshot once."""
+    body = ''.join(_ANTHROPIC_EVENTS).encode()
+    transport = httpx2.MockTransport(
+        lambda _: httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body)
+    )
+    async with httpx2.AsyncClient(transport=transport) as http_client:
+        async with Agent(_anthropic(http_client)).run_stream('Say hello.') as result:
+            [response async for response in result.stream_response(debounce_by=None)]
+            again = [response async for response in result.stream_response(debounce_by=None)]
+
+    assert [(response.text, response.state) for response in again] == [('Hello, th', 'incomplete')]

@@ -132,12 +132,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         Yields `ModelResponse` snapshots — `state='incomplete'` while streaming is in flight,
         followed by one final `state='complete'` snapshot (or `'interrupted'` if `cancel()` was
-        called, or `'incomplete'` if the stream ended before the provider's terminal event). If the
-        underlying response already has accumulated content when this is called, a pre-stream yield
-        surfaces it before iteration begins.
+        called, or `'incomplete'` if the model detected that the stream ended before the provider's
+        terminal event). If the underlying response already has accumulated content when this is
+        called, a pre-stream yield surfaces it before iteration begins.
         """
         msg = self.response
-        if msg.state == 'incomplete':
+        # A stream that ended before the provider's terminal event stays `'incomplete'`, and the final yield has it.
+        if msg.state == 'incomplete' and not self._model_stream_finished:
             for part in msg.parts:
                 if part.has_content():
                     yield msg
@@ -863,7 +864,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
         [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] was called) on the final yield.
-        A stream that ended before the provider's terminal event stays `'incomplete'` on the final yield.
+        It stays `'incomplete'` on the final yield if the model detected that the stream ended before the
+        provider's terminal event.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -1191,7 +1193,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` on the final yield.
-        A stream that ended before the provider's terminal event stays `'incomplete'` on the final yield.
+        It stays `'incomplete'` on the final yield if the model detected that the stream ended before the
+        provider's terminal event.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.

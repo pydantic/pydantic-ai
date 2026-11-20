@@ -859,7 +859,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
         The composite normally resolves the whole `suspended → … → complete` chain, so mid-run it's
         `'complete'` once the loop exits, `'interrupted'` if cancelled, and `'incomplete'` while a
-        segment is still in flight, or once the last segment ended without its provider's terminal event.
+        segment is still in flight, or once the last segment reports that it ended without its provider's
+        terminal event.
         The one case it *does* surface `'suspended'` is a **detach**: the consumer stopped iterating and
         the stream was torn down via `aclose()` — not `cancel()` — while the current/last segment is
         itself a still-pending suspended job. The server-side job survives
