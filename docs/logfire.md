@@ -535,7 +535,7 @@ Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage
 
 ### Workspace spans
 
-An instrumented run traces each call on its [workspace](workspace.md) as a `workspace {operation}` span (`working_dir`, `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` or `realpath`) under the tool or hook that made it, with any provider SDK spans nested under it. On a backend without native file access, such as [Docker](harness/docker-sandbox.md) or [SSH](harness/ssh-workspace.md), each shell command behind a file operation gets a child `workspace run` span.
+An instrumented run traces each call on its [workspace](workspace.md) as a `workspace {operation}` span (`working_dir`, `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` or `realpath`) under the tool or hook that made it, with any provider SDK spans nested under it. On a backend without native file access, such as [Docker](harness/docker-container.md) or [SSH](harness/ssh-workspace.md), each shell command behind a file operation gets a child `workspace run` span.
 
 A [sandbox](harness/index.md) backend starts its sandbox on the first call that needs it, so that call gets a child `workspace create` span, or `workspace attach` when the run reconnects to an existing one by its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef]. Both can take seconds and can fail before the call itself starts. Deleting a sandbox with the capability's `destroy(ref)` gets a `workspace destroy` span when a tool or hook calls it during the run.
 
