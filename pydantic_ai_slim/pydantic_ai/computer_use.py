@@ -40,7 +40,6 @@ from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
-from ._computer_use import COMPUTER_KIND_ID
 from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 
 __all__ = (
@@ -488,7 +487,6 @@ COMPUTER_KIND = ToolKind(
 
 When a request includes a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], the provider's own computer tool is
 sent to the model in place of the tool of this kind, which still runs the calls."""
-assert COMPUTER_KIND.id == COMPUTER_KIND_ID
 
 
 class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
