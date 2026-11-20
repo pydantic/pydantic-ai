@@ -7,7 +7,8 @@ complex (a move), or one of exactly the same complexity (a rename).
 During a merge, `--staged` reports a function only when it is worse than in both parents.
 
 Each failure lists complexipy's suggestions for the function and links the cases in `agent_docs/complexity.md`.
-The limit and the checked roots come from `[tool.complexipy]` in `pyproject.toml`.
+The limit and the checked roots come from `[tool.complexipy]` in `pyproject.toml`. The base-ref comparison is
+`scripts/_ratchet.py`.
 
 Usage:
     uv run scripts/check_complexity.py --staged                     # the index against HEAD, for pre-commit
@@ -16,12 +17,10 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import ast
 import io
 import os
 import re
-import subprocess
 import sys
 import tokenize
 import tomllib
@@ -32,6 +31,7 @@ from itertools import takewhile
 from pathlib import Path
 from typing import Literal
 
+from _ratchet import Change, Options, escape, merge_head, parse_args, read_changes, worse_than_both
 from complexipy import FunctionComplexity, code_complexity
 
 GUIDE = 'agent_docs/complexity.md'
@@ -69,21 +69,6 @@ _ROLE_DECORATOR = re.compile(r'\s*@(?:\w+\.)*(overload|setter|deleter)\s*(?:#.*)
 
 
 @dataclass
-class _Options:
-    base: str
-    staged: bool
-    github: bool
-
-
-@dataclass
-class _Change:
-    old_path: str | None
-    new_path: str | None
-    old_source: str | None = None
-    new_source: str | None = None
-
-
-@dataclass
 class _Offender:
     path: str
     function: FunctionComplexity
@@ -96,56 +81,6 @@ class _Removed:
     path: str
     name: str
     complexity: int
-
-
-def _git(*args: str, stdin: bytes | None = None) -> bytes:
-    return subprocess.run(('git', *args), input=stdin, capture_output=True, check=True).stdout
-
-
-def _read_objects(specs: Sequence[str]) -> list[str]:
-    """Read `rev:path` blobs through one `git cat-file --batch`."""
-    if not specs:
-        return []
-    out = _git('cat-file', '--batch', stdin=''.join(f'{spec}\n' for spec in specs).encode())
-    blobs: list[str] = []
-    pos = 0
-    for _ in specs:
-        end = out.index(b'\n', pos)
-        size = int(out[pos:end].split()[2])
-        blobs.append(out[end + 1 : end + 1 + size].decode('utf-8', errors='replace'))
-        pos = end + 1 + size + 1
-    return blobs
-
-
-def _changed_files(revisions: Sequence[str], roots: Sequence[str]) -> list[_Change]:
-    """Every changed `.py` file under `roots`, with renames paired."""
-    fields = _git('diff', '--name-status', '-z', '-M', *revisions, '--', *roots).decode().split('\0')
-    changes: list[_Change] = []
-    i = 0
-    while i < len(fields) - 1:
-        status, path = fields[i], fields[i + 1]
-        if status.startswith('R'):
-            changes.append(_Change(path, fields[i + 2]))
-            i += 3
-            continue
-        changes.append(_Change(None if status == 'A' else path, None if status == 'D' else path))
-        i += 2
-    return [c for c in changes if (c.new_path or c.old_path or '').endswith('.py')]
-
-
-def _untracked_files(roots: Sequence[str]) -> list[_Change]:
-    paths = _git('ls-files', '--others', '--exclude-standard', '-z', '--', *roots).decode().split('\0')
-    return [_Change(None, path) for path in paths if path.endswith('.py')]
-
-
-def _load(changes: list[_Change], base: str, staged: bool) -> None:
-    """Read both sides of each change, the new side from the index when `staged`, else from the working tree."""
-    olds = iter(_read_objects([f'{base}:{c.old_path}' for c in changes if c.old_path]))
-    news = iter(_read_objects([f':{c.new_path}' for c in changes if c.new_path] if staged else []))
-    for c in changes:
-        c.old_source = next(olds) if c.old_path else None
-        if c.new_path:
-            c.new_source = next(news) if staged else Path(c.new_path).read_text(encoding='utf-8')
 
 
 def _functions(source: str | None, *, no_ignore: bool = False) -> dict[str, FunctionComplexity]:
@@ -180,7 +115,7 @@ def _classify(before: int | None, after: int, limit: int) -> _Failure | None:
     return 'new' if before is None else 'crossed' if before <= limit else 'worsened'
 
 
-def _offenders_in(change: _Change, limit: int) -> tuple[list[_Offender], list[_Removed]]:
+def _offenders_in(change: Change, limit: int) -> tuple[list[_Offender], list[_Removed]]:
     # The base and the removals are scored with ignores off, so adding or removing an ignore neither hides a
     # function nor makes one look new. Only the change's own result honors them.
     old, new = _functions(change.old_source, no_ignore=True), _functions(change.new_source)
@@ -231,7 +166,7 @@ def _predecessors(offenders: list[_Offender], pool: list[_Removed]) -> dict[int,
     return found
 
 
-def _collect(changes: list[_Change], limit: int) -> list[_Offender]:
+def _collect(changes: list[Change], limit: int) -> list[_Offender]:
     """Every function the change made worse, judging a moved or renamed function against its predecessor."""
     offenders: list[_Offender] = []
     pool: list[_Removed] = []
@@ -295,7 +230,7 @@ class _Ignore:
     """Whether the change added this ignore: complexipy did not drop the function before the change."""
 
 
-def _ignores(change: _Change) -> list[_Ignore]:
+def _ignores(change: Change) -> list[_Ignore]:
     """Each function complexipy drops in the changed file, with the line and reason of its marker."""
     ignored = _ignored(change.new_source)
     if not ignored:
@@ -311,11 +246,6 @@ def _ignores(change: _Change) -> list[_Ignore]:
         line = next((n for n in header if n in reasons), function.line_start)
         found.append(_Ignore(change.new_path or '', line, reasons.get(line, ''), name not in before))
     return found
-
-
-def _escape(value: str, prop: bool = False) -> str:
-    value = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-    return value.replace(':', '%3A').replace(',', '%2C') if prop else value
 
 
 def _advice(o: _Offender) -> list[str]:
@@ -340,9 +270,9 @@ def _print_offender(o: _Offender, limit: int, github: bool) -> None:
     for line in _advice(o):
         print(f'    {line}')
     if github:
-        title = _escape(f'Cognitive complexity {_delta(o)} (limit {limit})', prop=True)
-        body = _escape('\n'.join([f'{failure}. See {GUIDE}#{anchor}', *_advice(o)]))
-        print(f'::error file={_escape(o.path, prop=True)},line={f.line_start},title={title}::{body}')
+        title = escape(f'Cognitive complexity {_delta(o)} (limit {limit})', prop=True)
+        body = escape('\n'.join([f'{failure}. See {GUIDE}#{anchor}', *_advice(o)]))
+        print(f'::error file={escape(o.path, prop=True)},line={f.line_start},title={title}::{body}')
 
 
 def _write_summary(offenders: list[_Offender], limit: int, summary: str) -> None:
@@ -369,23 +299,9 @@ def _report_ignores(ignores: list[_Ignore], github: bool) -> bool:
         )
         print(f'{ignore.path}:{ignore.line}: complexipy {message}, see {GUIDE}#ignoring-a-function')
         if github:
-            location = f'file={_escape(ignore.path, prop=True)},line={ignore.line}'
-            print(f'::{level} {location},title=complexipy ignore::{_escape(message)}')
+            location = f'file={escape(ignore.path, prop=True)},line={ignore.line}'
+            print(f'::{level} {location},title=complexipy ignore::{escape(message)}')
     return any(not ignore.reason for ignore in ignores)
-
-
-def _parse_args(argv: Sequence[str] | None) -> _Options:
-    parser = argparse.ArgumentParser(description='Check the cognitive complexity a change adds.')
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--staged', action='store_true', help='compare the index with HEAD')
-    source.add_argument('--base', help='compare the working tree with this revision')
-    parser.add_argument('--format', choices=('text', 'github'), default='text')
-    args = parser.parse_args(argv)
-    staged: bool = args.staged
-    base: str | None = args.base
-    output_format: str = args.format
-    # The group is required, so `base` is set whenever `--staged` is not.
-    return _Options(base or 'HEAD', staged, output_format == 'github')
 
 
 def _config() -> tuple[int, list[str]]:
@@ -400,42 +316,24 @@ def _config() -> tuple[int, list[str]]:
     return limit, roots
 
 
-def _changes(options: _Options, roots: Sequence[str]) -> list[_Change]:
-    if options.staged:
-        return _changed_files(['--cached', options.base], roots)
-    return _changed_files([options.base], roots) + _untracked_files(roots)
-
-
-def _offenders(options: _Options, roots: Sequence[str], limit: int) -> tuple[list[_Change], list[_Offender]]:
-    changes = _changes(options, roots)
-    _load(changes, options.base, options.staged)
-    return changes, _collect(changes, limit)
-
-
-def _merge_head() -> str | None:
-    """The commit a merge in progress brings in, or `None` outside a merge."""
-    found = subprocess.run(('git', 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), capture_output=True, text=True)
-    return found.stdout.strip() or None
+def _offenders(options: Options, roots: Sequence[str], limit: int) -> tuple[list[Change], list[_Offender]]:
+    found = read_changes(options, roots)
+    return found, _collect(found, limit)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the check and return the exit code."""
-    options = _parse_args(argv)
+    options = parse_args(argv, 'Check the cognitive complexity a change adds.')
     limit, roots = _config()
 
-    changes, offenders = _offenders(options, roots, limit)
-    merge_head = _merge_head() if options.staged else None
-    if merge_head:
-        # Compared with `HEAD` alone, a merge would be blamed for every function the merged branch made worse.
-        # Each function that is worse than in both parents is reported against the more complex parent.
-        _, theirs = _offenders(replace(options, base=merge_head), roots, limit)
-        by_name = {(o.path, o.function.name): o for o in theirs}
-        offenders = [
-            max(o, by_name[o.path, o.function.name], key=lambda offender: offender.old or 0)
-            for o in offenders
-            if (o.path, o.function.name) in by_name
-        ]
-    unexplained = _report_ignores([ignore for change in changes for ignore in _ignores(change)], options.github)
+    changed, offenders = _offenders(options, roots, limit)
+    theirs = merge_head() if options.staged else None
+    if theirs:
+        _, their_offenders = _offenders(replace(options, base=theirs), roots, limit)
+        offenders = worse_than_both(
+            offenders, their_offenders, key=lambda o: (o.path, o.function.name), before=lambda o: o.old
+        )
+    unexplained = _report_ignores([ignore for change in changed for ignore in _ignores(change)], options.github)
     if offenders:
         print(f'\ncognitive complexity limit is {limit}; {len(offenders)} function(s) got worse ({GUIDE}):\n')
     for o in offenders:

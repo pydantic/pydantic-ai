@@ -2736,7 +2736,9 @@ async def test_connect_rejects_retained_user_audio_at_another_rate() -> None:
         )
     ]
     model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session)))
-    with pytest.raises(UserError, match='recorded at 24000 Hz into a google realtime session expecting 16000 Hz'):
+    with pytest.raises(
+        UserError, match='into google realtime history: it was recorded at 24000 Hz, but the session expects 16000 Hz'
+    ):
         async with _connect(model, 'x', messages=history):
             pass  # pragma: no cover
 

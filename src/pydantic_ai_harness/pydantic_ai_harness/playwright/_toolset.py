@@ -531,7 +531,7 @@ async def _resolve_host(host: str) -> tuple[str, ...] | None:
     if cached is not None and cached[0] > now:
         return cached[1]
     try:
-        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
+        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)  # noqa: TID251  (not converted to anyio yet)
     except (TimeoutError, OSError, UnicodeError):
         return None
     if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
@@ -875,6 +875,14 @@ def _url_origin(url: str) -> str:
     return _without_credentials(_URL_ORIGIN.sub(r'\1', url, count=1))
 
 
+_URL_IN_TEXT = re.compile(r'[a-zA-Z][\w+.\-]{0,31}://\S+')
+"""A URL anywhere in a message, up to the next whitespace.
+
+The scheme is capped so a long run of word characters costs a linear scan rather
+than a quadratic one. A longer scheme still matches, from partway into it.
+"""
+
+
 def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     """Replace the CDP endpoint in `message` with a form carrying no credentials.
 
@@ -883,6 +891,13 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     put a token in that URL's query string or path, so only the scheme, host and
     port survive -- enough to see which endpoint was unreachable, which the driver
     reports separately anyway.
+
+    Playwright also quotes forms of the endpoint that do not contain `cdp_url`
+    verbatim: the `/json/version/` URL it builds for an `http(s)` endpoint, and the
+    endpoint as its URL parser normalized it (host lower-cased, query
+    percent-encoded). Every URL left after the exact replacement is cut to its
+    origin too, so a credential there does not depend on `_without_credentials`
+    knowing its parameter name.
     """
     try:
         parsed = urlparse(cdp_url)
@@ -891,11 +906,10 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
         # read inside the guard: this runs while an error is already being built.
         if parsed.port is not None:
             host = f'{host}:{parsed.port}'
-        scheme = parsed.scheme
+        safe = f'{parsed.scheme}://{host}' if parsed.scheme else host
     except ValueError:
-        return message.replace(cdp_url, '<cdp_url>')
-    safe = f'{scheme}://{host}' if scheme else host
-    return message.replace(cdp_url, safe)
+        safe = '<cdp_url>'
+    return _URL_IN_TEXT.sub(lambda url: _url_origin(url.group()), message.replace(cdp_url, safe))
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -1347,7 +1361,7 @@ class PlaywrightBrowserSession:
         is refused as one to retry, and the next starts from what this one admitted.
         """
         try:
-            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):
+            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):  # noqa: TID251  (not converted to anyio yet)
                 for page in pages:
                     for index, frame in enumerate(page.frames):
                         await self._check_inherited_frame(frame, top_level=index == 0)
@@ -1533,7 +1547,7 @@ class PlaywrightBrowserSession:
         if self._launch_timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
@@ -1937,7 +1951,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     texts.append(f'[frame {_without_credentials(frame.url)}]\n{text}')
 
         try:
-            await asyncio.wait_for(sweep(), budget_ms / 1000)
+            await asyncio.wait_for(sweep(), budget_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             pass
         return texts
@@ -2043,7 +2057,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc
