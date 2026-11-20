@@ -254,17 +254,15 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 _START_DESKTOP = (
-    # Whether a display runs is read from this container's own lock file, not from an X server answering. With
-    # `--network host`, an X server of the host or of another container, on the same display number, would answer
-    # through Linux's abstract socket, which every process on the same network shares.
-    # A stale lock, such as one `docker stop` leaves, names a process that is gone or is now another program.
-    # The lock of a running X server names that server, whichever kind it is, such as `Xvnc`.
+    # Whether a display runs is read from this container's own X lock, not from an X server answering: with
+    # `--network host`, the host's or another container's X server on the same display number would answer through
+    # Linux's abstract socket. A stale lock, such as one `docker stop` leaves, names a process that is gone or is now
+    # another program; a live one names an X server of any kind, such as `Xvnc`.
     f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
     f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
-    # Without `-noreset`, X resets when its last client program exits, such as an `xdotool` command while no window
-    # manager runs. The reset moves the pointer back to the middle and lets go of held buttons.
-    # `-nolisten local` turns off the abstract socket. With `--network host`, every user on the host could reach it.
-    # The socket file in /tmp/.X11-unix stays, for commands run in the container.
+    # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command while no window manager
+    # runs, which centers the pointer and lets go of held buttons. `-nolisten local` turns off the abstract socket,
+    # which every user on the host could reach with `--network host`; the /tmp/.X11-unix socket stays for the container.
     f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
     f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
     + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
@@ -278,16 +276,13 @@ _START_DESKTOP = (
     f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; fi'
 )
-"""Starts an X display of the size given as `$1`, then a window manager, then the panel.
+"""Starts an X display of the size given as `$1`, then a window manager, then the panel, skipping an X server or
+panel that already runs.
 
-It skips the X display when this container's X lock names a running X server, and skips the panel when it already
-shows. A second start waits for the first to finish, then finds its X server.
-
-It fails if the X server exits, or doesn't answer within 10 seconds. A second `fluxbox` exits when one already runs, so
-starting it every time brings back one that died. The script then waits up to 10 seconds for the window manager to
-answer `xprop`, so the first click focuses and raises the window it lands on. It waits up to 10 more seconds for the
-panel window, so the first screenshot isn't black. It fails if the panel exits first, and goes on without the panel
-after 10 seconds.
+It fails if the X server exits or doesn't answer within 10 seconds. A second `fluxbox` exits when one already runs, so
+starting it every time brings back one that died. It waits up to 10 seconds for the window manager to answer `xprop`,
+so the first click focuses and raises the window it lands on, then up to 10 seconds for the panel, so the first
+screenshot isn't black. It fails if the panel exits first, and goes on without it after the wait.
 """
 
 
@@ -295,9 +290,9 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
     if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
         return
-    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this;
-    # Podman's docs don't, but Podman 6.1.4 built the desktop image this way in the live desktop test on 2026-11-20.
-    # The runner gives a command no stdin, so `sh` pipes it in.
+    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -`; Podman's
+    # docs don't, but Podman 6.1.4 built the image this way in the live desktop test on 2026-11-20. The runner gives
+    # a command no stdin, so `sh` pipes it in.
     build = 'printf %s "$1" | "$2" build --tag "$3" -'
     result = await runner.run(['sh', '-c', build, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE])
     if result.exit_code != 0:
@@ -523,15 +518,13 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
         argv = command_argv(command, shell)
         checked_env = _checked_env(env or {})
         if self._display is not None:
-            # Started first, so a program the command opens shows on the screen.
             await self._display.start()
         return await self._run_argv(argv, env=checked_env, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
-        """Run `argv` in the container without starting its display, as the display's own commands do.
+        """Run `argv` in the container without starting its display, for the display's own commands.
 
-        The names in `env` are already checked. `run` checks the names a caller passes, and the display's own names
-        are valid.
+        The names in `env` must already be checked.
         """
         merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:
