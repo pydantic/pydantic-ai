@@ -3,8 +3,7 @@
 SDK assumptions verified 2026-09-09 against E2B 2.46.4 and 2.34.0: `connect` resumes
 paused workspaces, with a 300-second lifetime unless it is given `timeout`; commands use
 `/bin/bash -l -c`, the SDK command timeout does not kill the process, and command handles
-accumulate output. `create(lifecycle=...)`, with `auto_resume`, exists from 2.48.0, the package
-floor; with `auto_resume`, any request to a paused sandbox wakes it (measured on 2.51.0). Re-check
+accumulate output. `create(lifecycle=...)` exists from 2.48.0, the package floor. Re-check
 https://github.com/e2b-dev/E2B/blob/main/packages/python-sdk/e2b/sandbox_async/main.py and
 https://github.com/e2b-dev/E2B/blob/main/packages/python-sdk/e2b/sandbox_async/commands/command.py
 before changing acquisition or deadline behavior.
@@ -166,14 +165,16 @@ def _not_found(path: str | None) -> FileNotFoundError:
     return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
 
 
-def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
-    """Say the sandbox is gone; only one E2B still knows about (`found`) may merely be paused."""
-    reason = (
-        'it was killed, or it was paused when its `sandbox_timeout` ran out '
-        '(a later run that attaches to it resumes it)'
-        if found
-        else 'it was killed'
-    )
+def _unavailable_message(sandbox_id: str, *, found: bool, resumes: bool = False) -> str:
+    """Say the sandbox is gone; only one E2B still knows about (`found`) may merely be paused.
+
+    A backend that `resumes` reconnects on its next operation, which wakes a paused sandbox.
+    """
+    if not found:
+        reason = 'it was killed'
+    else:
+        wake = 'the next operation resumes it' if resumes else 'a later run that attaches to it resumes it'
+        reason = f'it was killed, or it was paused when its `sandbox_timeout` ran out ({wake})'
     return (
         f'The E2B sandbox {sandbox_id!r} is no longer running: {reason}. '
         "Pass `workspace='new'` to start a fresh sandbox."
@@ -241,9 +242,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         allow_internet_access: Whether a newly created sandbox may reach the internet.
         sandbox_timeout: Total lifetime of the sandbox in seconds, applied when it is created and
             again when attaching to it. When it runs out, E2B pauses the sandbox rather than
-            killing it. A paused sandbox the backend created wakes on its next request; one attached
-            by `ref` wakes on the operation after the one that finds it paused. The default, 3600,
-            is the most E2B's Hobby plan allows; Pro plans allow up to 86400.
+            killing it. The operation that finds it paused raises `WorkspaceUnavailableError`, and
+            the next one resumes it with this lifetime; a sandbox passed as `sandbox` is not
+            resumed. The default, 3600, is the most E2B's Hobby plan allows; Pro plans allow up to
+            86400.
         working_dir: Absolute directory commands start in and relative paths resolve against.
             E2B has no create-time working directory, so this is applied per command, including
             on an attached sandbox; `None` uses the sandbox's own default, discovered with
@@ -278,8 +280,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             raise ValueError(f'sandbox_timeout must be an integer of at least 1, got {sandbox_timeout!r}.')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
-        # Only a handle the backend acquired is replaced: reconnecting a caller's sandbox would need
-        # the caller's credentials, which the backend does not have.
+        # Only a sandbox the backend created or attached to is resumed after it pauses: one the
+        # caller passed in is theirs to resume.
         self._reconnects = sandbox is None
         self._client = client
         self._user = 'user'
@@ -414,10 +416,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
                 if self._reconnects and self._sandbox is sandbox:
-                    # A paused sandbox created without `auto_resume` only wakes on `connect`, so the
-                    # next operation reconnects instead of reusing this handle.
+                    # A paused sandbox answers nothing until `connect` wakes it, so the next
+                    # operation reconnects, with `sandbox_timeout`, instead of reusing this handle.
                     self._sandbox = None
-                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
+                return WorkspaceUnavailableError(
+                    _unavailable_message(sandbox.sandbox_id, found=True, resumes=self._reconnects)
+                )
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
@@ -526,9 +530,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                         envs=dict(self._env) if self._env is not None else None,
                         allow_internet_access=self._allow_internet_access,
                         network=self._network,
-                        # Pause at the end of the lifetime instead of killing, so the files survive, and
-                        # let the next request wake it, so a held backend keeps working.
-                        lifecycle={'on_timeout': 'pause', 'auto_resume': True},
+                        # Pause at the end of the lifetime instead of killing, so the files survive.
+                        lifecycle={'on_timeout': 'pause'},
                     )
                 except e2b.SandboxException as error:
                     if not _is_create_refusal(error):
