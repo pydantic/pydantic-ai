@@ -124,7 +124,8 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 ## Screen size
 
 Some models accept screenshots only up to a set size. Their profile sets it with
-`computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`:
+`computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`. Claude models get these limits only on
+`AnthropicModel`:
 
 - Claude Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and about 3.75 megapixels (2576x1456).
 - Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
