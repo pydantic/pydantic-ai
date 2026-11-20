@@ -12,6 +12,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_path_authority,
@@ -88,6 +89,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
+        desktop_size(self.desktop)
 
     @classmethod
     def from_spec(
