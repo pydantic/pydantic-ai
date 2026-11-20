@@ -550,8 +550,8 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/responses')[-1]
     message = json_objects(last['input'])[-1]
-    # The output can hold only the screenshot, so the image goes in a message after it. The message has a note naming
-    # the file, then the image inside the tags Pydantic AI puts around a tool's files.
+    # The output holds only the screenshot, so the image goes in a message after it: a note naming the file, then the
+    # image in tool-file tags.
     assert isinstance(content := message['content'], list)
     assert [part['type'] for part in content if isinstance(part, dict)] == [
         'input_text',
