@@ -50,11 +50,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..continuation_utils import ScriptedContinuationModel, scripted_response
 
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
-READINESS_WAIT_TIMEOUT = 5
 
 # The exact framework-protocol keys the `FallbackModel` side stamps and this module honors. Spelled out
 # here (rather than imported as module privates) since the test pins the wire contract itself.

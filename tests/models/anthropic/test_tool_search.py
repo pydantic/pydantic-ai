@@ -1,4 +1,4 @@
-"""Tests for tool search on the legacy `AsyncAnthropicBedrock` (InvokeModel) client."""
+"""Tests for Anthropic native tool search."""
 
 from __future__ import annotations as _annotations
 
@@ -12,15 +12,16 @@ from pydantic import JsonValue, TypeAdapter
 from pydantic_ai import Agent, ModelHTTPError, ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.messages import NativeToolSearchCallPart, NativeToolSearchReturnPart
+from pydantic_ai.run import AgentRunResultEvent
 
 from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
-from ..conftest import content_blocks, json_objects
+from ..conftest import AnthropicModelFactory, content_blocks, json_objects
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropicBedrock
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
@@ -185,3 +186,64 @@ async def test_anthropic_legacy_bedrock_bm25_history_replay(
     assert [{key: block[key] for key in ('name', 'input')} for block in content_blocks(body, 'server_tool_use')] == [
         expected
     ]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('stream', [False, True])
+async def test_anthropic_tool_search_replays_every_input_field(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, stream: bool
+):
+    """A search call goes back with every input field the model gave it, not only the query.
+
+    The model often passes `limit` alongside the query. Fable 5.2 binds a thinking block to the content before
+    it, so a search replayed without `limit` gets the next request rejected with an invalid thinking signature:
+    https://github.com/pydantic/pydantic-ai/issues/13656.
+    """
+    agent = Agent(
+        anthropic_model('claude-fable-5-2', capture=True),
+        capabilities=[ToolSearch()],
+        model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+        instructions='Every tool search call MUST include the limit parameter set to 2. Never omit limit.',
+    )
+
+    @agent.tool_plain(defer_loading=True)
+    def check_inventory(sku: str) -> str:
+        """Check the stock count for a SKU."""
+        return '14'
+
+    @agent.tool_plain(defer_loading=True)
+    def send_email(to: str, body: str) -> str:
+        """Send an email."""
+        return 'sent'
+
+    prompt = (
+        'Search for an inventory tool first. Then think carefully about which of the results fits best before '
+        'calling anything, and then search again for an email tool and email the stock count of SKU A1 to ops.'
+    )
+    if stream:
+        async with agent.run_stream_events(prompt) as stream_events:
+            events = [event async for event in stream_events]
+        assert isinstance(events[-1], AgentRunResultEvent)
+        messages = events[-1].result.all_messages()
+    else:
+        messages = (await agent.run(prompt)).all_messages()
+
+    calls = [
+        part.provider_details
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolSearchCallPart)
+    ]
+    assert calls == snapshot(
+        [{'strategy': 'bm25', 'extra_input': {'limit': 2}}, {'strategy': 'bm25', 'extra_input': {'limit': 2}}]
+    )
+
+    bodies = request_capture.bodies()
+    # No request was rejected and retried with `block_binding` set to drop the stale thinking.
+    assert [body['thinking'] for body in bodies] == snapshot(
+        [{'type': 'adaptive'}, {'type': 'adaptive'}, {'type': 'adaptive'}]
+    )
+    assert [block['input'] for block in content_blocks(bodies[-1], 'server_tool_use')] == snapshot(
+        [{'query': 'inventory stock count by SKU', 'limit': 2}, {'query': 'send email', 'limit': 2}]
+    )

@@ -201,8 +201,8 @@ so it is left out of every run step that has `read_file`. The instructions name 
 they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
 is called in the run:
 
-- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceOverflowStore()`. Reads of its spill
-  files through `read_file` are not reduced again.
+- `ToolOutputLimits`' `read_tool_result` and `grep_tool_result`, with the default
+  `WorkspaceOverflowStore()`. Reads of its spill files through `read_file` are not reduced again.
 - `Memory`'s `read_memory`, with a `FileMemoryStore` that has no `workspace=` of its own and a relative
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
@@ -370,6 +370,11 @@ applies the same rule to absolute symlink targets.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
+- **Ordered changes.** `write_file`, `edit_file` and `create_directory` are
+  [sequential tools](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency):
+  when a model sends several tool calls in one response, each change runs after the
+  calls before it, so a write into a directory created earlier in the response
+  finds it. The read tools still run in parallel.
 - **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
   is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
   matches only the text around them; `write_file` replaces the whole file with
@@ -501,7 +506,9 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+`FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/), and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners run in orchestrator code: they re-run on every replay, so keep them deterministic and idempotent, and they can't do I/O, so interactive approval of file changes through a UI or external service isn't supported on Azure yet. On Render, listeners run in the parent task, and events from the other tools are carried back to the run.
 
 ## Further reading
 

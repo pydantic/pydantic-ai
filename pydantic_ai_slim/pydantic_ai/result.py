@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    incomplete_tool_call_message,
     is_incomplete_json,
     run_image_process_hooks,
     run_output_with_hooks,
@@ -313,11 +314,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_output_tool_call(
-                    tool_call,
-                    schema=self._output_schema,
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=False,
+                return await self._validate_tool_output(
+                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -358,6 +356,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
+            raise
+
+    async def _validate_tool_output(
+        self, tool_call: _messages.ToolCallPart, *, cut_off: bool, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate an output tool call, whose arguments the token limit may have `cut_off`."""
+        try:
+            return await self._tool_manager.handle_output_tool_call(
+                tool_call,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
+        except ValidationError as e:
+            # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
+            if cut_off and not allow_partial and is_incomplete_json(e):
+                raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_text_output(
