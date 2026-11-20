@@ -395,7 +395,7 @@ class TestRun:
         machine = host.only
         call = FakeFsTransport.call
 
-        async def remove_then_stop(self: FakeFsTransport, method: str, request: Any) -> Any:
+        async def remove_then_stop(self: FakeFsTransport, method: str, request: object) -> object:
             result = await call(self, method, request)
             if method == 'FsRemove':
                 machine.status = 'stopped'
