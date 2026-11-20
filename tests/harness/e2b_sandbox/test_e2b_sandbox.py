@@ -138,6 +138,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'description',
         'env',
         'id',
+        'idle_timeout',
         'path_authority',
         'sandbox_timeout',
         'template',
@@ -152,6 +153,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'template': 'base',
         'allow_internet_access': False,
         'sandbox_timeout': 120,
+        'idle_timeout': 60,
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
     }
