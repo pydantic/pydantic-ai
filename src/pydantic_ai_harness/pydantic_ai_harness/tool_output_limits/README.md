@@ -457,9 +457,9 @@ recorded even when it cuts nothing (then both sizes are equal). When the default
 store shows up in a trace. A binary return gets only `fallback_from` and `fallback_error`, with no
 `action` or sizes, since `Truncate` can't take binary. The same holds for any action that can't run
 and has no `then`, or whose fallbacks all fail or end in `Passthrough()`: the return is unchanged
-and only `fallback_from` and `fallback_error` are recorded. When a `then` also fails and its own `then` produces the result,
-`fallback_from` and `fallback_error` still describe the band's own action, the one the band was
-configured to run; the later failure is in the log.
+and only `fallback_from` and `fallback_error` are recorded. When a `then` also fails and its own
+`then` produces the result, `fallback_from` and `fallback_error` still describe the band's own
+action, the one the band was configured to run; the later failure is in the log.
 
 ## Edge cases
 
