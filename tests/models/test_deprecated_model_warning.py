@@ -21,6 +21,7 @@ from pydantic_ai._unsupported_settings import suppress_warnings
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 
 from ..conftest import ignore_deprecated_models_in_recordings, try_import
 
@@ -141,31 +142,27 @@ def anthropic_on(client: AsyncAnthropicClient) -> Model:
     return AnthropicModel(CLAUDE, provider=AnthropicProvider(anthropic_client=client))
 
 
+def bedrock_client() -> AsyncAnthropicBedrock:
+    return AsyncAnthropicBedrock(aws_access_key='key', aws_secret_key='secret', aws_region='us-east-1')
+
+
+def azure_client() -> AsyncAzureOpenAI:
+    return AsyncAzureOpenAI(
+        api_key='mock-api-key', azure_endpoint='https://example.openai.azure.com', api_version='2025-04-01'
+    )
+
+
 SILENT_MODELS: dict[str, Callable[[], Model]] = {
-    'anthropic-bedrock': lambda: anthropic_on(
-        AsyncAnthropicBedrock(aws_access_key='key', aws_secret_key='secret', aws_region='us-east-1')
-    ),
+    'anthropic-bedrock': lambda: anthropic_on(bedrock_client()),
     'anthropic-bedrock-mantle': lambda: anthropic_on(
         AsyncAnthropicBedrockMantle(aws_access_key='key', aws_secret_key='secret', aws_region='us-east-1')
     ),
     'anthropic-vertex': lambda: anthropic_on(
         AsyncAnthropicVertex(region='us-east5', project_id='project', access_token='token')
     ),
-    'openai-chat-azure-client': lambda: OpenAIChatModel(
-        GPT,
-        provider=OpenAIProvider(
-            openai_client=AsyncAzureOpenAI(
-                api_key='mock-api-key', azure_endpoint='https://example.openai.azure.com', api_version='2025-04-01'
-            )
-        ),
-    ),
+    'openai-chat-azure-client': lambda: OpenAIChatModel(GPT, provider=OpenAIProvider(openai_client=azure_client())),
     'openai-responses-azure-client': lambda: OpenAIResponsesModel(
-        GPT,
-        provider=OpenAIProvider(
-            openai_client=AsyncAzureOpenAI(
-                api_key='mock-api-key', azure_endpoint='https://example.openai.azure.com', api_version='2025-04-01'
-            )
-        ),
+        GPT, provider=OpenAIProvider(openai_client=azure_client())
     ),
     'azure': lambda: OpenAIChatModel(
         GPT,
@@ -210,6 +207,33 @@ def test_profile_overrides():
     assert [str(w.message) for w in record] == snapshot(
         ["Model 'openrouter:openai/gpt-elsewhere' is deprecated by its provider. See https://example.com/openrouter"]
     )
+
+
+PLATFORM_DROPS: dict[str, Callable[[ModelProfile], Model]] = {
+    'anthropic-bedrock': lambda profile: AnthropicModel(
+        CLAUDE, provider=AnthropicProvider(anthropic_client=bedrock_client()), profile=profile
+    ),
+    'openai-chat-azure-client': lambda profile: OpenAIChatModel(
+        GPT, provider=OpenAIProvider(openai_client=azure_client()), profile=profile
+    ),
+    'openai-responses-azure-client': lambda profile: OpenAIResponsesModel(
+        GPT, provider=OpenAIProvider(openai_client=azure_client()), profile=profile
+    ),
+}
+
+
+@pytest.mark.parametrize('model_factory', PLATFORM_DROPS.values(), ids=PLATFORM_DROPS.keys())
+def test_profile_override_survives_platform_drop(model_factory: Callable[[ModelProfile], Model]):
+    """A deprecation the user sets with `profile=` survives the drop for a platform with a schedule of its own.
+
+    The model drops the provider's deprecation for that platform before the user's `profile=` applies, which is what
+    the docs tell users to rely on to warn about a model they serve there.
+    """
+    custom = ModelDeprecation(source_url='https://example.com/platform')
+    model = model_factory(ModelProfile(deprecation=custom))
+    assert model.profile.get('deprecation') == custom
+    with pytest.warns(DeprecatedModelWarning):
+        model.prepare_request(None, ModelRequestParameters())
 
 
 async def test_unused_fallback_doesnt_warn(allow_model_requests: None):
