@@ -10,7 +10,7 @@ Pydantic AI provides access to messages exchanged during an agent run. These mes
 
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
-Both [`RunResult`][pydantic_ai.agent.AgentRunResult]
+Both [`AgentRunResult`][pydantic_ai.agent.AgentRunResult]
 (returned by [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync])
 and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream]) have the following methods:
 
@@ -29,7 +29,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
-Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult] :
+Example of accessing methods on an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] :
 
 ```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
