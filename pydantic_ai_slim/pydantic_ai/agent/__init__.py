@@ -3626,7 +3626,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ]
         )
         return CombinedCapability(
-            [capability if id(capability) in configured else capability.for_agent(self) for capability in override_caps]
+            [
+                capability if id(capability) in configured else capability._keep_authority(capability.for_agent(self))  # pyright: ignore[reportPrivateUsage]
+                for capability in override_caps
+            ]
         )
 
     def _override_added_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
