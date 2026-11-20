@@ -235,8 +235,6 @@ class _Plan:
     """The inputs the last call that succeeded said are still pressed."""
     keeps_held: bool
     """Whether inputs left pressed stay pressed until the run ends, rather than being released when the call ends."""
-    confirmed: bool = False
-    """Whether a person approved the call because its provider asked for a confirmation."""
 
 
 @dataclass
@@ -456,7 +454,8 @@ async def _release(display: Display, held: list[_Release]) -> None:
 
     A lost workspace ends the run, so `WorkspaceUnavailableError` is raised instead.
     """
-    for release in list(held):
+    # The last input pressed is released first, so a shift-drag drops with shift still held.
+    for release in reversed(list(held)):
         with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
             try:
                 await display.act(release)
@@ -632,13 +631,14 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     @cached_property
     def _toolset(self) -> FunctionToolset[AgentDepsT]:
         """The `computer` tool, built once per instance so every run of an agent gets the same toolset."""
-        tool = Tool[AgentDepsT](
+        tool = Tool(
             self._computer,
             name='computer',
             description='Run actions on the screen in order, then return a screenshot of the result.',
             sequential=True,
             max_retries=3,
             prepare=_offer_what_the_workspace_allows,
+            args_validator=self._ask_for_approval,
             tool_kind=COMPUTER_KIND,
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
@@ -647,6 +647,17 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             durable=False,
         )
         return FunctionToolset([tool], id=self.id)
+
+    async def _ask_for_approval(self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction]) -> None:
+        """Ask a person to approve a call its provider flagged, before anything else about the call can fail.
+
+        It runs as the tool's argument validator, before the tool hooks and the call itself. So a result other than a
+        denial or a refusal of the arguments always comes after a person approved the call, which is how a model
+        adapter tells the provider what the person decided.
+        """
+        made = _the_call(ctx)
+        if made is not None and (reason := made[1].confirmation) is not None and not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'reason': reason})
 
     async def _computer(
         self,
@@ -661,9 +672,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(_READ_ONLY)
         made = _the_call(ctx)
         call = made[1] if made else None
-        if call is not None and call.confirmation is not None and not ctx.tool_call_approved:
-            # The provider asked for a person to approve this action before it runs.
-            raise ApprovalRequired(metadata={'reason': call.confirmation})
         run = _run_presses(ctx)
         keeps_held = run is not None
         # Without the run's record, as for a capability loaded mid-run, each call releases its own inputs, and
@@ -675,7 +683,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             changed=call is not None and call.actions != actions,
             held=list(run.held),
             keeps_held=keeps_held,
-            confirmed=call is not None and call.confirmation is not None,
         )
         stray = list(run.stray)
         # A call that never reports back, such as an interrupted one, may leave these pressed until the run ends. The
@@ -683,13 +690,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         run.held, run.stray = [], [*stray, *plan.held]
         outcome = await self._call(ctx, actions, plan)
         if isinstance(outcome, _NotRun):
-            error = _not_run_error(outcome, run, stray, plan, actions)
-            if plan.confirmed and isinstance(error, ToolFailed | ModelRetry):
-                # A person approved the call, so its result says so even though nothing ran. A provider that asked
-                # for the confirmation refuses a result that doesn't.
-                result = ComputerResult(performed=0, error=error.message, confirmed=True)
-                return ToolReturn([error.message], metadata=result)
-            raise error
+            raise _not_run_error(outcome, run, stray, plan, actions)
         tool_return, held = outcome
         result: ComputerResult = tool_return.metadata
         run.held, run.stray = held, stray
@@ -773,8 +774,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """
         performed, error, steps = await _perform(display, actions, mapping, self.settle_seconds, held)
         result = ComputerResult(performed=performed)
-        if plan.confirmed:
-            result['confirmed'] = True
         summary: list[str] = []
         if plan.changed:
             result['changed'] = True
