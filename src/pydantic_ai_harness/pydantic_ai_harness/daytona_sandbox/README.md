@@ -106,6 +106,29 @@ A command's output is collected once it exits, so `run()` returns then even if a
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+
+agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DaytonaSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open a terminal and find out which Python version is installed.')
+    print(result.output)
+```
+
+Daytona's default snapshot has an XFCE desktop and a terminal. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). Add `Coder` to give the agent the sandbox's shell and files too.
+
+Daytona's desktop can't press F13 to F24, keypad Enter, the keypad's `+`, `-`, `*`, `/` and `.` keys, print screen, pause, scroll lock, the menu key or media keys. It can't use the side mouse buttons. It can't type characters beyond U+FFFF, such as most emoji. When the agent asks for one of these, it is told the desktop can't do it. On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`. Its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+
+There's no live viewer. To watch a run, save each screenshot as it arrives, as shown in [Watching a run](../computer_use/#watching-a-run). Anyone with the sandbox's preview link can see and control its desktop. A public sandbox's preview link needs no token, so a public sandbox gets no desktop: the run fails with `UserError`.
+
 ## Reattach later
 
 To come back to the sandbox without the message history, pass its ref back as `workspace=`:
@@ -254,6 +277,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `secrets` | Daytona's `secrets` for a new sandbox, passed to `AsyncDaytona.create` unchanged: environment variable name to the name of an existing organization Secret. Default: `None`. An attached sandbox keeps the ones it was created with. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox. Default: `False`. |
 
 Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 

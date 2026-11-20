@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Protocol, TypeVar
 
 import anyio
@@ -48,8 +49,9 @@ class LazyDisplay:
     """The display a backend hands out for its whole life. It starts on first use, and again after a failure.
 
     Creating it does nothing. `start` starts the display, and does nothing if the display already runs. `driver` then
-    controls it. The backend also calls `start` before each shell command, so a program the command opens shows on
-    the screen.
+    controls it. `scope` wraps every call, including the start. For example, a backend uses it to turn a provider's
+    errors into workspace errors. The backend also calls `start` before each shell command, so a program the command
+    opens shows on the screen.
 
     A call that only looks, such as a screenshot, is retried once after a failure, and the retry restarts a lost
     display. An action is never retried, so nothing is done twice.
@@ -57,15 +59,33 @@ class LazyDisplay:
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
 
-    def __init__(self, driver: DisplayDriver, start: Callable[[], Awaitable[None]]):
+    def __init__(
+        self,
+        driver: DisplayDriver,
+        start: Callable[[], Awaitable[None]],
+        *,
+        scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
+    ):
         self._driver = driver
         self._start = start
+        self._scope = scope
         self._running = False
         """Whether the display is known to be running, so a call needn't start it first."""
         self._lock = anyio.Lock()
 
+    def reset(self) -> None:
+        """Forget that the display is running, such as when the environment may have restarted.
+
+        The next call starts it.
+        """
+        self._running = False
+
     async def start(self) -> None:
         """Start the display, unless it is known to be running."""
+        async with self._scope():
+            await self._start_unless_running()
+
+    async def _start_unless_running(self) -> None:
         # One start at a time: two would both find no display and start two.
         async with self._lock:
             if not self._running:
@@ -76,8 +96,9 @@ class LazyDisplay:
         retry = observe
         while True:
             try:
-                await self.start()
-                return await call(self._driver)
+                async with self._scope():
+                    await self._start_unless_running()
+                    return await call(self._driver)
             except UnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
             except Exception as error:
