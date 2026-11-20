@@ -227,8 +227,8 @@ def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[s
 _ENV = {'DISPLAY': DISPLAY}
 
 _START_TIMEOUT = 600
-"""Seconds a start script may take: it may install `_PACKAGES` (46 seconds on Sprites, live), after waiting behind
-`START_LOCK` for another start that installs them. Without an install, a start takes at most 70 seconds."""
+"""Seconds a start may take. An install of `_PACKAGES` took 46 seconds on Sprites, live, and a start can wait behind
+`START_LOCK` for another one doing that install. Without an install, a start takes at most 70 seconds."""
 
 
 _X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
@@ -236,54 +236,49 @@ _X_SOCKET_DIR = '/tmp/.X11-unix'
 _X_SOCKET = f'{_X_SOCKET_DIR}/X{DISPLAY_NUMBER}'
 
 _CLIENTS = 'xdotool xwininfo scrot setsid'
-"""The programs the display's commands run: every one but Xvfb, which only a start without a running X server needs."""
+"""The programs the display's commands run, besides Xvfb."""
 _PACKAGES = 'xdotool x11-utils scrot util-linux'
-"""The Debian and Ubuntu packages that have `_CLIENTS`. Xvfb's package, `xvfb`, is added when no X server runs."""
+"""The Debian packages that have `_CLIENTS`."""
 
 _DESKTOP_PROGRAMS = 'fluxbox tint2 xterm'
-"""The desktop's window manager, panel and terminal, each in the Debian and Ubuntu package of the same name. `xprop`,
-which tells when the window manager is up, is in `x11-utils`."""
+"""The window manager, panel and terminal, each in the Debian package of the same name. `xprop`, used to wait for the
+window manager, comes with `x11-utils` in `_PACKAGES`."""
 
 DESKTOP_PACKAGES = ('xvfb', *_PACKAGES.split(), *_DESKTOP_PROGRAMS.split())
-"""Every Debian and Ubuntu package the desktop needs, for a sandbox that builds them into its image."""
+"""Every Debian package the desktop needs, for a sandbox that builds them into its image."""
 
 _DESKTOP_LOG = '/tmp/pydantic-ai-desktop.log'
-"""Where the desktop's install and its programs write, so a desktop that didn't come up says why."""
+"""Where the desktop's install and programs write, so a desktop that didn't come up says why."""
 
 _DESKTOP_INSTALL_FAILED = '/tmp/pydantic-ai-desktop-install-failed'
-"""Names the desktop's programs an install failed to install, so later starts don't run `apt-get` again for the same
-ones. Deleting it makes the next start try again."""
+"""The desktop programs whose install failed, so later starts skip `apt-get` while the same ones are missing."""
 
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 
 _FLUXBOX_DIR = '$HOME/.fluxbox'
-"""Where fluxbox reads its settings."""
-
 _TINT2_DIR = '${XDG_CONFIG_HOME:-$HOME/.config}/tint2'
-"""Where tint2 reads its settings: under `XDG_CONFIG_HOME` when it's set."""
 
 
 def _write_unless_present(path: str, *lines: str) -> str:
-    """A shell fragment that writes `lines` to `path`, unless the file is there already."""
+    """A shell fragment that writes `lines` to `path` unless it exists."""
     return f'[ -e "{path}" ] || printf \'%s\\n\' {shlex.join(lines)} >"{path}"; '
 
 
 _DESKTOP_CONFIG = (
     f'mkdir -p "{_FLUXBOX_DIR}" "{_TINT2_DIR}"; '
     + _write_unless_present(f'{_FLUXBOX_DIR}/init', 'session.screen0.toolbar.visible: false')
-    # Every new window fills the screen above the panel, so nothing opens small in a corner.
+    # Maximize every window but the panel.
     + _write_unless_present(f'{_FLUXBOX_DIR}/apps', '[app] (class!=Tint2)', '  [Maximized] {yes}', '[end]')
-    # fluxbox asks `fbsetbg` to restore this display's last wallpaper on start. Without one recorded, and without a
-    # program that sets a picture as the wallpaper, `fbsetbg` opens a window saying so. This records a plain color, which
-    # fluxbox's own `fbsetroot` paints. fluxbox runs it with `DISPLAY` set to `:1.0`.
+    # On start, fluxbox has `fbsetbg` restore the last wallpaper. With none recorded and no wallpaper setter installed,
+    # `fbsetbg` opens a window saying so. This records a plain color, which fluxbox's own `fbsetroot` paints, under
+    # `:1.0`, the `DISPLAY` fluxbox runs it with.
     + _write_unless_present(f'{_FLUXBOX_DIR}/lastwallpaper', f'fbsetroot|-solid #3b4252||{DISPLAY}.0')
-    # xterm's default font is a small bitmap one that models misread, such as `g` as `9`. xterm reads this file
-    # however it is opened, from the panel, fluxbox's run box or a shell command, unless `xrdb` loaded settings.
+    # Models misread xterm's default bitmap font, such as `g` as `9`. xterm reads this file however it is opened,
+    # unless `xrdb` loaded settings.
     + _write_unless_present('$HOME/.Xdefaults', 'XTerm*faceName: Monospace', 'XTerm*faceSize: 14')
-    # A panel along the bottom with a button labelled Terminal, then Firefox's icon when it's installed, then a button
-    # per window. Models found the labelled button in fewer steps than an icon alone, and putting it first keeps it in
-    # one place whether or not the image has Firefox.
+    # Models found a button labelled Terminal in fewer steps than an icon alone. It comes first so its place doesn't
+    # depend on whether the image has Firefox.
     + _write_unless_present(
         f'{_TINT2_DIR}/tint2rc',
         # Backgrounds 1 (the panel) and 2 (the Terminal button), numbered in the order they're written.
@@ -320,52 +315,42 @@ _DESKTOP_CONFIG = (
         'task_maximum_size = 220 34',
     )
 )
-"""Writes the desktop's settings where the user the commands run as has fluxbox and tint2 read them, leaving any file
-already there alone. A home that can't be written leaves their own defaults."""
+"""Writes the fluxbox, tint2 and xterm settings, keeping any file already there."""
 
 _START_WINDOW_MANAGER = (
     f'if command -v fluxbox >/dev/null; then {{ {_DESKTOP_CONFIG}}} 2>/dev/null; '
-    # A second fluxbox exits when one runs, so starting it every time recovers one that died. The wait lets the first
-    # click focus and raise the window it lands on.
+    # A second fluxbox exits when one runs, so starting it every time recovers one that died. Waiting for it lets the
+    # first click focus and raise the window it lands on.
     'setsid fluxbox >&8 2>&1 8>&- 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
-    # tint2 shows only once a window manager answers, so it starts after one. Before running a program its buttons open,
-    # tint2 closes every file handle up to its soft open-file limit. Under a Kubernetes pod's 1,073,741,816, its
-    # terminal button opened nothing; with the soft limit at 1,048,576 it opened xterm in under a second. So tint2
-    # alone starts with its soft limit capped there, and the hard limit, which programs it opens can raise theirs to,
-    # stays as it was.
+    # tint2 shows only once a window manager answers. Before running a button's program, tint2 closes every file
+    # handle up to its soft open-file limit: under a Kubernetes pod's 1,073,741,816 its Terminal button opened nothing,
+    # and at 1,048,576 it opened xterm in under a second. Only tint2's soft limit is capped; the hard limit stays.
     f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then '
     '( n=$(ulimit -S -n); { [ "$n" = unlimited ] || [ "$n" -gt 1048576 ]; } 2>/dev/null && '
     'ulimit -S -n 1048576 2>/dev/null; exec setsid tint2 ) >&8 2>&1 8>&- 9>&- & '
     f'panel=$!; i=0; until {_PANEL_SHOWS} || ! kill -0 $panel 2>/dev/null || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi; '
 )
-"""Starts the window manager, unless it's missing, and waits up to 10 seconds for it to answer `xprop`. Then starts
-the panel unless it shows or is missing, and waits up to 10 seconds for its window, so the first screenshot isn't
-black. Either one exiting, or not answering in time, leaves the display working without it. Their output goes to
-file descriptor 8, which `start_x_server` opens on `_DESKTOP_LOG`, or on `/dev/null` when that can't be opened."""
+"""Starts fluxbox and waits up to 10 seconds for it to answer `xprop`, then tint2 unless it shows, waiting up to 10
+seconds for its window so the first screenshot isn't black. Either one missing, exiting or not answering leaves the
+display working without it. Their output goes to file descriptor 8, which `start_x_server` opens."""
 
 
 def start_x_server(log: str, *, desktop: bool = True) -> str:
     """A shell fragment that starts Xvfb on `DISPLAY` unless an X server runs, and with `desktop` a desktop on it.
 
-    The screen's size is the one `$1` names, such as `1280x800`. The desktop is a window manager, and a panel with a
-    button that opens a terminal.
+    `$1` is the screen size, such as `1280x800`. The desktop is a window manager and a panel with a Terminal button.
+    Whether an X server runs is read from the display's X lock. Pass `desktop=False` when the environment starts its
+    own desktop, such as E2B's XFCE.
 
-    Whether an X server runs is read from the display's X lock, not from an X server answering. Pass `desktop=False`
-    when the environment starts its own desktop, such as E2B's XFCE.
+    Missing programs are installed with `apt-get`, as root or through `sudo -n`. The fragment fails naming those of
+    `_CLIENTS` and Xvfb it can't install; without the desktop's programs, the display works without the desktop. It
+    fails once the X server exits, or after 10 seconds, printing the end of `log`.
 
-    It first installs any of the programs it needs that's missing with `apt-get`, as root or through `sudo -n`, and
-    fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it then installs the
-    desktop's programs, `_DESKTOP_PROGRAMS`, in a separate `apt-get install`, so one the package lists lack never stops
-    the display; when they can't be installed, or don't start, the display works without them. A failed install of
-    them after a working `apt-get update` is recorded in `_DESKTOP_INSTALL_FAILED`, and later starts skip it while the
-    same ones are missing. It fails once the X server exits, or after 10 seconds, printing the end of `log`.
-
-    It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
-    until the script exits, so the rest of the script runs under it too; anything started in the background must close
-    it with `9>&-`.
+    It takes `START_LOCK` and holds it until the script exits, so anything the script starts in the background must
+    close it with `9>&-`.
     """
     return (
         # Read the X lock instead of asking for an X server. With a shared network, such as Docker's `--network host`,
@@ -374,28 +359,23 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # program. A running X server's lock holds that server's process ID, whichever server it is, such as `Xvnc`.
         f'{START_LOCK}x_runs() {{ case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in '
         'X*) return 0;; esac; return 1; }; '
-        # `xvfb` is `Xvfb` when the script will start one, and empty when an X server runs; `xvfb_package` likewise.
+        # Programs in `missing` fail the start when they can't be installed; the desktop's, in `wanted`, don't.
         'if x_runs; then xvfb=; xvfb_package=; else xvfb=Xvfb; xvfb_package=xvfb; fi; '
         f'missing=; for p in $xvfb {_CLIENTS}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
-        # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
-            # The same programs failed to install before, so this start doesn't try again.
+            # Skip an install that already failed for the same programs.
             f'[ "$wanted" != "$(cat {_DESKTOP_INSTALL_FAILED} 2>/dev/null)" ] || wanted=; '
-            # The desktop writes to file descriptor 8 (9 is the lock). It points at `_DESKTOP_LOG` when that's missing
-            # or a file that can be written, and at `/dev/null` otherwise, so the log never stops the display. Anything
-            # else there isn't opened: a named pipe would wait for a reader, and a symlink would let a start as root
-            # write to the file it points to. The log is opened once, right after the check, and everything after
-            # writes to the descriptor, so a symlink put there after the open isn't followed. The write is first tried
-            # in a subshell, since a failed redirection on `exec` would end the script itself in dash. Not
-            # `command exec`, which would keep dash going: after it, macOS's bash 3.2 hangs at the next `exit`.
+            # The desktop writes to file descriptor 8 (9 is the lock): `_DESKTOP_LOG` when it's missing or a writable
+            # file, `/dev/null` otherwise. A named pipe would block the open, and a symlink would let a start as root
+            # write through it. Opening once, right after the check, means a symlink made later isn't followed. The
+            # write is tried in a subshell first because a failed redirection on `exec` ends a dash script; with
+            # `command exec` instead, macOS's bash 3.2 hangs at the next `exit`.
             f'exec 8>/dev/null; [ ! -L {_DESKTOP_LOG} ] && {{ [ ! -e {_DESKTOP_LOG} ] || [ -f {_DESKTOP_LOG} ]; }} && '
             f'( : >>{_DESKTOP_LOG} ) 2>/dev/null && exec 8>>{_DESKTOP_LOG}; '
             if desktop
             else 'wanted=; '
         )
-        # `elevate` prefixes a command that needs root: empty as root, `sudo -n` with passwordless sudo, and `none`
-        # when neither works.
         + 'if [ "$(id -u)" = 0 ]; then elevate=; elif sudo -n true >/dev/null 2>&1; then elevate="sudo -n"; '
         'else elevate=none; fi; '
         'if [ -n "$missing$wanted" ]; then '
@@ -407,30 +387,27 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         """{ echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
         'exit 1; }; '
         'else install="$elevate env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends"; '
-        # With only the desktop's programs missing, so with `desktop` and 8 open, the update writes to the desktop log:
-        # starting Xvfb below empties `log`, and with it why a failed update left the desktop out.
-        # `updated` is cleared when that update fails, so a failed install after it isn't recorded below.
+        # With only the desktop's programs missing, the update logs to fd 8, since starting Xvfb below empties `log`.
+        # A failed update clears `updated`, so the install failure after it isn't recorded.
         'updated=1; if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1 || updated=; '
-        # Otherwise the display's own programs first, failing the start when they can't be installed.
         f'elif ! {{ $elevate apt-get update -qq && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
         f'echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; fi; '
-        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A failure after a working
-        # update is recorded, unless a symlink is there, which a start as root would write through. A failed update,
-        # such as with the network down or apt's lock held, isn't, so the next start tries again.
+        # The desktop's own install, so a package the lists lack only leaves the desktop out. Its failure is recorded
+        # only after a working update, and never through a symlink.
         f'if [ -n "$wanted" ]; then if $install $wanted >&8 2>&1; then rm -f {_DESKTOP_INSTALL_FAILED} 2>/dev/null; '
         f'elif [ -n "$updated" ] && [ ! -L {_DESKTOP_INSTALL_FAILED} ]; then '
         f'printf %s "$wanted" 2>/dev/null >{_DESKTOP_INSTALL_FAILED} || true; fi; fi; '
         'fi; fi; '
-        # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
+        # Check again: the image's own X server may have started during the install, and its lock and socket must stay.
         'if ! x_runs; then '
-        # No X server here holds the lock, and ours doesn't listen on the abstract socket, so one listening there is
-        # another namespace's, such as the host's under `--network host`: `xdotool` would reach it before ours.
+        # Ours doesn't listen on the abstract socket, so an X server there is another namespace's, such as the host's
+        # under `--network host`, and `xdotool` would reach it before ours.
         f'if grep -q " @{_X_SOCKET}$" /proc/net/unix 2>/dev/null; then echo "another X server, outside this sandbox, '
         f'already uses display {DISPLAY} through a network namespace the sandbox shares, such as the host network" >&2; '
         'exit 1; fi; '
         f'rm -f {_X_LOCK} {_X_SOCKET}; '
-        # Xvfb makes the socket directory only as root; without root, one the user makes works, so the mkdir then runs
-        # unprefixed. Without `-p`, so a path that appears after the check fails the mkdir instead of being reused.
+        # Xvfb makes the socket directory only as root; without root, one the user makes works. No `-p`, so a path
+        # that appears after the check fails the mkdir instead of being reused.
         f'if [ ! -d {_X_SOCKET_DIR} ]; then [ "$elevate" = none ] && elevate=; '
         f'$elevate mkdir -m 1777 {_X_SOCKET_DIR}; fi; '
         # Without `-noreset`, X resets whenever its last program disconnects, such as an `xdotool` command when no
@@ -461,8 +438,7 @@ def x11_display(
 ) -> LazyDisplay:
     """Make a backend's display. `script` starts an X server at the size given as `$1`, unless one already runs.
 
-    `where` names the environment in error messages. `started` is called after each start that succeeds, such as to forget
-    that a program the start installs was missing.
+    `where` names the environment in error messages. `started` runs after each start that succeeds.
     """
 
     async def start() -> None:

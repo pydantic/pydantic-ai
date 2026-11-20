@@ -243,15 +243,13 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
 DESKTOP_DOCKERFILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile').read_text()
 """The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
 manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages and for emoji. Firefox
-starts without its first-run pages. The window manager's and panel's settings, such as new windows filling the screen,
-are written when the display starts."""
+starts without its first-run pages. The window manager's and panel's settings are written when the display starts."""
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
 
 _START_DESKTOP = start_x_server(f'{_PID_DIR}/xvfb.log')
-"""Starts an X display of the size `$1` names unless this container's X lock names a running X server, then the desktop
-on it. A second start waits for the first, then finds its X server."""
+"""Starts the container's display and desktop at the size `$1` names."""
 
 
 async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:

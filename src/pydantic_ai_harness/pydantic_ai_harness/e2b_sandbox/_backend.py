@@ -139,7 +139,6 @@ _XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
 _XFCE_SHOWS = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
 """A command that succeeds when XFCE's desktop window is visible on `DISPLAY`."""
 
-# E2B's template has its own desktop, XFCE, so the shared one isn't started on top of it.
 _START_DESKTOP = start_x_server(_XVFB_LOG, desktop=False) + (
     f'if command -v startxfce4 >/dev/null && ! {_XFCE_SHOWS}; then '
     f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
@@ -263,9 +262,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     `UserError` before it reaches E2B.
 
     With `desktop`, the sandbox's display starts the first time it is used. A custom template needs `xdotool`,
-    `xwininfo` (`x11-utils`), `scrot`, `setsid`, and Xvfb unless an X server runs. The first use installs any of these
-    that's missing with `apt-get` if it can. The template also needs `startxfce4` for the XFCE desktop, which isn't
-    installed for you.
+    `xwininfo` (`x11-utils`), `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with
+    `apt-get` if it can. It also needs `startxfce4` for the XFCE desktop, which isn't installed for you.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -673,7 +671,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
 
     def _recheck_setsid(self) -> None:
-        """Forget a "no setsid" answer once the display has started, since its start installs `setsid` when missing."""
+        """Forget a "no setsid" answer, since the display's start installs `setsid`."""
         if self._setsid is False:
             self._setsid = None
 
