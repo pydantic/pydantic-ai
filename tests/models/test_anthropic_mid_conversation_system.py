@@ -1395,7 +1395,13 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
     withdrawn = False
     agent = Agent(
         AnthropicModel(
-            'claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key), profile=with_native_system_role
+            'claude-haiku-5-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            # Recorded before superseded instructions were marked in place; this test measures the end block alone.
+            profile=lambda profile: {
+                **with_native_system_role(profile),
+                'mark_superseded_instructions_in_place': False,
+            },
         ),
         instructions='You are a concise assistant.',
     )
