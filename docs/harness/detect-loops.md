@@ -12,12 +12,12 @@ Notice when an agent repeats the same actions without making progress, and inter
 ```mermaid
 flowchart LR
     accTitle: Detect Loops: interrupt an agent that repeats itself
-    accDescr: Left to right, the model makes a tool call to your tool, and DetectLoops checks whether the same call gave the same result 3 times. If no, the next request goes to the model. If yes, with action='nudge' the next request goes to the model with a system prompt added, and with action='error' LoopDetectedError ends the run.
+    accDescr: Left to right, the model makes a tool call to your tool, and DetectLoops checks whether the same call gave the same result 3 times. If no, the next request goes to the model. If yes, with action='nudge' the next request goes to the model with a system prompt added, and with action='error' a dotted edge leads to LoopDetectedError, which ends the run.
     model(["model"]) -->|tool call| tool["your tool"]
-    tool --> check{"same call,<br/>same result,<br/>3 times?"}:::capability
+    tool --> check{"DetectLoops()<br/>same call, same result,<br/>3 times?"}:::capability
     check -->|no| next(["next request<br/>to model"])
     check -->|"yes · nudge"| nudge["next request +<br/>system prompt"]:::capability
-    check -->|"yes · error"| error["LoopDetectedError<br/>ends the run"]:::blocked
+    check -.-x|"yes · error"| error["LoopDetectedError<br/>ends the run"]:::blocked
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
 ```
@@ -80,7 +80,7 @@ A model can also loop inside one response: going over the same reasoning in its 
 
 A response that isn't streamed, such as one from `agent.run()` without an `event_stream_handler`, gets the same checks once it has arrived, at the same offsets, so it reaches the same decisions. `DetectLoops` doesn't make a run stream.
 
-Here the model writes the same sentence over and over in one response, and `action='error'` ends the run with the loop it found:
+Here the model writes the same sentence 100 times in one response. `action='error'` ends the run at the first check that finds the loop, at 2,048 characters, so the loop it reports has 51 repeats:
 
 ```python
 from pydantic_ai import Agent
