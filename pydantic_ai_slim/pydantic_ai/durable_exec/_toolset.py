@@ -3,19 +3,31 @@ from __future__ import annotations
 import copy
 import functools
 import inspect
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    Self,
+    TypeAlias,
+    assert_never,
+    cast,
+)
 
 import anyio
-from pydantic import Discriminator, Tag, ValidationError
+from pydantic import Discriminator, Field, Tag, ValidationError
 from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import (
@@ -27,8 +39,13 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent, _RecordsContentFiles  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.tools import (
+    AgentDepsT,
+    RunContext,
+    ToolDefinition,
+    _without_toolset_sequential_defer_loading,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
@@ -339,6 +356,10 @@ class _ApprovalRequired:
 class _CallDeferred:
     metadata: dict[str, Any] | None = None
     _: KW_ONLY
+    # Left out of the payload unless it is a question, so plain deferrals journal as they did before it existed.
+    call_kind: Annotated[Literal['external', 'question'], Field(exclude_if=lambda kind: kind == 'external')] = (
+        'external'
+    )
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
@@ -396,8 +417,10 @@ _ToolReturnResult = Annotated[
 
 
 @dataclass
-class _ToolReturn:
+class _ToolReturn(_RecordsContentFiles):
     """Legacy wire shape retained for decoding in-flight durable executions."""
+
+    _content_field: ClassVar[str] = 'result'
 
     result: _ToolReturnResult
     _: KW_ONLY
@@ -405,10 +428,12 @@ class _ToolReturn:
 
 
 @dataclass
-class _ToolContentResult:
+class _ToolContentResult(_RecordsContentFiles):
     # Emitted only when a user dict's `kind` collides with `'tool-return'`. Workers predating this
     # variant cannot decode it, but those payloads already failed to round-trip there; ordinary
     # results deliberately retain the legacy `tool_return` shape for rolling upgrades.
+    _content_field: ClassVar[str] = 'result'
+
     result: ToolReturnContent
     _: KW_ONLY
     kind: Literal['tool_content_result'] = 'tool_content_result'
@@ -442,7 +467,7 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     except ApprovalRequired as exc:
         return _ApprovalRequired(metadata=exc.metadata)
     except CallDeferred as exc:
-        return _CallDeferred(metadata=exc.metadata)
+        return _CallDeferred(metadata=exc.metadata, call_kind=exc.kind)
     except ModelRetry as exc:
         return _ModelRetry(message=exc.message)
     except ToolFailed as exc:
@@ -470,7 +495,7 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
     if isinstance(result, _ApprovalRequired):
         raise ApprovalRequired(metadata=result.metadata)
     if isinstance(result, _CallDeferred):
-        raise CallDeferred(metadata=result.metadata)
+        raise CallDeferred(metadata=result.metadata, kind=result.call_kind)
     if isinstance(result, _ValidationError):
         raise ValidationError.from_exception_data(
             result.title,
@@ -516,24 +541,22 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
-    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
+    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
 
-class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
-
-    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
-    across the activity boundary (Temporal) without re-running the code, so messages enqueued
-    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
-    """
-
-    def __init__(self, message: str):
-        super().__init__()
-        self._message = message
-
-    def append(self, pending: PendingMessage) -> None:
-        raise UserError(self._message)
+def revalidate_function_args(
+    toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
+) -> dict[str, Any]:
+    """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (
+        isinstance(tool, FunctionToolsetTool)
+        and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
+        # Only the source's own validator produced arguments in the shape `revalidate` expects.
+        and tool.args_validator is source.function_schema.validator
+    ):
+        return source.function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
 
 
 @dataclass
@@ -553,20 +576,6 @@ class DispatchSnapshots:
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
     _tool_names_by_kind: dict[str, str] = field(repr=False)
-
-
-def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
-    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
-
-    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
-    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
-    raises the same explanation with its own vocabulary.
-    """
-    return (
-        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
-        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
-        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
-    )
 
 
 class CancelGuard(RunCancellation):
@@ -608,7 +617,7 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     """
     return replace(
         ctx,
-        pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        pending_messages=EnqueueGuard(unit_noun, container_noun),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 
@@ -635,6 +644,18 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
     return result
 
 
+def opts_out_of_durable_unit(
+    durable: bool | None, metadata: Mapping[str, Any] | None, *, engine_key: str | None
+) -> bool:
+    """Whether a tool's `durable=False` runs it outside the durable unit.
+
+    The engine's own metadata key, when set on the tool, wins over the tool's `durable` field.
+    """
+    if durable is not False:
+        return False
+    return engine_key is None or metadata is None or metadata.get(engine_key) is None
+
+
 def resolve_tool_durable_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
@@ -643,7 +664,10 @@ def resolve_tool_durable_config(
     metadata_key: str,
     config_type_label: str,
 ) -> ToolConfig:
-    """Resolve a tool's durable config: tool metadata under `metadata_key` first, then `fallback_config` by name."""
+    """Resolve a tool's durable config from its metadata, or else from `fallback_config` by name.
+
+    Reads the tool's metadata under `metadata_key` first, then the tool's `durable=False`, then `fallback_config`.
+    """
     if tool is not None and tool.tool_def.metadata is not None:
         metadata_config = tool.tool_def.metadata.get(metadata_key)
         if metadata_config is False:
@@ -655,6 +679,10 @@ def resolve_tool_durable_config(
                     f'(`{config_type_label}`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('DurableConfig', metadata_config)
+    if tool is not None and opts_out_of_durable_unit(
+        tool.tool_def.durable, tool.tool_def.metadata, engine_key=metadata_key
+    ):
+        return False
     return fallback_config.get(tool_name, {})
 
 
@@ -765,6 +793,30 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
                 await held.aclose(*args)
 
 
+def holds_tool_instance_defaults(toolset: FunctionToolset[AgentDepsT]) -> bool:
+    """Whether `toolset` holds a `Tool` that a `FunctionToolset` made sequential or deferred."""
+    return any(
+        tool._sequential_from_toolset or tool._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
+        for tool in toolset.tools.values()
+    )
+
+
+@contextmanager
+def listing_tools_before_tool_instance_defaults() -> Generator[None]:
+    """List `Tool` instances without the `sequential` and `defer_loading` a `FunctionToolset` set on them.
+
+    That's how they were listed before `FunctionToolset` applied its `sequential` and `defer_loading` to
+    `Tool` instances, and each tool's `prepare` sees the definition it saw then. A sequential or deferred
+    tool changes which durable operations a workflow runs, so workflows started before then can only
+    continue with these.
+    """
+    token = _without_toolset_sequential_defer_loading.set(True)
+    try:
+        yield
+    finally:
+        _without_toolset_sequential_defer_loading.reset(token)
+
+
 class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
     def __init__(
         self,
@@ -778,6 +830,7 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         resolve_validation_config: ResolveToolConfig | None = None,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
+        listing_in_durable_context: Callable[[], AbstractContextManager[None]] = nullcontext,
     ):
         super().__init__(
             wrapped,
@@ -790,11 +843,13 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         self._resolve_tool_config = resolve_tool_config
         self._validate_args_operation = validate_args_operation
         self._resolve_validation_config = resolve_validation_config or resolve_tool_config
+        self._listing_in_durable_context = listing_in_durable_context
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tools = await super().get_tools(ctx)
         if not self._in_durable_context():
-            return tools
+            return await super().get_tools(ctx)
+        with self._listing_in_durable_context():
+            tools = await super().get_tools(ctx)
         return {name: self._tool_with_durable_validation(name, tool) for name, tool in tools.items()}
 
     def _tool_with_durable_validation(self, name: str, tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:

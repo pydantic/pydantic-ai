@@ -1,0 +1,160 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "428"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              In code execution, use web_search with the query 'site:ai.pydantic.dev Pydantic
+              AI' and reply with the first result title.
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        tools:
+        - name: web_search
+          type: web_search_20260318
+          max_uses: null
+          allowed_domains: null
+          blocked_domains: null
+          user_location: null
+          response_inclusion: excluded
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=160
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-b9c1ad24b441713c5478c79df29ddf46-2ad8de5491d8ea43-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CghidKXVp2m3KuLAxN9mk","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4518,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":25,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01YPvFMuFrDkwqjvvbdw4wvX","name":"code_execution","input":{}}              }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"\\nimport"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" json"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\n\\nresult"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" = await"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" web_search({\\\""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"query\\\": \\\"site:ai."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"pydantic.dev P"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ydantic AI\\\"})\\nparsed"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" ="}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" json.loads(result)"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\nprint(parsed["}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"0]['"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"title'])"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\n"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_01YPvFMuFrDkwqjvvbdw4wvX","content":{"type":"encrypted_code_execution_result","encrypted_stdout":"EpoBCioIFRgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMizB2wlEbngQtTU7hoMD0Q0FWIZCNgTxSSkIjBp/y7CVkf2EBScNnR345qsu1dsY3Z0k7YTXWifdvMRCSL1m2VYt/KR9LC35UYOHa0qHh+cThQmadXSq1bF0ZgzzpbbAxnrG1KCqbRUJZ0+JhgD","stderr":"","return_code":0,"content":[]}}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"The"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" title"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" of the first search"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" result is"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" **"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"\"pydantic ai\"**."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01TZkTbCRQavQCJ983BZCBNp","expires_at":"2026-11-04T11:19:37.244026Z"}},"usage":{"input_tokens":9160,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":122,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-11-04T10:19:38.915268+00:00

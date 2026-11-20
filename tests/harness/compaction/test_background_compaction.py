@@ -28,8 +28,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.compaction._fallback_compaction import MAX_BACKGROUND_COMPACTIONS
-
-READINESS_WAIT_TIMEOUT = 10
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 TRIGGER = 2_000
 """`max_tokens` of every chain here; `background_start=0.5` starts the summary above 1,000."""
@@ -427,16 +426,18 @@ async def test_take_background_compaction_drops_a_stale_one() -> None:
 async def test_discard_and_aclose_cancel_running_work() -> None:
     summarizer = Summarizer()
     compaction = chain(summarizer)
-    before = asyncio.all_tasks()
     await start_background(summarizer, compaction)
+    (discarded,) = [task for task in asyncio.all_tasks() if task.get_name() == 'background_compaction']
     await compaction.discard_background_compaction('c')
+    assert discarded.done()
     await compaction.discard_background_compaction('c')
     assert 'c' not in compaction.background_conversations and summarizer.cancelled == 1
     summarizer.started.clear()
     await start_background(summarizer, compaction)
+    (closed,) = [task for task in asyncio.all_tasks() if task.get_name() == 'background_compaction']
     await compaction.aclose()
+    assert closed.done()
     assert 'c' not in compaction.background_conversations and summarizer.cancelled == 2
-    assert asyncio.all_tasks() == before
 
 
 async def test_a_run_ending_in_the_background_band_starts_a_summary_for_the_next_run() -> None:

@@ -1,11 +1,11 @@
 """Storage backends for the `Planning` capability.
 
 A `PlanStore` is an async CRUD interface over an ordered list of plan steps. The
-default `InMemoryPlanStore` keeps them in process memory (matching planning's
-original ephemeral behaviour); `SqlitePlanStore` persists them to a local SQLite
-file. `PostgresPlanStore` (in `_postgres.py`) covers a server database over a
-caller-owned pool. Their deprecated `event_emitter` parameters preserve callback delivery for
-applications migrating to typed events from `Planning` tool runs.
+default `InMemoryPlanStore` keeps them in process memory; `SqlitePlanStore`
+persists them to a local SQLite file. `PostgresPlanStore` (in `_postgres.py`) and
+`RedisPlanStore` (in `_redis.py`) work over a caller-owned client. Their deprecated
+`event_emitter` parameters preserve callback delivery for applications migrating to
+typed events from `Planning` tool runs.
 """
 
 from __future__ import annotations
@@ -272,13 +272,18 @@ class SqlitePlanStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database)
         if not self._ready:
-            connection.execute(
-                f'CREATE TABLE IF NOT EXISTS {self._table} ('
-                'session TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, '
-                'content TEXT NOT NULL, status TEXT NOT NULL, active_form TEXT NOT NULL, '
-                'parent_id TEXT, depends_on TEXT NOT NULL, PRIMARY KEY (session, id))'
-            )
-            connection.commit()
+            try:
+                # Fails while another connection holds the database locked.
+                connection.execute(
+                    f'CREATE TABLE IF NOT EXISTS {self._table} ('
+                    'session TEXT NOT NULL, seq INTEGER NOT NULL, id TEXT NOT NULL, '
+                    'content TEXT NOT NULL, status TEXT NOT NULL, active_form TEXT NOT NULL, '
+                    'parent_id TEXT, depends_on TEXT NOT NULL, PRIMARY KEY (session, id))'
+                )
+                connection.commit()
+            except BaseException:
+                connection.close()
+                raise
             self._ready = True
         return connection
 

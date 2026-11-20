@@ -6,7 +6,24 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.](https://pydantic.dev/docs/ai/img/harness/sprites-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: Sprites Sandbox: your agent's commands run in a persistent Fly.io Sprite
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command, using ctx.workspace. SpritesSandbox's get_workspace hands the run a Sprite via the Sprites API and SPRITE_TOKEN. The Fly.io Sprite sleeps when idle, destroy(ref) deletes it, and a later run reattaches with the WorkspaceRef in the message history and result.workspace.ref, waking it if asleep.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        sprites["SpritesSandbox()<br/>get_workspace hands<br/>the run a Sprite"]:::capability
+    end
+    sandbox["Fly.io Sprite<br/>sleeps when idle,<br/>deleted by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sprites
+    ref -.->|"a later run reattaches,<br/>waking it if asleep"| sprites
+    sprites <-->|"Sprites API,<br/>SPRITE_TOKEN"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install
 
@@ -61,11 +78,11 @@ The follow-up run finds the Sprite in the message history and works in it, so th
 
 ## Choose the tools
 
-For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/) instead of `Coder`, or write your own tool that runs in the Sprite:
+For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../file_system/) instead of `Coder`, or write your own tool that runs in the Sprite:
 
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
@@ -87,7 +104,7 @@ File reads refuse FIFOs rather than waiting for a writer. File writes go through
 
 ### What a timeout stops
 
-A command timeout starts after the Sprite is ready. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
+A command timeout starts once the Sprite is ready and the command's exec connection is open, so a slow or retried connection does not use it up; each connection attempt has its own 10-second limit. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
 
 A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Sprites reports the exit status only after the output stream closes. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
 
@@ -112,7 +129,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN` too. Pass `workspace='new'` to start a fresh Sprite even when the message history names one.
 
-`runtime` only shapes a new Sprite, and an unknown one raises a clear error on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
+`runtime` only shapes a new Sprite, and an unknown one raises `WorkspaceUnavailableError` on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
 
 Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
@@ -161,7 +178,7 @@ async def delete_sprite(ref: WorkspaceRef) -> None:
 
 `destroy(ref)` deletes by Sprite id without attaching or waking it, and a Sprite that no longer exists returns quietly. Only destroy Sprites you own. Use `backend(ref)` to construct a lazy backend for an existing Sprite; `get_sandbox()` attaches to it and returns its native `sprites.AsyncSprite` (on a backend with no Sprite yet, it creates one). A backend you build yourself outside a run opens its own client, which you close with `aclose()`; after that, call `get_sandbox()` again for a working handle. See [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
 
-A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. If creation's reply was lost, the ref may identify a Sprite that is not yet visible to the API; a lookup failure does not prove it was never created:
+A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. If creation's reply was lost, the ref names the Sprite the backend tried to create, which may or may not exist, so destroy it by that name anyway:
 
 ```python
 from typing import Any
@@ -200,6 +217,8 @@ Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists un
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
+| `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 
