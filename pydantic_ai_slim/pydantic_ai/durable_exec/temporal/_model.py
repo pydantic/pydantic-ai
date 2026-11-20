@@ -41,8 +41,9 @@ from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
     _RequestParams,  # pyright: ignore[reportPrivateUsage]
 )
+from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import model_response_payload_errors
+from ._toolset import model_response_payload_errors, non_retryable_subclasses_as_application_errors
 from ._transports import restore_telemetry_mcp_url_ids
 
 if TYPE_CHECKING:
@@ -117,7 +118,7 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            with durable_unit_scope():
+            with durable_unit_scope(), _model_activity_errors():
                 async with managed_model_scope(
                     model_for_request, owned=not self._is_registered_model(model_for_request)
                 ) as active_model:
@@ -148,7 +149,7 @@ class TemporalModel(WrapperModel):
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            with durable_unit_scope():
+            with durable_unit_scope(), _model_activity_errors():
                 async with managed_model_scope(
                     model_for_request, owned=not self._is_registered_model(model_for_request)
                 ) as active_model:
@@ -245,7 +246,7 @@ class TemporalModel(WrapperModel):
 
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
-        with model_response_payload_errors(model_name):
+        with rebuilt_model_errors(), model_response_payload_errors(model_name):
             return await execute_activity(
                 activity=self.request_activity,
                 args=[
@@ -294,7 +295,7 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name} (stream)', **self.activity_config}
-        with model_response_payload_errors(model_name):
+        with rebuilt_model_errors(), model_response_payload_errors(model_name):
             response = await execute_activity(
                 activity=self.request_stream_activity,
                 args=[
@@ -618,3 +619,14 @@ class TemporalModel(WrapperModel):
             return models.infer_model(model_id)
 
         return models.infer_model(model_id, provider_factory=functools.partial(provider_factory, run_context))
+
+
+@contextmanager
+def _model_activity_errors() -> Generator[None]:
+    """In a model activity, raise errors the way the durability capability's model activities do.
+
+    A model error, or a model's refusal of a request it can't serve, crosses to the workflow as itself, and a subclass of
+    a non-retryable error, like that refusal, isn't retried.
+    """
+    with non_retryable_subclasses_as_application_errors(), model_errors_as_application_errors():
+        yield

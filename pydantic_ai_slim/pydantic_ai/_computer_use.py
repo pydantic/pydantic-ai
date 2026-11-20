@@ -32,7 +32,12 @@ SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
 LABEL_KEYS = frozenset({COORDINATE_GRID, SCREENSHOT_MAX_SIDE, SCREENSHOT_MAX_PIXELS})
 """The `provider_details` keys a model adds to its `computer` calls. The provider never sent or saw them."""
 
-_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+COMPUTER_KIND_ID = 'computer_use.computer'
+"""The id of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND], here so this module needn't import it.
+
+A kind's id is stored in message histories, so it never changes."""
+
+PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
 
 class UnservableRequestError(UserError):
@@ -41,13 +46,6 @@ class UnservableRequestError(UserError):
     `FallbackModel` and the `ModelFallback` capability move on to their next model when one raises this, whatever
     their `fallback_on` says, since another model may be able to serve it.
     """
-
-
-def _computer_kind_id() -> str:
-    # `computer_use` imports the label keys from this module, so it's imported here when first needed.
-    from .computer_use import COMPUTER_KIND
-
-    return COMPUTER_KIND.id
 
 
 def _grid_hint(grid: int) -> str:
@@ -69,7 +67,7 @@ def with_computer_grid_hint(params: ModelRequestParameters, profile: ModelProfil
     hint = _grid_hint(grid)
     tools = [
         replace(tool, description=f'{tool.description} {hint}' if tool.description else hint)
-        if tool.tool_kind == _computer_kind_id() and hint not in (tool.description or '')
+        if tool.tool_kind == COMPUTER_KIND_ID and hint not in (tool.description or '')
         else tool
         for tool in params.function_tools
     ]
@@ -78,7 +76,7 @@ def with_computer_grid_hint(params: ModelRequestParameters, profile: ModelProfil
 
 def computer_tool_names(params: ModelRequestParameters) -> set[str]:
     """The names of the request's `computer` tools."""
-    kind = _computer_kind_id()
+    kind = COMPUTER_KIND_ID
     return {tool.name for tool in params.function_tools if tool.tool_kind == kind}
 
 
@@ -107,16 +105,16 @@ def label_calls(parts: Iterable[object], tool_names: Container[str], labels: Map
 
 def png_size(data: bytes) -> tuple[int, int] | None:
     """Width and height from a PNG's header chunk, which the signature puts at bytes 16 to 24."""
-    if len(data) < 24 or not data.startswith(_PNG_SIGNATURE) or data[12:16] != b'IHDR':
+    if len(data) < 24 or not data.startswith(PNG_SIGNATURE) or data[12:16] != b'IHDR':
         return None
     return int.from_bytes(data[16:20], 'big'), int.from_bytes(data[20:24], 'big')
 
 
-def latest_screenshot_size(messages: Iterable[_messages.ModelMessage]) -> tuple[int, int] | None:
+def latest_screenshot_size(messages: Sequence[_messages.ModelMessage]) -> tuple[int, int] | None:
     """The size of the latest screenshot a `computer` call returned in `messages`."""
     from .computer_use import ComputerReturnPart
 
-    for message in reversed(list(messages)):
+    for message in reversed(messages):
         if not isinstance(message, _messages.ModelRequest):
             continue
         for part in reversed(message.parts):
@@ -149,7 +147,7 @@ def refuse_unservable_computer_request(
     Every `computer` call returns a screenshot, so a model that can't see images can't use the tool. A model shown a
     screenshot larger than it can see would see it scaled down and give positions on the smaller image.
 
-    `messages` are the ones about to be sent. A model that takes images but not PNGs gets a note in place of each
+    `messages` are the ones passed to the model's request. A model that takes images but not PNGs gets a note in place of each
     screenshot, so there is no size to check and it isn't refused for one.
     """
     if params is None or not computer_tool_names(params):
@@ -159,10 +157,10 @@ def refuse_unservable_computer_request(
             f'The `computer` tool needs a model that accepts images, and {model_name!r} does not: every `computer` '
             'call returns a screenshot.'
         )
-    if (size := latest_screenshot_size(messages)) is None:
-        return
     max_side = profile.get('computer_use_screenshot_max_side')
     max_pixels = profile.get('computer_use_screenshot_max_pixels')
+    if not (max_side or max_pixels) or (size := latest_screenshot_size(messages)) is None:
+        return
     if (fitted := fit_screenshot(size, max_side=max_side, max_pixels=max_pixels)) != size:
         raise UnservableRequestError(
             f'The latest screenshot is {size[0]}x{size[1]}, larger than {model_name!r} can see. Start the display at '
