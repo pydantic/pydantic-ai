@@ -28,11 +28,6 @@ with try_import():
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-# `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
-# harness imports it lazily. A registration after any test has escaped framing text emits a
-# `UserWarning`, which fails the test that first imports `Planning`. Pytest imports this conftest
-# during collection, before any test runs, so the import above registers the tag first.
-
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
