@@ -57,7 +57,18 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 The model must accept images.
 
-Every model gets `computer` as a regular function tool.
+- GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool when you use them
+  through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](../models/openai.md#native-tools).
+- Every other model gets `computer` as a regular function tool.
+
+By default, OpenAI's computer tool is sent only through `OpenAIProvider` and `BedrockMantleProvider`, except with an Azure client.
+The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets the tool too. Pydantic AI checks the provider class, not the server it calls. If you point
+`OpenAIProvider(base_url=...)` at another server, such as Ollama or vLLM, that doesn't support the computer tool,
+remove `ComputerTool` in the model's `profile=` argument, starting from the profile the model already has:
+`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Every other provider
+gets the function tool. If its server supports OpenAI's computer tool, add it the same way, with `| {ComputerTool}`.
+Passing a new `supported_native_tools` set instead replaces all of the model's native tools, so web search and the
+others would be dropped. Setting it in the provider's profile has no effect.
 
 Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
 
@@ -111,6 +122,9 @@ Some models accept screenshots only up to a set size. Their profile sets it with
 `computer_use_screenshot_max_pixels`. `ComputerUse` sends every screenshot at the screen's full size and doesn't
 shrink it. If the screen is larger than the model accepts, the run stops with a `UserError` that names the largest
 size that fits. A 1280x800 screen fits every model.
+
+GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
+they can miss what they click.
 
 ## When something goes wrong
 

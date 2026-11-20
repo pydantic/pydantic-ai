@@ -31,6 +31,7 @@ from ._citations import (
     responses_citations_provider_details,
     responses_output_text_annotation_ta,
 )
+from ._computer import map_computer_call, stop_computer_calls_unless_completed
 from ._errors import map_api_errors, response_error, response_error_type
 from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
@@ -97,6 +98,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
     _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
+    _status: ResponseStatus | None = field(default=None, init=False)
+    """The response's latest status: first from `response.created`, then from the event that ended the stream.
+
+    It decides whether the response's computer calls may run.
+    """
     _history: Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
@@ -104,6 +110,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         response = super().get()
+        response.parts = stop_computer_calls_unless_completed(
+            response.parts, self.model_request_parameters, status=self._status, refused=self._has_refusal
+        )
         if self._is_websocket:
             response.provider_details = {**(response.provider_details or {}), 'transport': 'websocket'}
         return with_history_digest(response, self._history)
@@ -127,6 +136,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _handle_terminal_response(self, response: responses.Response) -> None:
         """Take what the complete response that ends the stream reports as `_process_response` does."""
+        self._status = response.status
         # A stream resumed with `starting_after` has no `response.created`, so this is where it first sees these.
         self._model_name = response.model or self._model_name
         self.provider_response_id = self.provider_response_id or response.id
@@ -339,6 +349,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_created(self, chunk: responses.ResponseCreatedEvent) -> None:
         self._set_state(chunk.response.status)
+        # OpenAI sends `in_progress` here, so a stream that ends before its final event doesn't count as completed.
+        self._status = chunk.response.status
         if chunk.response.id:  # pragma: no branch
             self.provider_response_id = chunk.response.id
         self._store_conversation_id(chunk.response)
@@ -455,7 +467,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         match item:
             case responses.ResponseFunctionToolCall():
                 yield self._handle_function_call_part(item)
-            case responses.ResponseReasoningItem():
+            case responses.ResponseComputerToolCall() | responses.ResponseReasoningItem():
+                # A computer call's actions all arrive in its `done` event, so it is mapped there.
                 pass
             case responses.ResponseOutputMessage():
                 if item.phase is not None:
@@ -560,6 +573,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         match item:
             case responses.ResponseFunctionToolCall(id=str(item_id)) if item_id:
                 yield from self._map_function_call_done(item, item_id)
+            case responses.ResponseComputerToolCall():
+                yield from self._map_computer_call_done(item)
             case responses.ResponseReasoningItem():
                 if signature := item.encrypted_content:  # pragma: no branch
                     # Add the signature to the part corresponding to the first summary/raw CoT
@@ -595,6 +610,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
             case _:
                 pass
+
+    def _map_computer_call_done(self, item: responses.ResponseComputerToolCall) -> Iterator[ModelResponseStreamEvent]:
+        # The call's actions all arrive in its `done` event. OpenAI finishes each item before it starts the next, so
+        # the call is added here already complete, and keeps its place among the other parts.
+        # Its ID is stored the same way `_map_function_call_done` stores a function call's ID.
+        call_id = stored_tool_call_id(
+            item.call_id,
+            response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
+            provider_response_id=self.provider_response_id,
+            timestamp=self.timestamp,
+        )
+        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
+            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str

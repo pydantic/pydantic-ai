@@ -13,6 +13,7 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
     rejects the explicit prompt caching fields, and does not expose server-side input-token counting or the Batch API.
     """
     return merge_profile(
+        # This profile doesn't get the `ComputerTool` that `OpenAIProvider` adds: it is unverified on the Codex backend.
         openai_model_profile(model_name),
         OpenAIModelProfile(
             # Drop unsupported generic settings for portability. Forward explicit `openai_*`

@@ -16,6 +16,7 @@ Pydantic AI supports the following native tools:
 - **[`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
+- **[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]**: Sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 - **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
@@ -850,6 +851,41 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## Computer Tool
+
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Models are trained to use that tool. As with the [Memory Tool](#memory-tool), the provider doesn't run the calls. Pydantic AI runs each call with the agent's `computer` tool and sends the result back in the provider's format. It finds that tool by its kind, `computer`, not by its name.
+
+Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both the `computer` tool and the `ComputerTool` for you. With `ComputerUse(native=False)`, it leaves out the `ComputerTool`, and the model gets `computer` as a regular function tool.
+
+The native tool is sent only when the request has exactly one `computer` tool the model can call. If there is none, an `optional` `ComputerTool` is left out, and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]. If there is more than one, the request raises `UserError`.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| OpenAI Responses | ✅ | On GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the pointer position. With an Azure client, the model gets the function tool; to send the native tool, add `ComputerTool` in the model's `profile=` argument, as [Models](harness/computer-use.md#models) shows. |
+| OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
+| OpenRouter | ❌ | The model gets the function tool. |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+```py {title="computer_tool.py" test="skip" lint="skip"}
+from pydantic_ai_harness import ComputerUse
+
+from pydantic_ai import Agent
+
+agent = Agent('{{ openai:medium }}', capabilities=[my_desktop_sandbox, ComputerUse()])  # (1)!
+```
+
+1. Any capability whose workspace has a screen. See [Computer Use](harness/computer-use.md).
 
 ## Advisor Tool
 

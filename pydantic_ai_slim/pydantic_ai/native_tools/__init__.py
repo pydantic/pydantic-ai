@@ -904,10 +904,16 @@ class MemoryTool(AbstractNativeTool):
 class ComputerTool(AbstractNativeTool):
     """A provider's own (native) computer use tool, sent to the model in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
 
-    The request's `computer` tool still runs the calls the model makes. A `ComputerTool` is sent only when the
-    request has exactly one `computer` tool the model can call. With none, an
-    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one raises
-    [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`.
+    Pydantic AI Harness's `ComputerUse` adds it for you. The request's `computer` tool still runs the calls the model
+    makes. A `ComputerTool` is sent only when the request has exactly one `computer` tool the model can call. With
+    none, an [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one
+    raises [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`. See
+    [Computer Tool](../native-tools.md#computer-tool).
+
+    Supported by:
+
+    * OpenAI Responses, on GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock
+      Mantle
     """
 
     display_size: tuple[int, int]

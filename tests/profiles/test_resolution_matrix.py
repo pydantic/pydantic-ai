@@ -36,6 +36,7 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -406,7 +407,15 @@ def test_openai_gpt_5_4():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -431,10 +440,11 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400, and
+    minus the native `computer` tool, which OpenAI doesn't offer on it."""
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
-    expected['supported_native_tools'] -= {ToolSearchTool}
+    expected['supported_native_tools'] -= {ToolSearchTool, ComputerTool}
     assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
@@ -459,7 +469,15 @@ def test_openai_gpt_5_6():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -508,7 +526,15 @@ def test_openai_gpt_6_astra():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,

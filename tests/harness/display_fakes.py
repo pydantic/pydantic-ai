@@ -6,8 +6,6 @@ harness display protocols to its backends.
 
 from __future__ import annotations as _annotations
 
-import struct
-import zlib
 from collections.abc import Callable
 from typing import Self
 
@@ -21,28 +19,8 @@ from pydantic_ai_harness.computer_use import (
     UnsupportedActionError,
 )
 
+from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, png
 from ..workspace_fakes import FilesystemOnlyWorkspaceBackend, InMemoryProvider, ProviderBackend
-
-
-def png(
-    width: int, height: int, *, background: bytes = b'\x00\x00\x00', red_box: tuple[int, int, int, int] | None = None
-) -> bytes:
-    """A complete RGB PNG of the given size in `background`, with an optional red `(left, top, right, bottom)` box."""
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
-
-    left, top, right, bottom = red_box or (0, 0, 0, 0)
-    plain = b'\x00' + background * width
-    marked = b'\x00' + background * left + b'\xff\x00\x00' * (right - left) + background * (width - right)
-    rows = b''.join(marked if top <= y < bottom else plain for y in range(height))
-    header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
-
-
-FAKE_DISPLAY_SIZE = (1280, 800)
-FAKE_SCREENSHOT = png(*FAKE_DISPLAY_SIZE)
-"""A screenshot of the fake display."""
 
 
 class ScreenProvider(InMemoryProvider):
