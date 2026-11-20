@@ -2,18 +2,23 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Literal
 
 import httpx
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelRequestRejectedError
+from pydantic_ai.messages import ModelMessage, ModelRequestAttempt, ModelResponse, TextPart
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles.groq import GroqModelProfile
 
 from ..._inline_snapshot import snapshot
-from ...conftest import try_import
+from ...conftest import IsDatetime, IsInstance, try_import
 
 with try_import() as imports_successful:
     from groq.types.chat.chat_completion_message import ChatCompletionMessage
@@ -60,7 +65,7 @@ def lookup_country(location: CityLocation) -> str:
 async def test_groq_native_output_with_function_tools(
     allow_model_requests: None, stream: bool, native_from: Literal['marker', 'profile']
 ):
-    """`NativeOutput` with a function tool raises before any request, since Groq returns a 400 for the combination.
+    """`NativeOutput` with a function tool raises Groq's 400 class before any request, since Groq rejects the combination.
 
     It raises streamed or not, and whether native output comes from the `NativeOutput` marker or from the profile's
     `default_structured_output_mode`. A pre-request guard, so there's no response to record. A request that did go
@@ -77,7 +82,7 @@ async def test_groq_native_output_with_function_tools(
         agent = Agent(model, output_type=CityLocation, tools=[lookup_country])
 
     prompt = 'What is the largest city in the user country?'
-    with pytest.raises(UserError) as exc_info:
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
         if stream:
             async with agent.run_stream_events(prompt) as events:
                 _ = [event async for event in events]
@@ -86,6 +91,42 @@ async def test_groq_native_output_with_function_tools(
 
     assert str(exc_info.value) == snapshot(
         'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+    )
+
+
+async def test_groq_native_output_with_function_tools_falls_back(allow_model_requests: None):
+    """`FallbackModel` falls back on the guard's error by default, as it does on Groq's 400, and records the attempt.
+
+    A unit test: the guard raises before any request, so there is nothing to record, and the transport shows that.
+    """
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)  # pragma: no cover
+        return httpx.Response(500)  # pragma: no cover
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(CITY_LOCATION_JSON)])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        provider = GroqProvider(api_key='test-key', http_client=http_client)
+        model = FallbackModel(GroqModel('openai/gpt-oss-120b', provider=provider), FunctionModel(backup))
+        agent = Agent(model, output_type=NativeOutput(CityLocation), tools=[lookup_country])
+        result = await agent.run('What is the largest city in the user country?')
+
+    assert result.output == CityLocation(city='Mexico City', country='Mexico')
+    assert sent == []
+    assert result.response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='openai/gpt-oss-120b',
+                provider_name='groq',
+                outcome='error',
+                error='ModelRequestRejectedError: This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+            )
+        ]
     )
 
 

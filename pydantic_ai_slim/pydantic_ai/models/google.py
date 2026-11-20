@@ -21,6 +21,7 @@ from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelRequestRejectedError,
     UserError,
 )
 from ..messages import (
@@ -1361,11 +1362,14 @@ class GoogleModel(Model[Client]):
     ) -> tuple[str | None, dict[str, Any] | None]:
         """Return the response MIME type and JSON schema the output mode asks for."""
         if model_request_parameters.output_mode == 'native':
+            # A restriction of this model, not of the request, so it raises the class of an API rejection:
+            # `FallbackModel` then falls back on it, since another model may take the combination.
             if model_request_parameters.function_tools and not self.profile.get(
                 'google_supports_tool_combination', False
             ):
-                raise UserError(
-                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                raise ModelRequestRejectedError(
+                    self.model_name,
+                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.',
                 )
             output_object = model_request_parameters.output_object
             assert output_object is not None

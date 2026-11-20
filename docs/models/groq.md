@@ -93,7 +93,7 @@ agent = Agent(model)
 
 Other Groq models raise a [`UserError`][pydantic_ai.exceptions.UserError] for `NativeOutput`. [`PromptedOutput`][pydantic_ai.output.PromptedOutput] uses Groq's JSON mode (`json_object`) on every model when the request has no function tools.
 
-Groq can't combine `json_schema` with function tools, so `NativeOutput` on an agent with function tools raises a [`UserError`][pydantic_ai.exceptions.UserError] before the request is sent. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] instead.
+Groq can't combine `json_schema` with function tools, so `NativeOutput` on an agent with function tools raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before the request is sent, as Groq's 400 would. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] instead.
 
 ## Service tier
 
