@@ -407,6 +407,18 @@ async def test_a_model_that_cant_see_images_is_refused_the_computer_tool() -> No
         await agent.run('Click.')
 
 
+async def test_a_model_that_cant_see_images_answers_while_the_computer_tool_is_deferred() -> None:
+    # Until the history reveals the deferred tool, the model can't call it, so it needn't see screenshots.
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(
+        FunctionModel(respond, profile=ModelProfile(supports_image_input=False)),
+        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND, defer_loading=True)],
+    )
+    assert (await agent.run('Hello.')).output == 'ok'
+
+
 @pytest.mark.parametrize(
     'size, refusal',
     [

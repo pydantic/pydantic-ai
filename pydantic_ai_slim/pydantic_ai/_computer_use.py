@@ -128,7 +128,8 @@ def refuse_unservable_computer_request(
 
     A model that takes images but not PNGs gets a note in place of each screenshot, so there is no size to check.
     """
-    if not computer_tool_names(params):
+    # A deferred tool the history hasn't revealed can't be called yet, so it doesn't count.
+    if not params.available_tool_names_for_kind(COMPUTER_KIND_ID):
         return
     if not profile.get('supports_image_input', True):
         raise UnservableRequestError(
