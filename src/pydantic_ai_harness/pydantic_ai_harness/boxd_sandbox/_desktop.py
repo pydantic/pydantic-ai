@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import anyio
 from boxd import AuthenticationError, PermissionDeniedError
 
+from pydantic_ai._computer_use import PNG_SIGNATURE
 from pydantic_ai.computer_use import (
     Click,
     Drag,
@@ -49,7 +50,6 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import WorkspaceError
-from pydantic_ai_harness._png import PNG_SIGNATURE
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 if TYPE_CHECKING:
