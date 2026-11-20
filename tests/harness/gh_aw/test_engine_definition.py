@@ -1081,6 +1081,27 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert 'GITHUB_COPILOT_INTEGRATION_ID' not in invocation.env
 
 
+@pytest.mark.parametrize(
+    ('endpoint', 'logged'),
+    [
+        ('https://canary-user:canary-token@endpoint.example/v1', 'https://endpoint.example'),
+        ('https://endpoint.example/v1?key=canary-query', 'https://endpoint.example'),
+        ('endpoint.example/v1?key=canary-query', '(unparsable)'),
+    ],
+    ids=['userinfo', 'query', 'unparsable'],
+)
+def test_the_startup_log_names_only_endpoint_origins(tmp_path: Path, endpoint: str, logged: str) -> None:
+    """Workflow run logs are public, and an endpoint's userinfo or query string can carry a credential."""
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_BASE_URL': endpoint, 'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint},
+    )
+
+    assert f'provider=(PAI_BASE_URL) model=gpt-5 baseUrl={logged} otlp={logged}\n' in invocation.stdout
+    assert 'canary' not in invocation.stdout + invocation.capture
+    assert invocation.env['OPENAI_BASE_URL'] == endpoint
+
+
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_output: _RecorderCapture
 ) -> None:

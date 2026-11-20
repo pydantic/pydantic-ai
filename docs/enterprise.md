@@ -83,7 +83,7 @@ Without extra infrastructure, each provider reads its key from an environment va
 
 - **Approval**: mark a tool [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) and the run ends with the pending call; your application stores the conversation, and the run resumes, days later if need be, once a person approves or denies the call. [Going to Production](production.md#approval) shows the full flow, and [`ToolCallJudge`](harness/tool-call-judge.md) (Harness) replaces the person with an automated check by a second model.
 - **Guardrails**: [guardrails](harness/guardrails.md) (Harness) check the prompt, each tool call and result, and the final output, and can block, redact secrets and PII, or ask for approval. The [prompt injection defender](harness/prompt-injection-defender.md) screens tool results. The Gateway's [guardrails](https://pydantic.dev/docs/logfire/manage/ai-gateway/protect-data/) apply a second check on the traffic path, for every application that uses the Gateway.
-- **Least privilege**: give each caller only the tools it may use, and run model-written code in a [sandbox](harness/index.md#execution-environments); [How do I limit what the agent can touch?](production.md#safety) covers both.
+- **Least privilege**: give each caller only the tools it may use, and run model-written code in a [sandbox](workspace.md#supported-workspaces); [How do I limit what the agent can touch?](production.md#safety) covers both.
 
 ## Can we audit what an agent did? {#audit}
 

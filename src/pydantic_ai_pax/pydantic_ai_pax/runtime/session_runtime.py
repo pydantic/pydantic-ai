@@ -1646,11 +1646,11 @@ async def _execute_command(commands: Commands, text: str, *, console: Console) -
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
         if not is_silent(result):
             ended.output = result
-            console.print(result, markup=False)
+            console.print(result, markup=False, highlight=False)
             console.print()
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         ended.error = exc
-        console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+        console.print(str(exc), style=theme.color(theme.ERROR), markup=False, highlight=False)
         console.print()
     return ended
 

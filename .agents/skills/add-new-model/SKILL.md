@@ -1,6 +1,6 @@
 ---
 name: add-new-model
-description: Add support for a newly-released language or image generation model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5, openai:gpt-image-2). Use when a provider ships a new model id and you need to wire literals, profile flags, adapters, and tests to recognize it. Handles SDK-lag, gateway list conventions, capability probing, and direct image-model geometry.
+description: Add support for a newly-released language or image generation model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5, openai:gpt-image-2). Use when a provider ships a new model id and you need to wire literals, profile flags, adapters, and tests to recognize it. Handles SDK-lag, gateway list conventions, capability probing, and direct image-model geometry. Also use when Anthropic or OpenAI deprecates or retires a model, to update the deprecation tables.
 user-invocable: true
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, AskUserQuestion
 ---
@@ -38,6 +38,22 @@ advisor aliases) list the models a user would pick. They are not catalogs. Apply
 
 Profiles match any id, so removing an id from a literal changes autocomplete only. Never remove a profile branch
 because its id left a literal.
+
+## Deprecated and retired models
+
+A request to a model in `pydantic_ai_slim/pydantic_ai/providers/_model_deprecations.py` emits
+`DeprecatedModelWarning`. When Anthropic or OpenAI announces a deprecation or retirement, update that file.
+
+1. Read the announcement on [Anthropic's](https://platform.claude.com/docs/en/about-claude/model-deprecations) or
+   [OpenAI's](https://developers.openai.com/api/docs/deprecations) deprecations page. Never write an entry from memory.
+2. Add or update the entries as the module docstring's rules say.
+3. Run the test files that use each newly listed id. A test that replays a recording or mock on that id now fails
+   with `DeprecatedModelWarning`. Add the id to `DEPRECATED_MODELS_IN_RECORDINGS` in `tests/conftest.py`, in the group
+   for its announcement, with the retirement date and the provider's tracking issue. Add the id to that issue's
+   checklist.
+4. A test that sets its own warnings filter, such as `simplefilter('always')` or `simplefilter('error')`, overrides
+   `replay_deprecated_models`. Leave `DeprecatedModelWarning` out of what that test asserts instead.
+5. Run `tests/models/test_deprecated_model_warning.py` and `tests/profiles/test_resolution_matrix.py`.
 
 ## Image generation models
 

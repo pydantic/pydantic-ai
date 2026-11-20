@@ -75,6 +75,7 @@ class LivePrompt:
         panel: Callable[[str], Sequence[str]] = lambda _: (),
         queue_changed: Callable[[], None] = lambda: None,
         queue_in_toolbar: Callable[[], bool] | None = None,
+        full_screen: bool = False,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -87,6 +88,7 @@ class LivePrompt:
         `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
         `queue_in_toolbar=None` appends the queue count here; a callback leaves it to the toolbar,
         except over a notice when the callback returns `True`.
+        `full_screen` takes the whole terminal from the start; otherwise the panel starts compact and grows.
         """
         self.console = console
         self.commands = commands
@@ -113,6 +115,7 @@ class LivePrompt:
         self._last_escape: float | None = None
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
         self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
+        self.output.full_screen = full_screen
         self.keys = PromptKeys(
             source=get_app_session().input,
             feed=self.feed,
@@ -589,16 +592,18 @@ class LivePrompt:
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
-        # The box has no side borders and no prompt marker: the draft and the
-        # suggestions are plain rows between the top and bottom rules, so no
-        # row can drift out of alignment with the corners.
+        # The box has no side borders: the draft and the suggestions are rows between the top and
+        # bottom rules, so no row can drift out of alignment with the corners. The draft wraps two
+        # cells narrower, after a `❯ ` marker on its first row shown (a tall draft scrolls to the
+        # cursor, and the marker stays visible) and an indent on the rest.
         # The pinned row only takes a spare row: `paint` keeps `height - 2` rows, and the title,
         # one draft row, the rule, and the footer come first.
         pinned = self.pinned() if height - len(rows) - 5 >= 1 else ''
         inner = max(1, height - len(rows) - 4 - bool(pinned))
         popup_want = min(6, len(self._completions))
-        draft = self.buffer.rows(width=width, limit=max(1, min(height // 3, inner - popup_want)))
-        rows.extend(draft)
+        draft = self.buffer.rows(width=width - 2, limit=max(1, min(height // 3, inner - popup_want)))
+        rows.append(f'{theme.sgr(theme.ACCENT)}❯{reset} {draft[0]}')
+        rows.extend(map('  {}'.format, draft[1:]))
         popup_limit = max(0, min(6, len(self._completions), inner - len(draft)))
         start = max(0, self._selection - popup_limit + 1)
         for index, item in enumerate(self._completions[start : start + popup_limit], start=start):
@@ -684,7 +689,7 @@ class LivePrompt:
         try:
             async with self._completion_owner:
                 await self.output.drain()
-                self.output.release()
+                self.output.release(turn_running=self.interrupts.active)
                 yield
         finally:
             self._suspended = False

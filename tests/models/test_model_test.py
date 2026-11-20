@@ -4,15 +4,23 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import json
 import re
-from collections.abc import Callable
-from datetime import UTC
+from collections.abc import Callable, Iterator
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
+from enum import Enum
+from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from pydantic import BaseModel, Discriminator, Field, Tag
+from jsonschema import FormatChecker
+from jsonschema.validators import validator_for
+from pydantic import AnyUrl, BaseModel, Discriminator, EmailStr, Field, SecretStr, Tag, TypeAdapter, ValidationError
+from typing_extensions import TypeForm
 
 from pydantic_ai import (
     Agent,
@@ -35,6 +43,8 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._json_schema import JsonSchema
+from pydantic_ai._json_schema_keywords import Subschema, iter_subschemas
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolAvailabilityDeltaPart
 from pydantic_ai.models import ModelRequestParameters
@@ -565,6 +575,32 @@ def test_json_schema_test_data_additional():
     data = _JsonSchemaTestData(json_schema).generate()
     assert data == snapshot({'x': 0, 'additionalProperty': 'a', 'additionalProperty_': 'a'})
     TestModel.model_validate(data)
+
+
+def test_json_schema_test_data_min_properties():
+    """Properties added for `minProperties` get numbered names, so many of them take linear time and memory.
+
+    A name a property already has is skipped, and a closed object gets only the properties it lists.
+    """
+    data = _JsonSchemaTestData({'type': 'object', 'minProperties': 1000}).generate()
+    assert len(data) == 1000
+    assert max(map(len, data)) == len('additionalProperty_1000')
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'additionalProperty_1': {'type': 'integer'}},
+        'required': ['additionalProperty_1'],
+        'minProperties': 2,
+    }
+    assert list(_JsonSchemaTestData(schema).generate()) == ['additionalProperty_1', 'additionalProperty_2']
+
+    closed: JsonSchema = {
+        'type': 'object',
+        'properties': {'a': {'type': 'integer'}},
+        'additionalProperties': False,
+        'minProperties': 2,
+    }
+    assert list(_JsonSchemaTestData(closed).generate()) == ['a']
 
 
 def test_json_schema_test_data_equal_inclusive_bounds():
@@ -1209,3 +1245,257 @@ async def test_usage_consistent_across_run_modes(case: UsageCase):
     assert run_response_usages == case.response_usages
     assert run_total == case.total
     assert usages == dict.fromkeys(['run', 'run_stream', 'run_stream_events', 'iter_node_stream'], usages['run'])
+
+
+class _Inner(BaseModel):
+    x: int
+
+
+class _Tree(BaseModel):
+    children: list[_Tree] = []
+
+
+class _Color(Enum):
+    RED = 'r'
+    BLUE = 'b'
+
+
+TEST_MODEL_TYPES: dict[str, TypeForm[object]] = {
+    'int': int,
+    'int_multiple_of': Annotated[int, Field(multiple_of=7)],
+    'int_multiple_of_bounded': Annotated[int, Field(multiple_of=7, ge=10, le=30)],
+    'int_exclusive_bounds': Annotated[int, Field(gt=3, lt=6)],
+    'float_multiple_of': Annotated[float, Field(multiple_of=0.5, gt=1)],
+    'float_exclusive_bounds': Annotated[float, Field(gt=0.1, lt=0.2)],
+    'decimal': Decimal,
+    'str_length': Annotated[str, Field(min_length=2, max_length=3)],
+    'str_pattern': Annotated[str, Field(pattern=r'^\d{3}$')],
+    'email': EmailStr,
+    'url': AnyUrl,
+    'uuid': UUID,
+    'datetime': datetime,
+    'date': date,
+    'time': time,
+    'timedelta': timedelta,
+    'ipv4': IPv4Address,
+    'ipv6': IPv6Address,
+    'bytes': bytes,
+    'secret': SecretStr,
+    'dict_min_length': Annotated[dict[str, int], Field(min_length=2)],
+    'dict_max_length_0': Annotated[dict[str, int], Field(max_length=0)],
+    'list_length': Annotated[list[int], Field(min_length=2, max_length=3)],
+    'set': set[int],
+    'frozenset_min_length': Annotated[frozenset[int], Field(min_length=2)],
+    'tuple': tuple[int, str],
+    'tuple_variadic': tuple[int, ...],
+    'literal': Literal['a', 'b'],
+    'enum': _Color,
+    'optional': int | None,
+    'union': int | str,
+    'model': _Inner,
+    'recursive_model': _Tree,
+    'list_of_models': list[_Inner],
+    'bool': bool,
+    'none': None,
+}
+"""Field types whose Pydantic schemas `TestModel` has to generate valid arguments for."""
+
+_LEAF: JsonSchema = {'type': 'string', 'minLength': 1}
+
+TEST_MODEL_SCHEMAS: dict[str, JsonSchema] = {
+    'allOf': {'allOf': [{'type': 'integer', 'minimum': 3}]},
+    'allOf-ref': {'allOf': [{'$ref': '#/$defs/Leaf'}], 'description': 'A leaf'},
+    'allOf-properties': {'allOf': [{'type': 'object', 'properties': {'a': _LEAF}, 'required': ['a']}]},
+    'allOf-boolean': {'allOf': [True, {'type': 'integer'}]},
+    'allOf-ref-to-boolean': {'allOf': [{'$ref': '#/$defs/Flag'}, {'type': 'integer'}]},
+    'allOf-ref-to-ref': {'type': 'string', 'allOf': [{'$ref': '#/$defs/Alias'}]},
+    'allOf-anyOf': {'type': 'string', 'allOf': [{'anyOf': [{'type': 'string'}, {'type': 'integer'}]}]},
+    'allOf-repeated-bound': {'allOf': [{'type': 'integer', 'minimum': -10}, {'type': 'integer', 'minimum': 0}]},
+    'allOf-repeated-property': {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'integer', 'minimum': -10}}, 'required': ['a']},
+            {'properties': {'a': {'type': 'integer', 'minimum': 0}}},
+        ]
+    },
+    'minProperties': {'type': 'object', 'minProperties': 1},
+    'minProperties-optional': {'type': 'object', 'properties': {'a': _LEAF}, 'minProperties': 1},
+    'minProperties-declared-name': {
+        'type': 'object',
+        'properties': {'additionalProperty_1': {'$ref': '#/$defs/Count'}},
+        'minProperties': 1,
+    },
+    'maxProperties': {'type': 'object', 'additionalProperties': True, 'maxProperties': 0},
+    'multipleOf-within-exclusive': {'type': 'integer', 'multipleOf': 5, 'exclusiveMinimum': 5, 'exclusiveMaximum': 11},
+    'multipleOf-below-maximum': {'type': 'integer', 'multipleOf': 5, 'maximum': 8},
+    'multipleOf-fractional-integer': {'type': 'integer', 'multipleOf': 2.5, 'minimum': 0, 'maximum': 10},
+    'multipleOf-fractional-integer-off-the-adjacent-multiples': {
+        'type': 'integer',
+        'multipleOf': 1.5,
+        'minimum': 1,
+        'maximum': 4,
+    },
+    'multipleOf-integer-too-large-for-a-float': {'type': 'integer', 'multipleOf': 3, 'minimum': 10**400},
+    'multipleOf-fractional-number': {'type': 'number', 'multipleOf': 0.5, 'minimum': 0.3},
+    'format-longer-than-maxLength': {'type': 'string', 'format': 'uri', 'maxLength': 3},
+    'not': {'type': 'string', 'not': {'const': 'a'}},
+}
+"""Hand-written schemas Pydantic doesn't generate, for the keywords `TestModel` handles."""
+
+_TEST_MODEL_DEFS: JsonSchema = {
+    'Leaf': _LEAF,
+    'Flag': True,
+    'Alias': {'$ref': '#/$defs/TwoCharacters'},
+    'TwoCharacters': {'minLength': 2},
+    'Count': {'type': 'integer'},
+}
+"""Definitions beside `TEST_MODEL_SCHEMAS`."""
+
+UNSUPPORTED_KEYWORDS = {
+    'pattern': 'Generating a string that matches a regular expression needs a regex-inverting dependency.',
+    'not': 'Only the schema itself drives generation, so a value can match what `not` rejects.',
+}
+"""Keywords `TestModel` doesn't generate for, so a schema using one can get an argument it rejects."""
+
+PYDANTIC_STRICTER = {
+    'decimal': "`Decimal`'s schema accepts any string, so `TestModel` can generate one that isn't a number.",
+}
+"""Types whose schema accepts an argument their Pydantic validation rejects, which an entry expects."""
+
+_FORMATS = FormatChecker(formats=('date', 'email', 'ipv4', 'ipv6', 'uuid'))
+"""The formats `jsonschema` checks with the standard library alone, so the result doesn't depend on what's installed."""
+
+
+def _arguments_schema(field: JsonSchema, defs: JsonSchema) -> JsonSchema:
+    """A tool's arguments schema, with `field` as its one required property."""
+    return {'type': 'object', 'properties': {'field': field}, 'required': ['field'], '$defs': defs}
+
+
+def _test_model_schemas() -> Iterator[tuple[str, JsonSchema, TypeAdapter[object] | None]]:
+    for name, field_type in TEST_MODEL_TYPES.items():
+        adapter = TypeAdapter[object](field_type)
+        field_schema = adapter.json_schema()
+        defs = field_schema.pop('$defs', {})
+        yield name, _arguments_schema(field_schema, defs), adapter
+    for name, field_schema in TEST_MODEL_SCHEMAS.items():
+        yield name, _arguments_schema(field_schema, _TEST_MODEL_DEFS), None
+
+
+def _keywords(schema: Subschema) -> Iterator[str]:
+    """Every keyword in `schema` and its subschemas."""
+    if isinstance(schema, dict):
+        yield from schema
+        for subschema in iter_subschemas(schema):
+            yield from _keywords(subschema)
+
+
+@pytest.mark.parametrize(
+    ('name', 'schema', 'adapter'), [pytest.param(*case, id=case[0]) for case in _test_model_schemas()]
+)
+def test_test_model_arguments_validate(name: str, schema: JsonSchema, adapter: TypeAdapter[object] | None):
+    """`TestModel`'s arguments for each seed validate against their schema, and against the Pydantic type behind it.
+
+    A schema using an `UNSUPPORTED_KEYWORDS` keyword, or a `PYDANTIC_STRICTER` type, is expected to get an invalid
+    argument for some seed, so the entry has to go once `TestModel` generates valid ones.
+    """
+    invalid: dict[int, list[str]] = {}
+    for seed in range(3):
+        arguments = _JsonSchemaTestData(schema, seed).generate()
+        errors = [
+            error.message for error in validator_for(schema)(schema, format_checker=_FORMATS).iter_errors(arguments)
+        ]
+        if adapter is not None:
+            try:
+                # Tool arguments arrive as JSON, so they're validated in JSON mode.
+                adapter.validate_json(json.dumps(arguments['field']))
+            except ValidationError as e:
+                errors.extend(error['msg'] for error in e.errors())
+        if errors:
+            invalid[seed] = errors
+    if expected := sorted(UNSUPPORTED_KEYWORDS.keys() & set(_keywords(schema))) or PYDANTIC_STRICTER.get(name):
+        assert invalid, f'`TestModel` now generates valid arguments for `{name}`: remove the entry for {expected}'
+    else:
+        assert not invalid, f'`TestModel` generates invalid arguments for `{name}`: {invalid}'
+
+
+@pytest.mark.parametrize(
+    'schema',
+    [
+        pytest.param(_arguments_schema({'allOf': [{'$ref': '#/$defs/Missing'}]}, {}), id='allOf-missing-ref'),
+        pytest.param(
+            _arguments_schema({'$ref': '#/$defs/Loop'}, {'Loop': {'allOf': [{'$ref': '#/$defs/Loop'}]}}),
+            id='allOf-cycle',
+        ),
+        pytest.param(
+            _arguments_schema({'type': 'number', 'multipleOf': 3e-308, 'minimum': 1e10}, {}), id='multipleOf-overflows'
+        ),
+        pytest.param(_arguments_schema({'type': 'string', 'allOf': True}, {}), id='allOf-not-a-list'),
+        pytest.param(
+            _arguments_schema({'type': 'string', 'allOf': [{'allOf': None}]}, {}), id='nested-allOf-not-a-list'
+        ),
+        pytest.param(_arguments_schema({'type': 'string', 'allOf': [{'$ref': 5}]}, {}), id='allOf-ref-not-a-string'),
+        pytest.param(
+            {**_arguments_schema({'type': 'string', 'allOf': [{'$ref': '#/$defs/Leaf'}]}, {}), '$defs': []},
+            id='defs-not-an-object',
+        ),
+        pytest.param(
+            _arguments_schema({'type': 'string', 'allOf': [{'properties': 5, 'required': 5}]}, {}),
+            id='allOf-member-properties-not-an-object',
+        ),
+        pytest.param(_arguments_schema({'type': 'string', 'format': ['email']}, {}), id='format-not-a-string'),
+        pytest.param(
+            _arguments_schema({'type': 'string', 'format': 'email', 'maxLength': '3'}, {}),
+            id='format-length-not-a-number',
+        ),
+        pytest.param(_arguments_schema({'type': 'object', 'minProperties': '1'}, {}), id='minProperties-not-a-number'),
+        pytest.param(
+            _arguments_schema({'type': 'object', 'additionalProperties': True, 'maxProperties': '0'}, {}),
+            id='maxProperties-not-a-number',
+        ),
+        pytest.param(
+            _arguments_schema({'type': 'integer', 'multipleOf': 2.5, 'minimum': 10**400}, {}),
+            id='multipleOf-fractional-step-for-an-integer-too-large-for-a-float',
+        ),
+        pytest.param(
+            _arguments_schema({'type': 'integer', 'multipleOf': float('inf'), 'minimum': 1}, {}),
+            id='multipleOf-infinite',
+        ),
+        pytest.param(
+            _arguments_schema(
+                {'$ref': '#/$defs/Filter'},
+                {
+                    'Filter': {
+                        'type': 'object',
+                        'properties': {
+                            'and': {'type': 'array', 'items': {'$ref': '#/$defs/Filter'}},
+                            'eq': {'type': 'string'},
+                        },
+                        'minProperties': 1,
+                    }
+                },
+            ),
+            id='minProperties-recursive',
+        ),
+    ],
+)
+def test_test_model_generates_for_schemas_it_cant_satisfy(schema: JsonSchema):
+    """`TestModel` still generates arguments where `allOf`, `multipleOf`, `format` or an object size bound can't be
+    honored, as it did when it ignored them, rather than raising."""
+    assert 'field' in _JsonSchemaTestData(schema).generate()
+
+
+@pytest.mark.parametrize(
+    ('fmt', 'seed', 'expected'),
+    [
+        pytest.param('uuid', -1, 'ffffffff-ffff-ffff-ffff-ffffffffffff', id='uuid-negative'),
+        pytest.param('duration', -1, 'PT1S', id='duration-negative'),
+        pytest.param('date', 10**7, '9405-01-28', id='date-past-9999'),
+        pytest.param('date-time', -(10**7), '4641-12-04T00:00:00Z', id='date-time-before-year-1'),
+    ],
+)
+def test_test_model_generates_a_format_for_any_seed(fmt: str, seed: int, expected: str):
+    """A seed outside what a format holds, like a negative UUID or a date past 9999, still gets a value of it.
+
+    `jsonschema` checks neither `duration` nor `date-time` without extra packages, so the values are pinned here.
+    """
+    schema = _arguments_schema({'type': 'string', 'format': fmt}, {})
+    assert _JsonSchemaTestData(schema, seed=seed).generate() == {'field': expected}

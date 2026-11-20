@@ -42,7 +42,7 @@ from pydantic_ai_pax.plugins import PluginHost, load_plugin
 from pydantic_ai_pax.runtime.sandbox_calls import SandboxCallStartedEvent
 from pydantic_ai_pax.ui.menus.menu_worker import menu_key
 from pydantic_ai_pax.ui.menus.question_menu import QuestionMenu
-from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, INLINE_OFF, LEAVE, MODES_OFF, PromptSurface
 from pydantic_ai_pax.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey
 from pydantic_ai_pax.ui.rendering import theme
 from tests.pax.surface_terminal import SurfaceTerminal
@@ -198,10 +198,10 @@ def test_inline_terminal_preserves_transcript(keys: list[str], expected: tuple[s
     rendered = output.getvalue()
     assert rendered.startswith('Previous conversation stays here')
     assert 'Rewrite the module' in rendered
-    # Without an editor, the picker opens a live panel for the question, then leaves the
+    # Without an editor, the picker opens an inline panel for the question, then leaves the
     # question in the terminal's own scrollback.
-    assert rendered.rindex(LEAVE) > rendered.rindex(ENTER)
-    assert 'How should we do it?' in rendered.rsplit(LEAVE, 1)[1]
+    assert ENTER not in rendered
+    assert 'How should we do it?' in rendered.rsplit(INLINE_OFF, 1)[1]
     assert '\x1b[3J' not in rendered
     assert '\x1b[?25h' in rendered
 
@@ -431,7 +431,6 @@ async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) ->
     assert 'Earlier conversation' in output.getvalue()
     assert 'How should we do it?' in '\n'.join(surface.transcript.frame(width=80, height=24).rows)
     assert LEAVE not in output.getvalue(), "the editor's panel stays on screen"
-    assert output.getvalue().count(ENTER) == 1
 
 
 def test_terminal_cleanup_on_input_failure() -> None:
@@ -444,7 +443,7 @@ def test_terminal_cleanup_on_input_failure() -> None:
     with pytest.raises(OSError, match='input closed'):
         QuestionMenu(question=APPROACH, position=1, total=1).run(console=console, key_source=fail)
     assert '\x1b[?25h' in output.getvalue()
-    assert 'How should we do it?' in output.getvalue().rsplit(LEAVE, 1)[1]
+    assert 'How should we do it?' in output.getvalue().rsplit(INLINE_OFF, 1)[1]
 
 
 async def test_cancellation_joins_question_reader_before_releasing_screen(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -766,7 +765,9 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
 )
 def test_dragging_question_text_highlights_and_copies_without_answering(question: Question, target: str) -> None:
     terminal = SurfaceTerminal(width=80, height=24)
+    # Selecting painted cells is the full-screen panel's; the inline one leaves the mouse to the terminal.
     surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    surface.full_screen = True
     surface.write('Transcript control\n')
     menu = QuestionMenu(question=question, position=1, total=1)
 

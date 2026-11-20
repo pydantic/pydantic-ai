@@ -536,7 +536,23 @@ History-changing plugins use `await conversation.commit_messages`, not the legac
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
 The interactive editor owns its layout explicitly. Do not reintroduce a
-PromptSession renderer. `PromptSurface` composes a termflow.live `ScreenBuffer`,
+PromptSession renderer. `PromptSurface` starts inline on the main screen, repainting
+only the rows the terminal's scrollback lacks plus the editor, and switches to the
+alternate screen for good once they would fill the terminal, the terminal narrows,
+widens, or shrinks, or `release(turn_running=True)` hands the terminal over mid-turn.
+Released between turns, it erases its rows and prints the transcript into scrollback
+as it arrives (`_print_released`), keeping no rows, since a command may write to the
+terminal directly; it cannot do that mid-turn, when a streamed part may still grow.
+`display.full_screen` (`LivePrompt(full_screen=True)`, `PromptSurface.full_screen`)
+starts on the alternate screen; tests that need fixed frame rows use it. The inline
+phase pushes only `KEYS_ON`, never mouse reporting, so the terminal keeps its own wheel
+scrollback and selection; it shows every unprinted row, so it has nothing to scroll and
+follows. It erases its rows by moving up the count it painted, which a terminal that
+reflows text, or pushes rows into scrollback as it shrinks, or anything else writing to
+the terminal would invalidate, hence the switches. Do not let anything but `PromptSurface`
+write to the main screen while inline rows are up.
+The rules below about scrolling, the mouse, and resizes are the alternate screen's.
+On the alternate screen it composes a termflow.live `ScreenBuffer`,
 `TranscriptView` draws its transcript region, and `render_diff` paints changed
 cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
 the input cursor is a painted reverse-video cell. Keep terminal mutations in

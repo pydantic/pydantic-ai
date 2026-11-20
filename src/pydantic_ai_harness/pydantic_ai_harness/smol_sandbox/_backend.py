@@ -228,7 +228,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the VM (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one
