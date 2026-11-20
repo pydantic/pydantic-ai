@@ -3632,6 +3632,7 @@ def test_openai_compatible_qwen3_next():
         {
             'openrouter': {
                 'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_video_input': False,
                 'ignore_streamed_leading_whitespace': True,
                 'needs_json_string_tool_returns': True,
                 'openai_chat_send_back_thinking_parts': 'field',
@@ -3653,6 +3654,7 @@ def test_openai_compatible_qwen3_next():
             },
             'openrouter-thinking': {
                 'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_video_input': False,
                 'ignore_streamed_leading_whitespace': True,
                 'needs_json_string_tool_returns': True,
                 'thinking_always_enabled': True,
@@ -3748,6 +3750,7 @@ def test_bedrock_qwen3_next():
             'supported_native_tools': frozenset(),
             'bedrock_supports_leading_assistant_message': True,
             'bedrock_thinking_variant': 'qwen',
+            'bedrock_supports_stop_sequences': False,
             'supports_thinking': True,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
