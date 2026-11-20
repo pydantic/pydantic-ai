@@ -18,7 +18,9 @@ from pydantic_evals.evaluators import EqualsExpected
 EqualsExpected()
 ```
 
-**Parameters:** None
+**Parameters:**
+
+- `evaluation_name` (str | None): Custom name for this evaluation in reports
 
 **Returns:** `bool` - `True` if `ctx.output == ctx.expected_output`
 
