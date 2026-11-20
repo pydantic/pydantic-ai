@@ -489,11 +489,12 @@ A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recor
 `tool_output_limits.content.*` with the same names. Nothing is recorded for a return under every
 band or a `Truncate` whose `max_chars` the text already fits. A `then` that produces a result is
 recorded even when it cuts nothing (then both sizes are equal). An action that can't run and has no
-`then`, or whose `then` is `Passthrough()`, leaves the return unchanged and records nothing. When the default `Spill(then=Truncate())` can't
-write to its store, `action` is `truncate`, `fallback_from` is `spill` and `fallback_error` names the
-store's exception, which is how a failing store shows up in a trace. When a `then` also fails and
-its own `then` produces the result, `fallback_from` and `fallback_error` still describe the band's
-own action, the one the band was configured to run; the later failure is in the log.
+`then`, or whose `then` is `Passthrough()`, leaves the return unchanged and records nothing. When
+the default `Spill(then=Truncate())` can't write to its store, `action` is `truncate`,
+`fallback_from` is `spill` and `fallback_error` names the store's exception, which is how a failing
+store shows up in a trace. When a `then` also fails and its own `then` produces the result,
+`fallback_from` and `fallback_error` still describe the band's own action, the one the band was
+configured to run; the later failure is in the log.
 
 ## Edge cases
 

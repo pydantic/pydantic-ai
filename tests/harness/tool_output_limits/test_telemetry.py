@@ -22,6 +22,7 @@ from pydantic_ai_harness.tool_output_limits import (
     ToolOutputLimits,
     Truncate,
 )
+from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import Instrumented
 
 
@@ -50,7 +51,8 @@ class FailingStore:
     async def write(self, key: str, data: bytes) -> str:
         raise OSError('disk full')
 
-    async def read(self, handle: str) -> bytes:  # pragma: no cover - nothing is ever written
+    # Nothing is ever written, so nothing is read.
+    async def read(self, handle: str) -> bytes:  # pragma: no cover
         raise FileNotFoundError(handle)
 
 
@@ -207,6 +209,37 @@ class TestToolOutputLimitsTelemetry:
             attributes['tool_output_limits.fallback_error'],
         ) == ('truncate', 'spill', 'OSError')
 
+    async def test_a_spill_failure_journaled_by_an_earlier_version_falls_back_without_an_error(
+        self, instrumented: Instrumented
+    ):
+        """An earlier version journaled a failed spill as `None`: a replay still falls back, with no error type."""
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Spill(then=Truncate(max_chars=50)))], store=FailingStore()
+        )
+        durability = RecordingDurability(
+            journal={'replayed__capability__tool_output_limits.spill': {'value': None, 'usage_delta': {}}}
+        )
+        instrumentation, exporter = instrumented(False)
+        agent: Agent[object, str] = Agent(
+            TestModel(call_tools=['big_tool']), name='replayed', capabilities=[limits, durability, instrumentation]
+        )
+
+        @agent.tool_plain
+        def big_tool() -> str:
+            return 'x' * 500
+
+        await agent.run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {
+                'tool_output_limits.action': 'truncate',
+                'tool_output_limits.original_size': 500,
+                'tool_output_limits.reduced_size': 50,
+                'tool_output_limits.size_unit': 'chars',
+                'tool_output_limits.fallback_from': 'spill',
+            }
+        )
+
     async def test_content_reduced_on_its_own_gets_its_own_attributes(self, instrumented: Instrumented):
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(TRUNCATE, ToolReturn(return_value='small', content='y' * 300), instrumentation).run('go')
@@ -228,13 +261,11 @@ class TestToolOutputLimitsTelemetry:
 
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(spill, output, instrumentation).run('go')
-        attributes = limits_attributes(exporter)
-        reduced_size = attributes.pop('tool_output_limits.reduced_size')
-        assert isinstance(reduced_size, int) and reduced_size > 0
-        assert attributes == snapshot(
+        assert limits_attributes(exporter) == snapshot(
             {
                 'tool_output_limits.action': 'spill',
                 'tool_output_limits.original_size': 500,
+                'tool_output_limits.reduced_size': 322,
                 'tool_output_limits.size_unit': 'bytes',
             }
         )
