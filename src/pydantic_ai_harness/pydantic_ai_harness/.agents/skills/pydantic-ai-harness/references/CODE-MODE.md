@@ -284,6 +284,9 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[CodeMode])
 ## Observability
 
 With Logfire or another OpenTelemetry backend, nested tool calls inside `run_code` produce child spans.
+When the run is instrumented, each call also records `code_mode.budget_exhausted` on its `execute_tool run_code`
+span, and a failed call records `code_mode.error_kind`, `code_mode.limit` and `code_mode.session_reset`; see
+https://pydantic.dev/docs/ai/harness/code-mode/#span-attributes.
 The `run_code` tool return also carries history-only metadata keyed by nested call id (plus a
 `speculation` summary when `speculate` is set):
 
