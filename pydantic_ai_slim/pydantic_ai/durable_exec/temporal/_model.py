@@ -41,7 +41,7 @@ from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
     _RequestParams,  # pyright: ignore[reportPrivateUsage]
 )
-from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
+from ._model_errors import rebuilt_model_errors, refusals_as_application_errors
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import model_response_payload_errors, non_retryable_subclasses_as_application_errors
 from ._transports import restore_telemetry_mcp_url_ids
@@ -623,10 +623,10 @@ class TemporalModel(WrapperModel):
 
 @contextmanager
 def _model_activity_errors() -> Generator[None]:
-    """In a model activity, raise errors the way the durability capability's model activities do.
+    """In a model activity, raise a model's refusal of a request it can't serve as the workflow can rebuild it.
 
-    A model error, or a model's refusal of a request it can't serve, crosses to the workflow as itself, and a subclass of
-    a non-retryable error, like that refusal, isn't retried.
+    Other model errors reach the retry policy as they always have, under their own class names, which
+    `non_retryable_error_types` matches. A subclass of a non-retryable error isn't retried.
     """
-    with non_retryable_subclasses_as_application_errors(), model_errors_as_application_errors():
+    with non_retryable_subclasses_as_application_errors(), refusals_as_application_errors():
         yield

@@ -134,6 +134,21 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
 
 
 @contextmanager
+def refusals_as_application_errors() -> Generator[None]:
+    """In a model activity, raise a model's refusal of a request it can't serve as one the workflow rebuilds it from.
+
+    A fallback in the workflow moves on from it, and asking the same model again won't change the answer, so it isn't
+    retried.
+    """
+    try:
+        yield
+    except UnservableRequestError as error:
+        raise ApplicationError(
+            str(error), {_REFUSAL_KEY: error.message}, type=type(error).__name__, non_retryable=True
+        ) from error
+
+
+@contextmanager
 def model_errors_as_application_errors(
     non_retryable: tuple[type[ModelAPIError], ...] = (),
 ) -> Generator[None]:
@@ -147,13 +162,8 @@ def model_errors_as_application_errors(
     Temporal waits that long before the next attempt rather than the retry policy's backoff; see `_next_retry_delay`.
     """
     try:
-        yield
-    except UnservableRequestError as error:
-        # A model's refusal of a request it can't serve, which a fallback in the workflow moves on from. Asking again
-        # won't change the answer.
-        raise ApplicationError(
-            str(error), {_REFUSAL_KEY: error.message}, type=type(error).__name__, non_retryable=True
-        ) from error
+        with refusals_as_application_errors():
+            yield
     except ModelAPIError as error:
         # Checked here, where the error's class is the same as in the workflow, so the workflow can
         # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
