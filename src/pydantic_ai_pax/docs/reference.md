@@ -57,8 +57,8 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
 | `/SKILL-NAME [ARGS]` | Send an Agent Skill as your next prompt |
-| `!COMMAND` | Run a shell command; the command and output are saved for the next prompt |
-| `!!COMMAND` | Give an interactive program the whole terminal; only its exit status is saved |
+| `!COMMAND` | Run a shell command, in the sandbox in a `/sandbox` conversation; the command and output are saved for the next prompt |
+| `!!COMMAND` | Give an interactive program the whole terminal, on this machine only; only its exit status is saved |
 
 Plugins add their own commands, such as `/notion login` or `/google_workspace`. `/help` lists them.
 
@@ -1540,6 +1540,25 @@ status are saved. On Windows, the command shares CLAI's console in the same way.
 Without `!!`, a full-screen program on Windows cannot draw, because its output
 is a pipe.
 
+#### In a sandbox
+
+In a [`/sandbox`](#cloud-sandboxes-sandbox) conversation, a `!` line runs in the sandbox, where the
+agent's commands run, not on this machine:
+
+```text
+> !git status
+$ git status
+Runs in the Daytona sandbox; command and output saved for the next prompt
+...
+Done (0.8s)
+```
+
+It runs with the sandbox's shell in the sandbox's copy of the checkout, with the keys the agent got there
+with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
+input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
+never runs on this machine instead. `!!` needs this terminal, so in a sandbox CLAI refuses it and saves
+nothing; use `!` there. The command, output, and status are saved for the next prompt as on this machine.
+
 A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
 run in order with other queued input. `/help` lists the syntax.
 
@@ -2961,7 +2980,7 @@ no agent telemetry spans.
 Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
 conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
 uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
-there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If CLAI stops

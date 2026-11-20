@@ -71,7 +71,8 @@ they agree in the same PR.
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
   The one exception is a built-in that moves some conversations elsewhere, as
   `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
-  run's own history, the same history `get_workspace` resolves from.
+  run's own history, the same history `get_workspace` resolves from. Answer
+  `shell_line_workspace` from that history too, so `!` lines run where the runs do.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.

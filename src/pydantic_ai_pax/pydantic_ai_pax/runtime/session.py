@@ -206,6 +206,40 @@ class ConversationWorkspace(AbstractCapability[DepsT]):
         """Whether the workspace of a run continuing `messages` comes from this capability."""
         return False
 
+    def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> 'ShellLineWorkspace | None':
+        """Where a `!command` line typed in a conversation continuing `messages` runs, while `supplies` is true.
+
+        `None` runs it on this machine, in the session's directory.
+        """
+        return None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ShellLineWorkspace:
+    """The workspace a `!command` line runs in instead of this machine, such as the conversation's sandbox."""
+
+    workspace: WorkspaceBackend
+    name: str
+    """Where the command runs, as CLAI's messages say it: `the Daytona sandbox`."""
+
+
+def shell_line_workspace(
+    plugins: Sequence[AgentCapability[DepsT]], messages: Sequence[ModelMessage]
+) -> ShellLineWorkspace | None:
+    """The workspace a `!command` line runs in for a conversation over `messages`; `None` runs it on this machine.
+
+    It asks the same `ConversationWorkspace` capabilities that supply the conversation's runs their workspace,
+    so a `!` line and the agent's own commands run in the same place.
+    """
+    leaves: list[AbstractCapability[DepsT]] = []
+    for plugin in plugins:
+        if isinstance(plugin, AbstractCapability):
+            cast('AbstractCapability[DepsT]', plugin).apply(leaves.append)
+    for leaf in leaves:
+        if isinstance(leaf, ConversationWorkspace) and leaf.supplies(messages):
+            return leaf.shell_line_workspace(messages)
+    return None
+
 
 class WorkspacelessCapability(DynamicCapability[DepsT]):
     """A capability function that never supplies the run's workspace, such as a built-in plugin's MCP server.

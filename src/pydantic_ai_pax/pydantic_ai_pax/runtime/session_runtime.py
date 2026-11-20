@@ -27,6 +27,7 @@ from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
@@ -35,7 +36,12 @@ from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEven
 from pydantic_ai_pax.cli.command_context import CommandContext, CommandProvider
 from pydantic_ai_pax.cli.effort import effort_command, effort_completions
 from pydantic_ai_pax.cli.self_update import Relaunch, Updates, WebHandoff
-from pydantic_ai_pax.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
+from pydantic_ai_pax.cli.shell_passthrough import (
+    HELP as SHELL_HELP,
+    run_shell_command,
+    run_workspace_command,
+    shell_command,
+)
 from pydantic_ai_pax.commands import (
     Command,
     Commands,
@@ -86,6 +92,7 @@ from pydantic_ai_pax.runtime.session import (
     StockAgent,
     agent_capabilities,
     current_session_id,
+    shell_line_workspace,
 )
 from pydantic_ai_pax.runtime.session_settings import SessionSettings
 from pydantic_ai_pax.runtime.sessions import Sessions
@@ -1400,16 +1407,28 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
-                context = await run_shell_command(
-                    command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
-                )
-                await self.session.commit_messages(
-                    [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
-                )
+                context = await self._shell_line(command)
+                if context is not None:
+                    await self.session.commit_messages(
+                        [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
+                    )
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
         return await self._prompt(text)
+
+    async def _shell_line(self, command: str) -> str | None:
+        """Run a `!` line where the conversation's runs work, its sandbox or this machine; return what to save."""
+        try:
+            place = shell_line_workspace(self.run_plugins(), self.session.messages)
+        except UserError as exc:  # The sandbox cannot be opened: deleted, or its provider is not installed.
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            return None
+        if place is not None:
+            return await run_workspace_command(command, place=place, console=self.console, interrupts=self.interrupts)
+        return await run_shell_command(
+            command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
+        )
 
     async def _prompt(self, text: str) -> bool:
         if self.session.model is None and self.agent.model is None:

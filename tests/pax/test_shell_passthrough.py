@@ -21,6 +21,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_pax import chat
 from pydantic_ai_pax.cli.shell_passthrough import (
@@ -28,13 +29,16 @@ from pydantic_ai_pax.cli.shell_passthrough import (
     _ShellOutput,  # pyright: ignore[reportPrivateUsage]
     run_in_terminal,
     run_shell_command,
+    run_workspace_command,
     shell_command,
     terminal_modes_kept,
 )
+from pydantic_ai_pax.cli.shell_terminal import Terminal
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.processes import taskkill_path
+from pydantic_ai_pax.runtime.session import ShellLineWorkspace
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
@@ -659,6 +663,38 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
             return signal.getsignal(signal.SIGINT)
 
     assert await asyncio.to_thread(handler_inside) == signal.getsignal(signal.SIGINT)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
+async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl-C reaches CLAI as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
+    import termios
+
+    from pydantic_ai_pax.cli import shell_passthrough
+
+    leader, follower = os.openpty()
+    monkeypatch.setattr(shell_passthrough, 'attached_terminal', lambda: Terminal(input=follower, output=follower))
+    output = io.StringIO()
+    place = ShellLineWorkspace(workspace=LocalWorkspaceBackend(tmp_path), name='the Fake sandbox')
+
+    async def press_ctrl_c() -> None:
+        while termios.tcgetattr(follower)[3] & termios.ISIG:
+            await anyio.sleep(0.01)
+        os.write(leader, b'\x03')
+
+    try:
+        async with anyio.create_task_group() as keys:
+            keys.start_soon(press_ctrl_c)
+            with anyio.fail_after(10):
+                context = await run_workspace_command(
+                    'sleep 30', place=place, console=Console(file=output), interrupts=Interrupts()
+                )
+        assert termios.tcgetattr(follower)[3] & termios.ISIG
+    finally:
+        os.close(leader)
+        os.close(follower)
+    assert 'Interrupted (' in output.getvalue()
+    assert context is not None and '$ sleep 30\nInterrupted\n' in context
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')

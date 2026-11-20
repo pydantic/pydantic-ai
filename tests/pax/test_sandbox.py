@@ -74,7 +74,10 @@ from pydantic_ai_pax.builtin_plugins.sandbox.seed import (
     seed,
     snapshot,
 )
+from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.api_keys import load_keys, save_key
+from pydantic_ai_pax.config.project_settings import ProjectSettings
+from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import (
     ConversationChanged,
     LoadedPlugin,
@@ -85,6 +88,7 @@ from pydantic_ai_pax.plugins import (
 )
 from pydantic_ai_pax.runtime.imported_history import imported_kind
 from pydantic_ai_pax.runtime.rewind import rewind_points
+from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs, Type
 
 if TYPE_CHECKING:
@@ -421,7 +425,7 @@ class TestCommand:
             'with your uncommitted changes.\n'
             'git and gh there act as @Ada, on every repository that login reaches. '
             "Fake's proxy, outside the sandbox, holds the token until the sandbox is deleted.\n"
-            'Your files here stay as they are: ask the agent to push, then pull here. ! commands still run here.'
+            'Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.'
         )
         assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
         # The history records the sandbox before any prompt, so every copy of the conversation finds it.
@@ -789,6 +793,101 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
     result = await fork.prompt('in the background')
     assert working_dirs[-1] == str(provider.folder(WorkspaceRef(provider='fake', id='sbx-1')))
     assert result.response.workspace_ref == WorkspaceRef(provider='fake', id='sbx-1')
+
+
+def sandboxed_shell(
+    loaded: LoadedPlugin[None], checkout: Path, tmp_path: Path
+) -> tuple[SessionRuntime[None, str], io.StringIO]:
+    """A headless shell on `checkout` with the plugin's capability, whose conversation the plugin's commands act on."""
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(), deps_type=type(None)),
+        deps=None,
+        plugins=loaded.capabilities,
+        usage_limits=None,
+        console=Console(file=output, force_terminal=False, width=200),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=checkout,
+    )
+    loaded.host.conversation = shell.session
+    return shell, output
+
+
+def saved_prompts(shell: SessionRuntime[None, str]) -> list[str]:
+    return [
+        part.content
+        for message in shell.session.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+    ]
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProvider, tmp_path: Path) -> None:
+    """A `!` line in a sandboxed conversation runs in the sandbox, where the agent's commands run, and says so."""
+    loaded = load(checkout)
+    shell, output = sandboxed_shell(loaded, checkout, tmp_path)
+    await plugin_of(loaded).command(['fake'])
+    folder = provider.folder(WorkspaceRef(provider='fake', id='sbx-1')).resolve()
+    for line in ('!pwd -P', "!head -c 100001 /dev/zero | tr '\\0' x >&2; exit 3", '!!vim', '/exit'):
+        shell.send_input(line)
+    assert await shell.run() == 'exit'
+
+    text = output.getvalue()
+    assert f'Runs in the Fake sandbox; command and output saved for the next prompt\n{folder}\nDone (' in text
+    assert str(checkout.resolve()) not in text
+    assert (
+        '!! gives a command this terminal, so it cannot run in the Fake sandbox. '
+        'Use !vim to run it there without the terminal.'
+    ) in text
+    cut = f'{"x" * 100_000}\n[Output truncated after 100000 characters]\n'
+    assert saved_prompts(shell)[-2:] == [
+        f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
+        f'$ pwd -P\nExit code 0\n\nstdout:\n{folder}\n\n\nstderr:\n',
+        f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
+        f"$ head -c 100001 /dev/zero | tr '\\0' x >&2; exit 3\nExit code 3\n\nstdout:\n\n\nstderr:\n{cut}",
+    ]
+
+
+@pytest.mark.parametrize('deleted', [False, True])
+async def test_a_shell_line_reports_a_sandbox_it_cannot_use(
+    checkout: Path, provider: FakeProvider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deleted: bool
+) -> None:
+    """A sandbox that fails the command, or was deleted, is reported; the `!` line never falls back to this machine."""
+
+    async def stopped(self: FakeSandboxBackend, command: WorkspaceCommand, **kwargs: object) -> CommandResult:
+        raise WorkspaceUnavailableError('The Fake sandbox stopped.')
+
+    loaded = load(checkout)
+    shell, output = sandboxed_shell(loaded, checkout, tmp_path)
+    plugin = plugin_of(loaded)
+    await plugin.command(['fake'])
+    if deleted:
+        await plugin.command(['delete'])
+    else:
+        monkeypatch.setattr(FakeSandboxBackend, 'run', stopped)
+    saved = saved_prompts(shell)
+    shell.send_input('!pwd')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+
+    text = output.getvalue()
+    if deleted:
+        assert "This conversation's Fake sandbox was deleted. Run /new to start another." in text
+        assert saved_prompts(shell) == saved
+    else:
+        assert 'Shell error: The Fake sandbox stopped.' in text
+        assert saved_prompts(shell) == [
+            *saved,
+            'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
+            '$ pwd\nShell error: The Fake sandbox stopped.\n\nstdout:\n\n\nstderr:\n',
+        ]
+    assert str(checkout.resolve()) not in text
 
 
 async def test_a_fork_before_the_first_answer_runs_in_the_sandbox(checkout: Path, provider: FakeProvider) -> None:

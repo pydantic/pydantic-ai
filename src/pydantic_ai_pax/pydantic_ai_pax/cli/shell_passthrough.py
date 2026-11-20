@@ -13,21 +13,29 @@ import time
 from collections.abc import Generator
 from pathlib import Path
 from types import FrameType
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai_pax.cli.shell_terminal import COMMAND_ENVIRONMENT, PtyRun, attached_terminal
+from pydantic_ai.workspaces import CommandResult, Workspace
+from pydantic_ai_pax.cli.shell_terminal import COMMAND_ENVIRONMENT, PtyRun, attached_terminal, ctrl_c_as_key
+from pydantic_ai_pax.errors import error_message
 from pydantic_ai_pax.runtime.processes import kill_process_tree, signal_process_group
 from pydantic_ai_pax.ui.menus.menu_worker import full_terminal
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
 
+if TYPE_CHECKING:
+    from pydantic_ai_pax.runtime.session import ShellLineWorkspace
+
 HELP = (
     '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); save command and output for the next prompt.'
+    ' In a /sandbox conversation it runs in the sandbox.'
     ' A full-screen program such as `!vim` gets the terminal, and only its exit status is saved\n'
-    '!!COMMAND: Give COMMAND the terminal from the start, for prompts and REPLs; save only its exit status'
+    '!!COMMAND: Give COMMAND the terminal from the start, for prompts and REPLs; save only its exit status.'
+    ' Only on this machine, not in a sandbox'
 )
 
 # Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
@@ -150,6 +158,63 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
         f'The user ran a local shell command (not an agent tool call):\n'
         f'$ {command}\n{status}\n\nstdout:\n{output.stdout.getvalue()}\n\nstderr:\n{output.stderr.getvalue()}'
     )
+
+
+async def run_workspace_command(
+    command: str, *, place: 'ShellLineWorkspace', console: Console, interrupts: Interrupts
+) -> str | None:
+    """Run in `place`, such as the conversation's sandbox, and return context for the next model request.
+
+    The workspace returns the output once the command exits, so it shows then, not as it arrives.
+    Ctrl-C cancels the command, read as a key (`ctrl_c_as_key`) as for a local one. A `!!command` needs
+    this terminal, so it is refused and `None` returned.
+    """
+    if command.startswith('!'):
+        console.print(
+            f'!! gives a command this terminal, so it cannot run in {place.name}. '
+            f'Use !{command[1:].strip()} to run it there without the terminal.',
+            style=theme.color(theme.WARNING),
+            markup=False,
+        )
+        return None
+    console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
+    console.print(f'Runs in {place.name}; command and output saved for the next prompt', style=theme.color(theme.MUTED))
+    started = time.monotonic()
+    error: str | None = None
+    result: CommandResult | None = None
+
+    async def execute() -> None:
+        nonlocal result
+        result = await Workspace(place.workspace).run(command, shell=True)
+
+    completed = True
+    terminal = attached_terminal()
+    try:
+        with contextlib.nullcontext() if terminal is None else ctrl_c_as_key(terminal, interrupts.cancel):
+            completed = await interrupts.run(execute())
+    except Exception as exc:  # noqa: BLE001 -- a failed sandbox command must not end the shell.
+        error = error_message(exc)
+    stdout = stderr = ''
+    exit_code: int | None = None
+    if result is not None:
+        stdout, stderr, exit_code = _capped(result.stdout), _capped(result.stderr), result.exit_code
+        for text in (stdout, stderr):
+            if text:
+                console.print(
+                    text, end='' if text.endswith('\n') else '\n', markup=False, highlight=False, soft_wrap=True
+                )
+    status = _report(console, error=error, completed=completed, exit_code=exit_code, started=started)
+    return (
+        f'The user ran a shell command in {place.name} (not an agent tool call):\n'
+        f'$ {command}\n{status}\n\nstdout:\n{stdout}\n\nstderr:\n{stderr}'
+    )
+
+
+def _capped(text: str) -> str:
+    """`text` cut to the characters a `!` command saves for the model, marked when cut."""
+    if len(text) <= _MAX_OUTPUT_CHARS:
+        return text
+    return f'{text[:_MAX_OUTPUT_CHARS]}\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n'
 
 
 async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:

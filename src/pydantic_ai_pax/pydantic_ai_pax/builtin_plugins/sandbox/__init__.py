@@ -42,7 +42,7 @@ from pydantic_ai_pax.models.profiles import KEY_NAME
 from pydantic_ai_pax.plugins import NoSettings, Plugin, PluginHost, SessionEnd
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
-from pydantic_ai_pax.runtime.session import ConversationWorkspace
+from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_ai_pax.ui.rendering.status import StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
@@ -169,8 +169,15 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         if ref is None and ctx.conversation_id == conversation.conversation_id:
             # A run of the conversation on screen without its history, such as a Monty cell or a task prompt.
             ref = history_sandbox(conversation.messages)
-        if (ref := _owned(ref)) is None:
+        return None if (ref := _owned(ref)) is None else self._workspace(ref)
+
+    def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> ShellLineWorkspace | None:
+        if (ref := history_sandbox(messages)) is None:
             return None
+        return ShellLineWorkspace(workspace=self._workspace(ref), name=f'the {PROVIDERS[ref.provider].title} sandbox')
+
+    def _workspace(self, ref: WorkspaceRef) -> WorkspaceBackend:
+        """The sandbox `ref` names, with the variables `request_env` gave it; agent runs and `!` lines both use it."""
         sandbox = self.plugin.sandbox(ref)
         # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
         return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env)
@@ -398,5 +405,5 @@ def _started(
         )
         if checkout.clone_url is None and checkout.head is not None:
             lines.append('origin is not on GitHub, so pushing it needs credentials the sandbox does not have.')
-    lines.append('Your files here stay as they are: ask the agent to push, then pull here. ! commands still run here.')
+    lines.append('Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.')
     return '\n'.join(lines)

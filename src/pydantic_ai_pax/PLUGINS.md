@@ -3590,8 +3590,8 @@ When the conversation or its title changed, every loaded plugin, the caller incl
 receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
 Resuming the conversation already held only shows its history again. An in-memory
 `Transcript` has nothing saved, so its `resume` raises `LookupError`.
-Local `!command` executions append a user message with the command, stdout, stderr, and
-completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
+`!command` executions, on this machine or in the conversation's `/sandbox` sandbox, append a user
+message with the command, stdout, stderr, and completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
 `!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
 the context reaches the model on the next prompt.
 
