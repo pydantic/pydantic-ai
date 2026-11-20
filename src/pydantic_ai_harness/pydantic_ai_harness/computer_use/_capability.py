@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import logging
 import math
 import weakref
 from collections.abc import AsyncGenerator, Sequence
@@ -15,7 +16,7 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
-from pydantic_ai._computer_use import fit_screenshot, latest_screenshot_size, png_size
+from pydantic_ai._computer_use import latest_screenshot_size, png_size
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -62,6 +63,8 @@ if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.run import AgentRunResult
+
+_logger = logging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
 The `computer` tool shows and controls this computer's screen.
@@ -110,10 +113,7 @@ _LOOKING_PARAMETERS = Tool(_look).tool_def.parameters_json_schema
 
 
 async def _offer_what_the_workspace_allows(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
-    """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools there.
-
-    A provider's own computer tool has a fixed list of actions, so a call from it that acts is refused when it runs.
-    """
+    """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools there."""
     if not ctx.workspace.read_only:
         return tool_def
     return replace(tool_def, parameters_json_schema=_LOOKING_PARAMETERS)
@@ -122,9 +122,9 @@ async def _offer_what_the_workspace_allows(ctx: RunContext[Any], tool_def: ToolD
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
 """One lock per event loop and screen, keyed by the display object and by the workspace ref.
 
-Agents that share a screen, such as parallel sub-agents, take turns one whole call at a time, so one agent's clicks
-never land between another's. A lock can't wake a task waiting on another event loop, so calls on separate loops don't
-take turns. A lock is dropped once no call holds it or waits for it."""
+Agents that share a screen, such as parallel sub-agents, take turns one whole call at a time. A lock can't wake a task
+on another event loop, so calls on separate loops don't take turns. A lock is dropped once nothing holds or waits for
+it."""
 
 _RELEASE_TIMEOUT = 5
 """Seconds to wait, at most, for the screen and for each button release, when a call or a run's end releases buttons."""
@@ -167,20 +167,6 @@ def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
     return run if run is not None and run.run_id == ctx.run_id else None
 
 
-@dataclass(frozen=True)
-class _ScreenshotLimit:
-    """The largest screenshot a model takes. A field left `None` is unlimited."""
-
-    max_side: int | None = None
-    """The longest side, in pixels."""
-    max_pixels: int | None = None
-    """The pixel count."""
-
-    def fit(self, size: tuple[int, int]) -> tuple[int, int]:
-        """The largest size with the same shape as `size` that fits the limit: `size` itself when it fits."""
-        return fit_screenshot(size, max_side=self.max_side, max_pixels=self.max_pixels)
-
-
 _NO_DISPLAY = (
     '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
     "run's workspace has none."
@@ -201,14 +187,10 @@ _INTERRUPTED = (
 class _Plan:
     """What a call needs from the run's messages and model, which code inside a durable step can't read."""
 
-    grid: int | None
-    """The grid the model pointed on, if any."""
     seen: tuple[int, int] | None
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: bool
     """Whether the actions to run differ from the ones the model asked for."""
-    limit: _ScreenshotLimit
-    """The largest screenshot the model that made the call accepts. A larger screen is refused."""
     held: list[MouseButton]
     """The mouse buttons the last call that succeeded said are still pressed."""
     keeps_held: bool
@@ -271,17 +253,7 @@ def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolA
         run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
 
 
-def _check_fits(size: tuple[int, int], limit: _ScreenshotLimit) -> None:
-    """Refuse a screen of `size` larger than the model can see."""
-    if (fitted := limit.fit(size)) != size:
-        raise UserError(
-            f'The screen is {size[0]}x{size[1]}, larger than the model can see. Start the display at '
-            f'{fitted[0]}x{fitted[1]} or smaller.'
-        )
-
-
 def _points(action: ComputerToolAction) -> Sequence[Point]:
-    """The positions an action names."""
     match action:
         case Click(x=x, y=y) | Scroll(x=x, y=y) | MouseMove(x=x, y=y) if x is not None and y is not None:
             return (Point(x=x, y=y),)
@@ -294,12 +266,12 @@ def _points(action: ComputerToolAction) -> Sequence[Point]:
             return ()
 
 
-def _off_screen(actions: list[ComputerToolAction], width: int, height: int, space: str) -> str | None:
+def _off_screen(actions: list[ComputerToolAction], width: int, height: int) -> str | None:
     """Why the first position outside `width` by `height` is refused, if there is one."""
     for index, action in enumerate(actions, 1):
         for point in _points(action):
             if point.x >= width or point.y >= height:
-                return f'Action {index} ({action.type}) at ({point.x}, {point.y}) is outside the {width}x{height} {space}, so no action ran.'
+                return f'Action {index} ({action.type}) at ({point.x}, {point.y}) is outside the {width}x{height} screen, so no action ran.'
     return None
 
 
@@ -313,7 +285,7 @@ class _CoordinateMapping:
     """One `computer` call's coordinate space and how it maps to the display."""
 
     space: tuple[int, int]
-    """The model's coordinate space: a grid, or the size of the screenshot it pointed on."""
+    """The model's coordinate space: the size of the screenshot it pointed on."""
     display: tuple[int, int]
     """The display's size in pixels."""
 
@@ -408,8 +380,7 @@ async def _perform(
 ) -> tuple[int, str | None, _Steps]:
     """Run the actions in order until one fails. Return how many ran, why the next one failed, and the steps they took.
 
-    `held` starts as the buttons pressed before the call, and ends as the ones that may still be pressed. After an
-    action, the screen settles before a zoom or a screenshot.
+    `held` starts as the buttons pressed before the call, and ends as the ones that may still be pressed.
     """
     steps = _Steps(display, mapping, settle_seconds)
     for index, action in enumerate(actions):
@@ -432,7 +403,6 @@ async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseBu
         if pressing and isinstance(e, UnsupportedActionError):
             held.remove(pressing)  # the display refused the press, so nothing is pressed
         return str(e) or type(e).__name__
-    # A click releases its button, and a drag the left one.
     released = action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
     if released in held:
         held.remove(released)
@@ -547,7 +517,10 @@ async def _taking_turns(keys: list[object]) -> AsyncGenerator[None]:
 
 
 async def _screenshot(steps: _Steps, summary: list[str]) -> tuple[bytes, tuple[int, int]]:
-    """The settled screenshot ending a call and its size, or a `ToolFailed` that starts with the call's `summary`."""
+    """The settled screenshot ending a call and its size, or a `ToolFailed` that starts with the call's `summary`.
+
+    A screenshot that isn't a PNG raises `UserError`, since every call on that display would fail the same way.
+    """
     try:
         png = await steps.settle() or await steps.display.screenshot()
     except WorkspaceUnavailableError:
@@ -555,7 +528,9 @@ async def _screenshot(steps: _Steps, summary: list[str]) -> tuple[bytes, tuple[i
     except WorkspaceError as e:
         raise ToolFailed(' '.join([*summary, f'Taking the screenshot failed: {e}'])) from e
     if (size := png_size(png)) is None:
-        raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
+        raise UserError(
+            'The display returned a screenshot that is not a PNG. `Display.screenshot` must return PNG bytes.'
+        )
     return png, size
 
 
@@ -594,7 +569,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     `ComputerUse` runs that tool's calls. `False` sends the `computer` function tool to every model instead. OpenAI's
     own computer tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer
-    position. With `False`, GPT can do all of these.
+    position; the function tool can.
     """
 
     id: str | None = 'computer_use'
@@ -642,22 +617,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(_READ_ONLY)
         run = _run_buttons(ctx)
         keeps_held = run is not None
-        # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons. This
-        # throwaway record is never read.
+        # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons, and
+        # this record is never read.
         run = run or _RunButtons(run_id=ctx.run_id)
         made = _the_call(ctx)
         call = made[1] if made else None
         plan = _Plan(
-            # The grid the model that made the call points on, as that model recorded it.
-            grid=call.coordinate_grid if call else None,
             # The model pointed on the latest screenshot before its call.
             seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=call is not None and call.actions != actions,
-            # The screenshot the call ends with must fit the model that made the call. A model that answers next and
-            # can't take it refuses the request itself.
-            limit=_ScreenshotLimit(call.screenshot_max_side, call.screenshot_max_pixels)
-            if call
-            else _ScreenshotLimit(),
             held=list(run.held),
             keeps_held=keeps_held,
         )
@@ -718,14 +686,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             try:
                 # Also starts a display that stopped, before anything acts.
                 size = await _display_size(display)
-                # The call ends with a screenshot at the screen's size. If the model can't take a screenshot that
-                # size, the run ends before anything acts.
-                _check_fits(size, plan.limit)
-                # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size.
-                space = (plan.grid, plan.grid) if plan.grid else plan.seen or size
+                # The model pointed on the screenshot it saw, even if the display has changed size.
+                space = plan.seen or size
                 mapping = _CoordinateMapping(space=space, display=size)
                 # A backend would move a position outside the screen to the screen's edge and act there.
-                if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
+                if refused := _off_screen(actions, *mapping.space):
                     raise ModelRetry(refused)
                 pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
                 _leave_presses_for_run_end(ctx, actions)
@@ -736,8 +701,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 message = f'{e.message.rstrip(".")}. {released}' if released else e.message
                 return _NotRun(message, 'retry' if isinstance(e, ModelRetry) else 'tool', held=stuck)
             except BaseException:
-                # The call was cancelled, such as by the tool's timeout, or the workspace was lost. Release the buttons
-                # before the next call.
+                # Cancelled, such as by the tool's timeout, or the workspace was lost.
                 await _release(display, held)
                 raise
 
@@ -777,8 +741,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if held:
             buttons = 'button is' if len(held) == 1 else 'buttons are'
             summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
-        # A model that uses a grid gives grid positions. Telling it the size in pixels would invite pixel positions.
-        summary.append('Screenshot attached.' if plan.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
+        summary.append(f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *steps.outputs, BinaryImage(data=png, media_type='image/png')]
         return ToolReturn(content, metadata=result), held
 
@@ -791,7 +754,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return settings
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        # For a model that uses a grid, the agent adds to the tool's description how to give grid positions.
         return [_INSTRUCTIONS, _shell_instructions]
 
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
@@ -805,8 +767,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """The provider's own computer tool, sized to the screenshot the model gives positions on.
 
         That's the latest screenshot, or the display's size before the first screenshot. It's worked out again for
-        each model a step tries.
+        each model a step tries. A read-only workspace gets none: its actions can't be narrowed to the ones that look.
         """
+        if ctx.workspace.read_only:
+            return None
         if (seen := latest_screenshot_size(ctx.messages)) is not None:
             # Once there's a screenshot, the display isn't read, so a reply that doesn't use the screen doesn't start
             # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
@@ -834,14 +798,17 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         try:
             return await handler()
         finally:
-            # Give the context back as the caller had it, so nothing after this run sees its record.
             _RUN_BUTTONS.reset(token)
             await self._release_held(ctx, run.might_be_held())
 
     async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
         if held:
             with anyio.CancelScope(shield=True):
-                await self._release_on_display(ctx, held)
+                try:
+                    await self._release_on_display(ctx, held)
+                except Exception:
+                    # The run's result matters more than a button left pressed on the screen.
+                    _logger.warning('Could not release the mouse buttons %s when the run ended', held, exc_info=True)
 
     @durable_operation('release')
     async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
