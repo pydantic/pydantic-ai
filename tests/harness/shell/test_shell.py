@@ -1919,7 +1919,8 @@ class TestSignalling:
         )
         with pytest.raises(WorkspaceError, match='Operation not permitted'):
             await job.kill()
-        assert [argv[:3] for argv in backend.argv] == [['sh', '-c', _KILL_SCRIPT]]
+        # Past `Job.alive`'s check (named `alive`), only the signal ran: no zombie check.
+        assert [argv[:3] for argv in backend.argv if argv[3] != 'alive'] == [['sh', '-c', _KILL_SCRIPT]]
 
     async def test_a_group_left_with_only_zombies_is_stopped(self, shell_dir: Path) -> None:
         # Between a wrapper's exit and its reap, the job's process group holds only zombies, and macOS refuses
