@@ -42,7 +42,7 @@ def test_adjustable_reasoning_models(model_name: str):
     assert 'mistral_reasoning_efforts' not in profile
 
 
-@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0', 'mistral-large-latest'])
 def test_large_4_models(model_name: str):
     """Large 4 accepts `'low'`/`'medium'`/`'high'` and rejects `'none'`, so it can't turn reasoning off."""
     profile = MistralProvider.model_profile(model_name)
@@ -73,7 +73,6 @@ def test_magistral_models(model_name: str):
 
 
 _NON_REASONING_MODELS = [
-    'mistral-large-latest',
     'codestral-latest',
     'mistral-moderation-latest',
     'devstral-medium-latest',

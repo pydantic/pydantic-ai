@@ -4074,7 +4074,7 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
     assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)
 
 
-@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0', 'mistral-large-latest'])
 @pytest.mark.parametrize(
     'thinking, expected_reasoning_effort',
     [
