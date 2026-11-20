@@ -452,8 +452,7 @@ Gotchas:
   and a model that can't take images or can't see the latest screenshot is always skipped, whatever `fallback_on`
   says. If every model is skipped, the run ends with the last model's `UserError`; if another model failed in a way
   `fallback_on` moves on from, with a `FallbackExceptionGroup`. The previous `computer` call has already acted by
-  then. A custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
-  `ComputerCallPart`, not from the run's model.
+  then. A custom runner reads `coordinate_grid` from each `ComputerCallPart`, not from the run's model.
 - Screenshots are sent at the screen's full size. If the screen is larger than the model accepts (profile
   `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`), the model is refused the request that
   would send the screenshot, with an error that names the largest size that fits; a fallback moves on to its next
