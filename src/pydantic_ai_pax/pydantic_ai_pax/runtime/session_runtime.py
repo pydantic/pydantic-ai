@@ -1418,9 +1418,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _shell_line(self, command: str) -> str | None:
         """Run a `!` line where the conversation's runs work, its sandbox or this machine; return what to save."""
+        # The capabilities a run's workspace is chosen from: the agent's own, then the next run's.
+        configured = [*(agent_capabilities(self.session.agent) or ()), *self.run_plugins()]
         try:
-            # The capabilities a run's workspace is chosen from: the agent's own, then the next run's.
-            configured = [*(agent_capabilities(self.session.agent) or ()), *self.run_plugins()]
             place = shell_line_workspace(configured, self.session.messages)
         except Exception as exc:  # noqa: BLE001 -- a sandbox that cannot be opened, as when deleted, must not end the shell.
             self.console.print(error_message(exc), style=theme.color(theme.ERROR), markup=False)

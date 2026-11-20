@@ -671,11 +671,11 @@ async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, mon
     """Ctrl-C reaches CLAI as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
     import termios
 
-    from pydantic_ai_pax.cli import shell_passthrough
-
     leader, follower = os.openpty()
     os.set_blocking(leader, False)  # The test's key press never waits on the event loop.
-    monkeypatch.setattr(shell_passthrough, 'attached_terminal', lambda: Terminal(input=follower, output=follower))
+    monkeypatch.setattr(
+        'pydantic_ai_pax.cli.shell_passthrough.attached_terminal', lambda: Terminal(input=follower, output=follower)
+    )
 
     class Sandbox(LocalWorkspaceBackend):
         async def run(

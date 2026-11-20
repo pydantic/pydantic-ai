@@ -25,6 +25,7 @@ from pydantic_ai_pax.runtime.processes import kill_process_tree, signal_process_
 from pydantic_ai_pax.ui.menus.menu_worker import full_terminal
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class _ShellOutput(asyncio.SubprocessProtocol):
         if remaining >= 0:
             captured.write(text[:remaining])
             if len(text) > remaining:
-                captured.write(f'\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n')
+                captured.write(_truncated())
         if text:
             self.console.print(text, end='', markup=False, highlight=False, soft_wrap=True)
             self.needs_newline = not text.endswith('\n')
@@ -199,8 +200,13 @@ async def run_workspace_command(
         stdout, stderr, exit_code = _capped(result.stdout), _capped(result.stderr), result.exit_code
         for text in (stdout, stderr):
             if text:
+                # The sandbox's output, which a file it prints may control, gets no terminal escapes; the model sees it as is.
                 console.print(
-                    text, end='' if text.endswith('\n') else '\n', markup=False, highlight=False, soft_wrap=True
+                    terminal_text(text),
+                    end='' if text.endswith('\n') else '\n',
+                    markup=False,
+                    highlight=False,
+                    soft_wrap=True,
                 )
     status = _report(console, error=error, completed=completed, exit_code=exit_code, started=started)
     return (
@@ -209,11 +215,14 @@ async def run_workspace_command(
     )
 
 
+def _truncated() -> str:
+    """Marks a stream cut to `_MAX_OUTPUT_CHARS` in the context a `!` line saves, locally or in a sandbox."""
+    return f'\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n'
+
+
 def _capped(text: str) -> str:
     """`text` cut to the characters a `!` command saves for the model, marked when cut."""
-    if len(text) <= _MAX_OUTPUT_CHARS:
-        return text
-    return f'{text[:_MAX_OUTPUT_CHARS]}\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n'
+    return text if len(text) <= _MAX_OUTPUT_CHARS else text[:_MAX_OUTPUT_CHARS] + _truncated()
 
 
 async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:

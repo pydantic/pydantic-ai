@@ -834,7 +834,8 @@ async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProv
     shell, output = sandboxed_shell(loaded, checkout, tmp_path)
     await plugin_of(loaded).command(['fake'])
     folder = provider.folder(WorkspaceRef(provider='fake', id='sbx-1')).resolve()
-    for line in ('!pwd -P', "!head -c 100001 /dev/zero | tr '\\0' x >&2; exit 3", '!!vim', '/exit'):
+    clipboard = "!printf '\\033]52;c;aGk=\\007'"  # A file the sandbox prints could set this machine's clipboard.
+    for line in ('!pwd -P', "!head -c 100001 /dev/zero | tr '\\0' x >&2; exit 3", clipboard, '!!vim', '/exit'):
         shell.send_input(line)
     assert await shell.run() == 'exit'
 
@@ -843,7 +844,9 @@ async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProv
     assert str(checkout.resolve()) not in text
     assert '!! needs this terminal, which the Fake sandbox does not have. Nothing ran.' in text
     cut = f'{"x" * 100_000}\n[Output truncated after 100000 characters]\n'
-    assert saved_prompts(shell)[-2:] == [
+    assert '\x1b' not in text and '\\x1b]52;c;aGk=\\x07' in text
+    assert '\x1b]52;c;aGk=\x07' in saved_prompts(shell)[-1]
+    assert saved_prompts(shell)[-3:-1] == [
         f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
         f'$ pwd -P\nExit code 0\n\nstdout:\n{folder}\n\n\nstderr:\n',
         f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
