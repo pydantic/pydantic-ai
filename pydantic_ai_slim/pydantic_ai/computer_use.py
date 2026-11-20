@@ -485,21 +485,21 @@ class ComputerResult(TypedDict):
 
 
 _COORDINATE_GRID = 'coordinate_grid'
-"""The `provider_details` key where the agent records the size of the grid a call's positions are on."""
+"""The `provider_details` key where a model records the size of the grid its call's positions are on."""
 
 _SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
-"""The `provider_details` key where the agent records the longest screenshot side the call's model can see."""
+"""The `provider_details` key where a model records the longest screenshot side it can see."""
 
 _SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
-"""The `provider_details` key where the agent records the most screenshot pixels the call's model can see."""
+"""The `provider_details` key where a model records the most screenshot pixels it can see."""
 
 
 _LABEL_KEYS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
-"""The `provider_details` keys the agent adds to a `computer` call. The provider never sent or saw them."""
+"""The `provider_details` keys a model adds to its `computer` calls. The provider never sent or saw them."""
 
 
 def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
-    """The value the agent recorded on `part` under `key`, or `None` unless it is an `int` of at least `minimum`."""
+    """The value the model recorded on `part` under `key`, or `None` unless it is an `int` of at least `minimum`."""
     value = (part.provider_details or {}).get(key)
     return value if type(value) is int and value >= minimum else None
 
@@ -526,8 +526,8 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def coordinate_grid(self) -> int | None:
         """The size of the grid the call's positions are on, such as `1000` for positions from 0 to 999.
 
-        `None` means the positions are pixels. The agent copies the value from the `computer_use_coordinate_grid`
-        setting in the profile of the model that made the call, and stores it in the call's `provider_details`. A
+        `None` means the positions are pixels. The model that made the call copies the value from the
+        `computer_use_coordinate_grid` setting in its profile, and stores it in the call's `provider_details`. A
         history that lost `provider_details`, such as one a UI rebuilt, gives `None`.
         """
         return _label(self, _COORDINATE_GRID, minimum=2)
@@ -536,10 +536,9 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_side(self) -> int | None:
         """The longest screenshot side, in pixels, that the model that made the call can see. `None` means no limit.
 
-        The agent copies the value from the `computer_use_screenshot_max_side` setting in the model's profile. A
-        computer use capability reads it to refuse a screen the model can't see before the call does anything. For a
-        call made through a `FallbackModel`, it is the smallest limit of its models. A history a UI rebuilt gives
-        `None`.
+        The model copies the value from the `computer_use_screenshot_max_side` setting in its profile. A computer use
+        capability reads it to refuse a screen the model can't see before the call does anything. A history a UI
+        rebuilt gives `None`.
         """
         return _label(self, _SCREENSHOT_MAX_SIDE)
 
@@ -547,8 +546,8 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def screenshot_max_pixels(self) -> int | None:
         """The most pixels (width times height) in a screenshot that the model that made the call can see.
 
-        `None` means no limit. The agent copies the value from the `computer_use_screenshot_max_pixels` setting in the
-        model's profile, the same way as
+        `None` means no limit. The model copies the value from the `computer_use_screenshot_max_pixels` setting in its
+        profile, the same way as
         [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
         """
         return _label(self, _SCREENSHOT_MAX_PIXELS)

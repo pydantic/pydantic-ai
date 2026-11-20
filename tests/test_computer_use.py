@@ -18,7 +18,7 @@ from pydantic_ai.computer_use import (
     ComputerReturnPart,
     Screenshot,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -265,6 +265,14 @@ async def test_a_grid_model_is_told_its_grid_and_its_calls_record_it(streamed: b
     assert [part.coordinate_grid for part in _computer_calls(restored)] == [1000]
 
 
+def test_a_request_prepared_again_is_told_its_grid_once() -> None:
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=GRID_PROFILE)
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[_computer_tool_def()]))
+    _, again = model.prepare_request(None, prepared)
+    assert [tool.description for tool in again.function_tools] == [tool.description for tool in prepared.function_tools]
+    assert GRID_SENTENCE in (prepared.function_tools[0].description or '')
+
+
 async def test_a_computer_call_a_stream_ended_on_records_its_grid_for_the_run_that_resumes_it() -> None:
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         yield {0: DeltaToolCall(name='computer', json_args='{"actions": [{"type": "click", "x": 500, "y": 500}]}')}
@@ -281,22 +289,39 @@ async def test_a_computer_call_a_stream_ended_on_records_its_grid_for_the_run_th
     assert call.coordinate_grid == 1000
 
 
-@pytest.mark.parametrize(
-    'grids',
-    [pytest.param([None], id='pixels'), pytest.param([1000, None], id='mixed-fallback')],
-)
-async def test_a_model_not_known_to_point_on_a_grid_is_left_alone(grids: list[int | None]) -> None:
+async def test_a_model_not_known_to_point_on_a_grid_is_left_alone() -> None:
     descriptions: list[str | None] = []
     respond, _ = _click_then_stop(descriptions)
-    models = [
-        FunctionModel(respond, profile=ModelProfile(computer_use_coordinate_grid=grid) if grid else None)
-        for grid in grids
-    ]
-    agent = _grid_agent(models[0] if len(models) == 1 else FallbackModel(*models))
-    messages = (await agent.run('Click.')).all_messages()
+    messages = (await _grid_agent(FunctionModel(respond)).run('Click.')).all_messages()
     assert descriptions == ['Act on the screen.'] * 2
     [call] = _computer_calls(messages)
     assert call.provider_details is None
+
+
+@pytest.mark.parametrize(
+    'grids', [pytest.param((1000, None), id='grid-down'), pytest.param((None, 1000), id='pixels-down')]
+)
+async def test_a_fallback_call_has_the_grid_of_the_model_that_made_it(grids: tuple[int | None, int | None]) -> None:
+    # Each model is told its own grid and labels its own calls, so a call made after a fallback points on the grid of
+    # the model that made it.
+    down_saw: list[str | None] = []
+    up_saw: list[str | None] = []
+
+    def down(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        down_saw.append(info.function_tools[0].description)
+        raise ModelAPIError('down', 'Unavailable.')
+
+    respond, _ = _click_then_stop(up_saw)
+    down_grid, up_grid = grids
+    model = FallbackModel(
+        FunctionModel(down, profile=ModelProfile(computer_use_coordinate_grid=down_grid) if down_grid else None),
+        FunctionModel(respond, profile=ModelProfile(computer_use_coordinate_grid=up_grid) if up_grid else None),
+    )
+    messages = (await _grid_agent(model).run('Click.')).all_messages()
+    told = {None: 'Act on the screen.', 1000: f'Act on the screen. {GRID_SENTENCE}'}
+    assert (down_saw, up_saw) == ([told[down_grid]] * 2, [told[up_grid]] * 2)
+    [call] = _computer_calls(messages)
+    assert call.coordinate_grid == up_grid
 
 
 async def test_a_wrapped_fallback_of_grid_models_is_told_its_grid() -> None:
@@ -350,7 +375,7 @@ def _limited(max_side: int | None, max_pixels: int | None) -> ModelProfile:
     'limits, side, pixels',
     [
         pytest.param([(1568, 1_150_000)], 1568, 1_150_000, id='one-model'),
-        pytest.param([(2576, 3_600_000), (1568, None), (None, None)], 1568, 3_600_000, id='smallest-in-a-fallback'),
+        pytest.param([(2576, 3_600_000), (1568, None)], 2576, 3_600_000, id='the-model-that-answered-a-fallback'),
     ],
 )
 async def test_a_computer_call_records_the_screenshots_its_model_takes(
@@ -361,6 +386,44 @@ async def test_a_computer_call_records_the_screenshots_its_model_takes(
     agent = _grid_agent(models[0] if len(models) == 1 else FallbackModel(*models))
     [call] = _computer_calls((await agent.run('Click.')).all_messages())
     assert (call.screenshot_max_side, call.screenshot_max_pixels, call.coordinate_grid) == (side, pixels, None)
+
+
+def _screenshot(width: int, height: int) -> BinaryImage:
+    header = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + width.to_bytes(4, 'big') + height.to_bytes(4, 'big')
+    return BinaryImage(data=header + b'\x08\x06\x00\x00\x00', media_type='image/png')
+
+
+async def test_a_model_that_cant_see_images_is_refused_the_computer_tool() -> None:
+    respond, _ = _click_then_stop([])
+    agent = _grid_agent(FunctionModel(respond, model_name='blind', profile=ModelProfile(supports_image_input=False)))
+    with pytest.raises(UserError, match="needs a model that accepts images, and 'blind' does not"):
+        await agent.run('Click.')
+
+
+@pytest.mark.parametrize(
+    'size, refusal',
+    [
+        pytest.param((1000, 800), None, id='fits'),
+        pytest.param((1280, 800), 'Start the display at 1000x625 or smaller', id='too-long'),
+        pytest.param((1000, 1000), 'Start the display at 948x948 or smaller', id='too-many-pixels'),
+    ],
+)
+async def test_a_model_is_refused_a_screenshot_larger_than_it_can_see(
+    size: tuple[int, int], refusal: str | None
+) -> None:
+    respond, _ = _click_then_stop([])
+    model = FunctionModel(respond, model_name='small', profile=_limited(1000, 900_000))
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        """Act on the screen."""
+        return ['Done.', _screenshot(*size)]
+
+    agent = Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
+    if refusal is None:
+        assert (await agent.run('Click.')).output == 'ok'
+    else:
+        with pytest.raises(UserError, match=f"larger than 'small' can see. {refusal}"):
+            await agent.run('Click.')
 
 
 @pytest.mark.parametrize('value', [True, 0, '1000'])
