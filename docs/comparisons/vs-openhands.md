@@ -1,6 +1,6 @@
 # Pydantic AI vs OpenHands Software Agent SDK
 
-The OpenHands Software Agent SDK is a Python SDK for agents that work with code, and the engine behind the OpenHands CLI and Cloud: an agent loop with terminal, file-editing and browser tools, workspaces on your machine or in Docker, and an agent server to run them remotely. In Pydantic AI, a [coding agent](https://pydantic.dev/docs/ai/harness/coder/) is one [configuration](../capabilities/overview.md) of a general [`Agent`][pydantic_ai.Agent], so the same [sandboxes](https://pydantic.dev/docs/ai/harness/#execution-environments), [skills](https://pydantic.dev/docs/ai/harness/skills/) and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) serve whatever else you build on it.
+The OpenHands Software Agent SDK is a Python SDK for agents that work with code, and the engine behind the OpenHands CLI and Cloud: an agent loop with terminal, file-editing and browser tools, workspaces on your machine or in Docker, and an agent server to run them remotely. In Pydantic AI, a [coding agent](https://pydantic.dev/docs/ai/harness/coder/) is one [configuration](../capabilities/overview.md) of a general [`Agent`][pydantic_ai.Agent], so the same [sandboxes](../workspace.md#supported-workspaces), [skills](https://pydantic.dev/docs/ai/harness/skills/) and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) serve whatever else you build on it.
 
 Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
 
@@ -11,7 +11,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | Many, via LiteLLM | [Many](../models/overview.md) |
-| Extensibility | Tools, hooks, plugins | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, hooks, plugins | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Coding agent, composed from its tools | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | With [OpenHands Enterprise](https://docs.openhands.dev/enterprise) | [For the framework itself](../enterprise-support.md), no platform required |
@@ -31,7 +31,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | Yes | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ

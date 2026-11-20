@@ -1,50 +1,38 @@
 """Capabilities whose tools make requests record them under durable execution, instead of repeating them.
 
 DBOS runs function tools in workflow code, so a capability's tool I/O is only recorded when the
-capability routes it through a `durable_operation`. Each scenario runs one capability's tools in a
-DBOS workflow, then re-executes the workflow from after its last recorded step, the way recovering a
-committed run does, and checks that no request was made again. Planning's tools also run with an
-event stream handler, whose steps for the events a tool emits must replay in their recorded order.
-Shell's `shell` tool names its job in workflow code, so a recovered workflow must report the job it started.
+capability routes it through a `durable_operation`. Each scenario runs the calls of one case in
+`tests/harness/capability_cases.py` that names `durable_steps`, in a DBOS workflow, then re-executes
+the workflow from after its last recorded step, the way recovering a committed run does, and checks
+that no request was made again. Planning's tools also run with an event stream handler, whose steps
+for the events a tool emits must replay in their recorded order. Shell's `shell` tool names its job
+in workflow code, so a recovered workflow must report the job it started.
 
 The other engines run function tools in their own durable unit, which needs the toolset's `id`; the
-construction tests below check every capability supplies one.
+construction tests below check every one of those capabilities supplies one.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import stat
 import tempfile
 import uuid
 from collections import Counter
-from collections.abc import (
-    AsyncIterable,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Collection,
-    Generator,
-    Mapping,
-    Sequence,
-)
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import anyio
 import pytest
-from pydantic import BaseModel
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.advisor import Advisor
-from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
-from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
-from pydantic_ai_harness.localstack import LocalStack
-from pydantic_ai_harness.memory import InMemoryStore, Memory
+from pydantic_ai_harness.capability_creation import CapabilityStore
+from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCompletedEvent,
@@ -54,35 +42,23 @@ from pydantic_ai_harness.planning import (
     SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.smart_search import SmartSearch
-from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from tests.conftest import detach_dbos_logging
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
+from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
+from .capability_cases import CASES
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
+    # The Exa and You.com cases' `requires`, which their builds below need.
+    import exa_py  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import youdotcom  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from exa_py.agent.types import AgentEffort, AgentOutput, AgentRun
-    from exa_py.api import (
-        ContentsOptions,
-        DeepOutputSchema,
-        DeepSearchOutput,
-        Result,
-        SearchResponse,
-        SearchType,
-        TextContentsOptions,
-    )
-    from youdotcom import models
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
     from pydantic_ai.durable_exec.prefect import PrefectDurability
     from pydantic_ai.durable_exec.temporal import TemporalDurability
-    from pydantic_ai_harness.exa import ExaAgent, ExaSearch
-    from pydantic_ai_harness.youdotcom import YouResearch, YouSearch
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos, prefect, temporalio, exa-py or youdotcom not installed', allow_module_level=True)
-
-_requests: Counter[str] = Counter()
-"""Requests each scenario's fakes received, by request name."""
 
 
 @pytest.fixture
@@ -90,7 +66,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_tool_io',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
     instance = DBOS(config=config)
     DBOS.launch()
@@ -98,7 +73,6 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
@@ -113,234 +87,26 @@ def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
     return FunctionModel(respond)
 
 
-class _ExaClient:
-    async def search(
-        self,
-        query: str,
-        *,
-        contents: ContentsOptions | Literal[False],
-        num_results: int | None = None,
-        type: SearchType | None = None,
-        output_schema: DeepOutputSchema | None = None,
-        include_domains: list[str] | None = None,
-        exclude_domains: list[str] | None = None,
-    ) -> SearchResponse[Result]:
-        _requests[f'exa.search.{type}'] += 1
-        output = DeepSearchOutput(content='deep answer', grounding=[]) if type == 'deep' else None
-        result = Result(url='https://a.dev', id='a', title='A', highlights=['excerpt'])
-        return SearchResponse(results=[result], resolved_search_type=None, auto_date=None, output=output)
-
-    async def get_contents(self, urls: str, *, text: TextContentsOptions) -> SearchResponse[Result]:
-        _requests['exa.get_contents'] += 1
-        result = Result(url=urls, id=urls, title='A', text='page text')
-        return SearchResponse(results=[result], resolved_search_type=None, auto_date=None)
+def _capabilities(
+    built: AbstractCapability[None] | Sequence[AbstractCapability[None]],
+) -> list[AbstractCapability[None]]:
+    return [built] if isinstance(built, AbstractCapability) else list(built)
 
 
-class _ExaAgentRuns:
-    async def create(
-        self,
-        *,
-        query: str,
-        system_prompt: str | None = None,
-        output_schema: dict[str, object] | type[BaseModel] | None = None,
-        effort: AgentEffort | None = None,
-        previous_run_id: str | None = None,
-    ) -> AgentRun | Any:
-        _requests['exa_agent.create'] += 1
-        return AgentRun(id='run_1', status='queued')
-
-    async def poll_until_finished(
-        self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
-    ) -> AgentRun:
-        _requests['exa_agent.poll'] += 1
-        return AgentRun(id=run_id, status='completed', output=AgentOutput(text='Done.'))
-
-
-class _YouClient:
-    async def search_async(
-        self,
-        *,
-        query: str,
-        count: int | None = None,
-        freshness: str | None = None,
-        country: str | None = None,
-        extraction: models.Extraction | None = None,
-        include_domains: Sequence[str] | None = None,
-        exclude_domains: Sequence[str] | None = None,
-        boost_domains: Sequence[str] | None = None,
-    ) -> models.SearchResponse:
-        _requests['you.search'] += 1
-        return models.SearchResponse()
-
-    async def contents_async(
-        self,
-        *,
-        urls: Sequence[str] | None = None,
-        formats: Sequence[models.ContentsFormats] | None = None,
-    ) -> list[models.ContentsResponse]:
-        _requests['you.contents'] += 1
-        return [models.ContentsResponse(url='https://a.dev', title='A', markdown='body')]
-
-    async def answer_async(
-        self,
-        *,
-        query: str,
-        freshness: str | None = None,
-        country: str | None = None,
-        include_domains: Sequence[str] | None = None,
-        exclude_domains: Sequence[str] | None = None,
-        boost_domains: Sequence[str] | None = None,
-    ) -> models.AnswerResponse:
-        _requests['you.answer'] += 1
-        return models.AnswerResponse(answer='the answer')
-
-    async def research_async(
-        self,
-        *,
-        input: str,
-        research_effort: models.ResearchEffort | None = None,
-        background: bool | None = None,
-        source_control: models.SourceControl | Mapping[str, object] | None = None,
-        output_schema: Mapping[str, object] | None = None,
-    ) -> models.ResearchResult:
-        _requests['you.research'] += 1
-        # An empty answer makes the tool ask the model to retry, which the operation records as data.
-        return models.ResearchResponse(
-            output=models.Output(content='', content_type=models.ContentType.TEXT, sources=[]), warnings=None
-        )
-
-    async def finance_research_async(
-        self,
-        *,
-        input: str,
-        research_effort: models.FinanceResearchEffort | None = None,
-    ) -> models.FinanceResearchResponse:
-        _requests['you.finance_research'] += 1
-        return models.FinanceResearchResponse(
-            output=models.FinanceResearchOutput(
-                content='finance answer', content_type=models.FinanceResearchContentType.TEXT, sources=[]
-            )
-        )
-
-
-def _counting_aws_cli() -> str:
-    """An `aws` stand-in that counts its runs in the file named by `HARNESS_AWS_CLI_COUNT`."""
-    directory = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_'))
-    script = directory / 'aws'
-    script.write_text('#!/bin/sh\necho run >> "$HARNESS_AWS_CLI_COUNT"\necho ok\n')
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return str(script)
-
-
-def _counting_model(name: str, respond: Callable[[AgentInfo], ModelResponse]) -> FunctionModel:
-    def counted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        _requests[name] += 1
-        return respond(info)
-
-    return FunctionModel(counted)
-
-
-def _relevant(info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'entity': 1, 'operation': 1})])
-
-
-_CREATION_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_creation_'))
-_SEARCH_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_search_'))
-(_SEARCH_DIRECTORY / 'config.py').write_text('def load(path):\n    # parse the config file\n    return path\n')
-_PLAN_DATABASE = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_plan_')) / 'plan.db'
-_AUTHORED = """
-from pydantic_ai.capabilities import AbstractCapability
-
-
-class Marker(AbstractCapability):
-    def get_instructions(self):
-        return 'marker'
-"""
-
-
-def _agent(
-    name: str,
-    capability: AbstractCapability[None],
-    *calls: tuple[str, dict[str, Any]],
-    workspace: Path | None = None,
-) -> Agent[None, str]:
-    extra: list[AbstractCapability[None]] = [] if workspace is None else [LocalWorkspace[None](str(workspace))]
-    return Agent(
-        _call_tools(*calls),
-        name=name,
-        deps_type=type(None),
-        capabilities=[*extra, capability, DBOSDurability[None]()],
-    )
-
+_DURABLE = {name: case.calls for name, case in CASES.items() if case.calls is not None and case.calls.durable_steps}
+"""The cases whose tools make requests a recovered run must not repeat."""
 
 _AGENTS: dict[str, Agent[None, str]] = {
-    'exa_search': _agent(
-        'exa_search_agent',
-        ExaSearch[None](client=_ExaClient(), include_deep_search=True),
-        ('web_search', {'query': 'q'}),
-        ('get_page', {'url': 'https://a.dev'}),
-        ('deep_search', {'question': 'q'}),
-    ),
-    'exa_agent': _agent('exa_agent_agent', ExaAgent[None](runs=_ExaAgentRuns()), ('exa_agent', {'query': 'q'})),
-    'you_search': _agent(
-        'you_search_agent',
-        YouSearch[None](client=_YouClient()),
-        ('web_search', {'query': 'q'}),
-        ('get_page', {'url': 'https://a.dev'}),
-    ),
-    'you_research': _agent(
-        'you_research_agent',
-        YouResearch[None](client=_YouClient()),
-        ('answer', {'query': 'q'}),
-        ('research', {'input': 'q'}),
-        ('finance_research', {'input': 'q'}),
-    ),
-    'localstack': _agent(
-        'localstack_agent',
-        LocalStack[None](aws_cli_path=_counting_aws_cli(), include_instructions=False),
-        ('aws_cli', {'command': 's3 ls'}),
-    ),
-    'capability_creation': _agent(
-        'capability_creation_agent',
-        CapabilityCreation[None](directory=_CREATION_DIRECTORY / 'authored'),
-        ('author_capability', {'name': 'marker', 'code': _AUTHORED}),
-        ('list_authored_capabilities', {}),
-        ('disable_authored_capability', {'name': 'marker'}),
-        workspace=_CREATION_DIRECTORY,
-    ),
-    'memory': _agent(
-        'memory_agent',
-        Memory[None](store=InMemoryStore()),
-        ('write_memory', {'content': 'The user prefers tabs.', 'file': 'style.md'}),
-        # A missing file asks the model to retry, which the operation records as data.
-        ('read_memory', {'file': 'missing.md'}),
-        ('search_memory', {'query': 'tabs'}),
-        ('delete_memory', {'file': 'missing.md'}),
-    ),
-    'planning': _agent(
-        'planning_agent',
-        Planning[None](store=SqlitePlanStore(database=str(_PLAN_DATABASE))),
-        ('write_plan', {'items': [{'id': 'first', 'content': 'Write the migration'}]}),
-        ('add_task', {'content': 'Run the tests'}),
-    ),
-    'advisor': _agent(
-        'advisor_agent',
-        Advisor[None](
-            _counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), mode='local'
-        ),
-        ('advisor', {'prompt': 'q'}),
-    ),
-    'smart_search': _agent(
-        'smart_search_agent',
-        SmartSearch[None](_counting_model('smart_search.judge', _relevant), guidance=''),
-        ('smart_search', {'query': 'parse the config'}),
-        workspace=_SEARCH_DIRECTORY,
-    ),
-    'conversation_search': _agent(
-        'conversation_search_agent',
-        ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all', add_instructions=False),
-        ('search_conversation_history', {'query': 'tabs'}),
-    ),
+    name: Agent(
+        _call_tools(*calls.made),
+        name=f'{name}_agent',
+        deps_type=type(None),
+        capabilities=[
+            *_capabilities(calls.build(Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_')))),
+            DBOSDurability[None](),
+        ],
+    )
+    for name, calls in _DURABLE.items()
 }
 
 
@@ -357,28 +123,28 @@ _WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
 
 @pytest.fixture
 def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
-    """Count every request the scenarios' fakes, the `aws` stand-in, and the stores make."""
-    _requests.clear()
+    """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make."""
+    REQUESTS.clear()
     aws_count = tmp_path / 'aws_cli_count'
-    monkeypatch.setenv('HARNESS_AWS_CLI_COUNT', str(aws_count))
+    monkeypatch.setenv(AWS_CLI_COUNT_VARIABLE, str(aws_count))
 
     for method in ('write', 'list_all', 'disable'):
         original = getattr(CapabilityStore, method)
 
         def counted(self: CapabilityStore, *args: Any, _original: Any = original, _method: str = method) -> Any:
-            _requests[f'store.{_method}'] += 1
+            REQUESTS[f'store.{_method}'] += 1
             return _original(self, *args)
 
         monkeypatch.setattr(CapabilityStore, method, counted)
 
     # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
-    original_memory_write = InMemoryStore.write
+    original_memory_write = InMemoryMemoryStore.write
 
-    async def counted_memory_write(self: InMemoryStore, *args: Any, **kwargs: Any) -> Any:
-        _requests['memory.write'] += 1
+    async def counted_memory_write(self: InMemoryMemoryStore, *args: Any, **kwargs: Any) -> Any:
+        REQUESTS['memory.write'] += 1
         return await original_memory_write(self, *args, **kwargs)
 
-    monkeypatch.setattr(InMemoryStore, 'write', counted_memory_write)
+    monkeypatch.setattr(InMemoryMemoryStore, 'write', counted_memory_write)
 
     # The plan tools read the store many times; a write is what recovery must not repeat.
     for method in ('set_items', 'add_item'):
@@ -387,7 +153,7 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
         async def counted_plan(
             self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
         ) -> Any:
-            _requests[f'plan.{_method}'] += 1
+            REQUESTS[f'plan.{_method}'] += 1
             return await _original(self, *args)
 
         monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
@@ -395,37 +161,18 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
     original_list_runs = SnapshotHistorySource.list_runs
 
     async def counted_list_runs(self: SnapshotHistorySource) -> Any:
-        _requests['history.list_runs'] += 1
+        REQUESTS['history.list_runs'] += 1
         return await original_list_runs(self)
 
     monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
 
     def snapshot() -> Counter[str]:
-        counts = Counter(_requests)
+        counts = Counter(REQUESTS)
         if aws_count.exists():
             counts['aws_cli'] = len(aws_count.read_text().splitlines())
         return counts
 
     return snapshot
-
-
-_EXPECTED_STEPS: dict[str, Collection[str]] = {
-    'exa_search': ['exa_search.web_search', 'exa_search.get_page', 'exa_search.deep_search'],
-    'exa_agent': ['exa_agent.create_run', 'exa_agent.resolve_run'],
-    'you_search': ['you_search.web_search', 'you_search.get_page'],
-    'you_research': ['you_research.answer', 'you_research.research', 'you_research.finance_research'],
-    'localstack': ['localstack.aws_cli'],
-    'capability_creation': [
-        'capability_creation.write',
-        'capability_creation.list_all',
-        'capability_creation.disable',
-    ],
-    'memory': ['memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'],
-    'planning': ['planning.set_items', 'planning.add_item'],
-    'advisor': ['advisor.consult'],
-    'smart_search': ['smart_search.judge'],
-    'conversation_search': ['conversation_search.search'],
-}
 
 
 @pytest.mark.parametrize('scenario', sorted(_AGENTS))
@@ -449,7 +196,7 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
 
     step_names = {step['function_name'] for step in steps}
     agent_name = _AGENTS[scenario].name
-    for operation in _EXPECTED_STEPS[scenario]:
+    for operation in _DURABLE[scenario].durable_steps:
         capability_id, name = operation.split('.')
         assert f'{agent_name}__capability__{capability_id}.{name}' in step_names
 
@@ -499,9 +246,6 @@ async def test_dbos_recovery_reports_the_same_shell_job(dbos: DBOS) -> None:
     assert (_SHELL_DIRECTORY / 'side-effects.txt').read_text().splitlines() == ['one']
 
 
-_READINESS_WAIT_TIMEOUT = 5.0
-
-
 class _SlowReadPlanStore(InMemoryPlanStore):
     """A plan store whose `get_item` waits, once a plan tool has emitted `last_event`, until it's handled.
 
@@ -522,7 +266,7 @@ class _SlowReadPlanStore(InMemoryPlanStore):
         return isinstance(event, event_type) and event.item.id == task_id
 
     async def get_item(self, item_id: str) -> PlanItem | None:
-        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await self.released.wait()
         return await super().get_item(item_id)
 
@@ -645,30 +389,14 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
 
 
 @pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])
-@pytest.mark.parametrize(
-    'capability',
-    [
-        pytest.param(lambda: ExaSearch[None](client=_ExaClient()), id='exa_search'),
-        pytest.param(lambda: ExaAgent[None](runs=_ExaAgentRuns()), id='exa_agent'),
-        pytest.param(lambda: YouSearch[None](client=_YouClient()), id='you_search'),
-        pytest.param(lambda: YouResearch[None](client=_YouClient()), id='you_research'),
-        pytest.param(lambda: LocalStack[None](), id='localstack'),
-        pytest.param(lambda: CapabilityCreation[None](directory=_CREATION_DIRECTORY), id='capability_creation'),
-        pytest.param(lambda: Advisor[None]('test', mode='local'), id='advisor'),
-        pytest.param(lambda: SmartSearch[None]('test'), id='smart_search'),
-        pytest.param(
-            lambda: ConversationSearch[None](SnapshotHistorySource(InMemoryStepStore()), scope='all'),
-            id='conversation_search',
-        ),
-    ],
-)
+@pytest.mark.parametrize('scenario', sorted(_DURABLE))
 def test_toolset_can_be_wrapped_by_engines_that_wrap_function_tools(
-    capability: Callable[[], AbstractCapability[None]], durability: type[TemporalDurability | PrefectDurability]
+    scenario: str, durability: type[TemporalDurability | PrefectDurability], tmp_path: Path
 ) -> None:
     """Temporal and Prefect run each function tool in its own unit, named after the toolset's `id`."""
     Agent(
         _call_tools(),
         name=f'wrapped_{uuid.uuid4().hex}',
         deps_type=type(None),
-        capabilities=[capability(), durability()],
+        capabilities=[*_capabilities(_DURABLE[scenario].build(tmp_path)), durability()],
     )

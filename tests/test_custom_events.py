@@ -6,7 +6,7 @@ import asyncio
 import sys
 import textwrap
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -1019,7 +1019,7 @@ async def test_iter_completed_or_buffered_plain_list_buffer():
     async def result() -> int:
         return 1
 
-    items = [item async for item in _iter_completed_or_buffered({asyncio.create_task(result())}, [])]
+    items = [item async for item in _iter_completed_or_buffered([asyncio.create_task(result())], [])]
     assert [item.result() for item in items if isinstance(item, asyncio.Task)] == [1]
 
 
@@ -1036,9 +1036,62 @@ async def test_iter_completed_or_buffered_drains_pre_buffered_events():
         return 1
 
     buffer = EventStreamBuffer([ProgressEvent(payload='pre-buffered')])
-    items = [item async for item in _iter_completed_or_buffered({asyncio.create_task(result())}, buffer)]
+    items = [item async for item in _iter_completed_or_buffered([asyncio.create_task(result())], buffer)]
     assert isinstance(items[0], ProgressEvent)
     assert [item.result() for item in items if isinstance(item, asyncio.Task)] == [1]
+
+
+@pytest.mark.parametrize('signalling', [False, True], ids=['plain-list-buffer', 'event-stream-buffer'])
+async def test_iter_completed_or_buffered_yields_same_wakeup_completions_in_call_order(
+    signalling: bool, monkeypatch: pytest.MonkeyPatch
+):
+    """Tasks that finish in one wakeup come out in call order, whatever order `asyncio.wait`'s `done` set iterates in.
+
+    A set of tasks iterates in an order that follows task identity, so a durable runtime replaying a run can see a
+    different order than the run that recorded it. The patched `asyncio.wait` hands `done` back in reverse call order,
+    one of the orders a plain set can produce. A task that finishes in a later wakeup still comes out after them,
+    even though it was called first.
+
+    Unit test: the plain-list branch isn't reachable through the public API, and a public run can't choose the
+    iteration order of the `done` set.
+    """
+    from pydantic_ai._run_context import EventStreamBuffer
+    from pydantic_ai._tool_execution import _iter_completed_or_buffered  # pyright: ignore[reportPrivateUsage]
+
+    real_wait = asyncio.wait
+
+    class ReversedDone(set[asyncio.Task[object]]):
+        def __iter__(self) -> Iterator[asyncio.Task[object]]:
+            return iter(sorted(super().__iter__(), key=lambda task: task.get_name(), reverse=True))
+
+    async def reversed_wait(
+        fs: Iterable[asyncio.Task[object]], *, timeout: float | None = None, return_when: str = asyncio.ALL_COMPLETED
+    ) -> tuple[set[asyncio.Task[object]], set[asyncio.Task[object]]]:
+        done, pending = await real_wait(fs, timeout=timeout, return_when=return_when)
+        return ReversedDone(done), pending
+
+    monkeypatch.setattr(asyncio, 'wait', reversed_wait)
+
+    release = asyncio.Event()
+
+    async def finishes_late() -> None:
+        await release.wait()
+
+    async def finishes_now() -> None:
+        pass
+
+    tasks = [
+        asyncio.create_task(finishes_late(), name='a'),
+        asyncio.create_task(finishes_now(), name='b'),
+        asyncio.create_task(finishes_now(), name='c'),
+    ]
+    buffer: list[AgentStreamEvent] = EventStreamBuffer() if signalling else []
+    yielded: list[str] = []
+    async for item in _iter_completed_or_buffered(tasks, buffer):
+        assert isinstance(item, asyncio.Task)
+        yielded.append(item.get_name())
+        release.set()
+    assert yielded == ['b', 'c', 'a']
 
 
 async def test_output_function_emission_is_delivered():

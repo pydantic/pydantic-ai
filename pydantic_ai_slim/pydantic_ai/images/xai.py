@@ -27,7 +27,6 @@ try:
     from xai_sdk.proto import usage_pb2
     from xai_sdk.types import (
         ImageAspectRatio as XaiImageAspectRatio,
-        ImageGenerationModel as LatestXaiImageGenerationModelNames,
         ImageResolution,
     )
 
@@ -41,8 +40,16 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+LatestXaiImageGenerationModelNames = Literal[
+    'grok-imagine-image-2.0', 'grok-imagine-image-quality', 'grok-imagine-image'
+]
+"""Latest xAI image generation models."""
+
 XaiImageGenerationModelName = str | LatestXaiImageGenerationModelNames
-"""Possible xAI image generation model names."""
+"""Possible xAI image generation model names.
+
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too, as a `str`.
+"""
 
 
 class XaiImageGenerationSettings(ImageGenerationSettings, total=False):

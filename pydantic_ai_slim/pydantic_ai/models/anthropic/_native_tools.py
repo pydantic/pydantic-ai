@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -22,6 +22,9 @@ from anthropic.types.beta import (
     BetaDirectCaller,
     BetaMCPToolResultBlock,
     BetaMCPToolUseBlock,
+    BetaMemoryTool20250818Param,
+    BetaRequestMCPServerToolConfigurationParam,
+    BetaRequestMCPServerURLDefinitionParam,
     BetaServerToolCaller,
     BetaServerToolCaller20260120,
     BetaServerToolUseBlock,
@@ -56,6 +59,7 @@ from anthropic.types.beta.beta_text_editor_code_execution_tool_result_block_para
 from pydantic import TypeAdapter
 
 from ... import _utils
+from ...exceptions import UserError
 from ...messages import (
     ModelMessage,
     ModelRequest,
@@ -67,9 +71,20 @@ from ...messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from ...native_tools import AdvisorTool, CodeExecutionTool, MCPServerTool, WebFetchTool, WebSearchTool
-from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch
+from ...native_tools import (
+    AbstractNativeTool,
+    AdvisorTool,
+    CodeExecutionTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch, ToolSearchTool
 from ...profiles.anthropic import AnthropicCodeExecutionToolVersion
+from ...tools import ToolDefinition
+
+if TYPE_CHECKING:
+    from . import AnthropicModelSettings
 
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
@@ -92,7 +107,9 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 
-_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
+_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset(
+    {'web_search_20260209', 'web_fetch_20260209', 'web_search_20260318', 'web_fetch_20260318'}
+)
 """Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
 
 _CODE_EXECUTION_TOOL_TYPES = frozenset(
@@ -327,14 +344,42 @@ def map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> BetaT
             assert_never(version)
 
 
+def with_native_memory_tool(
+    tools: list[BetaToolUnionParam], declared_function_tools: Sequence[ToolDefinition]
+) -> list[BetaToolUnionParam]:
+    """Replace the `memory` function tool's definition in `tools` with Anthropic's native memory tool."""
+    if 'memory' not in {tool.name for tool in declared_function_tools}:
+        raise UserError("Native `MemoryTool` requires a 'memory' tool to be defined.")
+    tools = [tool for tool in tools if tool.get('name') != 'memory']
+    tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
+    return tools
+
+
+def map_mcp_server_tool(tool: MCPServerTool) -> BetaRequestMCPServerURLDefinitionParam:
+    mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
+        type='url',
+        name=tool.id,
+        url=tool.url,
+    )
+    if tool.allowed_tools is not None:  # pragma: no branch
+        mcp_server_url_definition_param['tool_configuration'] = BetaRequestMCPServerToolConfigurationParam(
+            enabled=bool(tool.allowed_tools),
+            allowed_tools=tool.allowed_tools,
+        )
+    if tool.authorization_token:
+        mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
+    return mcp_server_url_definition_param
+
+
 def map_advisor_tool(tool: AdvisorTool) -> BetaAdvisorTool20260301Param:
     param = BetaAdvisorTool20260301Param(type='advisor_20260301', name='advisor', model=tool.model)
     if tool.max_uses is not None:
         param['max_uses'] = tool.max_uses
     if tool.max_tokens is not None:
         param['max_tokens'] = tool.max_tokens
-    if tool.caching is not None:
-        param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=tool.caching)
+    caching = (tool.provider_settings or {}).get('anthropic', {}).get('caching', tool.caching)
+    if caching is not None:
+        param['caching'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=caching)
     return param
 
 
@@ -361,6 +406,7 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
         provider_details: dict[str, Any] = {
             'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25',
             **anthropic_caller_provider_details(item.caller),
+            **tool_search_extra_input_provider_details(tool_args, item.name),
         }
         return NativeToolSearchCallPart(
             provider_name=provider_name,
@@ -418,6 +464,17 @@ def normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str)
     return {'queries': queries}
 
 
+def tool_search_extra_input_provider_details(tool_args: dict[str, Any] | None, tool_name: str) -> dict[str, Any]:
+    """Keep the input fields that `ToolSearchArgs` has no slot for, such as `limit`, for replay.
+
+    Replay has to send the exact input the model gave: a thinking block that follows the search is bound
+    to it, and Anthropic rejects the thinking signature if a field is missing.
+    """
+    wire_key = 'pattern' if tool_name == 'tool_search_tool_regex' else 'query'
+    extra_input = {key: value for key, value in (tool_args or {}).items() if key != wire_key}
+    return {'extra_input': extra_input} if extra_input else {}
+
+
 def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> NativeToolSearchCallPart:
     """Finalize a streamed tool-search call's args.
 
@@ -441,7 +498,14 @@ def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> N
     # input key (`pattern` vs `query`) is honored.
     strategy = (part.provider_details or {}).get('strategy')
     tool_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
-    return replace(part, args=normalize_tool_search_args(parsed, tool_name))
+    return replace(
+        part,
+        args=normalize_tool_search_args(parsed, tool_name),
+        provider_details={
+            **(part.provider_details or {}),
+            **tool_search_extra_input_provider_details(parsed, tool_name),
+        },
+    )
 
 
 def map_tool_search_tool_result_block(
@@ -581,3 +645,24 @@ def map_mcp_server_result_block(
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )
+
+
+def native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
+    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
+
+    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
+    `search_tools` function tool, which `function_tools` already carries.
+    """
+    if isinstance(tool, MCPServerTool):
+        return False
+    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
+
+
+def code_execution_may_call_web_tools(supports_dynamic_filtering: bool, model_settings: AnthropicModelSettings) -> bool:
+    """Whether code execution may call the web tools.
+
+    Models with dynamic filtering allow it by default. Without it, the web tools are called directly unless
+    `anthropic_web_tools_allowed_callers` names a code execution caller.
+    """
+    allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers') or []
+    return supports_dynamic_filtering or any(caller != 'direct' for caller in allowed_callers)

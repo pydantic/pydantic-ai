@@ -1,12 +1,15 @@
 from __future__ import annotations as _annotations
 
 import itertools
+import math
 import string
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
-from datetime import date, datetime, timedelta
-from typing import Any, Literal, assert_never, cast
+from datetime import date, datetime
+from fractions import Fraction
+from typing import Any, ClassVar, Literal, TypeVar, assert_never, cast
+from uuid import UUID
 
 import pydantic_core
 
@@ -38,7 +41,7 @@ from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
 from . import ModelRequestParameters, StreamedResponse
 from ._in_memory_batch import InMemoryBatchModel
-from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
+from .function import _estimate_response_part_tokens, _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -78,7 +81,7 @@ class TestModel(InMemoryBatchModel):
     supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
     # Nor is there a model to tell what the `<system>` tag means, and the announcement would show up in every
     # history a test inspects.
-    _announces_system_voice = False
+    _announces_lookalike_notes = False
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
@@ -204,22 +207,21 @@ class TestModel(InMemoryBatchModel):
         ]
         if self.call_tools == 'all':
             return [(r.name, r) for r in callable_function_tools]
-        else:
-            function_tools_lookup = {t.name: t for t in callable_function_tools}
-            all_function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
-            tools_to_call: list[ToolDefinition] = []
-            for name in self.call_tools:
-                if tool_def := function_tools_lookup.get(name):
-                    tools_to_call.append(tool_def)
-                elif tool_def := all_function_tools_lookup.get(name):
-                    raise UserError(
-                        f'Tool {name!r} has visibility '
-                        f'{model_request_parameters.visibility_of(name)!r}; it must be revealed '
-                        'or configured without deferred loading before `TestModel` can call it.'
-                    )
-                else:
-                    raise UserError(f'TestModel was configured to call unknown tool {name!r}.')
-            return [(r.name, r) for r in tools_to_call]
+        function_tools_lookup = {t.name: t for t in callable_function_tools}
+        all_function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
+        tools_to_call: list[ToolDefinition] = []
+        for name in self.call_tools:
+            if tool_def := function_tools_lookup.get(name):
+                tools_to_call.append(tool_def)
+            elif tool_def := all_function_tools_lookup.get(name):
+                raise UserError(
+                    f'Tool {name!r} has visibility '
+                    f'{model_request_parameters.visibility_of(name)!r}; it must be revealed '
+                    'or configured without deferred loading before `TestModel` can call it.'
+                )
+            else:
+                raise UserError(f'TestModel was configured to call unknown tool {name!r}.')
+        return [(r.name, r) for r in tools_to_call]
 
     def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
         if self.custom_output_text is not None:
@@ -260,21 +262,7 @@ class TestModel(InMemoryBatchModel):
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
-            # Multiple calls to the same tool would otherwise share the documented
-            # `pyd_ai_tool_call_id__{name}` id, which tool execution rejects as ambiguous, so
-            # uniquify only on collision, including with a tool whose own name ends in `__<n>`.
-            emitted_ids: set[str] = set()
-            parts: list[ToolCallPart] = []
-            for name, args in tool_calls:
-                base_id = f'pyd_ai_tool_call_id__{name}'
-                tool_call_id = next(
-                    candidate
-                    for candidate in itertools.chain([base_id], (f'{base_id}__{n}' for n in itertools.count(2)))
-                    if candidate not in emitted_ids
-                )
-                emitted_ids.add(tool_call_id)
-                parts.append(ToolCallPart(name, self.gen_tool_args(args), tool_call_id=tool_call_id))
-            return ModelResponse(parts=parts, model_name=self._model_name)
+            return self._tool_calls_response(tool_calls)
 
         if messages:  # pragma: no branch
             last_message = messages[-1]
@@ -287,76 +275,108 @@ class TestModel(InMemoryBatchModel):
                 p.tool_name for p in last_message.parts if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
             }
             if new_retry_names:
-                # Handle retries for both function tools and output tools
-                # Check function tools first
-                retry_parts: list[ModelResponsePart] = [
-                    ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls if name in new_retry_names
-                ]
-                # Check output tools
-                if output_tools:
-                    retry_parts.extend(
-                        [
-                            ToolCallPart(
-                                tool.name,
-                                output_wrapper.value
-                                if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
-                                else self.gen_tool_args(tool),
-                                tool_call_id=f'pyd_ai_tool_call_id__{tool.name}',
-                            )
-                            for tool in output_tools
-                            if tool.name in new_retry_names
-                        ]
-                    )
-                return ModelResponse(parts=retry_parts, model_name=self._model_name)
+                return self._retry_response(new_retry_names, tool_calls, output_wrapper, output_tools)
 
         if isinstance(output_wrapper, _WrappedTextOutput):
-            if (response_text := output_wrapper.value) is None:
-                # build up details of tool responses
-                output: dict[str, Any] = {}
-                for message in messages:
-                    if isinstance(message, ModelRequest):
-                        for part in message.parts:
-                            if isinstance(part, ToolReturnPart):
-                                output[part.tool_name] = part.content
-                if output:
-                    return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())],
-                        model_name=self._model_name,
-                    )
-                else:
-                    return ModelResponse(
-                        parts=[TextPart('success (no tool calls)')],
-                        model_name=self._model_name,
-                    )
-            else:
-                return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
+            return self._text_response(messages, output_wrapper.value)
         else:
             assert output_tools, 'No output tools provided'
-            custom_output_args = output_wrapper.value
-            output_tool = output_tools[self.seed % len(output_tools)]
-            if custom_output_args is not None:
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            output_tool.name,
-                            custom_output_args,
-                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
-                        )
-                    ],
-                    model_name=self._model_name,
-                )
-            else:
-                response_args = self.gen_tool_args(output_tool)
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            output_tool.name,
-                            response_args,
-                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
-                        )
-                    ],
-                    model_name=self._model_name,
-                )
+            return self._output_tool_response(output_tools, output_wrapper.value)
+
+    def _tool_calls_response(self, tool_calls: list[tuple[str, ToolDefinition]]) -> ModelResponse:
+        # Multiple calls to the same tool would otherwise share the documented
+        # `pyd_ai_tool_call_id__{name}` id, which tool execution rejects as ambiguous, so
+        # uniquify only on collision, including with a tool whose own name ends in `__<n>`.
+        emitted_ids: set[str] = set()
+        parts: list[ToolCallPart] = []
+        for name, args in tool_calls:
+            base_id = f'pyd_ai_tool_call_id__{name}'
+            tool_call_id = next(
+                candidate
+                for candidate in itertools.chain([base_id], (f'{base_id}__{n}' for n in itertools.count(2)))
+                if candidate not in emitted_ids
+            )
+            emitted_ids.add(tool_call_id)
+            parts.append(ToolCallPart(name, self.gen_tool_args(args), tool_call_id=tool_call_id))
+        return ModelResponse(parts=parts, model_name=self._model_name)
+
+    def _retry_response(
+        self,
+        retry_names: set[str],
+        tool_calls: list[tuple[str, ToolDefinition]],
+        output_wrapper: _WrappedTextOutput | _WrappedToolOutput,
+        output_tools: list[ToolDefinition],
+    ) -> ModelResponse:
+        # Handle retries for both function tools and output tools
+        # Check function tools first
+        retry_parts: list[ModelResponsePart] = [
+            ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls if name in retry_names
+        ]
+        # Check output tools
+        if output_tools:
+            retry_parts.extend(
+                [
+                    ToolCallPart(
+                        tool.name,
+                        output_wrapper.value
+                        if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
+                        else self.gen_tool_args(tool),
+                        tool_call_id=f'pyd_ai_tool_call_id__{tool.name}',
+                    )
+                    for tool in output_tools
+                    if tool.name in retry_names
+                ]
+            )
+        return ModelResponse(parts=retry_parts, model_name=self._model_name)
+
+    def _text_response(self, messages: list[ModelMessage], response_text: str | None) -> ModelResponse:
+        if response_text is not None:
+            return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
+        # build up details of tool responses
+        output: dict[str, Any] = {}
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
+                    if isinstance(part, ToolReturnPart):
+                        output[part.tool_name] = part.content
+        if output:
+            return ModelResponse(
+                parts=[TextPart(pydantic_core.to_json(output).decode())],
+                model_name=self._model_name,
+            )
+        else:
+            return ModelResponse(
+                parts=[TextPart('success (no tool calls)')],
+                model_name=self._model_name,
+            )
+
+    def _output_tool_response(
+        self, output_tools: list[ToolDefinition], custom_output_args: dict[str, Any] | None
+    ) -> ModelResponse:
+        output_tool = output_tools[self.seed % len(output_tools)]
+        if custom_output_args is not None:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        output_tool.name,
+                        custom_output_args,
+                        tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                    )
+                ],
+                model_name=self._model_name,
+            )
+        else:
+            response_args = self.gen_tool_args(output_tool)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        output_tool.name,
+                        response_args,
+                        tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                    )
+                ],
+                model_name=self._model_name,
+            )
 
 
 class _StreamCancelled(Exception):
@@ -380,52 +400,66 @@ class TestStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
-            if isinstance(part, TextPart):
-                text = part.content
-                *words, last_word = text.split(' ')
-                words = [f'{word} ' for word in words]
-                words.append(last_word)
-                if len(words) == 1 and len(text) > 2:
-                    mid = len(text) // 2
-                    words = [text[:mid], text[mid:]]
-                self._usage += _get_string_usage('')
-                for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=''):
-                    yield event
-                for word in words:
-                    # Simulate the transport error that real providers raise
-                    # when the HTTP connection is closed mid-stream by cancel().
-                    if self._cancelled:
-                        raise _StreamCancelled()
-                    self._usage += _get_string_usage(word)
-                    for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
-                        yield event
-            elif isinstance(part, ToolCallPart):
+            for event in self._map_part(i, part):
+                yield event
+
+    def _map_part(self, index: int, part: ModelResponsePart) -> Iterator[ModelResponseStreamEvent]:
+        match part:
+            case TextPart():
+                yield from self._map_text_part(index, part)
+            case ToolCallPart():
+                self._usage += RequestUsage(output_tokens=_estimate_response_part_tokens(part))
                 # `ToolCallPart` subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a
                 # `TypedDict`, which is structurally a `dict[str, Any]` but pyright keeps
                 # the narrower union here.
                 yield self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=i,
+                    vendor_part_id=index,
                     tool_name=part.tool_name,
                     args=cast('str | dict[str, Any] | None', part.args),
                     tool_call_id=part.tool_call_id,
                 )
-            elif isinstance(part, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
+            case NativeToolCallPart() | NativeToolReturnPart():  # pragma: no cover
                 # NOTE: These parts are not generated by TestModel, but we need to handle them for type checking
                 assert False, f'Unexpected part type in TestModel: {type(part).__name__}'
-            elif isinstance(part, ThinkingPart):  # pragma: no cover
+            case ThinkingPart():  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
-            elif isinstance(part, FilePart):  # pragma: no cover
+            case FilePart():  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
-            elif isinstance(part, CompactionPart):  # pragma: no cover
+            case CompactionPart():  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
                 assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
-            elif isinstance(part, SpeechPart):  # pragma: no cover
+            case SpeechPart():  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since `SpeechPart`s are converted in `Model.prepare_messages`.
                 assert False, 'This should be unreachable — `SpeechPart`s are converted in `Model.prepare_messages`.'
-            else:
+            case _:
                 assert_never(part)
+
+    def _map_text_part(self, index: int, part: TextPart) -> Iterator[ModelResponseStreamEvent]:
+        text = part.content
+        *words, last_word = text.split(' ')
+        words = [f'{word} ' for word in words]
+        words.append(last_word)
+        if len(words) == 1 and len(text) > 2:
+            mid = len(text) // 2
+            words = [text[:mid], text[mid:]]
+        yield from self._parts_manager.handle_text_delta(vendor_part_id=index, content='')
+        # The token estimate isn't additive (`'a, '` and `'b'` count 2 and 1, `'a, b'` counts 2), so each fragment
+        # adds the change in the estimate of the text streamed so far, ending on the estimate `TestModel.request`
+        # gives. That change depends only on the last non-whitespace character streamed and whether whitespace
+        # follows it, so `tail` carries just those and the estimate stays linear in the text's length.
+        tail = ''
+        for word in words:
+            # Simulate the transport error that real providers raise
+            # when the HTTP connection is closed mid-stream by cancel().
+            if self._cancelled:
+                raise _StreamCancelled()
+            extended = tail + word
+            self._usage += RequestUsage(output_tokens=_estimate_string_tokens(extended) - _estimate_string_tokens(tail))
+            stripped = extended.rstrip()
+            tail = stripped[-1:] + extended[len(stripped) :][:1]
+            yield from self._parts_manager.handle_text_delta(vendor_part_id=index, content=word)
 
     @property
     def model_name(self) -> str:
@@ -456,6 +490,15 @@ class TestStreamedResponse(StreamedResponse):
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
+_SEED_DATE = date(2024, 1, 1).toordinal()
+
+
+def _seed_date(seed: int) -> str:
+    """The date `seed` days after 2024-01-01, wrapping around the range a `date` holds instead of overflowing it."""
+    return date.fromordinal((_SEED_DATE + seed - 1) % date.max.toordinal() + 1).isoformat()
+
+
+_BoundT = TypeVar('_BoundT', int, float)
 
 
 class _JsonSchemaTestData:
@@ -463,6 +506,39 @@ class _JsonSchemaTestData:
 
     This tries to generate the minimal viable data for the schema.
     """
+
+    _NUMBER_BOUNDS: ClassVar[tuple[tuple[str, Callable[[float, float], bool]], ...]] = (
+        ('minimum', lambda value, bound: value >= bound),
+        ('maximum', lambda value, bound: value <= bound),
+        ('exclusiveMinimum', lambda value, bound: value > bound),
+        ('exclusiveMaximum', lambda value, bound: value < bound),
+    )
+    """Each JSON Schema numeric bound, and whether a value is within it."""
+    _TIGHTER_BOUND: ClassVar[dict[str, Callable[[float, float], float]]] = {
+        'minimum': max,
+        'exclusiveMinimum': max,
+        'minLength': max,
+        'minItems': max,
+        'minProperties': max,
+        'maximum': min,
+        'exclusiveMaximum': min,
+        'maxLength': min,
+        'maxItems': min,
+        'maxProperties': min,
+    }
+    """Each JSON Schema bound, and how two `allOf` members' values for it combine into the tighter one."""
+    _FORMATS: ClassVar[dict[str, Callable[[int], str]]] = {
+        'date': _seed_date,
+        'date-time': lambda seed: f'{_seed_date(seed)}T00:00:00Z',
+        'time': lambda seed: f'00:00:{seed % 60:02}Z',
+        'duration': lambda seed: f'PT{abs(seed)}S',
+        'email': lambda seed: f'user{seed}@example.com',
+        'uri': lambda seed: f'https://example.com/{seed}',
+        'uuid': lambda seed: str(UUID(int=seed % (1 << 128))),
+        'ipv4': lambda seed: f'192.0.2.{seed % 256}',
+        'ipv6': lambda seed: f'2001:db8::{seed % 65536:x}',
+    }
+    """A value for each string `format` the generator knows, by seed; any other `format` gets an ordinary string."""
 
     def __init__(self, schema: ObjectJsonSchema, seed: int = 0):
         self.schema = schema
@@ -484,6 +560,8 @@ class _JsonSchemaTestData:
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
             return examples[self.seed % len(examples)]
+        elif _utils.is_list(all_of := schema.get('allOf')) and all_of:
+            return self._gen_any(self._merge_all_of(schema, all_of))
         elif ref := schema.get('$ref'):
             return self._gen_any(self._resolve_ref(ref))
         elif any_of := schema.get('anyOf'):
@@ -492,26 +570,29 @@ class _JsonSchemaTestData:
             # a `oneOf` beside a `type` narrows that type, so the `type` drives generation
             return self._one_of_gen(schema)
 
-        type_ = schema.get('type')
-        if type_ is None:
-            # if there's no type or ref, we can't generate anything
-            return self._char()
-        elif type_ == 'object':
-            return self._object_gen(schema)
-        elif type_ == 'string':
-            return self._str_gen(schema)
-        elif type_ == 'integer':
-            return self._int_gen(schema)
-        elif type_ == 'number':
-            return self._number_gen(schema)
-        elif type_ == 'boolean':
-            return self._bool_gen()
-        elif type_ == 'array':
-            return self._array_gen(schema)
-        elif type_ == 'null':
-            return None
-        else:
-            raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
+        match schema.get('type'):
+            case None:
+                # if there's no type or ref, we can't generate anything
+                return self._char()
+            case [_, *_] as types:
+                # a JSON Schema type list: the seed picks one member, as an `anyOf` does
+                return self._gen_any({**schema, 'type': types[self.seed % len(types)]})
+            case 'object':
+                return self._object_gen(schema)
+            case 'string':
+                return self._str_gen(schema)
+            case 'integer':
+                return self._multiple_of(self._int_gen(schema), schema)
+            case 'number':
+                return self._multiple_of(self._number_gen(schema), schema)
+            case 'boolean':
+                return self._bool_gen()
+            case 'array':
+                return self._array_gen(schema)
+            case 'null':
+                return None
+            case type_:
+                raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
     def _resolve_ref(self, ref: str) -> dict[str, Any]:
         """Look up a JSON Schema `$ref` in the schema's `$defs`, or as a local JSON pointer like `#/properties/from`."""
@@ -519,6 +600,69 @@ class _JsonSchemaTestData:
         if name not in self.defs and (target := resolve_json_pointer(self.schema, ref)) is not None:
             return target
         return self.defs[name]
+
+    def _merge_all_of(self, schema: dict[str, Any], all_of: list[object]) -> dict[str, Any]:
+        """`schema` without `allOf`, with each member's keywords added.
+
+        `properties` and `required` are combined, a property two of them declare gets both schemas as an `allOf`, and a
+        bound takes the tighter value; any other keyword the schema or an earlier member has keeps its value.
+        """
+        merged = {key: value for key, value in schema.items() if key != 'allOf'}
+        # A member's own `allOf`, `$ref` and the `anyOf` member the seed picks are merged as members too, and each `$ref`
+        # once, so a cycle ends. Copied into `merged`, a `$ref` or `anyOf` would drive generation and drop its `type`.
+        members, seen = list(all_of), set[str]()
+        while members:
+            if (member := self._all_of_member(members.pop(0), seen)) is None:
+                continue
+            if _utils.is_list(nested := member.get('allOf')):
+                members.extend(nested)
+            if (chained := member.get('$ref')) and isinstance(chained, str):
+                members.append({'$ref': chained})
+            if _utils.is_list(any_of := member.get('anyOf')) and any_of:
+                members.append(any_of[self.seed % len(any_of)])
+            self._merge_keywords(merged, member)
+        return merged
+
+    @staticmethod
+    def _merge_keywords(merged: dict[str, Any], member: dict[str, Any]) -> None:
+        """Add an `allOf` member's keywords to `merged`, combining `properties`, `required` and bounds."""
+        for key, value in member.items():
+            existing = merged.get(key)
+            if key == 'properties' and _utils.is_str_dict(value) and (existing is None or _utils.is_str_dict(existing)):
+                existing = existing or {}
+                both = {name: {'allOf': [existing[name], schema]} for name, schema in value.items() if name in existing}
+                merged['properties'] = {**value, **existing, **both}
+            elif key == 'required' and isinstance(value, list) and isinstance(existing, list | None):
+                merged['required'] = [*(existing or []), *value]
+            elif (tighter := _JsonSchemaTestData._TIGHTER_BOUND.get(key)) and (
+                (bound := _JsonSchemaTestData._finite_bound(merged, key)) is not None
+                and (other := _JsonSchemaTestData._finite_bound(member, key)) is not None
+            ):
+                merged[key] = tighter(bound, other)
+            elif key not in ('allOf', 'anyOf', '$ref'):
+                merged.setdefault(key, value)
+
+    def _all_of_member(self, member: object, seen: set[str]) -> dict[str, Any] | None:
+        """An `allOf` member with its `$ref` resolved, or `None` for one with nothing to merge.
+
+        That's a boolean, a `$ref` already merged, and one that isn't a string or points at nothing or at a boolean,
+        which `allOf` adds no keywords from, as when `allOf` was ignored.
+        """
+        if not _utils.is_str_dict(member):
+            return None
+        if not (ref := member.get('$ref')):
+            return member
+        if not isinstance(ref, str) or ref in seen:
+            return None
+        seen.add(ref)
+        try:
+            target: object = self._resolve_ref(ref)
+        except (KeyError, TypeError):
+            # `TypeError` is a `$defs` that isn't an object.
+            return None
+        if not _utils.is_str_dict(target):
+            return None
+        return {**target, **{key: value for key, value in member.items() if key != '$ref'}}
 
     def _one_of_gen(self, schema: dict[str, Any]) -> Any:
         """Generate data for a JSON Schema `oneOf`."""
@@ -544,21 +688,58 @@ class _JsonSchemaTestData:
         required = set(schema.get('required', []))
 
         data: dict[str, Any] = {}
-        if properties := schema.get('properties'):
-            for key, value in properties.items():
-                if key in required:
-                    data[key] = self._gen_any(value)
+        properties: dict[str, Any] = schema.get('properties') or {}
+        for key, value in properties.items():
+            if key in required:
+                data[key] = self._gen_any(value)
 
-        if addition_props := schema.get('additionalProperties'):
+        max_properties = self._finite_bound(schema, 'maxProperties')
+        if (addition_props := schema.get('additionalProperties')) and (
+            max_properties is None or max_properties > len(data)
+        ):
             add_prop_key = 'additionalProperty'
             while add_prop_key in data:
                 add_prop_key += '_'
             data[add_prop_key] = self._gen_any(addition_props)
 
+        self._add_min_properties(data, properties, addition_props, self._finite_bound(schema, 'minProperties') or 0)
         return data
+
+    def _add_min_properties(
+        self,
+        data: dict[str, Any],
+        properties: dict[str, Any],
+        addition_props: dict[str, Any] | bool | None,
+        min_properties: float,
+    ) -> None:
+        """Add optional properties, then additional ones where the schema allows them, until `minProperties` holds.
+
+        An optional property holding a `$ref` is left out: through a recursive definition, adding it can recurse forever.
+        """
+        optional = iter(
+            [key for key, value in properties.items() if key not in data and not _utils.contains_ref(value)]
+        )
+        # Numbered names keep the time and the names' length linear in `minProperties`.
+        numbers = itertools.count(1)
+        while len(data) < min_properties:
+            if (key := next(optional, None)) is not None:
+                data[key] = self._gen_any(properties[key])
+            elif addition_props is False:
+                return
+            else:
+                while (key := f'additionalProperty_{next(numbers)}') in data or key in properties:
+                    pass
+                data[key] = self._gen_any(addition_props or {})
 
     def _str_gen(self, schema: dict[str, Any]) -> str:
         """Generate a string from a JSON Schema string."""
+        # A value of a known format, unless it breaks the length bounds an ordinary string below keeps to.
+        if isinstance(fmt := schema.get('format'), str) and fmt in self._FORMATS:
+            value = self._FORMATS[fmt](self.seed)
+            min_length, max_length = self._finite_bound(schema, 'minLength'), self._finite_bound(schema, 'maxLength')
+            if (min_length or 0) <= len(value) <= (len(value) if max_length is None else max_length):
+                return value
+
         min_len = schema.get('minLength')
         if min_len is not None:
             return self._char() * min_len
@@ -566,60 +747,37 @@ class _JsonSchemaTestData:
         if schema.get('maxLength') == 0:
             return ''
 
-        if fmt := schema.get('format'):
-            if fmt == 'date':
-                return (date(2024, 1, 1) + timedelta(days=self.seed)).isoformat()
-
         return self._char()
 
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
-        maximum = schema.get('maximum')
-        minimum = schema.get('minimum')
-        if minimum is not None and maximum == minimum:
-            return minimum
-
-        if maximum is None:
-            exc_max = schema.get('exclusiveMaximum')
-            if exc_max is not None:
-                maximum = exc_max - 1
-
-        if minimum is None:
-            exc_min = schema.get('exclusiveMinimum')
-            if exc_min is not None:
-                minimum = exc_min + 1
+        # Each bound moves to the nearest integer inside it, so fractional bounds still generate integers.
+        minimum = None if (bound := self._finite_bound(schema, 'minimum')) is None else math.ceil(bound)
+        maximum = None if (bound := self._finite_bound(schema, 'maximum')) is None else math.floor(bound)
+        if (exc_min := self._finite_bound(schema, 'exclusiveMinimum')) is not None:
+            minimum = self._tightest_bound(minimum, math.floor(exc_min) + 1, max)
+        if (exc_max := self._finite_bound(schema, 'exclusiveMaximum')) is not None:
+            maximum = self._tightest_bound(maximum, math.ceil(exc_max) - 1, min)
 
         if minimum is not None and maximum is not None:
-            span = maximum - minimum
-            if span == 0:
-                # Exclusive-bound adjustments can collapse a valid narrow range.
+            if minimum == maximum:
                 return minimum
-            if (
-                schema.get('type') == 'integer'
-                and minimum % 1 == 0
-                and maximum % 1 == 0
-                and 'exclusiveMinimum' not in schema
-                and 'exclusiveMaximum' not in schema
-                and span > 0
-            ):
-                minimum = int(minimum)
-                span = int(maximum) - minimum + 1
+            span = maximum - minimum
+            # Only a schema without any exclusive key, even an ignored one, reaches its maximum. Letting exclusive
+            # ranges reach it too would change the values existing snapshots pin for them.
+            if 'exclusiveMinimum' not in schema and 'exclusiveMaximum' not in schema and span > 0:
+                span += 1
             return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:
             return maximum - self.seed
-        else:
-            return self.seed
+        return self.seed
 
     def _number_gen(self, schema: dict[str, Any]) -> float:
         """Generate a float from a JSON Schema number."""
-        minimum = schema.get('minimum')
-        if (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
-            minimum = exclusive_minimum if minimum is None else max(minimum, exclusive_minimum)
-        maximum = schema.get('maximum')
-        if (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
-            maximum = exclusive_maximum if maximum is None else min(maximum, exclusive_maximum)
+        minimum = self._tightest_bound(schema.get('minimum'), schema.get('exclusiveMinimum'), max)
+        maximum = self._tightest_bound(schema.get('maximum'), schema.get('exclusiveMaximum'), min)
         if minimum is not None and maximum is not None:
             if minimum == maximum:
                 return float(minimum)
@@ -636,6 +794,67 @@ class _JsonSchemaTestData:
             return float(maximum - self.seed - offset)
         else:
             return float(self.seed)
+
+    @staticmethod
+    def _multiple_of(value: _BoundT, schema: dict[str, Any]) -> _BoundT:
+        """`value`, or the nearest multiple of the schema's `multipleOf` above or below it that stays within bounds."""
+        step = _JsonSchemaTestData._finite_bound(schema, 'multipleOf')
+        if step is None or step <= 0:
+            return value
+        try:
+            if value % step == 0:
+                return value
+            if isinstance(value, int) and isinstance(step, int):
+                # Integer arithmetic, which an integer too large for a float needs.
+                lower = value // step
+                candidates = ((lower + 1) * step, lower * step)
+            elif math.isfinite(quotient := value / step):
+                candidates = (math.ceil(quotient) * step, math.floor(quotient) * step)
+                if isinstance(value, int):
+                    # The integer multiples of a fractional step p/q in lowest terms are the multiples of p.
+                    numerator = Fraction(step).numerator
+                    lower = value // numerator
+                    candidates += ((lower + 1) * numerator, lower * numerator)
+            else:
+                # A step so small that the quotient overflows has no multiple to move to.
+                return value
+        except OverflowError:
+            # An integer too large for a float, with a fractional step.
+            return value
+        # An integer value skips a fractional multiple, which converting it to an integer would truncate.
+        within_bounds = (
+            converted
+            for candidate in candidates
+            if (converted := type(value)(candidate)) == candidate
+            and all(
+                not isinstance(bound := schema.get(key), int | float)
+                or isinstance(bound, bool)
+                or within(candidate, bound)
+                for key, within in _JsonSchemaTestData._NUMBER_BOUNDS
+            )
+        )
+        return next(within_bounds, value)
+
+    @staticmethod
+    def _finite_bound(schema: dict[str, Any], key: str) -> float | None:
+        """A JSON Schema bound, or `None` when it is missing, not a number or not finite.
+
+        A draft-4 boolean `exclusiveMinimum` or `exclusiveMaximum` only marks its inclusive bound as exclusive,
+        so it counts as missing too.
+        """
+        bound = schema.get(key)
+        if isinstance(bound, bool) or not isinstance(bound, int | float):
+            return None
+        return bound if isinstance(bound, int) or math.isfinite(bound) else None
+
+    @staticmethod
+    def _tightest_bound(
+        bound: _BoundT | None, exclusive_bound: _BoundT | None, tightest: Callable[[_BoundT, _BoundT], _BoundT]
+    ) -> _BoundT | None:
+        """The tighter of an inclusive and an exclusive JSON Schema bound, as `tightest` picks it."""
+        if exclusive_bound is None:
+            return bound
+        return exclusive_bound if bound is None else tightest(bound, exclusive_bound)
 
     def _bool_gen(self) -> bool:
         """Generate a boolean from a JSON Schema boolean."""
@@ -656,23 +875,24 @@ class _JsonSchemaTestData:
             # stop at `maxItems`, compared as for `items` below, unless `minItems` asks for more
             if isinstance(max_items, (int, float)) and not max_items > index and not min_items > index:
                 break
-            data.append(self._gen_any(item))
-            if unique_items:
-                self.seed += 1
+            data.append(self._array_item(item, unique_items))
 
         if min_items > len(data):
             for _ in range(min_items - len(data)):
-                data.append(self._gen_any(items_schema))
-                if unique_items:
-                    self.seed += 1
+                data.append(self._array_item(items_schema, unique_items))
         elif items_schema:
             # if there is an `items` schema, add an item unless it would break `maxItems` rule
             if max_items is None or max_items > len(data):
-                data.append(self._gen_any(items_schema))
-                if unique_items:
-                    self.seed += 1
+                data.append(self._array_item(items_schema, unique_items))
 
         return data
+
+    def _array_item(self, schema: dict[str, Any] | bool, unique_items: bool | None) -> Any:
+        """Generate an array item, moving the seed on when the items must be unique."""
+        item = self._gen_any(schema)
+        if unique_items:
+            self.seed += 1
+        return item
 
     def _char(self) -> str:
         """Generate a character on the same principle as Excel columns, e.g. a-z, aa-az..."""
@@ -684,8 +904,3 @@ class _JsonSchemaTestData:
             rem //= chars
         s += _chars[self.seed % chars]
         return s
-
-
-def _get_string_usage(text: str) -> RequestUsage:
-    response_tokens = _estimate_string_tokens(text)
-    return RequestUsage(output_tokens=response_tokens)

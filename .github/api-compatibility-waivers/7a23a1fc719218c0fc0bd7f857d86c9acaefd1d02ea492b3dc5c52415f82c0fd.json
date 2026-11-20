@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "Deprecates `pydantic_ai.models.anthropic.DEPRECATED_ANTHROPIC_MODELS` for removal in v3. Imports and type checking still work: a module `__getattr__` returns the same frozenset with a `PydanticAIDeprecationWarning`, and a `TYPE_CHECKING` declaration keeps its `frozenset[str]` type. The name left the module's `__all__`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13795"
+}

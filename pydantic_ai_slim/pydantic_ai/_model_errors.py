@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Protocol, cast
 
 import pydantic_core
@@ -26,7 +26,12 @@ from .exceptions import (
 )
 
 HTTPErrorCategory = type[
-    ModelRateLimitError | ModelQuotaExceededError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError
+    ModelRateLimitError
+    | ModelQuotaExceededError
+    | ModelUnavailableError
+    | ModelServerError
+    | ModelTimeoutError
+    | ModelRequestRejectedError
 ]
 """An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
 
@@ -44,14 +49,17 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
-    unavailable. A 400 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category in
-    the provider's own error code or message first.
+    unavailable. A 400, 413 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category
+    in the provider's own error code or message first. A 408 is the provider timing out the attempt, so a
+    `ModelTimeoutError`.
     """
+    if status_code == 408:
+        return ModelTimeoutError
     if status_code in (401, 403):
         return ModelAuthenticationError
     if status_code == 404:
         return ModelNotFoundError
-    if status_code in (400, 422):
+    if status_code in (400, 413, 422):
         return ModelRequestRejectedError
     if status_code == 402:
         return ModelQuotaExceededError
@@ -93,8 +101,13 @@ _OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
 }
 """The HTTP status OpenAI-compatible APIs use for an error, by its `code` or `type`, for errors that come without one."""
 
-_CONTEXT_WINDOW_MESSAGES = ('maximum context length', 'reduce the length of the messages')
-"""How OpenAI-compatible APIs that send no `context_length_exceeded` code (OpenRouter, vLLM, Groq) word an overflow."""
+_CONTEXT_WINDOW_MESSAGES = (
+    'maximum context length',
+    'reduce the length of the messages',
+    'exceeded max context length',
+)
+"""How OpenAI-compatible APIs that send no `context_length_exceeded` code word an overflow
+(OpenRouter, vLLM, Groq, Ollama Cloud)."""
 
 
 def openai_compatible_status(code: str | None, error_type: str | None) -> int | None:
@@ -123,11 +136,93 @@ def openai_compatible_category(
     if says_overloaded(code, error_type):
         return ModelOverloadedError
     if code == 'model_not_found':
-        # The Responses API sends it as a 400, the Chat Completions API as a 404.
+        # An error inside a stream carries no status, so only the code says what it is.
         return ModelNotFoundError
     if code == 'invalid_api_key':
         return ModelAuthenticationError
     return http_status_category(status_code, message) if status_code is not None else None
+
+
+def openai_compatible_status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    code: str | None,
+    error_type: str | None,
+    message: object,
+    headers: Mapping[str, str],
+) -> ModelHTTPError:
+    """The error for an OpenAI-compatible API's error status, in the category its `code`, `type` and message name."""
+    return ModelHTTPError.for_category(
+        openai_compatible_category(status_code, code, error_type, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
+
+
+def openai_error_fields(error: Mapping[str, object]) -> tuple[str | None, str | None]:
+    """The `code` and `type` of an OpenAI-compatible API's error object, as `openai` reads them."""
+    code, error_type = error.get('code'), error.get('type')
+    return str(code) if code is not None else None, error_type if isinstance(error_type, str) else None
+
+
+def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
+    """Read an error response body that no SDK read, the way the provider SDKs read one.
+
+    Returns `text` parsed as JSON, or `None` when it isn't JSON; its `error` value, which OpenAI-compatible and Google
+    APIs send as `{"error": {...}}`, or the parsed object itself when it has no `error`, or `None` when it isn't an
+    object; and the string fields of that error object.
+    """
+    try:
+        parsed: object = pydantic_core.from_json(text) if text else None
+    except ValueError:
+        parsed = None
+    error = parsed.get('error', parsed) if is_str_dict(parsed) else None
+    fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+    return parsed, error, fields
+
+
+class MultiValueHeaders(Protocol):
+    """Response headers that can repeat a name, like `websockets`' `Headers`."""
+
+    def __iter__(self) -> Iterator[str]: ...
+
+    def get_all(self, key: str) -> list[str]: ...
+
+
+def joined_headers(headers: MultiValueHeaders) -> dict[str, str]:
+    """`headers` as a `dict`, with a repeated header's values joined as `httpx` joins them.
+
+    `dict()` of `websockets`' `Headers` raises `MultipleValuesError` on a repeated header, like two `Set-Cookie` lines.
+    """
+    return {name: ', '.join(headers.get_all(name)) for name in headers}
+
+
+def openai_compatible_response_error(
+    model_name: str, status_code: int, body: str | None, headers: Mapping[str, str]
+) -> ModelHTTPError:
+    """The error for an OpenAI-compatible error response that no SDK read, like a rejected WebSocket upgrade.
+
+    It gets the category, error code and error type the SDK's error for the same response gets, and keeps `body` as
+    the response text. A status below 400 isn't an error response, so it gets no category.
+    """
+    _, _, fields = parse_error_body(body)
+    code, error_type = fields.get('code'), fields.get('type')
+    category = openai_compatible_category(status_code, code, error_type, fields.get('message', body))
+    return ModelHTTPError.for_category(
+        category if status_code >= 400 else None,
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
 
 
 _ZAI_QUOTA_CODES = frozenset(
@@ -200,6 +295,27 @@ def google_exceeds_daily_quota(body: object) -> bool:
     return False
 
 
+def google_retry_after(error: ModelHTTPError) -> float | None:
+    """Seconds to wait from `error`'s `google.rpc.RetryInfo` detail, or the `Retry-After` header it already read.
+
+    Gemini reports the wait in the error body rather than a `Retry-After` header, so the body is the fallback: a
+    response that carries the header keeps that value. The delay is a protobuf `Duration` string of seconds, like
+    `'14s'` or `'0.5s'`; one that's absent, doesn't end in `s`, holds no number before it, or is negative or
+    infinite says nothing.
+    """
+    if error.retry_after is not None:
+        return error.retry_after
+    for detail in google_error_details(error.body):
+        if isinstance(raw := detail.get('retryDelay'), str) and raw.endswith('s'):
+            try:
+                seconds = float(raw[:-1])
+            except ValueError:
+                continue
+            if 0 <= seconds < float('inf'):
+                return seconds
+    return None
+
+
 def google_status_category(status: str | None, message: object, body: object) -> HTTPErrorCategory | None:
     """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`, and the error `body`'s details.
 
@@ -236,6 +352,35 @@ def google_status_category(status: str | None, message: object, body: object) ->
             return None
 
 
+def google_status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    status: str | None,
+    message: str | None,
+    body: object,
+    headers: Mapping[str, str] | None,
+    suggested_model_id: str | None = None,
+    in_stream: bool = False,
+) -> ModelHTTPError:
+    """The error for a Google API error response, in the category its `status` and `body`'s details name.
+
+    Its `retry_after` falls back to the body's `google.rpc.RetryInfo`.
+    """
+    error = ModelHTTPError.for_category(
+        google_status_category(status, message, body) or http_status_category(status_code, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        provider_error_code=status,
+        in_stream=in_stream,
+    )
+    error.retry_after = google_retry_after(error)
+    return error
+
+
 _BEDROCK_CONTEXT_WINDOW_MESSAGES = ('input is too long', 'input tokens exceeded', 'prompt is too long')
 """Bedrock reports a context window overflow as a `ValidationException`, identifiable only by its message."""
 
@@ -250,6 +395,8 @@ def bedrock_code_category(code: str | None, message: object) -> HTTPErrorCategor
         case 'modelstreamerrorexception':
             # The model failed while streaming its response; Bedrock says to retry the request.
             return ModelServerError
+        case 'modeltimeoutexception':
+            return ModelTimeoutError
         case 'serviceunavailableexception' | 'modelnotreadyexception':
             return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
         case 'mpagreementbeingcreated':
@@ -370,28 +517,61 @@ class HTTPStatusResponse(Protocol):
     def content(self) -> bytes: ...
 
 
-def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
-    """The `ModelHTTPError` for an error status the HTTP transport raised before the provider SDK saw the response.
+def transport_error_body(response: HTTPStatusResponse) -> tuple[object, dict[str, object], str]:
+    """Read the body of an error status the HTTP transport raised before the provider SDK saw the response.
 
     A retrying transport's `validate_response` raises `HTTPStatusError` for a status it retries, and re-raises it
     once it runs out of attempts. Most SDKs let that exception through unchanged, and `anthropic` and `groq` wrap it
     in their connection error, though the provider did respond.
+
+    Returns the body, parsed as JSON, or its text when it isn't JSON or is `null`, or `None` when it's empty or the
+    transport closed the response without reading it; the error object in it, which most APIs wrap as
+    `{"error": {...}}`, or the body itself when it holds no `error`, or `{}` when it isn't an object; and the body's
+    text.
     """
     try:
         content = response.content
     except RuntimeError:  # `ResponseNotRead`: the transport closed the response without reading its body.
         content = b''
     text = content.decode(errors='replace')
-    body: object = None
-    if content:
-        try:
-            body = pydantic_core.from_json(content)
-        except ValueError:
-            body = text
+    parsed, error, _ = parse_error_body(text)
+    return parsed if parsed is not None else text or None, error if is_str_dict(error) else {}, text
+
+
+def transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `ModelHTTPError` for an error status the HTTP transport raised, by its status and body text alone.
+
+    See `transport_error_body` for when the transport raises it.
+    """
+    body, _, text = transport_error_body(response)
     return ModelHTTPError.for_category(
         http_status_category(response.status_code, text),
         status_code=response.status_code,
         model_name=model_name,
+        body=body,
+        headers=dict(response.headers),
+    )
+
+
+def google_transport_error_fields(response: HTTPStatusResponse) -> tuple[object, str | None, str]:
+    """The body, Google API `status` and message of an error status the HTTP transport raised.
+
+    They're read as `google.genai` reads them, which takes the text of a body that isn't JSON as the message. See
+    `transport_error_body` for when the transport raises it.
+    """
+    body, error, text = transport_error_body(response)
+    status, message = error.get('status'), error.get('message')
+    return body, status if isinstance(status, str) else None, message if isinstance(message, str) else text
+
+
+def google_transport_status_error(model_name: str, response: HTTPStatusResponse) -> ModelHTTPError:
+    """The `google_status_error` for an error status the HTTP transport raised, from `google_transport_error_fields`."""
+    body, status, message = google_transport_error_fields(response)
+    return google_status_error(
+        model_name,
+        status_code=response.status_code,
+        status=status,
+        message=message,
         body=body,
         headers=dict(response.headers),
     )

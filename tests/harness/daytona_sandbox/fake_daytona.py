@@ -44,6 +44,7 @@ class CreateParams(Protocol):
     snapshot: str | None
     auto_stop_interval: int | None
     env_vars: dict[str, str] | None
+    secrets: dict[str, str] | None
     network_block_all: bool | None
     labels: dict[str, str] | None
 

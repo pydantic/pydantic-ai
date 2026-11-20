@@ -47,7 +47,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call
+from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call, schema_arg_names
+from pydantic_ai_harness._warn import warn_callable_renamed
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -205,7 +206,7 @@ _StrictBool = Annotated[bool, Strict()]
 """A declaration counts only when it is literally `True`, not a truthy stand-in."""
 
 
-class _McpSafetyHints(TypedDict, total=False):
+class _MCPSafetyHints(TypedDict, total=False):
     """The MCP tool annotations that vouch for early execution, as they arrive in tool metadata."""
 
     readOnlyHint: _StrictBool
@@ -215,7 +216,7 @@ class _SafetyDeclarations(TypedDict, total=False):
     """The tool metadata keys `speculate='declared'` reads; unrelated keys are ignored."""
 
     read_only: _StrictBool
-    annotations: _McpSafetyHints
+    annotations: _MCPSafetyHints
 
 
 _SAFETY_ADAPTER = TypeAdapter(_SafetyDeclarations)
@@ -318,8 +319,8 @@ def _literal_kwargs(call: ast.Call, name: str) -> dict[str, object] | None:
     return kwargs
 
 
-def _close_paren(code: str, start: int) -> int | None:
-    """Return the index just past the paren that closes `code[start]`, or `None` if still open.
+def _close_paren(code: str, start: int, stop: int) -> int | None:
+    """Return the index just past the paren that closes `code[start]`, or `None` if still open at `stop`.
 
     A small scanner rather than a parse: the enclosing statement is usually incomplete, so only
     the call expression itself can be balanced. Tracks nesting across all bracket kinds and skips
@@ -329,7 +330,7 @@ def _close_paren(code: str, start: int) -> int | None:
     depth = 0
     quote: str | None = None
     i = start
-    while i < len(code):
+    while i < stop:
         ch = code[i]
         if quote is not None:
             if ch == '\\':
@@ -349,7 +350,7 @@ def _close_paren(code: str, start: int) -> int | None:
     return None
 
 
-def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_ExtractedCall], int]:
+def _text_literal_calls(code: str, eligible: frozenset[str], budget: int) -> tuple[list[_ExtractedCall], int]:
     """Extract complete eligible calls straight from streamed text, closed statement or not.
 
     This is what makes launches fire as soon as a call finishes streaming: `_literal_calls` only
@@ -362,41 +363,73 @@ def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_Extr
     completion; the `def`/attribute lookbehind filters the two cheap-to-catch shapes.
 
     Also returns the characters the paren scanner walked, so the caller can charge it against
-    the scan budget: nested calls make the walks overlap, and the sum is what bounds the work.
+    the scan budget. Nested calls make the walks overlap, so their sum can grow quadratically with
+    nesting depth; the walks stop once they pass `budget`, so a scan that exhausts the budget does
+    at most `budget` of that work before the caller halts it. Per name, everything else here is
+    linear in `len(code)`.
     """
     out: list[_ExtractedCall] = []
     walked = 0
     for name in eligible:
-        for match in re.finditer(rf'\b{re.escape(name)}\s*\(', code):
-            before = code[: match.start()]
-            if before.rstrip().endswith('.') or re.search(r'\bdef\s*$', before):
-                continue
-            end = _close_paren(code, match.end() - 1)
-            if end is None:
-                # Every later occurrence sits inside this still-open call, so none of them is a
-                # launchable top-level call yet; stopping here keeps one scan linear.
-                walked += len(code) - match.start()
-                break
-            walked += end - match.start()
-            try:
-                expression = parse_code(code[match.start() : end], mode='eval')
-            except (SyntaxError, ValueError, RecursionError, MemoryError):
-                # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
-                # a `SyntaxError`, and adversarial nesting can exhaust the parser.
-                continue
-            if not isinstance(expression.body, ast.Call):
-                continue  # pragma: no cover - a `name(...)` span that parses is always a Call
-            kwargs = _literal_kwargs(expression.body, name)
-            if kwargs is None:
-                continue
-            out.append(
-                _ExtractedCall(
-                    sandbox_name=name,
-                    kwargs=kwargs,
-                    line_start=before.count('\n') + 1,
-                    line_end=code[:end].count('\n') + 1,
-                )
+        calls, name_walked = _text_literal_calls_to(code, name, budget - walked)
+        out.extend(calls)
+        walked += name_walked
+        if walked > budget:
+            break
+    return out, walked
+
+
+_DEF_KEYWORD = re.compile(r'\bdef')
+
+
+def _text_literal_calls_to(code: str, name: str, budget: int) -> tuple[list[_ExtractedCall], int]:
+    """`_text_literal_calls` for the calls to one function `name`.
+
+    Each match only reads the whitespace before it and its own span, never the whole prefix:
+    rescanning the prefix per match would make one scan quadratic in `len(code)`.
+    """
+    out: list[_ExtractedCall] = []
+    walked = 0
+    newlines = 0
+    newlines_counted_to = 0
+    for match in re.finditer(rf'\b{re.escape(name)}\s*\(', code):
+        start = match.start()
+        # The whitespace before a match ends at the previous match's `(` at the latest, so these
+        # backward walks never overlap.
+        lookbehind = start
+        while lookbehind and code[lookbehind - 1].isspace():
+            lookbehind -= 1
+        if code.endswith('.', 0, lookbehind) or _DEF_KEYWORD.match(code, max(lookbehind - 3, 0), lookbehind):
+            continue
+        end = _close_paren(code, match.end() - 1, min(len(code), start + budget - walked))
+        if end is None:
+            # Every later occurrence sits inside this still-open call, so none of them is a
+            # launchable top-level call yet; stopping here keeps one scan linear. A walk cut
+            # short by the budget lands here too, and its charge exceeds what was left.
+            walked += len(code) - start
+            break
+        walked += end - start
+        try:
+            expression = parse_code(code[start:end], mode='eval')
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
+            # a `SyntaxError`, and adversarial nesting can exhaust the parser.
+            continue
+        if not isinstance(expression.body, ast.Call):
+            continue  # pragma: no cover - a `name(...)` span that parses is always a Call
+        kwargs = _literal_kwargs(expression.body, name)
+        if kwargs is None:
+            continue
+        newlines += code.count('\n', newlines_counted_to, start)
+        newlines_counted_to = start
+        out.append(
+            _ExtractedCall(
+                sandbox_name=name,
+                kwargs=kwargs,
+                line_start=newlines + 1,
+                line_end=newlines + code.count('\n', start, end) + 1,
             )
+        )
     return out, walked
 
 
@@ -494,23 +527,13 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
                 return
         match event:
             case PartStartEvent(part=ToolCallPart() as part) if part.tool_name == RUN_CODE_TOOL_NAME:
-                watch = _PartWatch(tool_call_id=part.tool_call_id, run_step=ctx.run_step)
-                if isinstance(part.args, str):
-                    watch.args_text = part.args
-                elif isinstance(part.args, dict):
-                    watch.args_dict = dict(part.args)
-                self._parts[part.tool_call_id] = watch
-                self._index_to_part[event.index] = part.tool_call_id
-                await self._scan(watch, ctx)
+                await self._scan(self._open_watch(part, event.index, ctx.run_step), ctx)
             case PartStartEvent():
                 self._index_to_part.pop(event.index, None)
             case PartDeltaEvent(delta=ToolCallPartDelta() as delta):
                 watch = self._watch_at(event.index, delta.tool_call_id)
                 if watch is not None:
-                    if isinstance(delta.args_delta, str):
-                        watch.args_text += delta.args_delta
-                    elif isinstance(delta.args_delta, dict):
-                        watch.args_dict = {**(watch.args_dict or {}), **delta.args_delta}
+                    self._extend_args(watch, delta)
                     await self._scan(watch, ctx)
             case PartEndEvent():
                 watch = self._watch_at(event.index, None)
@@ -523,6 +546,24 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             case _:
                 pass
         await self._emit_settles(ctx)
+
+    def _open_watch(self, part: ToolCallPart, part_index: int, run_step: int) -> _PartWatch:
+        """Start watching a streamed `run_code` part, seeded with the arguments it started with."""
+        watch = _PartWatch(tool_call_id=part.tool_call_id, run_step=run_step)
+        if isinstance(part.args, str):
+            watch.args_text = part.args
+        elif isinstance(part.args, dict):
+            watch.args_dict = dict(part.args)
+        self._parts[part.tool_call_id] = watch
+        self._index_to_part[part_index] = part.tool_call_id
+        return watch
+
+    @staticmethod
+    def _extend_args(watch: _PartWatch, delta: ToolCallPartDelta) -> None:
+        if isinstance(delta.args_delta, str):
+            watch.args_text += delta.args_delta
+        elif isinstance(delta.args_delta, dict):
+            watch.args_dict = {**(watch.args_dict or {}), **delta.args_delta}
 
     async def _retire_stale(self, ctx: RunContext[AgentDepsT]) -> None:
         """Evict launches no snippet can legitimately claim any more.
@@ -578,16 +619,18 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final and newlines == watch.scanned_newlines:
             # No line boundary since the last scan: nothing can have closed. Report the grown
             # code for live rendering and skip the parse work.
-            await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statements=watch.closed_count))
+            await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statement_count=watch.closed_count))
             return
         watch.scanned_newlines = newlines
         watch.closed_count = self._count_closed(code, final=final)
-        await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statements=watch.closed_count))
+        await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statement_count=watch.closed_count))
         # Launch from the raw text, not the closed statements: a call is ready once its closing
         # paren has streamed, even while its enclosing statement (an `if` arm, a `with` body) is
         # still being generated. Rescans recount every occurrence in the grown prefix, so
         # `demanded` is reconciled to the count rather than incremented.
-        extracted_calls, walked = _text_literal_calls(self._ordered_prefix(code), step.eligible)
+        extracted_calls, walked = _text_literal_calls(
+            self._ordered_prefix(code), step.eligible, MAX_SCAN_WORK_CHARS - watch.scan_work_chars
+        )
         if not self._charge_scan_work(watch, walked):
             return
         seen: dict[str, int] = {}
@@ -673,7 +716,8 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         watch.launched += 1
         self.stats.launched += 1
         launch_id = f'{watch.tool_call_id}__spec_{watch.launched}'
-        call_part = ToolCallPart(tool_name=original_name, args=extracted.kwargs, tool_call_id=launch_id)
+        args = schema_arg_names(step.wrapped_tools[original_name].tool_def, extracted.kwargs)
+        call_part = ToolCallPart(tool_name=original_name, args=args, tool_call_id=launch_id)
         call = SpeculativeCall(
             sandbox_name=sandbox_name,
             original_name=original_name,
@@ -688,7 +732,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         await ctx.emit(
             SpeculativeCallLaunchedEvent(
                 launch_id=launch_id,
-                sandbox_function=sandbox_name,
+                sandbox_function_name=sandbox_name,
                 wrapped_tool_name=original_name,
                 arguments=extracted.kwargs,
                 line_start=extracted.line_start,
@@ -845,7 +889,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         self._watch_for(ctx, execution).misses += 1
         await ctx.emit(
             SpeculativeCallMissedEvent(
-                sandbox_function=sandbox_name,
+                sandbox_function_name=sandbox_name,
                 wrapped_tool_name=call_part.tool_name,
                 nested_tool_call_id=call_part.tool_call_id,
             )
@@ -871,7 +915,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             'wasted': len(evicted),
         }
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
         """Run-end cleanup: cancel every launch no snippet ever claimed.
 
         Shielded: a run cancelled through an anyio scope is level-triggered, so without the
@@ -884,6 +928,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         with anyio.CancelScope(shield=True):
             for watch in parts.values():
                 await self._cancel_watch(watch)
+
+    async def close(self) -> None:
+        """Deprecated: renamed to `aclose`."""
+        warn_callable_renamed('SpeculationCoordinator.close', 'SpeculationCoordinator.aclose')
+        await self.aclose()
 
     async def _evict(
         self, ctx: RunContext[AgentDepsT], watch: _PartWatch

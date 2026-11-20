@@ -32,6 +32,10 @@ changing acquisition, command, file, or error handling:
   A failure is the matching builtin `OSError` (`FileNotFoundError`, `IsADirectoryError`, ...), a symlink loop
   is `ELOOP`, and `remove` deletes a symlink itself. A machine whose boxd agent predates the file API, such as
   one restored from an older snapshot, raises `MachineAgentOutdatedError` until it reboots.
+- Verified 2026-11-16: `machines.create` refuses `isolated` or `vcpu` beside a `spec` (`MachineSpecError`), so
+  a machine with `secrets` gets both from the spec, its size as `'{vcpu}x{4 * vcpu}'` (vCPUs x GiB of memory).
+  A spec combines with `from_snapshot`. In the machine, a secret's variable holds a `bxds_` stand-in, never
+  the value. A secret can be deleted while a machine still names it; the machine keeps running.
 """
 
 from __future__ import annotations
@@ -159,6 +163,14 @@ def _refusal(machine: Machine) -> str | None:
             'from; save snapshots from a machine on no network.'
         )
     return None
+
+
+def _check_attachable(machine_id: str, machine: Machine) -> None:
+    """Raise `WorkspaceUnavailableError` if `BoxdSandbox` refuses `machine`, or boxd deleted it or it failed."""
+    if (refusal := _refusal(machine)) is not None:
+        raise WorkspaceUnavailableError(refusal)
+    if machine.status in ('destroyed', 'failed'):
+        raise WorkspaceUnavailableError(_gone_message(machine_id))
 
 
 def _credentials_rejected(error: Exception) -> bool:
@@ -396,6 +408,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
+        secrets: Names of existing boxd secrets a newly created machine gets, applied as
+            `boxd.spec.secrets(*secrets)` in its machine spec. A secret tied to domains reaches the
+            machine only as a placeholder, and boxd swaps in the real value as requests leave for those
+            domains. A secret without domains is set as its real value. An attached machine keeps the
+            ones it was created with.
     """
 
     def __init__(
@@ -409,11 +426,14 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Sequence[str] | None = None,
     ) -> None:
         if ref is not None:
             _check_ref(ref)
         if snapshot is not None and vcpu is not None:
             raise ValueError('pass either `snapshot` or `vcpu`, not both: a snapshot keeps the size it was saved at')
+        if isinstance(secrets, str):
+            raise ValueError(f'`secrets` takes a list of secret names, such as [{secrets!r}], not a string')
         check_env(env)
         self._ref = ref
         self._client = client
@@ -423,6 +443,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
+        self._secrets = tuple(secrets or ())
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
         self._missing_cwd_marker = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
@@ -522,6 +543,12 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         if self._create_name is None:
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
+        spec = None
+        if self._secrets:
+            # boxd refuses `isolated` and `vcpu` next to a spec, so the spec carries them.
+            spec = boxd.spec.spec().isolated().with_(boxd.spec.secrets(*self._secrets))
+            if self._vcpu is not None:
+                spec = spec.size(f'{self._vcpu}x{4 * self._vcpu}')
         machine = await _launch(
             client,
             name,
@@ -529,9 +556,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 name,
                 org=self._org,
                 from_snapshot=self._snapshot,
-                isolated=True,
-                vcpu=self._vcpu,
+                isolated=spec is None,
+                vcpu=self._vcpu if spec is None else None,
                 auto_suspend_timeout=self._auto_suspend_timeout,
+                spec=spec,
             ),
             org=self._org,
             verb='create',
@@ -562,10 +590,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                             f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
                             "for these credentials). Pass `workspace='new'` to start a fresh machine."
                         ) from error
-                    if (refusal := _refusal(machine)) is not None:
-                        raise WorkspaceUnavailableError(refusal)
-                    if machine.status in ('destroyed', 'failed'):
-                        raise WorkspaceUnavailableError(_gone_message(machine_id))
+                    _check_attachable(machine_id, machine)
                     try:
                         if machine.status == 'stopped':
                             await client.machines.start(machine.id)

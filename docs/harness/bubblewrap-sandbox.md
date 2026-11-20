@@ -1,17 +1,44 @@
 ---
-title: Bubblewrap Sandbox
-description: "Run a Pydantic AI agent's commands in a Linux bubblewrap sandbox on the host they run on, over SSH or locally."
+title: Bubblewrapped Workspace
+description: "Run a Pydantic AI agent's commands in a Linux bubblewrap wrapper on the host they run on, over SSH or locally."
 ---
 
-# Bubblewrap Sandbox
+# Bubblewrapped Workspace
 
-Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox on the host they already run on, over SSH or locally.
+Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) wrapper on the host they already run on, over SSH or locally.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/bubblewrap_sandbox/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BubblewrapSandbox wraps another workspace capability, here SSHWorkspace, and its get_workspace hook runs every command and file operation on that host inside a bwrap sandbox. In the sandbox the working directory is writable, the rest of the host's files are read-only, /tmp is private, /run is empty, and a seccomp filter blocks every socket. The sandbox does not stop commands from reading files the host user can read, signalling the host user's processes, or writing files such as git hooks that run unsandboxed later.](../img/harness/bubblewrap-sandbox.svg)
+!!! warning "Best effort, not a security boundary"
+    `BubblewrappedWorkspace` keeps a trusted agent from accidentally changing files outside its working directory. It is **not a security boundary** and **not a sandbox for untrusted code or untrusted agents**: commands share the host kernel and run as the host user. For untrusted agents, use a VM or microVM-backed sandbox such as [E2B](e2b-sandbox.md), [Modal](modal-sandbox.md), [Daytona](daytona-sandbox.md), [BoxLite](boxlite-sandbox.md), or [Smol](smol-sandbox.md).
+
+    Do **not** set the working directory to your home directory or a directory containing it. The agent could change files there, such as shell startup files or configuration under a non-default `$XDG_CONFIG_HOME`, and they run later outside the wrapper. Only the default startup locations listed below are mounted read-only.
+
+```mermaid
+flowchart TB
+    accTitle: Bubblewrapped Workspace: confine your agent's commands on the host they run on
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. Their ctx.workspace is BubblewrappedWorkspace, which wraps SSHWorkspace and runs commands over ssh -T in a bwrap wrapper on dev@build-box with private /tmp and empty /run. In it, working_dir /srv/app is writable, the host's other files are read-only, and seccomp blocks the network, every socket.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        bwrap["BubblewrappedWorkspace()<br/>wraps SSHWorkspace"]:::capability
+    end
+    sandbox["bwrap wrapper<br/>on dev@build-box<br/>private /tmp, empty /run"]:::external
+    workdir["working_dir<br/>/srv/app"]:::external
+    files["the host's<br/>other files"]:::external
+    sockets["network:<br/>every socket"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| bwrap
+    bwrap <-->|"commands over ssh -T"| sandbox
+    sandbox -->|"writable"| workdir
+    sandbox -->|"read-only"| files
+    sandbox -.-x|"seccomp blocks"| sockets
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install
 
@@ -19,56 +46,78 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 ```
 
-The sandbox's host must run Linux with `bwrap` installed (the `bubblewrap` package) and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
+The host the commands run on must run Linux, with the `bubblewrap` package installed and user namespaces allowed. Otherwise commands raise `WorkspaceUnavailableError`. The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras; swap them for your own tools and model provider.
 
 ## Quick start
 
-`BubblewrapSandbox` wraps another workspace capability and runs its commands in a sandbox on that workspace's host. Wrap [`SSHWorkspace`](ssh-workspace.md) to sandbox commands on a remote host, or `LocalWorkspace` to sandbox them on this one:
+`BubblewrappedWorkspace` wraps another workspace capability and runs its commands in `bwrap` on that workspace's host. Wrap [`SSHWorkspace`](ssh-workspace.md) to confine commands on a remote host, or `LocalWorkspace` to confine them on this one:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import BubblewrapSandbox, Coder, SSHWorkspace
+from pydantic_ai_harness import BubblewrappedWorkspace, Coder, SSHWorkspace
 
 agent = Agent(
     '{{ anthropic:large }}',
-    capabilities=[BubblewrapSandbox(SSHWorkspace('dev@build-box', working_dir='/srv/app')), Coder()],
+    capabilities=[BubblewrappedWorkspace(SSHWorkspace('dev@build-box', working_dir='/srv/app')), Coder()],
 )
 result = agent.run_sync('Run the test suite and fix the first failure.')
 ```
 
-## What the sandbox allows
+- Commands can write only to the working directory. They see the host's other files read-only, a private `/tmp` and an empty `/run`.
+- The file tools of [`FileSystem`](filesystem.md) and [`Coder`](coder.md) run in the wrapper too, so they can't write outside the working directory either, even through a swapped-in symlink.
+- There is no network, not even loopback or Unix sockets. A test suite that starts a local server needs `network=True`. See [Network](#network).
+- Background jobs keep running after the call and the run that started them, until something stops them. Commands share the host's process list.
+- The run's ref and `backend` are the wrapped workspace's, so continuing a run works as it does for that workspace.
 
-Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and can write only to the working directory. `/run` is empty, because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection. `bwrap` must be able to give the sandbox its own user namespace, and the sandbox has no capabilities.
+## What the wrapper allows
 
-When the working directory contains the host account's home directory, as an `SSHWorkspace` without a `working_dir` does, the files the host runs or reads when the next SSH connection logs in, before the command starts, are mounted read-only: `~/.ssh`, `~/.pam_environment`, and the startup files a login shell runs for a command (`~/.bashrc`, `~/.zshenv`, `~/.cshrc`, `~/.tcshrc` and `~/.config/fish`). Missing ones are created first, empty. If one of them is a symlink, the sandbox doesn't start, because a command could replace the link. Neither finding the home directory (`cd -P` and `pwd -P` on an absolute `$HOME`) nor creating a missing `~/.ssh` (`/bin/mkdir`) searches `PATH`; without an absolute home the sandbox does not start. `bwrap_args` come after these mounts and can still replace them.
+`bwrap` gives the wrapper its own user namespace and no Linux capabilities, the kernel's per-process privileges. `/run` is empty because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection.
 
-Without the network, a seccomp filter blocks the same system calls as the [Codex CLI](https://github.com/openai/codex)'s Linux sandbox does without network access: commands can't connect to, serve or accept on any socket, including Unix sockets the host has elsewhere on disk and the sandbox's own loopback, and can't use `ptrace` or `io_uring`. Commands can still create stream socket pairs, which language runtimes use between their own processes. Unlike Codex, Unix datagram sockets are blocked too, because a datagram can be addressed to any socket file without connecting first. So a test suite that starts a local server needs `network=True`, and so does Python's `forkserver` start method for `multiprocessing` (the default on Linux since Python 3.14), which listens on a socket: `multiprocessing.get_context('spawn')` or `'fork'` work without it. The filter covers x86_64 and aarch64 hosts; a 32-bit program in the sandbox is stopped when it makes a system call.
+When the working directory contains the host account's home directory, as an `SSHWorkspace` without a `working_dir` does, the files the host runs or reads when the next SSH connection logs in are mounted read-only:
 
-Pass `network=True` to share the host's network: commands can reach it, including services on the host's loopback and anything the host can reach, and can listen on the host's ports. The DNS configuration under `/run` comes back with it, and there is no seccomp filter.
+- `~/.ssh` and `~/.pam_environment`.
+- The startup files a login shell runs or commonly sources for a command: `~/.bashrc`, `~/.bashrc.d`, `~/.cargo/env`, `~/.local/bin/env`, `~/.zshenv` (and `$ZDOTDIR/.zshenv` when `ZDOTDIR` points elsewhere), `~/.cshrc`, `~/.tcshrc` and `~/.config/fish`.
 
-Add `bwrap` arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes another directory writable and `['--tmpfs', path]` hides one, such as `~/.ssh`. The program that starts `bwrap`, and `base64` when the filter loads, is taken from a `PATH` directory outside the working directory.
+Missing ones are created empty. If one of them is a symlink, or the home directory isn't absolute, the wrapper doesn't start.
 
-Commands share the host's process list rather than getting their own, so a command started in the background, such as a [Shell](shell.md) background job or a dev server, keeps running after the call that started it, and after the agent run, until something stops it. Later calls can check on it or stop it. On timeout or cancellation, what stops is up to the wrapped backend. `LocalWorkspaceBackend` and `SSHWorkspaceBackend` stop the command and its foreground descendants; SSH cleanup is best effort if the host stalls or becomes unreachable. The E2B and Modal backends do the same only when the image has `setsid`, and otherwise stop just the command itself, so its children may keep running. Jobs deliberately detached into their own session keep running on every backend. The cost is that sandboxed commands can see the host's processes and their command lines, and signal the host user's own. A call's `env` values are `bwrap --setenv` arguments, so they show up in that process list while the command runs.
+Add `bwrap` arguments with `bwrap_args=`. They come after the defaults, including the mounts above:
 
-File methods such as `write_text`, and so the [FileSystem](filesystem.md) and [Coder](coder.md) file tools, run in the sandbox too, as shell commands, so they see what commands see: they can't write outside the working directory, even through a symlink a command swapped in after a path check. Only when the wrapped workspace is read-only, and so runs no commands, are its files read from the host directly. The run's ref is the wrapped workspace's, and its `backend` is the wrapped backend.
+- `['--bind', path, path]` makes another directory writable.
+- `['--tmpfs', path]` hides one, such as `~/.ssh`.
 
-The wrapped workspace must run commands without a controlling terminal. `BubblewrapWorkspace` omits `bwrap --new-session` so the backend can stop foreground descendants on timeout or cancellation; with a controlling terminal, kernels permitting `TIOCSTI` could let sandboxed commands inject input into the host terminal. `LocalWorkspaceBackend` starts a new session and `SSHWorkspaceBackend` uses `ssh -T`. `E2BSandboxBackend` and `ModalSandboxBackend` run commands through their providers' non-PTY command APIs, so no terminal is attached, with or without `setsid` in the image. All four satisfy this requirement; custom backends must do so too.
+### Network
 
-### What it doesn't protect
+By default, a seccomp filter, a kernel-level list of blocked system calls, stops commands from:
 
-The sandbox keeps an agent from changing the host outside its working directory. It is not a boundary against an agent trying to harm the host user:
+- Connecting to, serving or accepting on any socket, including Unix sockets elsewhere on disk and the wrapper's own loopback.
+- Using `ptrace` or `io_uring`.
+
+Stream socket pairs still work, which language runtimes use between their own processes.
+
+Python's `multiprocessing` listens on a socket with its `forkserver` start method, the default on Linux since Python 3.14. Use `multiprocessing.get_context('spawn')` or `'fork'`, or pass `network=True`.
+
+`network=True` shares the host's network: commands can reach anything the host can, including services on its loopback, and listen on its ports. There is no seccomp filter then.
+
+### What it doesn't stop
+
+The wrapper keeps an agent from accidentally changing the host outside its working directory. It is not a boundary against an agent trying to harm the host user:
 
 - Commands can read every file the host user can, such as SSH keys and cloud credentials, and show them to the model. Hide those directories with `bwrap_args=['--tmpfs', path]`.
-- Commands can signal, and so stop, the host user's other processes.
-- Anything a command writes in the working directory, such as Git hooks, a `Makefile` or an `.envrc`, runs unsandboxed if you later run it outside the sandbox.
-- With the home directory writable, so are the files only an interactive login runs, such as `~/.profile` and `~/.bash_profile`, and other per-user configuration. Give the sandbox a project directory as its `working_dir` instead.
-- The wrapped workspace's own settings, `bwrap_args`, and the host's `bwrap` outside the working directory are trusted.
+- Commands can see the host's processes and their command lines, including a call's `env` values. They can also signal, and so stop, the host user's other processes.
+- Anything a command writes in the working directory, such as Git hooks, a `Makefile` or an `.envrc`, runs outside the wrapper if you later run it there.
+- When the working directory contains the home directory, everything in it except the paths listed above stays writable. That includes:
+  - files only an interactive login runs, such as `~/.profile` and `~/.bash_profile`;
+  - other per-user configuration, including fish configuration when `$XDG_CONFIG_HOME` is set to a non-default location;
+  - files the read-only startup files source, such as a `~/.bashrc.local`. Which ones depends on each host, so the wrapper can't know them all.
 
-For an agent you don't trust, give it its own user on the host, or use a cloud sandbox such as [E2B](e2b-sandbox.md).
+  This isn't specific to SSH: with a `LocalWorkspace`, the same files run the next time you open a shell. Give the wrapper a project directory as its `working_dir` instead.
+- The wrapper trusts the wrapped workspace's own settings, `bwrap_args`, and the host's `bwrap` and `base64`, taken from a `PATH` directory outside the working directory.
+
+For an agent you don't trust, give it its own user on the host, or use a VM-backed sandbox such as [Smol](smol-sandbox.md) or [BoxLite](boxlite-sandbox.md).
 
 ## Use the workspace directly
 
-The capability builds a `BubblewrapWorkspace`, a [`WrapperWorkspace`](../workspace.md#read-only-access) you can also use directly, around any workspace:
+The capability builds a `BubblewrapWorkspace` around the wrapped workspace. You can also use it directly, around any workspace. It is a [`WrapperWorkspace`](../workspace-custom.md#wrapping-a-workspace):
 
 ```python {test="skip"}
 from pydantic_ai.workspaces import CommandResult, Workspace
@@ -76,17 +125,28 @@ from pydantic_ai_harness import BubblewrapWorkspace, SSHWorkspaceBackend
 
 
 async def run_tests() -> CommandResult:
-    workspace = BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@build-box')))
+    workspace = BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@build-box', working_dir='/srv/app')))
     # `bwrap` runs `make test` on build-box
     return await workspace.run(['make', 'test'])
 ```
 
+The wrapped workspace must run commands without a controlling terminal. Otherwise, on kernels that permit `TIOCSTI`, wrapped commands could type input into the host terminal. `LocalWorkspaceBackend`, `SSHWorkspaceBackend`, `E2BSandboxBackend` and `ModalSandboxBackend` all run commands without one. A custom backend must too.
+
+## Limits
+
+- On a timeout or cancellation, what stops is up to the wrapped backend:
+    - Local and SSH stop the command and its foreground descendants. SSH cleanup can fail if the host stalls.
+    - E2B and Modal do so only when the image has `setsid`.
+    - Jobs detached into their own session keep running everywhere.
+- The seccomp filter covers x86_64 and aarch64 hosts. A 32-bit program in the wrapper is stopped when it makes a system call.
+- A read-only wrapped workspace runs no commands, so its files are read from the host directly.
+
 ## Telemetry
 
-`BubblewrapSandbox` emits no spans of its own. The run's workspace is the wrapped one's, so core's [instrumentation](../capabilities/instrumentation.md) records its `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each sandboxed command runs inside its tool call's span.
+`BubblewrappedWorkspace` emits no spans of its own. The run's workspace is the wrapped one's, so core's [instrumentation](../capabilities/instrumentation.md) records its `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each wrapped command runs inside its tool call's span.
 
 ## API reference
 
-::: pydantic_ai_harness.bubblewrap_sandbox.BubblewrapSandbox
+::: pydantic_ai_harness.bubblewrap_sandbox.BubblewrappedWorkspace
 
 ::: pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace
