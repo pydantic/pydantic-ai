@@ -250,6 +250,30 @@ class TestCommands:
         assert result.exit_code == 0
         assert calls >= 2
 
+    async def test_a_running_command_keeps_the_sandbox_from_stopping_while_idle(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Daytona stops a sandbox whose only activity is a command running and being polled.
+        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._ACTIVITY_REFRESH_INTERVAL', 0)
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.activity_error = DaytonaConnectionError('control plane down')
+        original = sandbox.process.get_session_command
+        polls = 0
+
+        async def running_for_three_polls(*args: Any, **kwargs: Any) -> Any:
+            nonlocal polls
+            result = await original(*args, **kwargs)
+            polls += 1
+            if polls <= 3:
+                result.exit_code = None
+            return result
+
+        monkeypatch.setattr(sandbox.process, 'get_session_command', running_for_three_polls)
+        # A refresh that fails does not fail the command.
+        assert (await backend.run(['true'])).exit_code == 0
+        assert sandbox.activity_refreshes == 3
+
     @pytest.mark.parametrize(
         ('error', 'expected'),
         [
@@ -466,18 +490,21 @@ class TestCommands:
             await backend.run(['true'])
         assert sandbox.start_calls == []
 
-    @pytest.mark.parametrize('state', [daytona.SandboxState.STOPPED, daytona.SandboxState.PAUSED])
-    async def test_a_sandbox_stopped_under_a_held_backend_is_unavailable(
+    @pytest.mark.parametrize(
+        'state', [daytona.SandboxState.STOPPING, daytona.SandboxState.STOPPED, daytona.SandboxState.PAUSED]
+    )
+    async def test_a_sandbox_stopped_under_a_held_backend_is_started_by_its_next_operation(
         self, fake_daytona: FakeDaytona, state: daytona.SandboxState
     ) -> None:
-        # Daytona stops an idle container and pauses an idle VM; attaching again starts either.
+        # Daytona stops an idle container and pauses an idle VM. An application such as CLAI keeps one
+        # backend for a whole session, so that backend must start the sandbox again itself.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.state = state
-        with pytest.raises(WorkspaceUnavailableError, match='was stopped while idle'):
+        with pytest.raises(WorkspaceUnavailableError, match='was stopped while idle; the next operation starts it'):
             await backend.run(['true'])
         assert sandbox.start_calls == []
-        assert (await DaytonaSandboxBackend(ref=backend.ref).run(['true'])).exit_code == 0
+        assert (await backend.run(['true'])).exit_code == 0
         assert sandbox.start_calls
 
     async def test_session_setup_timeout_is_transient(

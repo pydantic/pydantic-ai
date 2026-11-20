@@ -74,6 +74,10 @@ _CREATE_TIMEOUT = 120
 # For create, start, and delete.
 _LIFECYCLE_TIMEOUT = 60.0
 _TEARDOWN_TIMEOUT = 30.0
+# How often a running command resets Daytona's idle timer. Daytona stops a sandbox even while a
+# command runs, and polling the command does not count as activity: with a one-minute idle stop,
+# a sandbox polled five times a second was stopped 76s into a `sleep 240` (live, 2026-11-20).
+_ACTIVITY_REFRESH_INTERVAL = 30.0
 # Between attempts to delete a command session.
 _RETRY_DELAY = 1.0
 # The most partial output a timeout reports per stream.
@@ -141,6 +145,17 @@ def secrets_error(secrets: Mapping[str, str] | None, env: Mapping[str, str] | No
         # `env` is set on every command, so it would hide the placeholder the proxy replaces.
         return ValueError(f'{", ".join(shadowed)} cannot be in both `env` and `secrets`')
     return None
+
+
+# Includes the states on the way to stopped: the toolbox already refuses requests then, as a 502.
+_STOPPED_STATES = (
+    daytona.SandboxState.STOPPING,
+    daytona.SandboxState.STOPPED,
+    daytona.SandboxState.ARCHIVING,
+    daytona.SandboxState.ARCHIVED,
+    daytona.SandboxState.PAUSING,
+    daytona.SandboxState.PAUSED,
+)
 
 
 def _in_deleted_state(sandbox: AsyncSandbox) -> bool:
@@ -215,10 +230,10 @@ async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
         return None
     if _in_deleted_state(sandbox):
         return WorkspaceUnavailableError(_unavailable_message(sandbox.id))
-    if sandbox.state in (daytona.SandboxState.STOPPED, daytona.SandboxState.ARCHIVED, daytona.SandboxState.PAUSED):
+    if sandbox.state in _STOPPED_STATES:
         return WorkspaceUnavailableError(
-            f'The Daytona sandbox {sandbox.id!r} was stopped while idle; a later run that attaches to it '
-            "starts it again. Pass `workspace='new'` to start a fresh sandbox."
+            f'The Daytona sandbox {sandbox.id!r} was stopped while idle; the next operation starts it again. '
+            "Pass `workspace='new'` to start a fresh sandbox."
         )
     return None
 
@@ -332,6 +347,7 @@ class _DaytonaProcess:
 
     async def wait(self) -> CommandResult:
         assert self._command_id is not None
+        next_refresh = anyio.current_time() + _ACTIVITY_REFRESH_INTERVAL
         while True:
             async with _mapped_errors('Could not read the command result', sandbox=self._sandbox):
                 command = await self._process.get_session_command(
@@ -339,9 +355,24 @@ class _DaytonaProcess:
                 )
             if command.exit_code is not None:
                 break
+            if anyio.current_time() >= next_refresh:
+                await self._refresh_activity()
+                next_refresh = anyio.current_time() + _ACTIVITY_REFRESH_INTERVAL
             await anyio.sleep(0.2)
         self._finished = True
         return await self._result(command.exit_code)
+
+    async def _refresh_activity(self) -> None:
+        """Reset Daytona's idle timer, which a running command and polling its status do not.
+
+        Best effort: a failed refresh is retried at the next interval, and a stop it misses is
+        reported by the next poll.
+        """
+        with anyio.move_on_after(_REQUEST_TIMEOUT):
+            try:
+                await self._sandbox.refresh_activity(request_timeout=_REQUEST_TIMEOUT)
+            except Exception as error:
+                logger.debug('Could not refresh the activity of Daytona sandbox %s: %r', self._sandbox.id, error)
 
     async def _result(self, exit_code: int) -> CommandResult:
         try:
@@ -658,6 +689,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._operations += 1
         try:
             yield
+        except WorkspaceUnavailableError:
+            # Forget the sandbox, so the next operation attaches by `ref` again, which starts a stopped one.
+            self._sandbox, self._resolved_working_dir = None, None
+            raise
         finally:
             self._operations -= 1
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:

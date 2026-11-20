@@ -233,7 +233,7 @@ git config --global credential.https://github.com.helper '!f() { echo username=x
 - `WorkspaceTimeoutError` carries the last 4 KiB of each stream.
 - Output is collected when the command exits, so output a background child writes afterwards is lost. Redirect it to a file. `Shell.start_command` does this for you.
 - A command whose output passes 10 MiB raises `WorkspaceOutputLimitError` once it exits. Redirect large output to a file.
-- `timeout=None` removes the command deadline, not Daytona's idle stop.
+- A running command keeps Daytona from stopping the sandbox as idle. Once it exits, a background child it left running doesn't.
 - The Daytona SDK needs asyncio. Under Trio, every operation raises `UserError`.
 
 ## Durable execution

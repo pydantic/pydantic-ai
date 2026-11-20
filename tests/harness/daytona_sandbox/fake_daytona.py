@@ -30,6 +30,7 @@ from typing import Protocol
 import anyio
 import anyio.lowlevel
 from daytona import (
+    DaytonaBadGatewayError,
     DaytonaBadRequestError,
     DaytonaConnectionError,
     DaytonaError,
@@ -101,6 +102,9 @@ class FakeProcess:
         self.owner.check_alive()
         if self.owner.state in (SandboxState.STOPPED, SandboxState.PAUSED):
             raise DaytonaError('sandbox stopped')
+        if self.owner.state == SandboxState.STOPPING:
+            # What the toolbox answered live while Daytona stopped an idle sandbox.
+            raise DaytonaBadGatewayError('Failed to create session: ', status_code=502)
         if self.owner.process_create_gate is not None:
             await self.owner.process_create_gate.wait()
         self.owner.process_sessions.add(session_id)
@@ -383,6 +387,8 @@ class FakeSandbox:
         self.state = SandboxState.STARTED
         self.purged = False
         self.refresh_error: Exception | None = None
+        self.activity_refreshes = 0
+        self.activity_error: Exception | None = None
         # What a toolbox call to a deleted sandbox raises, when not the default 404.
         self.gone_error: Exception | None = None
         self.download_error: Exception | None = None
@@ -431,6 +437,11 @@ class FakeSandbox:
 
     async def wait_for_sandbox_start(self, timeout: float | None = 60) -> None:
         self.state = SandboxState.STARTED
+
+    async def refresh_activity(self, request_timeout: float | None = None) -> None:
+        self.activity_refreshes += 1
+        if self.activity_error is not None:
+            raise self.activity_error
 
     async def refresh_data(self, request_timeout: float | None = None) -> None:
         if self.refresh_error is not None:
