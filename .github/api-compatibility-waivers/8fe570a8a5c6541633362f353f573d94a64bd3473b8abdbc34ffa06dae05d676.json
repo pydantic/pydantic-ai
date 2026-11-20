@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "CodeMode.from_spec defaults id to 'code_mode', matching the constructor, so a spec-built CodeMode under TemporalDurability runs its remote Monty turns as activities instead of deadlocking; id=None keeps the old behaviour.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13756"
+}

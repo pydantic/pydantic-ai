@@ -8,7 +8,22 @@ Salesforce, or Zendesk. Each instance is scoped to one linked account, which is 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the StackOne capability connects to StackOne's MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account's provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.](https://pydantic.dev/docs/ai/img/harness/stackone.svg)
+```mermaid
+flowchart TB
+    accTitle: StackOne: run actions in a user's linked business apps
+    accDescr: Inside your agent, the model searches and then executes through the StackOne capability, whose two tools end in _search_actions and _execute_action. The capability calls StackOne MCP at api.stackone.com/mcp with an API key and x-account-id. StackOne MCP sends the action to the linked account, such as BambooHR or Salesforce, and gets the result.
+    subgraph agent["Your agent"]
+        model(["model"])
+        stackone["StackOne()<br/>..._search_actions,<br/>..._execute_action"]:::capability
+    end
+    mcp["StackOne MCP<br/>api.stackone.com/mcp"]:::external
+    account["linked account<br/>such as BambooHR<br/>or Salesforce"]:::external
+    model <-->|"search, then execute"| stackone
+    stackone <-->|"API key, x-account-id"| mcp
+    mcp <-->|"action, result"| account
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Before you start
 
@@ -46,7 +61,7 @@ export OPENAI_API_KEY='your-openai-api-key'
 ```
 
 `StackOne` reads `STACKONE_API_KEY` automatically. The example reads `STACKONE_ACCOUNT_ID` explicitly so the account
-ID is not hard-coded. You can pass `api_key=` directly instead, but keep secrets out of source control.
+ID is not hard-coded. You can pass `auth=` directly instead, but keep secrets out of source control.
 
 ## Run your first agent
 
@@ -68,6 +83,38 @@ print(result.output)
 
 By default, the model receives two tools. It searches for an action that matches the request, then executes the
 returned action ID. The final output depends on the linked provider and its data.
+
+## Authenticate each user
+
+`auth` takes the API key as a string, or a sync or async function of the run context that returns one. The function is
+called at the start of each run, so the key can come from deps or a secret store rather than the capability's
+configuration. The function never falls back to `STACKONE_API_KEY`: if it returns `None` or `''`, that run gets no
+StackOne tools. Each key must belong to the StackOne project that owns `account_id`.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import StackOne
+
+
+@dataclass
+class Deps:
+    stackone_api_key: str | None
+
+
+def stackone_api_key(ctx: RunContext[Deps]) -> str | None:
+    return ctx.deps.stackone_api_key
+
+
+agent = Agent(
+    'openai:gpt-5',
+    deps_type=Deps,
+    capabilities=[StackOne(account_id='your-linked-account-id', auth=stackone_api_key)],
+)
+```
+
+`auth` replaces `api_key`, which still works but emits a `HarnessDeprecationWarning`. Passing both raises an error.
 
 ## Control available actions
 
@@ -151,13 +198,13 @@ Provider actions can return large exports. Combine StackOne with the
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne, ToolOutputLimits
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
 agent = Agent(
     'openai:gpt-5',
     capabilities=[
         StackOne(account_id='your-linked-account-id'),
-        ToolOutputLimits(store=LocalFileStore()),
+        ToolOutputLimits(store=LocalFileOverflowStore()),
     ],
 )
 ```
@@ -188,7 +235,7 @@ Handle the resulting deferred approval requests as described in the linked guide
 
 The capability also works with Pydantic AI's
 [agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) format for YAML or JSON. Keep the API key in
-`STACKONE_API_KEY` rather than storing it in the file:
+`STACKONE_API_KEY` rather than storing it in the file. Specs take no `auth`, and a spec's `api_key` is deprecated:
 
 ```yaml
 # agent.yaml

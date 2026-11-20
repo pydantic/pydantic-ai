@@ -27,7 +27,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@c9c896e9f097362c69cabf5312d345155aec9625
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@b11b8984abedc3761d7cc01306aeb3a35f6a33dd
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -50,7 +50,7 @@ models:
             output: 0.00000050
 engine:
   id: pydantic-ai
-  version: '0.64.0'
+  version: '0.70.0'
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
@@ -165,7 +165,7 @@ safe-outputs:
         timeout-minutes: 15
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serve detection when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          # Serve detection on both Coding Plan accounts when OpenCode Go refuses it before its first step.
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
@@ -181,6 +181,9 @@ safe-outputs:
         env:
           DETECTOR_OUTCOME: ${{ steps.detection_agentic_execution.outcome }}
           DETECTOR_JOB_STATUS: ${{ job.status }}
+          # The provider and plan of the last OpenCode run, which served detection or failed it.
+          DETECTOR_PROVIDER: ${{ steps.detection_agentic_execution.outputs.provider }}
+          DETECTOR_PLAN: ${{ steps.detection_agentic_execution.outputs.plan }}
           OTEL_SERVICE_NAME: gh-aw.threat-detection
         with:
           script: |
@@ -208,6 +211,8 @@ safe-outputs:
               'gh-aw.detector.outcome': outcome,
               'gh-aw.detector.reason': marker ? marker[1] : valid ? 'verdict' : 'missing_verdict',
               'gh-aw.detector.verdict': valid ? verdict.prompt_injection || verdict.secret_leak || verdict.malicious_patch ? 'blocked' : 'clean' : 'missing',
+              'gh-aw.detector.provider': process.env.DETECTOR_PROVIDER || 'unknown',
+              'gh-aw.detector.plan': process.env.DETECTOR_PLAN || 'unknown',
               'gh-aw.detector.attempts': streams.length,
               'gh-aw.detector.requests': steps.length,
               'gh-aw.detector.usage_available': steps.length > 0,

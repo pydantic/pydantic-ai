@@ -29,8 +29,11 @@ Inside a function, a name gets its classes from a parameter or variable annotati
 a `for` loop or comprehension over an iterable whose annotation or return annotation is known, or
 `isinstance` narrowing, and a module-level type alias stands for the type it names. A name bound any
 other way, such as a `with ... as` target, a tuple-unpacked loop variable or a module-level loop
-variable, has no class, so a member read through it records nothing. An access on a typed name that
-the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
+variable, has no class, so a member read through it records nothing. A `.get(key)` call on a mapping
+whose annotation or return annotation is known, a mapping type named in `_Index._MAPPINGS` such as
+`dict[K, V]` or `Mapping[K, V]`, is a `V`; a subscript `mapping[key]` and the other mapping methods,
+such as `.values()`, `.pop()` and `.setdefault()`, have no class. An access on a typed name that the
+walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
 to the class, unless the class has a base outside the walked packages (`BaseModel`, `Exception`),
 which may define the member: those accesses record nothing. Reflection over a whole instance is read
 only through `fields()` and `__dataclass_fields__`; `vars(obj)` and iterating `obj.__dict__` record
@@ -74,6 +77,7 @@ import re
 import subprocess
 import sys
 import tokenize
+from collections import ChainMap
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -193,6 +197,9 @@ Symbol = _Module | _ClassInfo | _ModuleValue
 
 class _Index:
     """Lazily parsed modules under `SOURCE_ROOTS`, and name resolution across them."""
+
+    # Mapping types, annotated `[K, V]`, whose `.get(key)` yields a `V`.
+    _MAPPINGS = frozenset({'Dict', 'Mapping', 'MutableMapping', 'OrderedDict', 'defaultdict', 'dict'})
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -361,6 +368,29 @@ class _Index:
             case _:
                 return frozenset()
 
+    def value_classes(self, module: _Module, annotation: ast.expr | None) -> frozenset[_ClassInfo]:
+        """The classes the values of a mapping with this annotation, written in `module`, are instances of."""
+        match annotation:
+            case ast.Constant(value=str(source)):
+                return self.value_classes(module, _parse_annotation(source))
+            case ast.BinOp(left=left, op=ast.BitOr(), right=right):
+                return self.value_classes(module, left) | self.value_classes(module, right)
+            case ast.Subscript(value=value, slice=ast.Tuple(elts=[_, item])) if _last_name(value) in self._MAPPINGS:
+                return self.annotation_classes(module, item)
+            case ast.Subscript(value=value, slice=index) if _last_name(value) in _TYPE_WRAPPERS:
+                arguments = index.elts if isinstance(index, ast.Tuple) else [index]
+                if _last_name(value) == 'Annotated':
+                    arguments = arguments[:1]
+                return frozenset[_ClassInfo]().union(*(self.value_classes(module, argument) for argument in arguments))
+            case ast.Name() | ast.Attribute():
+                match self.symbol(module, annotation):
+                    case _ModuleValue(module=alias_module, value=ast.expr() as value):
+                        return self.value_classes(alias_module, value)
+                    case _:
+                        return frozenset()
+            case _:
+                return frozenset()
+
     def bases(self, info: _ClassInfo) -> _Ancestry:
         """The class's resolved direct bases, and whether every base resolved."""
         resolved: list[_ClassInfo] = []
@@ -522,6 +552,8 @@ class _Scope:
     locals: dict[str, frozenset[_ClassInfo]] = field(default_factory=dict[str, frozenset[_ClassInfo]])
     owner: _ClassInfo | None = None
     """The class whose body this scope is, or whose method this scope is."""
+    annotated: dict[str, ast.expr | None] = field(default_factory=dict[str, ast.expr | None])
+    """The annotations of a function scope's parameters and annotated local variables, by name."""
 
 
 class _EngineWalker(ast.NodeVisitor):
@@ -619,7 +651,16 @@ class _EngineWalker(ast.NodeVisitor):
             case ast.Call(func=ast.Attribute(value=value, attr=attr)) if not isinstance(
                 self.index.symbol(self.module, value), _Module
             ):
-                return self.attribute_types(value, attr, returns=True)
+                result = self.attribute_types(value, attr, returns=True)
+                if attr == 'get':
+                    # No walked class defines a mapping's `get`: what it yields comes from the mapping's annotation,
+                    # which an enclosing function holds when the mapping is a name it binds.
+                    annotated = ChainMap(*(scope.annotated for scope in reversed(self.scopes)))
+                    annotations = self.annotations(value, annotated)
+                    result |= frozenset[_ClassInfo]().union(
+                        *(self.index.value_classes(module, annotation) for module, annotation in annotations)
+                    )
+                return result
             case ast.Call(func=func):
                 symbol = self.index.symbol(self.module, func)
                 if isinstance(symbol, _ModuleValue):
@@ -651,25 +692,32 @@ class _EngineWalker(ast.NodeVisitor):
             if (found := self.index.lookup(info, attr)) is not None:
                 yield found
 
-    def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[_ClassInfo]:
-        """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
-        match iterable:
+    def annotations(
+        self, expr: ast.expr, annotated: Mapping[str, ast.expr | None]
+    ) -> Iterator[tuple[_Module, ast.expr | None]]:
+        """The annotation or return annotation of what `expr` reads or calls, each with the module it is written in."""
+        match expr:
             case ast.Name(id=name) if name in annotated:
-                return self.index.element_classes(self.module, annotated[name])
+                yield self.module, annotated[name]
             case ast.Name() | ast.Attribute() | ast.Call() if isinstance(
-                symbol := self.index.symbol(self.module, iterable.func if isinstance(iterable, ast.Call) else iterable),
+                symbol := self.index.symbol(self.module, expr.func if isinstance(expr, ast.Call) else expr),
                 _ModuleValue,
             ):
-                annotation = symbol.returns if isinstance(iterable, ast.Call) else symbol.annotation
-                return self.index.element_classes(symbol.module, annotation)
+                yield symbol.module, symbol.returns if isinstance(expr, ast.Call) else symbol.annotation
             case ast.Attribute(value=value, attr=attr) | ast.Call(func=ast.Attribute(value=value, attr=attr)):
-                result: frozenset[_ClassInfo] = frozenset()
                 for definer, member in self.member_hits(value, attr):
-                    annotation = member.returns if isinstance(iterable, ast.Call) else member.annotation
-                    result |= self.index.element_classes(definer.module, annotation)
-                return result
+                    yield definer.module, member.returns if isinstance(expr, ast.Call) else member.annotation
             case _:
-                return frozenset()
+                pass
+
+    def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[_ClassInfo]:
+        """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
+        return frozenset[_ClassInfo]().union(
+            *(
+                self.index.element_classes(module, annotation)
+                for module, annotation in self.annotations(iterable, annotated)
+            )
+        )
 
     def bind(self, scope: _Scope, name: str, classes: frozenset[_ClassInfo]) -> None:
         if classes:
@@ -743,15 +791,18 @@ class _EngineWalker(ast.NodeVisitor):
             if default is not None:
                 self.visit(default)
         enclosing = self.scopes[-1]
-        scope = _Scope(self.qualname(node.name), owner=enclosing.owner)
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        scope = _Scope(
+            self.qualname(node.name),
+            owner=enclosing.owner,
+            annotated={argument.arg: argument.annotation for argument in arguments},
+        )
         self.bind_parameters(scope, enclosing, node, arguments)
         self.scopes.append(scope)
-        annotated = {argument.arg: argument.annotation for argument in arguments}
         if (vararg := node.args.vararg) is not None and vararg.annotation is not None:
             # `*items: T` makes `items` a tuple of `T`.
-            annotated[vararg.arg] = ast.Subscript(value=ast.Name(id='tuple'), slice=vararg.annotation)
-        self.bind_locals(scope, node, annotated)
+            scope.annotated[vararg.arg] = ast.Subscript(value=ast.Name(id='tuple'), slice=vararg.annotation)
+        self.bind_locals(scope, node)
         for argument in [*arguments, node.args.vararg, node.args.kwarg]:
             if argument is not None and argument.annotation is not None:
                 self.visit(argument.annotation)
@@ -772,9 +823,9 @@ class _EngineWalker(ast.NodeVisitor):
             else:
                 self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
 
-    def bind_locals(self, scope: _Scope, node: FunctionNode, annotated: dict[str, ast.expr | None]) -> None:
+    def bind_locals(self, scope: _Scope, node: FunctionNode) -> None:
         """Flow-insensitively, the classes each local name of the function is bound to anywhere in it."""
-        annotated.update(
+        scope.annotated.update(
             {
                 statement.target.id: statement.annotation
                 for statement in ast.walk(node)
@@ -797,7 +848,7 @@ class _EngineWalker(ast.NodeVisitor):
                     | ast.AsyncFor(target=ast.Name(id=name), iter=iterable)
                     | ast.comprehension(target=ast.Name(id=name), iter=iterable)
                 ):
-                    self.bind(scope, name, self.element_types(iterable, annotated))
+                    self.bind(scope, name, self.element_types(iterable, scope.annotated))
                 case _:
                     pass
 
