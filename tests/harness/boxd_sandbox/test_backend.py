@@ -347,15 +347,13 @@ class TestRun:
             with pytest.raises(WorkspaceUnavailableError, match="'machine-1' no longer exists"):
                 await backend.run(['sh', '-c', 'touch started; exec sleep 60'])
 
-    async def test_a_machine_stopped_during_a_command_is_unavailable_until_attached_again(
-        self, host: FakeBoxd, tmp_path: Path
-    ) -> None:
+    async def test_a_machine_stopped_during_a_command_is_not_run_again(self, host: FakeBoxd, tmp_path: Path) -> None:
         backend = BoxdSandboxBackend()
         await backend.run(['true'])
         machine = host.only
 
         async def stop_once_started() -> None:
-            while not (tmp_path / 'started').exists():
+            while not (tmp_path / 'runs').exists():
                 await anyio.sleep(0.01)
             machine.status = 'stopped'
             for process in machine.processes:
@@ -364,12 +362,30 @@ class TestRun:
 
         async with anyio.create_task_group() as group:
             group.start_soon(stop_once_started)
-            with pytest.raises(WorkspaceUnavailableError, match="'machine-1' was stopped; a later run that attaches"):
-                await backend.run(['sh', '-c', 'touch started; exec sleep 60'])
-        with pytest.raises(WorkspaceUnavailableError, match='was stopped'):
-            await backend.run(['true'])
-        assert (await BoxdSandboxBackend(ref=backend.ref).run(['echo', 'back'])).stdout == 'back\n'
+            with pytest.raises(
+                WorkspaceUnavailableError, match="'machine-1' was stopped during the command, which may have partly run"
+            ):
+                await backend.run(['sh', '-c', 'echo ran >> runs; exec sleep 60'])
+        # The next operation starts the machine again, and the command ran only the once.
+        assert (await backend.run(['cat', 'runs'])).stdout == 'ran\n'
         assert machine.starts == 1
+
+    async def test_a_machine_stopped_under_a_held_backend_is_started_by_the_next_operation(
+        self, host: FakeBoxd
+    ) -> None:
+        backend = BoxdSandboxBackend()
+        await backend.write_bytes('kept.txt', b'kept')
+        machine = host.only
+
+        machine.status = 'stopped'
+        assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+        machine.status = 'stopped'
+        assert await backend.read_bytes('kept.txt') == b'kept'
+        machine.status = 'stopped'
+        await backend.write_bytes('new.txt', b'new')
+
+        assert await backend.read_bytes('new.txt') == b'new'
+        assert machine.starts == 3
 
     async def test_a_machine_deleted_between_commands_is_unavailable(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
