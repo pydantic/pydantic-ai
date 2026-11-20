@@ -15,13 +15,13 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
+from pydantic_ai._computer_use import fit_screenshot, latest_screenshot_size, png_size
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
     ComputerCallPart,
     ComputerResult,
-    ComputerReturnPart,
     ComputerToolAction,
     CursorPosition,
     Drag,
@@ -39,8 +39,6 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
-    ModelMessage,
-    ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ToolCallPart,
@@ -51,7 +49,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._png import png_size
 from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent
 from pydantic_ai_harness.computer_use._protocol import (
     Display,
@@ -181,12 +178,7 @@ class _ScreenshotLimit:
 
     def fit(self, size: tuple[int, int]) -> tuple[int, int]:
         """The largest size with the same shape as `size` that fits the limit: `size` itself when it fits."""
-        width, height = size
-        scale = min(
-            self.max_side / max(width, height) if self.max_side else 1.0,
-            math.sqrt(self.max_pixels / (width * height)) if self.max_pixels else 1.0,
-        )
-        return size if scale >= 1 else (max(1, int(width * scale)), max(1, int(height * scale)))
+        return fit_screenshot(size, max_side=self.max_side, max_pixels=self.max_pixels)
 
 
 _NO_DISPLAY = (
@@ -479,17 +471,6 @@ async def _release_for_failure(display: Display, held: list[MouseButton]) -> tup
     return ' '.join(said), stuck
 
 
-def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | None:
-    """The size of the latest screenshot the model saw."""
-    for message in reversed(messages):
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in reversed(message.parts):
-            if isinstance(part, ComputerReturnPart) and (screenshot := part.screenshot) is not None:
-                return png_size(screenshot.data)
-    return None
-
-
 def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
     """The index of the response that made this call, and the call as the model made it."""
     for index in range(len(ctx.messages) - 1, -1, -1):
@@ -667,10 +648,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         made = _the_call(ctx)
         call = made[1] if made else None
         plan = _Plan(
-            # The grid the model that made the call points on, as the agent recorded it.
+            # The grid the model that made the call points on, as that model recorded it.
             grid=call.coordinate_grid if call else None,
             # The model pointed on the latest screenshot before its call.
-            seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
+            seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=call is not None and call.actions != actions,
             # The screenshot the call ends with must fit the model that made the call. A model that answers next and
             # can't take it refuses the request itself.
@@ -826,7 +807,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         That's the latest screenshot, or the display's size before the first screenshot. It's worked out again for
         each model a step tries.
         """
-        if (seen := _last_screenshot_size(ctx.messages)) is not None:
+        if (seen := latest_screenshot_size(ctx.messages)) is not None:
             # Once there's a screenshot, the display isn't read, so a reply that doesn't use the screen doesn't start
             # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
             return ComputerTool(display_size=seen, optional=True)
