@@ -26,6 +26,10 @@ A result's content is a short summary, what each action returned, then a screens
 The summary's wording can change between releases;
 [`ComputerResult`][pydantic_ai.computer_use.ComputerResult], in the result's `metadata`, does not.
 
+A call with a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] must not run until a person
+approves it. A runner that approves it sets `confirmed` on the result, so the adapter tells the provider; without it,
+the provider refuses the result.
+
 In the message history, the tool's calls and results become
 [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
 [`ComputerReturnPart`][pydantic_ai.computer_use.ComputerReturnPart], whatever the tool's name.
@@ -54,6 +58,8 @@ __all__ = (
     'CursorPosition',
     'Drag',
     'HoldKeys',
+    'KeyDown',
+    'KeyUp',
     'MouseButton',
     'MouseDown',
     'MouseMove',
@@ -404,6 +410,24 @@ class HoldKeys:
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
+class KeyDown:
+    """Press keys and keep them pressed until a `key_up`, for example to hold `shift` through several clicks."""
+
+    type: Literal['key_down'] = 'key_down'
+    keys: _Keys
+    """One key per entry, pressed together."""
+
+
+@dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
+class KeyUp:
+    """Release keys pressed with `key_down`."""
+
+    type: Literal['key_up'] = 'key_up'
+    keys: _Keys
+    """One key per entry, released together."""
+
+
+@dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class Wait:
     """Pause, for example while a page or application loads."""
 
@@ -445,6 +469,8 @@ ComputerToolAction: TypeAlias = Annotated[
     | TypeText
     | PressKeys
     | HoldKeys
+    | KeyDown
+    | KeyUp
     | Wait
     | Screenshot
     | Zoom
@@ -479,6 +505,10 @@ class ComputerResult(TypedDict):
     changed them. A model adapter then sends the summary instead of reporting the model's actions as the ones that
     ran."""
 
+    confirmed: NotRequired[bool]
+    """`True` when the call had a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] and a
+    person approved it before it ran. A model adapter tells the provider so only when this is set."""
+
 
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
@@ -497,6 +527,15 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         """The actions the model asked for, or `None` if the arguments are incomplete (still streaming) or malformed."""
         typed = self.typed_args
         return typed['actions'] if typed is not None else None
+
+    @property
+    def confirmation(self) -> str | None:
+        """The provider's reason this call must be approved by a person before it runs, or `None`.
+
+        A provider sets it on actions its safety checks flag, such as accepting a cookie banner or sending a message.
+        """
+        reason = (self.provider_details or {}).get('confirmation')
+        return reason if isinstance(reason, str) else None
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
