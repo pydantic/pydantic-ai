@@ -438,8 +438,8 @@ what happened uses the words the capability's API already uses for it, such as t
 operator reading a trace and a developer reading the code name the same outcome the same way.
 
 Code that still calls `ctx.tracer.start_span` or `start_as_current_span`, or checks
-`ctx.trace_include_content` itself, predates these functions and moves onto them in follow-ups; don't
-copy it.
+`ctx.trace_include_content` to gate recording content itself, predates these functions and moves onto
+them in follow-ups; don't copy it. Checking it to skip building costly content, as above, is fine.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.
