@@ -117,6 +117,11 @@ class _ToXml:
         return self._to_xml(value=self.data, path='', tag=tag)
 
     def _to_xml(self, value: Any, path: str, tag: str | None = None) -> ElementTree.Element:
+        if isinstance(value, BaseModel) and value.__pydantic_root_model__:
+            # A root model dumps to its root value, which can be a list or a scalar rather than a mapping. Format that
+            # value instead; the structure info still names a mapping root after the model's class, as for any model.
+            self._init_structure_info()
+            value = _dump_model(value)
         element = self._create_element(self.item_tag if tag is None else tag, path)
         if self._set_scalar_text(element, value):
             return element
@@ -151,11 +156,7 @@ class _ToXml:
             element.tag = value.__class__.__name__
         # by dumping the model we loose all metadata in nested data structures,
         # but we have collected it when called _init_structure_info
-        try:
-            mapping = value.model_dump(mode='json')
-        except PydanticSerializationError as e:
-            raise TypeError(f'Unsupported type for XML formatting: {e}') from e
-        self._mapping_to_xml(element, mapping, path)
+        self._mapping_to_xml(element, _dump_model(value), path)
 
     def _set_scalar_text(self, element: ElementTree.Element, value: Any) -> bool:
         """Set element.text for scalar types. Return True if handled, False otherwise."""
@@ -260,6 +261,13 @@ class _ToXml:
     @classmethod
     def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:
         return {attr: str(value) for attr in cls._FIELD_ATTRIBUTES if (value := getattr(info, attr, None)) is not None}
+
+
+def _dump_model(value: BaseModel) -> Any:
+    try:
+        return value.model_dump(mode='json')
+    except PydanticSerializationError as e:
+        raise TypeError(f'Unsupported type for XML formatting: {e}') from e
 
 
 def _rootless_xml_elements(root: ElementTree.Element, indent: str | None) -> Iterator[str]:

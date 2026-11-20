@@ -8,7 +8,7 @@ from typing import Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, RootModel, computed_field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai import format_as_xml
@@ -597,6 +597,29 @@ def test_no_indent():
         '<example><item>1</item><item>2</item><item>3</item></example>'
     )
     assert format_as_xml([1, 2, 3], indent=None) == snapshot('<item>1</item><item>2</item><item>3</item>')
+
+
+def test_root_model():
+    """A `RootModel` is formatted as its root value, which can be a list or a scalar, not only a mapping."""
+
+    class Tags(RootModel[dict[str, int]]):
+        pass
+
+    assert format_as_xml(RootModel[list[int]]([1, 2]), root_tag='nums') == snapshot("""\
+<nums>
+  <item>1</item>
+  <item>2</item>
+</nums>\
+""")
+    assert format_as_xml(RootModel[int](3)) == snapshot('<item>3</item>')
+    # A mapping root inside a list is still named after the model's class, like any other model.
+    assert format_as_xml([Tags({'a': 1})], root_tag='tags') == snapshot("""\
+<tags>
+  <Tags>
+    <a>1</a>
+  </Tags>
+</tags>\
+""")
 
 
 def test_invalid_value():
