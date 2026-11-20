@@ -7,16 +7,19 @@ transport: once cut off cleanly after the first text delta, and once with the ev
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import httpx2
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import FinishReason, ModelResponse, ModelResponseState
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import AgentStreamEvent, FinishReason, ModelResponse, ModelResponseState
 from pydantic_ai.models import Model
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset
 
 from ..conftest import try_import
 
@@ -281,3 +284,79 @@ async def test_stream_response_again_after_cut_off_stream(allow_model_requests: 
             again = [response async for response in result.stream_response(debounce_by=None)]
 
     assert [(response.text, response.state) for response in again] == [('Hello, th', 'incomplete')]
+
+
+def _anthropic_tool_use(index: int, tool_call_id: str, tool_name: str, args: str) -> tuple[str, ...]:
+    return (
+        _sse(
+            'content_block_start',
+            {
+                'type': 'content_block_start',
+                'index': index,
+                'content_block': {'type': 'tool_use', 'id': tool_call_id, 'name': tool_name, 'input': {}},
+            },
+        ),
+        _sse(
+            'content_block_delta',
+            {
+                'type': 'content_block_delta',
+                'index': index,
+                'delta': {'type': 'input_json_delta', 'partial_json': args},
+            },
+        ),
+        _sse('content_block_stop', {'type': 'content_block_stop', 'index': index}),
+    )
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_deferred_tool_pause_on_cut_off_stream_resumes_as_a_pause(allow_model_requests: None):
+    """A run that paused for a deferred call of a cut-off response resumes that pause, as it does a complete one.
+
+    Run again without a prompt, the deferred call pauses the run again; with a new prompt, the unprocessed call is
+    refused. Neither sends another request.
+    """
+    body = ''.join(
+        (
+            _ANTHROPIC_EVENTS[0],
+            *_anthropic_tool_use(0, 'call_create', 'create_file', '{"path": "a.py"}'),
+            *_anthropic_tool_use(1, 'call_delete', 'delete_file', '{"path": "b.py"}'),
+        )
+    ).encode()
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body)
+
+    async def drain(_: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in events:
+            pass
+
+    delete_file = ToolDefinition(
+        name='delete_file',
+        parameters_json_schema={'type': 'object', 'properties': {'path': {'type': 'string'}}, 'required': ['path']},
+    )
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        agent = Agent(
+            _anthropic(http_client),
+            output_type=[str, DeferredToolRequests],
+            toolsets=[ExternalToolset([delete_file])],
+        )
+
+        @agent.tool_plain
+        def create_file(path: str) -> str:
+            return f'Created {path}'
+
+        paused = await agent.run('Create a.py and delete b.py.', event_stream_handler=drain)
+        history = paused.all_messages()
+        resumed = await agent.run(message_history=history)
+        with pytest.raises(UserError, match='unprocessed tool calls'):
+            await agent.run('Next', message_history=history)
+
+    response = history[1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'incomplete'
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [call.tool_name for call in paused.output.calls] == ['delete_file']
+    assert resumed.output == paused.output
+    assert len(requests) == 1
