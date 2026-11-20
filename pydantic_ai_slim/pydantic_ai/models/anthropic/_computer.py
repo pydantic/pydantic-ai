@@ -50,10 +50,7 @@ class ComputerReplay(TypedDict):
     computer_blocks: list[ComputerBlock]
     computer_tool: AnthropicComputerToolVersion
     computer_action_counts: list[Annotated[int, Field(ge=1)]]
-    """How many `computer` actions each of Claude's calls became.
-
-    Results are matched to calls by these counts, so the calls aren't converted again.
-    """
+    """How many `computer` actions each of Claude's calls became. Results are matched to calls by these counts."""
 
 
 _REPLAY = TypeAdapter(ComputerReplay)
@@ -66,8 +63,7 @@ def stop_computer_calls_unless_finished(
 ) -> list[ModelResponsePart]:
     """Keep every `computer` call in a response cut off by the token limit from running.
 
-    Claude can stop at `max_tokens` partway through a batch. The calls it finished would then run without the rest, so
-    none of them runs. Streamed and non-streamed responses are checked on their final parts.
+    Claude can stop at `max_tokens` partway through a batch, and the finished calls would then run without the rest.
     """
     if finish_reason != 'length':
         return list(parts)
@@ -77,15 +73,13 @@ def stop_computer_calls_unless_finished(
 def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer) -> ComputerReplay | None:
     """Return Claude's original calls behind a `computer` call, or `None` to send it back as a regular tool call.
 
-    The history may come from storage or a UI, so the stored data is validated. There must be one count per call, each
-    count must be at least 1, and the counts must add up to the call's number of actions.
+    The history may come from storage or a UI, so the stored data is validated.
 
-    The part's class isn't checked. A call with an action the `computer` tool doesn't accept, such as an option it
-    lacks, becomes a plain `ToolCallPart` after a round trip through JSON. It is still sent back as Claude's calls.
+    The part's class isn't checked: a call with an action the `computer` tool doesn't accept becomes a plain
+    `ToolCallPart` after a round trip through JSON, and still goes back as Claude's calls.
 
-    The original calls aren't sent back if the part's actions or tool name no longer match them, such as after a hook
-    changed or renamed them. They also aren't sent back if they came from a different tool version than `sent`. In both
-    cases, sending them would tell Claude that its own calls ran.
+    The original calls aren't sent back if a hook changed the part's actions or tool name, or if they came from a
+    different tool version than `sent`, since that would tell Claude that its own calls ran.
     """
     if part.provider_name != provider_name or part.tool_name != sent.name:
         return None
@@ -96,7 +90,7 @@ def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer
     if replay['computer_tool'] != sent.version:
         return None
     if part.args == UNFINISHED_COMPUTER_ARGS:
-        # Blocked because the response was cut off. Claude's calls go back unchanged, each answered as not run.
+        # Blocked because the response was cut off; each call is answered as not run.
         return replay
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
     match part.args_as_dict():
@@ -169,7 +163,7 @@ class NativeComputer:
     ) -> ComputerCallPart:
         """Turn Claude's computer use calls into one `computer` call, keeping the calls to send back unchanged.
 
-        Pass `member_actions` when `member_actions()` has already converted each call, so they aren't converted again.
+        Pass `member_actions` to reuse calls `member_actions()` already converted.
         """
         if member_actions is None:
             member_actions = [self.member_actions(block) for block in blocks]
@@ -193,8 +187,8 @@ class NativeComputer:
 
         If the call can't run as Claude asked, the result is one action that the `computer` tool refuses.
 
-        `after_tool_calls` names the other tools Claude called just before this call. The batch runs as one `computer`
-        call, so this call would run before those tools. The batch is refused instead, and Claude is asked again.
+        `after_tool_calls` names the other tools Claude called just before this call. Since the batch runs as one
+        `computer` call, this call would run before them, so the batch is refused and Claude is asked again.
         """
         name, args = computer_member(block, self.version)
         if after_tool_calls:
@@ -208,7 +202,7 @@ SPLIT_BATCH_REFUSAL = (
 )
 """What Claude gets instead of the validation errors when another tool call came between its computer calls.
 
-The text is fixed. It holds nothing from the history, because the history may come from storage or a UI.
+It is fixed text, so nothing from a stored or UI-built history reaches Claude through it.
 """
 
 
@@ -256,7 +250,7 @@ class ComputerBatch:
         self.between = []
 
     def note_other(self, tool_name: str) -> None:
-        """Record another tool's call. It would run out of order if it came between the batch's calls."""
+        """Record another tool's call."""
         if self.blocks:
             self.between.append(tool_name)
 
@@ -269,8 +263,8 @@ class ComputerBatch:
     def insert(self, parts: list[ModelResponsePart]) -> None:
         """Insert the toolset's calls into `parts` as one `computer` call, where the first call was.
 
-        All toolset calls in one response form one batch. They run in order until one fails. Text may come between
-        them. Another tool call can't, because it would then run after calls that Claude made after it.
+        The batch runs in order until a call fails. Text may come between its calls; another tool call can't, because
+        it would then run after calls Claude made after it.
         """
         if (part := self.call_part()) is not None:
             parts.insert(self.index, part)

@@ -74,9 +74,8 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    # If another thread uses `random` while Hypothesis draws an example, Hypothesis warns, as
-    # `tests/test_history_properties.py` explains. `filterwarnings = error` turns that warning into a flaky failure.
-    # No strategy here uses `random`.
+    # Hypothesis warns when another thread uses `random` mid-draw (see `tests/test_history_properties.py`), which
+    # `filterwarnings = error` makes a flaky failure. No strategy here uses `random`.
     pytest.mark.filterwarnings(
         'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
     ),
@@ -146,7 +145,7 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
 
     first, second = get_mock_chat_completion_kwargs(client)
     assert first['tools'] == [{'type': 'computer_toolset_20260801'}]
-    # The toolset calls go back unchanged, each with its own result. Both name the toolset.
+    # The toolset calls go back unchanged, each with its own result.
     calls = second['messages'][-2]['content']
     assert [(c['id'], c['name'], c['toolset_name']) for c in calls] == [
         ('toolu_1', 'left_click', 'computer'),
@@ -747,7 +746,7 @@ async def _streamed(events: list[BetaRawMessageStreamEvent], *function_tools: To
 async def test_a_streamed_member_call_whose_input_came_with_its_start_keeps_it(allow_model_requests: None) -> None:
     block = _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]})
     events = _stream(block)
-    # No input deltas: the whole input comes with the block's start event, as an ordinary tool call's can.
+    # No input deltas: the whole input comes with the block's start event.
     events[1] = BetaRawContentBlockStartEvent(type='content_block_start', index=0, content_block=block)
     del events[2]
     (call,) = (await _streamed(events)).parts
@@ -917,7 +916,7 @@ async def test_a_streamed_computer_call_cut_off_mid_input_stops_the_run(
             await _agent(model, FakeComputer()).run(
                 'Go.', model_settings={'max_tokens': 60}, event_stream_handler=drain
             )
-    # The cut-off call is the response's last part, with arguments that don't parse. The run checks the last part.
+    # The cut-off call is the response's last part, with arguments that don't parse.
     *_, response = [message for message in messages if isinstance(message, ModelResponse)]
     assert response.finish_reason == 'length'
     last = response.parts[-1]
@@ -1051,8 +1050,8 @@ async def _sent_results(
     """The results a request sends for a toolset call whose tool result is `content`."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    # The actions each call becomes. If `counts` gives a different number than the conversion, the count is used and
-    # the actions are screenshots. The kind of action doesn't affect how the result is split.
+    # Where `counts` differs from the conversion, the count is used and the actions are screenshots. The kind of
+    # action doesn't affect how the result is split.
     actions: list[dict[str, Any]] = []
     for block, count in zip(blocks, counts):
         mapped = await _mapped(block['name'], block['input'])
@@ -1134,7 +1133,6 @@ async def test_every_member_call_gets_one_result_and_the_content_goes_back_whole
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert all(block['type'] == 'text' for r in sent if r['is_error'] for block in r['content'])
     if unsuccessful:
-        # The text goes back once, on the last call. The other calls say the result is on the last call.
         *rest, last = [[block['text'] for block in r['content']] for r in sent]
         assert rest == [[ON_LAST]] * (members - 1)
         assert len(last) == 1 and last != [ON_LAST]
@@ -1447,7 +1445,6 @@ async def test_claude_is_told_in_a_sentence_why_a_split_batch_did_not_run(allow_
     await agent.run('Go.')
 
     assert computer.actions == []
-    # Fixed text. Nothing in it comes from the history, which may come from storage or a UI.
     refusal = (
         'No computer action ran: they run together as one batch, and another tool call came between them. Make the '
         "computer calls before or after the other tools' calls, not between them."
