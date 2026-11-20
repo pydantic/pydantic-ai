@@ -665,7 +665,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if reduction is not None:
             # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept,
             # with the error that stopped it. A later fallback's error is in the log.
-            reduction.fallback_from = _action_name(failed)
+            reduction.fallback_from = (
+                'truncate' if isinstance(failed, Truncate) else 'spill' if isinstance(failed, Spill) else 'summarize'
+            )
             reduction.fallback_error = error
         return reduction
 
@@ -857,14 +859,6 @@ def _text_and_handle(reduction: _Reduction | None) -> tuple[str | None, str | No
     if reduction is None:
         return None, None
     return reduction.text, reduction.handle
-
-
-def _action_name(action: Truncate | Spill | Summarize) -> _ActionName:
-    if isinstance(action, Truncate):
-        return 'truncate'
-    if isinstance(action, Spill):
-        return 'spill'
-    return 'summarize'
 
 
 def _text_size_unit(over_tokens: bool) -> Literal['chars', 'tokens']:
