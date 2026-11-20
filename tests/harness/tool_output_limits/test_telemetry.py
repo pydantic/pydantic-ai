@@ -176,6 +176,14 @@ class TestToolOutputLimitsTelemetry:
             {'tool_output_limits.fallback_from': 'spill', 'tool_output_limits.fallback_error': 'OSError'}
         )
 
+    async def test_binary_under_a_bare_truncate_records_only_what_it_fell_back_from(self, instrumented: Instrumented):
+        """`Truncate` can't take binary and has no `then`, so no exception stopped it and no error is recorded."""
+        limits = ToolOutputLimits[object](bands=[Band(over=100, action=Truncate())])
+        instrumentation, exporter = instrumented(False)
+        await agent_with_tool(limits, b'\x00' * 500, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot({'tool_output_limits.fallback_from': 'truncate'})
+
     async def test_a_summary_is_recorded(self, instrumented: Instrumented):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Summarize(summarize=short_summarize, then=Truncate(max_chars=50)))]
@@ -260,6 +268,18 @@ class TestToolOutputLimitsTelemetry:
                 'tool_output_limits.content.original_size': 300,
                 'tool_output_limits.content.reduced_size': 50,
                 'tool_output_limits.content.size_unit': 'chars',
+            }
+        )
+
+    async def test_a_failed_content_spill_gets_content_attributes(self, instrumented: Instrumented):
+        limits = ToolOutputLimits[object](bands=[Band(over=100, action=Spill())], store=FailingStore())
+        instrumentation, exporter = instrumented(False)
+        await agent_with_tool(limits, ToolReturn(return_value='small', content='y' * 300), instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {
+                'tool_output_limits.content.fallback_from': 'spill',
+                'tool_output_limits.content.fallback_error': 'OSError',
             }
         )
 

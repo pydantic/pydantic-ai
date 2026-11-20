@@ -134,6 +134,11 @@ class _Unit:
     value: ToolReturnContent
     suffix: str
 
+    @property
+    def attribute_prefix(self) -> str:
+        """The prefix of this unit's span attributes: `content` gets its own, so both can be recorded."""
+        return 'tool_output_limits.content' if self.suffix == '.content' else 'tool_output_limits'
+
 
 _ActionName = Literal['truncate', 'spill', 'summarize']
 
@@ -588,7 +593,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if not span.is_recording():
             # Measuring the replacement can mean running a tokenizer.
             return
-        prefix = 'tool_output_limits.content' if unit.suffix == '.content' else 'tool_output_limits'
+        prefix = unit.attribute_prefix
         size_unit: Literal['chars', 'tokens', 'bytes']
         if unit.binary:
             size_unit = 'bytes'
@@ -612,7 +617,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
     def _record_unreduced(self, ctx: RunContext[AgentDepsT], unit: _Unit, unreduced: _Unreduced) -> None:
         """Say on the call's `execute_tool` span that the band's action failed and the unit was kept as is."""
-        prefix = 'tool_output_limits.content' if unit.suffix == '.content' else 'tool_output_limits'
+        prefix = unit.attribute_prefix
         attributes = {f'{prefix}.fallback_from': unreduced.fallback_from}
         if unreduced.fallback_error is not None:
             attributes[f'{prefix}.fallback_error'] = unreduced.fallback_error
