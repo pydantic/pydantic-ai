@@ -158,6 +158,9 @@ GuardOutcome = bool | GuardrailResult
 GuardrailDirection: TypeAlias = Literal['input', 'output', 'stream', 'tool args', 'tool result']
 """The edge of the run where a guardrail made its decision."""
 
+SpanAction: TypeAlias = Literal['block', 'replace', 'retry', 'approve']
+"""The `GuardrailResult` actions that record a span; `allow` records none."""
+
 
 GuardCallable = Callable[..., object]
 """A guard as the helpers below handle it.
@@ -427,7 +430,7 @@ def guard_at(guards: Sequence[GuardCallable], position: int) -> GuardCallable | 
 
 def decision_attributes(
     direction: GuardrailDirection,
-    action: Literal['allow', 'block', 'replace', 'retry', 'approve'],
+    action: SpanAction,
     *,
     guard: GuardCallable | None,
     position: int,
