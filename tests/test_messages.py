@@ -3294,6 +3294,21 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_dict_lone_surrogate_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for args holding a lone surrogate."""
+    surrogate_args = '{"q": "caf\udce9"}'
+    part = ToolCallPart(tool_name='test_tool', args=surrogate_args)
+    assert part.args_as_dict() == {INVALID_JSON_KEY: surrogate_args}
+
+
+def test_args_as_dict_raise_if_invalid_lone_surrogate():
+    """args_as_dict(raise_if_invalid=True) should raise TypeError on args holding a lone surrogate."""
+    surrogate_args = '{"q": "caf\udce9"}'
+    part = ToolCallPart(tool_name='test_tool', args=surrogate_args)
+    with pytest.raises(TypeError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
 @pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
 def test_args_as_dict_rejects_non_dict_json_under_optimization():
     """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
@@ -3361,6 +3376,13 @@ def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
     json_list = '[1, 2, 3]'
     part = ToolCallPart(tool_name='test_tool', args=json_list)
     assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_json_str_lone_surrogate_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for args holding a lone surrogate."""
+    surrogate_args = '{"q": "caf\udce9"}'
+    part = ToolCallPart(tool_name='test_tool', args=surrogate_args)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: surrogate_args}
 
 
 def test_args_as_json_str_empty_args():

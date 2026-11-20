@@ -4392,7 +4392,7 @@ class BaseToolCallPart(Generic[ArgsT_co]):
         This is just for convenience with models that require dicts as input.
 
         Args:
-            raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
+            raise_if_invalid: If `True`, a `ValueError`, `TypeError` or `AssertionError`
                 caused by malformed or non-object JSON in `args` will be re-raised.  When
                 `False` (the default), such JSON is handled gracefully by
                 returning `{'INVALID_JSON': '<raw args>'}` so that the value
@@ -4409,7 +4409,7 @@ class BaseToolCallPart(Generic[ArgsT_co]):
             if not isinstance(args, dict):
                 raise AssertionError('args should be a dict')
             return cast(dict[str, Any], args)
-        except (ValueError, AssertionError):
+        except (ValueError, TypeError, AssertionError):
             if raise_if_invalid:
                 raise
             return {INVALID_JSON_KEY: self.args}
@@ -4433,7 +4433,11 @@ class BaseToolCallPart(Generic[ArgsT_co]):
         that only becomes valid JSON once the following deltas are concatenated would be degraded to the
         wrapper. Emit those verbatim instead, as the UI event streams do.
         """
-        return pydantic_core.to_json(self.args_as_dict()).decode()
+        dict_args = self.args_as_dict()
+        try:
+            return pydantic_core.to_json(dict_args).decode()
+        except pydantic_core.PydanticSerializationError:
+            return json.dumps(dict_args)
 
     def has_content(self) -> bool:
         """Return `True` if the tool call has content."""
