@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from render import Options, Retry, TaskContext, Workflows
 from render.workflows import TaskDefinition
 
-from pydantic_ai._telemetry import run_telemetry_scope
+from pydantic_ai._telemetry import RunTelemetry, run_telemetry_scope
 from pydantic_ai.durable_exec import (
     JournalOperationNamer,
     ParameterTransports,
@@ -18,6 +18,7 @@ from pydantic_ai.durable_exec import (
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
 )
+from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai_harness._typeguards import is_object_dict
@@ -219,9 +220,14 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 # Retrying cannot repair persisted request bytes or worker-side decoding.
                 return permanent_error('invalid-request', exc)
 
+            ctx = operation_run_context(params)
+            assert ctx is not None, 'every installed operation carries a run context'
             try:
                 # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
-                with self._runtime.activate(context), run_telemetry_scope(operation_run_context(params)):
+                with (
+                    self._runtime.activate(context),
+                    run_telemetry_scope(RunTelemetry(ctx.tracer, self._include_content(ctx.trace_include_content))),
+                ):
                     value = await operation.handler(params)
             except RenderProtocolError as exc:
                 return permanent_error('invalid-result', exc)
@@ -279,6 +285,12 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                     'Put tools needing different settings in separate named toolsets, '
                     'or return False to run a function tool inline.'
                 )
+
+    def _include_content(self, run_includes_content: bool) -> bool:
+        """Whether workspace spans capture content: only if both the run and this worker's instrumentation do."""
+        agent = self._runtime.agent
+        settings = agent_instrumentation_settings(agent) if agent is not None else None
+        return run_includes_content and settings is not None and settings.include_content
 
     def _static_function_toolset(self, toolset_id: str) -> FunctionToolset[RuntimeDepsT] | None:
         """The bound agent's construction-time function toolset with this ID, if there is one."""
