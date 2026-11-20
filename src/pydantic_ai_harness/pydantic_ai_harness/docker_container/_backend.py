@@ -295,9 +295,9 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
     if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
         return
-    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this.
-    # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile; not tried with podman
-    # yet. The runner gives a command no stdin, so `sh` pipes it in.
+    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this;
+    # Podman's docs don't, but Podman 6.1.4 built the desktop image this way in the live desktop test on 2026-11-20.
+    # The runner gives a command no stdin, so `sh` pipes it in.
     build = 'printf %s "$1" | "$2" build --tag "$3" -'
     result = await runner.run(['sh', '-c', build, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE])
     if result.exit_code != 0:
