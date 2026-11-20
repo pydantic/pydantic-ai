@@ -539,7 +539,7 @@ Each guardrail on a durable-capable agent needs an explicit, distinct `id`, whic
 | --- | --- | --- |
 | `guardrail.direction` | every span | `input`, `output`, `stream`, `tool args` or `tool result` |
 | `guardrail.action` | every span | the verdict: `block`, `replace`, `retry` or `approve` |
-| `guardrail.guard` | every span | the deciding guard's qualified name, such as `no_secrets` (a `functools.partial` is named by the function it wraps, a callable object by its class name) |
+| `guardrail.guard` | every span, except a replayed verdict whose guard is no longer in the chain | the deciding guard's qualified name, such as `no_secrets` (a `functools.partial` is named by the function it wraps, a callable object by its class name) |
 | `guardrail.position` | every span | the deciding guard's index in its chain, starting at 0; for a redaction several guards made, the last of them |
 | `guardrail.tool` | tool spans, and stream spans for a tool call | the tool's name |
 | `guardrail.tool_call_id` | `guardrail deferred tool args` | the call id, to correlate with the `DeferredToolRequests` the application answers |
