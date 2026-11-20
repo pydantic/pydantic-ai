@@ -1,11 +1,12 @@
 """Tests for the shared _spec.py module."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Protocol, Self
+from dataclasses import dataclass, field
+from typing import Annotated, Any, ClassVar, Literal, Protocol, Self
 
 import pytest
-from pydantic import BaseModel, GetPydanticSchema, JsonValue, ValidationError
+from inline_snapshot import snapshot
+from pydantic import BaseModel, GetPydanticSchema, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import SchemaError
 from typing_extensions import TypeAliasType
 
@@ -307,6 +308,36 @@ class TypeVarGenericParam(AbstractCapability[AgentDepsT]):
     limit: int = 1
 
 
+@dataclass
+class KeywordOnlyVarKeyword(AbstractCapability[None]):
+    minimum: int = 0
+
+    @classmethod
+    def from_spec(cls, *, minimum: int, **kwargs: object) -> Self:
+        return cls(minimum=minimum)
+
+
+@dataclass
+class KeywordOnlyAmongSeveralVarKeyword(AbstractCapability[None]):
+    minimum: int = 0
+
+    @classmethod
+    def from_spec(cls, *, minimum: int, label: str | None = None, **unsupported: object) -> Self:
+        return cls(minimum=minimum)
+
+
+@dataclass
+class OpenMetadata(AbstractCapability[None]):
+    tools: list[str] | Literal['all'] | dict[str, JsonValue] = 'all'
+    metadata: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
+
+    @classmethod
+    def from_spec(
+        cls, *, tools: list[str] | Literal['all'] | dict[str, JsonValue] = 'all', **metadata: JsonValue
+    ) -> Self:
+        return cls(tools=tools, metadata=metadata)
+
+
 class TestBuildSchemaTypes:
     """Schema generation and spec loading make no model request, so these tests record no cassette."""
 
@@ -352,6 +383,60 @@ class TestBuildSchemaTypes:
         assert list(validator.iter_errors(scalar_spec))
         with pytest.raises(ValueError, match='positional argument'):
             Agent.from_spec(scalar_spec, custom_capability_types=[KeywordCapability])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('capability', 'arguments', 'minimum'),
+        [
+            pytest.param(KeywordOnlyVarKeyword, {'minimum': 4}, 4, id='keyword-form'),
+            pytest.param(KeywordOnlyVarKeyword, 4, None, id='short-form'),
+            pytest.param(KeywordOnlyAmongSeveralVarKeyword, {'minimum': 4}, 4, id='among-several-keyword-form'),
+            pytest.param(KeywordOnlyAmongSeveralVarKeyword, 4, None, id='among-several-short-form'),
+        ],
+    )
+    def test_keyword_only_var_keyword_capability_schema(
+        self,
+        capability: type[KeywordOnlyVarKeyword] | type[KeywordOnlyAmongSeveralVarKeyword],
+        arguments: JsonValue,
+        minimum: int | None,
+    ):
+        """A keyword-only parameter of a target taking `**kwargs` takes its value in the keyword form only.
+
+        The loader passes a short form's value positionally, which such a parameter rejects.
+        """
+        name = capability.__name__
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{name: arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([capability])
+        assert (list(validator_for(schema)(schema).iter_errors(spec)) == []) is (minimum is not None)
+        if minimum is None:
+            with pytest.raises(ValueError, match='positional argument'):
+                Agent.from_spec(spec, custom_capability_types=[capability])
+        else:
+            capabilities = Agent.from_spec(spec, custom_capability_types=[capability]).root_capability.capabilities
+            assert [c.minimum for c in capabilities if isinstance(c, capability)] == [minimum]
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    @pytest.mark.parametrize(
+        ('arguments', 'tools', 'metadata'),
+        [
+            pytest.param({'code_mode': True}, 'all', {'code_mode': True}, id='metadata-only'),
+            pytest.param({'tools': ['a'], 'code_mode': True}, ['a'], {'code_mode': True}, id='tools-and-metadata'),
+        ],
+    )
+    def test_open_metadata_capability_schema(
+        self, arguments: JsonValue, tools: list[str] | Literal['all'], metadata: dict[str, JsonValue]
+    ):
+        """A target taking `**kwargs` keeps its short form for a keyword-only parameter whose type accepts an object.
+
+        The loader reads that short form's object as keyword arguments, which the target takes.
+        """
+        spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [{'OpenMetadata': arguments}]}
+        schema = AgentSpec.model_json_schema_with_capabilities([OpenMetadata])
+        assert [key for key in schema['$defs'] if key.endswith('_OpenMetadata')] == ['short_spec_OpenMetadata']
+        assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+        capabilities = Agent.from_spec(spec, custom_capability_types=[OpenMetadata]).root_capability.capabilities
+        [capability] = [c for c in capabilities if isinstance(c, OpenMetadata)]
+        assert (capability.tools, capability.metadata) == (tools, metadata)
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     @pytest.mark.parametrize(
@@ -581,6 +666,92 @@ class TestBuildSchemaTypes:
         registry = {'MultiParam': MultiParam}
         types = build_schema_types(registry)
         assert len(types) >= 1
+
+    def test_dataclass_target_omits_non_init_annotations(self):
+        """A class target's `ClassVar` and `init=False` annotations name no parameter, so no spec form takes them.
+
+        Evals pass an evaluator class itself as its schema target.
+        """
+
+        @dataclass
+        class Stateful:
+            kind: ClassVar[str] = 'stateful'
+            threshold: int
+            label: str = 'x'
+            derived: str = field(init=False)
+
+        types = build_schema_types({'Stateful': Stateful})
+        assert [TypeAdapter(t).json_schema() for t in types] == snapshot(
+            [
+                {
+                    'additionalProperties': False,
+                    'properties': {'Stateful': {'title': 'Stateful', 'type': 'integer'}},
+                    'required': ['Stateful'],
+                    'title': 'short_spec_Stateful',
+                    'type': 'object',
+                },
+                {
+                    '$defs': {
+                        'spec_params_Stateful': {
+                            'additionalProperties': False,
+                            'properties': {
+                                'threshold': {'title': 'Threshold', 'type': 'integer'},
+                                'label': {'title': 'Label', 'type': 'string'},
+                            },
+                            'required': ['threshold'],
+                            'title': 'spec_params_Stateful',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'Stateful': {'$ref': '#/$defs/spec_params_Stateful'}},
+                    'required': ['Stateful'],
+                    'title': 'spec_Stateful',
+                    'type': 'object',
+                },
+            ]
+        )
+
+    def test_variadic_keyword_dataclass_target_omits_classvar(self):
+        """A class target whose `__init__` takes `**kwargs` keeps every field in its schema, `init=False` included.
+
+        `**kwargs` can take any field, but never a `ClassVar`. Each field is required, since the signature gives no
+        defaults: https://github.com/pydantic/pydantic-ai/issues/13490.
+        """
+
+        @dataclass
+        class Stateful:
+            kind: ClassVar[str] = 'stateful'
+            threshold: int
+            derived: str = field(default='', init=False)
+
+            def __init__(self, **kwargs: object) -> None: ...  # pragma: no cover
+
+        types = build_schema_types({'Stateful': Stateful})
+        assert [TypeAdapter(t).json_schema() for t in types] == snapshot(
+            [
+                {'const': 'Stateful', 'type': 'string'},
+                {
+                    '$defs': {
+                        'spec_params_Stateful': {
+                            'additionalProperties': False,
+                            'properties': {
+                                'threshold': {'title': 'Threshold', 'type': 'integer'},
+                                'derived': {'title': 'Derived', 'type': 'string'},
+                            },
+                            'required': ['threshold', 'derived'],
+                            'title': 'spec_params_Stateful',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'Stateful': {'$ref': '#/$defs/spec_params_Stateful'}},
+                    'required': ['Stateful'],
+                    'title': 'spec_Stateful',
+                    'type': 'object',
+                },
+            ]
+        )
 
     def test_custom_schema_target(self):
         def my_factory(name: str, count: int = 1) -> None: ...  # pragma: no cover

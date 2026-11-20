@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
@@ -265,22 +265,14 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                match e.body:
-                    case {'code': 'moderation_blocked'}:
-                        raise ContentFilterError(
-                            'OpenAI image generation was blocked for content moderation',
-                            json.dumps(e.body),
-                        ) from e
-                    case _:
-                        pass
-                raise ModelHTTPError.for_category(
-                    _model_errors.openai_compatible_category(status_code, e.code, e.type, e.message),
+                raise _status_error(
+                    self.model_name,
                     status_code=status_code,
-                    model_name=self.model_name,
                     body=e.body,
+                    code=e.code,
+                    error_type=e.type,
+                    message=e.message,
                     headers=dict(e.response.headers),
-                    provider_error_code=e.code,
-                    provider_error_type=e.type,
                 ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
@@ -288,7 +280,19 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
-            raise _model_errors.transport_status_error(self.model_name, e.response) from e
+            body, error, text = _model_errors.transport_error_body(e.response)
+            code, error_type = _model_errors.openai_error_fields(error)
+            raise _status_error(
+                self.model_name,
+                status_code=e.response.status_code,
+                body=body,
+                code=code,
+                error_type=error_type,
+                # `openai`'s own message holds the whole body.
+                message=text,
+                headers=dict(e.response.headers),
+                error_object=error,
+            ) from e
 
         return self._map_response(prompt, check_json_response(self.model_name, response))
 
@@ -393,6 +397,39 @@ def _resolve_openai_settings(
     geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
 
     return _OpenAIResolvedSettings(size=geometry.size, ignored=ignored, conflicts=geometry.conflicts)
+
+
+def _status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    code: str | None,
+    error_type: str | None,
+    message: str,
+    headers: dict[str, str],
+    error_object: Mapping[str, object] | None = None,
+) -> ContentFilterError | ModelHTTPError:
+    """The error for an OpenAI image API error status.
+
+    `body` is the error object, as `openai` unwraps it from the response body, unless `error_object` is given: the body
+    of a status a retrying transport gave up on is the whole response body, which wraps it. A `moderation_blocked` one
+    is a `ContentFilterError` holding the error object as JSON.
+    """
+    if code == 'moderation_blocked':
+        return ContentFilterError(
+            'OpenAI image generation was blocked for content moderation',
+            json.dumps(body if error_object is None else error_object),
+        )
+    return _model_errors.openai_compatible_status_error(
+        model_name,
+        status_code=status_code,
+        body=body,
+        code=code,
+        error_type=error_type,
+        message=message,
+        headers=headers,
+    )
 
 
 def _response_body(response: ImagesResponse) -> str:

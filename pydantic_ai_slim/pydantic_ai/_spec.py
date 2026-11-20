@@ -30,7 +30,7 @@ from pydantic_core import PydanticOmit, SchemaError, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
-from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai._utils import get_function_type_hints, is_classvar_annotation
 
 if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler
@@ -332,7 +332,8 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
     type has no JSON form, since no spec entry can then load `target`.
     """
-    hints = get_function_type_hints(target)
+    parameters = inspect.signature(target).parameters
+    hints = _spec_annotation_hints(target)
     hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
@@ -341,7 +342,7 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
 
     required_type_hints: dict[str, Any] = {}
 
-    for p in inspect.signature(target).parameters.values():
+    for p in parameters.values():
         # Skip self/cls (unbound instance/class methods) and *args/**kwargs
         if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
             type_hints.pop(p.name, None)
@@ -362,6 +363,19 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     return type_hints, required_type_hints
 
 
+def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
+    """The resolved type hints of `target`'s annotations that can be spec parameters.
+
+    A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
+    `init=False` dataclass field. A target that takes `*args` or `**kwargs` may take any of them except a `ClassVar`.
+    """
+    parameters = inspect.signature(target).parameters
+    if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
+        hints = get_function_type_hints(target)
+        return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}
+    return get_function_type_hints(target, include_keys=set(parameters))
+
+
 def _without_not_required(type_hint: object) -> object:
     """`type_hint` without a `NotRequired` wrapper, so a short form's `Name` key stays required.
 
@@ -379,12 +393,15 @@ def _accepts_var_keyword(target: Callable[..., object]) -> bool:
 def _keyword_only_spec_params(target: Callable[..., object], type_hints: Mapping[str, Any]) -> set[str]:
     """The names of `target`'s keyword-only spec parameters.
 
-    A target accepting `**kwargs` keeps its existing mapping schema, so none of its parameters count.
+    The loader reads a string-keyed object in the short form as keyword arguments, which a target accepting `**kwargs`
+    takes. So such a target keeps its short form for a keyword-only parameter whose type accepts an object, and that
+    parameter doesn't count.
     """
-    if _accepts_var_keyword(target):
-        return set()
     params = inspect.signature(target).parameters.values()
-    return {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+    keyword_only_params = {p.name for p in params if p.kind == p.KEYWORD_ONLY and p.name in type_hints}
+    if _accepts_var_keyword(target):
+        return {name for name in keyword_only_params if not _type_accepts_object(name, type_hints[name])}
+    return keyword_only_params
 
 
 def _object_rejecting_type(target: Callable[..., object], name: str, type_hint: object) -> object | None:
@@ -395,21 +412,25 @@ def _object_rejecting_type(target: Callable[..., object], name: str, type_hint: 
     keeps its schema. So does a parameter whose type has no JSON schema, since the schema's union drops that short form,
     or no core schema, so the full schema raises that error with its field path.
     """
-    if _accepts_var_keyword(target):
+    if _accepts_var_keyword(target) or not _type_accepts_object(name, type_hint):
         return None
+    reject_objects = GetPydanticSchema(
+        get_pydantic_json_schema=lambda core_schema, handler: {
+            'allOf': [
+                handler(core_schema),
+                {'not': {'type': 'object', 'propertyNames': {'type': 'string'}}},
+            ]
+        }
+    )
+    return Annotated[type_hint, reject_objects]
+
+
+def _type_accepts_object(name: str, type_hint: object) -> bool:
+    """Whether the JSON schema of `type_hint` can accept a JSON object. A type with no JSON or core schema can't."""
     with suppress(PydanticOmit, PydanticInvalidForJsonSchema, SchemaError):
         json_schema = TypeAdapter(_make_typed_dict('short_spec', name, {name: type_hint})).json_schema()
-        if _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {})):
-            reject_objects = GetPydanticSchema(
-                get_pydantic_json_schema=lambda core_schema, handler: {
-                    'allOf': [
-                        handler(core_schema),
-                        {'not': {'type': 'object', 'propertyNames': {'type': 'string'}}},
-                    ]
-                }
-            )
-            return Annotated[type_hint, reject_objects]
-    return None
+        return _json_schema_accepts_object(json_schema['properties'][name], json_schema.get('$defs', {}))
+    return False
 
 
 def _json_schema_accepts_object(
