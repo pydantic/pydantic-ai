@@ -66,14 +66,10 @@ from pydantic_ai_harness.computer_use import (
     DisplayAction,
     UnsupportedActionError,
 )
-from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
 from ..display_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
-
-with try_import() as google_imports:
-    pass
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 

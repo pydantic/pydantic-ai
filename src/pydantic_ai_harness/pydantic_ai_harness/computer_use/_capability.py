@@ -16,7 +16,6 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
-from pydantic_ai._computer_use import latest_screenshot_size, png_size
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -50,6 +49,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai_harness._png import latest_screenshot_size, png_size
 from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent
 from pydantic_ai_harness.computer_use._protocol import (
     Display,
@@ -553,7 +553,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     The model calls the tool with mouse and keyboard actions. They run in order, and the tool returns a screenshot. The
     workspace's backend needs a screen, which means it implements
     [`SupportsDisplay`][pydantic_ai_harness.computer_use.SupportsDisplay], as a sandbox started with a desktop does.
-    The model must accept images.
+    The model has to accept images to see the screen. One that can't gets a note in place of each screenshot.
     """
 
     _: KW_ONLY
