@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -118,6 +119,7 @@ from .._prompt_cache import (
     split_cache_setting,
     split_instruction_cache_points,
 )
+from .._tool_call_ids import hashed_tool_call_id
 from .._tool_choice import resolve_tool_choice
 
 try:
@@ -3312,7 +3314,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         if custom_tool_refs:
             return beta_tool_result_block_param.BetaToolResultBlockParam(
-                tool_use_id=_guard_tool_call_id(t=part),
+                tool_use_id=_tool_use_id(part),
                 type='tool_result',
                 content=custom_tool_refs,
                 is_error=False,
@@ -3323,7 +3325,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # text block instead: the typed return's own no-matches message, or a line
             # naming matches this request no longer declares.
             return beta_tool_result_block_param.BetaToolResultBlockParam(
-                tool_use_id=_guard_tool_call_id(t=part),
+                tool_use_id=_tool_use_id(part),
                 type='tool_result',
                 content=[BetaTextBlockParam(text=custom_empty_message or _NO_MATCHES_MESSAGE, type='text')],
                 is_error=False,
@@ -3347,7 +3349,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
         return beta_tool_result_block_param.BetaToolResultBlockParam(
-            tool_use_id=_guard_tool_call_id(t=part),
+            tool_use_id=_tool_use_id(part),
             type='tool_result',
             content=tool_result_content or '',
             is_error=part.outcome in ERROR_OUTCOMES,
@@ -3364,7 +3366,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 case ToolCallPart():
                     assistant_content_params.append(
                         BetaToolUseBlockParam(
-                            id=_guard_tool_call_id(t=response_part),
+                            id=_tool_use_id(response_part),
                             type='tool_use',
                             name=response_part.tool_name,
                             input=response_part.args_as_dict(),
@@ -4322,6 +4324,25 @@ class _MapModelRequestContext:
     deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = field(
         default_factory=list[tuple[int, Literal['5m', '1h']]]
     )
+
+
+_TOOL_USE_ID_PATTERN = re.compile(r'[a-zA-Z0-9_-]+')
+"""The `tool_use.id` / `tool_result.tool_use_id` values Anthropic accepts."""
+
+
+def _tool_use_id(part: ToolCallPart | ToolReturnPart) -> str:
+    """The ID to send for a function tool call or its result.
+
+    A history from another provider can carry IDs Anthropic rejects with
+    `tool_use.id: String should match pattern '^[a-zA-Z0-9_-]+$'`, like the Gemini IDs an
+    OpenAI-compatible gateway returns with a base64 thought signature in them. Such an ID is
+    sent as a hash of itself, so a call and its result still pair up, and the same history
+    maps to the same request every time.
+    """
+    tool_call_id = _guard_tool_call_id(t=part)
+    if _TOOL_USE_ID_PATTERN.fullmatch(tool_call_id):
+        return tool_call_id
+    return f'toolu_{hashed_tool_call_id(tool_call_id, 24)}'
 
 
 def __getattr__(name: str) -> object:
