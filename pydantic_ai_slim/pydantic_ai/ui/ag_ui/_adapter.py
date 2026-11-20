@@ -1059,7 +1059,7 @@ def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> 
         )
 
 
-def _native_returns_before_function_calls(parts: Sequence[ModelResponsePart]) -> Sequence[ModelResponsePart]:
+def _native_returns_before_function_calls(parts: Sequence[ModelResponsePart]) -> list[ModelResponsePart]:
     """`parts` with each `NativeToolReturnPart` moved ahead of the function `ToolCallPart`s directly before it.
 
     An `AssistantMessage` lists all of a response's tool calls before the `ToolMessage`s that answer
@@ -1068,19 +1068,16 @@ def _native_returns_before_function_calls(parts: Sequence[ModelResponsePart]) ->
     """
     ordered: list[ModelResponsePart] = []
     function_calls: list[ModelResponsePart] = []
-    moved = False
     for part in parts:
         if isinstance(part, ToolCallPart):
             function_calls.append(part)
-        elif isinstance(part, NativeToolReturnPart):
-            moved = moved or bool(function_calls)
-            ordered.append(part)
         else:
-            ordered.extend(function_calls)
-            function_calls.clear()
+            if not isinstance(part, NativeToolReturnPart):
+                ordered.extend(function_calls)
+                function_calls.clear()
             ordered.append(part)
     ordered.extend(function_calls)
-    return ordered if moved else parts
+    return ordered
 
 
 def _tool_return_content_from_parts(parts: list[UserContent]) -> ToolReturnContent:
