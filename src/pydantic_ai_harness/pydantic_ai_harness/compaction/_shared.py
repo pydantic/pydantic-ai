@@ -931,7 +931,8 @@ def _keeping_workspace(messages: list[ModelMessage], cutoff: int) -> int:
     """*cutoff*, moved back so the kept tail holds the latest response when it names a workspace.
 
     The next run finds its workspace from that response's `workspace_ref`, so a tail of requests alone, such as
-    a large user turn after it, would move the conversation out of its workspace.
+    a large user turn after it, would move the conversation out of its workspace. The response is kept whatever
+    its size, and for a local workspace too: running in the wrong workspace is worse than a larger history.
     """
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
