@@ -15,7 +15,7 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field
 
-from pydantic_ai._computer_use import fit_screenshot, latest_screenshot_size, png_size
+from pydantic_ai._computer_use import latest_screenshot_size, png_size
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -167,20 +167,6 @@ def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
     return run if run is not None and run.run_id == ctx.run_id else None
 
 
-@dataclass(frozen=True)
-class _ScreenshotLimit:
-    """The largest screenshot a model takes. A field left `None` is unlimited."""
-
-    max_side: int | None = None
-    """The longest side, in pixels."""
-    max_pixels: int | None = None
-    """The pixel count."""
-
-    def fit(self, size: tuple[int, int]) -> tuple[int, int]:
-        """The largest size with the same shape as `size` that fits the limit: `size` itself when it fits."""
-        return fit_screenshot(size, max_side=self.max_side, max_pixels=self.max_pixels)
-
-
 _NO_DISPLAY = (
     '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
     "run's workspace has none."
@@ -207,8 +193,6 @@ class _Plan:
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: bool
     """Whether the actions to run differ from the ones the model asked for."""
-    limit: _ScreenshotLimit
-    """The largest screenshot the model that made the call accepts. A larger screen is refused."""
     held: list[MouseButton]
     """The mouse buttons the last call that succeeded said are still pressed."""
     keeps_held: bool
@@ -269,15 +253,6 @@ def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolA
     """
     if (run := _run_buttons(ctx)) is not None:
         run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
-
-
-def _check_fits(size: tuple[int, int], limit: _ScreenshotLimit) -> None:
-    """Refuse a screen of `size` larger than the model can see."""
-    if (fitted := limit.fit(size)) != size:
-        raise UserError(
-            f'The screen is {size[0]}x{size[1]}, larger than the model can see. Start the display at '
-            f'{fitted[0]}x{fitted[1]} or smaller.'
-        )
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
@@ -653,11 +628,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             # The model pointed on the latest screenshot before its call.
             seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=call is not None and call.actions != actions,
-            # The screenshot the call ends with must fit the model that made the call. A model that answers next and
-            # can't take it refuses the request itself.
-            limit=_ScreenshotLimit(call.screenshot_max_side, call.screenshot_max_pixels)
-            if call
-            else _ScreenshotLimit(),
             held=list(run.held),
             keeps_held=keeps_held,
         )
@@ -718,9 +688,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             try:
                 # Also starts a display that stopped, before anything acts.
                 size = await _display_size(display)
-                # The call ends with a screenshot at the screen's size. If the model can't take a screenshot that
-                # size, the run ends before anything acts.
-                _check_fits(size, plan.limit)
                 # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size.
                 space = (plan.grid, plan.grid) if plan.grid else plan.seen or size
                 mapping = _CoordinateMapping(space=space, display=size)

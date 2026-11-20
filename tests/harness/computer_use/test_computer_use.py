@@ -729,6 +729,23 @@ The `computer` tool shows and controls this computer's screen.
         assert isinstance(refused, UserError) and refused.message == message
         assert seen == []
 
+    @pytest.mark.parametrize('fallback', ['FallbackModel', 'ModelFallback'])
+    async def test_a_fallback_moves_on_from_a_model_whose_call_returned_a_screenshot_it_cant_see(
+        self, fallback: str
+    ) -> None:
+        # The small model answers the first request, which has no screenshot yet, and its call returns one larger than
+        # it can see. The next request goes to the big model.
+        small_seen: list[AgentInfo] = []
+        big_seen: list[AgentInfo] = []
+        small = _answering('small', _SMALL, small_seen, [{'type': 'screenshot'}])
+        big = _answering('big', ModelProfile(), big_seen)
+        if fallback == 'FallbackModel':
+            agent = Agent(FallbackModel(small, big), capabilities=[ScreenProvider().capability(), ComputerUse()])
+        else:
+            agent = Agent(small, capabilities=[ScreenProvider().capability(), ComputerUse(), ModelFallback(big)])
+        assert (await agent.run('Look.')).output == 'done'
+        assert (len(small_seen), len(big_seen)) == (1, 1)
+
     @pytest.mark.parametrize(
         'actions, gone',
         [
@@ -1104,30 +1121,6 @@ The `computer` tool shows and controls this computer's screen.
         assert isinstance(tool_return, ComputerReturnPart)
         assert tool_return.screenshot == SCREENSHOT
 
-    async def test_a_screen_larger_than_the_model_takes_ends_the_run(self) -> None:
-        provider = ScreenProvider()
-        model = _scripted(
-            [{'type': 'click', 'x': 1, 'y': 1}],
-            profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
-        )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
-        with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
-            await agent.run('Go.')
-        # The closing screenshot could never be taken, so the click didn't run either.
-        assert provider.actions == []
-
-    async def test_a_screen_larger_than_a_fallback_model_takes_ends_the_run_before_its_call_acts(self) -> None:
-        # The run's own model takes any screen, but the call is the fallback's, which the agent labels with its limit.
-        provider = ScreenProvider()
-        fallback = _answering('small', _SMALL, [], [{'type': 'click', 'x': 1, 'y': 1}])
-        agent = Agent(
-            _unavailable('primary', ModelProfile()),
-            capabilities=[provider.capability(), ComputerUse(), ModelFallback(fallback)],
-        )
-        with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
-            await agent.run('Click.')
-        assert provider.actions == []
-
     @pytest.mark.parametrize('shared', ['display-object', 'display-object-from-two-environments', 'ref'])
     async def test_agents_on_one_screen_take_turns_a_whole_call_at_a_time(self, shared: str) -> None:
         """However the runs reach the screen: one display object, with or without refs of their own, or one ref."""
@@ -1464,7 +1457,7 @@ The `computer` tool shows and controls this computer's screen.
         assert tool_return.outcome == 'retried'
         assert provider.actions == []
 
-    async def test_a_press_on_a_screen_the_model_cant_see_is_never_released(
+    async def test_a_model_that_cant_see_the_screenshot_is_refused_the_next_request(
         self, durability: list[AbstractCapability[object]]
     ) -> None:
         provider = ScreenProvider()
@@ -1473,9 +1466,14 @@ The `computer` tool shows and controls this computer's screen.
             name='computer',
             capabilities=[provider.capability(), ComputerUse(), *durability],
         )
-        with pytest.raises(UserError, match='The screen is 1280x800, larger than the model can see'):
+        # The call runs and returns its screenshot; the model is refused the request that would send it.
+        with pytest.raises(
+            UserError,
+            match=r'The latest screenshot is 1280x800, larger than .* can see\. Start the display at 1000x625',
+        ):
             await agent.run('Go.')
-        assert provider.actions == []
+        # The run's end releases the button the call left pressed.
+        assert provider.actions == [MouseDown(), MouseUp()]
 
     async def test_a_press_on_a_new_screen_whose_size_cant_be_read_is_never_released(
         self, durability: list[AbstractCapability[object]]

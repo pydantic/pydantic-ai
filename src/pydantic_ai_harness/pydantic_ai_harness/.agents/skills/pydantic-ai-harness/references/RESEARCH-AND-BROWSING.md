@@ -458,8 +458,9 @@ Gotchas:
   custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
   `ComputerCallPart`, not from the run's model.
 - Screenshots are sent at the screen's full size. If the screen is larger than the model accepts (profile
-  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`), the run stops before the call acts,
-  with an error that names the largest size that fits. 1280x800 fits every model.
+  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`), the model is refused the request that
+  would send the screenshot, with an error that names the largest size that fits; a fallback moves on to its next
+  model. 1280x800 fits every model.
 - Under durable execution, everything one `computer` call does on the screen is one durable step, so replay and
   recovery don't repeat a finished call. A call cut off before its step was recorded is retried under the engine's
   settings for capability steps. On Temporal, set `activity_config` with a longer `start_to_close_timeout` and

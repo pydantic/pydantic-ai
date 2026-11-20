@@ -109,8 +109,9 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 Some models accept screenshots only up to a set size. Their profile sets it with
 [`computer_use_screenshot_max_side`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side] and
 `computer_use_screenshot_max_pixels`. `ComputerUse` sends every screenshot at the screen's full size and doesn't
-shrink it. If the screen is larger than the model accepts, the run stops with a `UserError` that names the largest
-size that fits. A 1280x800 screen fits every model.
+shrink it. A model is refused the request that would send it a screenshot larger than it accepts, with a `UserError`
+that names the largest size that fits. Under a fallback, the next model answers instead. A 1280x800 screen fits every
+model.
 
 ## When something goes wrong
 
