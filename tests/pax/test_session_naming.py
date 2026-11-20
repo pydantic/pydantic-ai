@@ -36,7 +36,11 @@ async def test_structured_name_and_auxiliary_usage() -> None:
 
 
 async def test_a_reasoning_model_has_room_to_think_before_naming() -> None:
-    """A reasoning model spends output tokens thinking before its title; a tight cap left it no answer (#14082)."""
+    """A reasoning model spends output tokens thinking before its title; a tight cap left it no answer (#14082).
+
+    Not a VCR test: a recording doesn't show the `max_tokens` value sent, and only a fake model can stand in for a
+    reasoning model that runs out of a tight cap.
+    """
     caps: list[int | None] = []
 
     async def reasoning_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
