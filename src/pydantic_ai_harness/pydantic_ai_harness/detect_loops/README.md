@@ -13,8 +13,8 @@ flowchart LR
     model(["model"]) -->|tool call| tool["your tool"]
     tool --> check{"DetectLoops()<br/>same call, same result,<br/>3 times?"}:::capability
     check -->|no| next(["next request<br/>to model"])
-    check -->|"yes · nudge"| nudge["next request +<br/>system prompt"]:::capability
-    check -.-x|"yes · error"| error["LoopDetectedError<br/>ends the run"]:::blocked
+    check -->|"yes, nudge"| nudge["next request +<br/>system prompt"]:::capability
+    check -.-x|"yes, error"| error["LoopDetectedError<br/>ends the run"]:::blocked
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
 ```
