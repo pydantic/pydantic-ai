@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
@@ -39,14 +40,19 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 from tests.batch_utils import UNRUN_MESSAGES
 from tests.conftest import try_import
+from tests.models.mock_openai import with_history_digests
 
 with try_import() as imports_successful:
     import httpx2
     from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.auth import WorkloadIdentity
 
-    from pydantic_ai.models import _openai_batch as openai_batch
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+        _batch as openai_batch,
+    )
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
@@ -97,6 +103,27 @@ def test_batching_a_chat_completions_model_points_to_the_responses_api(
     with pytest.raises(UserError) as exc_info:
         BatchPool().wrap(model_factory())
     assert str(exc_info.value) == message
+
+
+def test_batching_a_chat_completions_model_points_to_the_responses_api_by_profile_not_provider_name() -> None:
+    """The hint follows `openai_supports_batch_api`, which `OpenAIResponsesModel` batches on, not the provider's name."""
+
+    class RenamedOpenAIProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'my-openai'
+
+    provider = RenamedOpenAIProvider(api_key='k')
+    assert OpenAIResponsesModel('gpt-4.1-nano', provider=provider).batch_max_requests is not None
+    with pytest.raises(UserError, match='batch it through the Responses API'):
+        BatchPool().wrap(OpenAIChatModel('gpt-4.1-nano', provider=provider))
+
+    no_batch_profile = OpenAIModelProfile(openai_supports_batch_api=False)
+    with pytest.raises(UserError) as exc_info:
+        BatchPool().wrap(
+            OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k'), profile=no_batch_profile)
+        )
+    assert str(exc_info.value) == "`OpenAIChatModel` 'gpt-4.1-nano' has no batch API."
 
 
 @pytest.mark.parametrize(
@@ -220,7 +247,11 @@ async def test_batch_encode_carries_the_responses_params() -> None:
         custom_id='item',
         messages=[ModelRequest(parts=[UserPromptPart('Hello')], instructions='Answer briefly')],
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=100, temperature=0.5, openai_user='user', extra_body={'metadata': {'source': 'test'}}
+            max_tokens=100,
+            temperature=0.5,
+            openai_user='user',
+            openai_safety_identifier='safety_id',
+            extra_body={'metadata': {'source': 'test'}},
         ),
         model_request_parameters=ModelRequestParameters(
             function_tools=[ToolDefinition(name='weather', parameters_json_schema={'type': 'object', 'properties': {}})]
@@ -246,6 +277,7 @@ async def test_batch_encode_carries_the_responses_params() -> None:
             'max_output_tokens': 100,
             'temperature': 0.5,
             'user': 'user',
+            'safety_identifier': 'safety_id',
             'metadata': {'source': 'test'},
         }
     )
@@ -256,11 +288,13 @@ async def test_batch_encode_continues_a_stored_response() -> None:
     model = _model()
     request = BatchRequest(
         custom_id='item',
-        messages=[
-            ModelRequest(parts=[UserPromptPart('Hello')]),
-            ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
-            ModelRequest(parts=[UserPromptPart('Again')]),
-        ],
+        messages=with_history_digests(
+            [
+                ModelRequest(parts=[UserPromptPart('Hello')]),
+                ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
+                ModelRequest(parts=[UserPromptPart('Again')]),
+            ]
+        ),
         model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
     body = json.loads((await model.batch_encode(request)).body)
@@ -335,7 +369,6 @@ async def test_batch_create_refuses_a_different_client_or_model(allow_model_requ
     'settings,match',
     [
         ({'timeout': 10}, 'per-request `timeout`'),
-        ({'max_retries': 0}, 'per-request `max_retries`'),
         ({'extra_headers': {'X-Tenant': 'a'}}, 'per-request `extra_headers`'),
         ({'openai_background': True}, '`openai_background`'),
         ({'extra_body': {'stream': True}}, '`stream` or `background`'),
@@ -348,6 +381,12 @@ async def test_batch_encode_rejects_what_a_batch_cannot_honor(settings: dict[str
         await _model().batch_encode(_request(**settings))
 
 
+async def test_batch_encode_ignores_max_retries() -> None:
+    """OpenAI runs a batched request itself, so an SDK retry count is ignored rather than rejected."""
+    encoded = await _model().batch_encode(_request(max_retries=0))
+    assert encoded == await _model().batch_encode(_request())
+
+
 async def test_batch_requires_a_static_api_key() -> None:
     """A key callback could choose a different credential per request, while a batch is submitted and polled with one."""
 
@@ -357,6 +396,22 @@ async def test_batch_requires_a_static_api_key() -> None:
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=api_key)))
     with pytest.raises(UserError, match='requires a static API key'):
         await model.batch_encode(_request())
+
+
+async def test_batch_keeps_azure_ad_token_provider_support() -> None:
+    token = Mock(return_value='unused-token')
+    client = AsyncAzureOpenAI(
+        azure_endpoint='https://example.openai.azure.com',
+        api_version='2024-10-21',
+        azure_ad_token_provider=token,
+    )
+    model = OpenAIResponsesModel(
+        'gpt-4.1-nano',
+        provider=AzureProvider(openai_client=client),
+        profile=OpenAIModelProfile(openai_supports_batch_api=True),
+    )
+    assert openai_batch.batch_client(model) is client
+    token.assert_not_called()
 
 
 async def test_batch_rejects_a_workload_identity() -> None:
@@ -389,7 +444,11 @@ class _FakeBatchAPI:
     files: dict[str, str] = field(default_factory=dict[str, str])
     requests: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     delete_status: int = 200
+    delete_gave_up: bool = False
+    """Whether the delete's `delete_status` is one a retrying transport gave up on, so it raises `HTTPStatusError`."""
     create_error: tuple[int, dict[str, Any]] | None = None
+    create_gave_up: bool = False
+    """Whether the create's `create_error` is one a retrying transport gave up on, so it raises `HTTPStatusError`."""
     response_bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
@@ -397,11 +456,19 @@ class _FakeBatchAPI:
         self.requests.append((request.method, path))
         if request.method == 'DELETE' and path.startswith('/files/'):
             if self.delete_status != 200:
-                return httpx2.Response(self.delete_status, json={'error': {'message': 'Nope', 'type': 'server_error'}})
+                response = httpx2.Response(
+                    self.delete_status, json={'error': {'message': 'Nope', 'type': 'server_error'}}, request=request
+                )
+                if self.delete_gave_up:
+                    raise httpx2.HTTPStatusError('Server error', request=request, response=response)
+                return response
             return httpx2.Response(200, json={'id': path.split('/')[2], 'object': 'file', 'deleted': True})
         if request.method == 'POST' and path == '/batches' and self.create_error is not None:
             status_code, body = self.create_error
-            return httpx2.Response(status_code, json=body)
+            response = httpx2.Response(status_code, json=body, request=request)
+            if self.create_gave_up:
+                raise httpx2.HTTPStatusError('Error', request=request, response=response)
+            return response
         if request.method == 'POST' and path == '/responses':
             # A request sent on its own, outside a batch.
             self.response_bodies.append(json.loads(request.read()))
@@ -827,7 +894,7 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     """A batch whose model OpenAI doesn't know suggests a close known model, as a request on its own does."""
     api = _FakeBatchAPI(batch=_batch_json('validating'))
     model = OpenAIResponsesModel(
-        'gpt-4.1-nan',
+        'gpt-5.6-lun',
         provider=OpenAIProvider(
             openai_client=AsyncOpenAI(
                 api_key='k', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
@@ -836,12 +903,12 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     )
     request = _request()
     batch = await model.batch_create([await model.batch_encode(request)])
-    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-4.1-nan' is not supported.", 'line': 1}
+    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-5.6-lun' is not supported.", 'line': 1}
     api.batch = _batch_json('failed', errors={'object': 'list', 'data': [error]})
     [result] = await model.batch_results(await model.batch_status(batch))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, request)
-    assert exc_info.value.suggested_model_id == 'openai:gpt-4.1-nano'
+    assert exc_info.value.suggested_model_id == 'openai:gpt-5.6-luna'
 
 
 async def test_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
@@ -874,10 +941,18 @@ async def test_cancelled_batch_returns_what_it_ran(allow_model_requests: None) -
     assert ('DELETE', '/files/file-input') not in api.requests
 
 
-@pytest.mark.parametrize('delete_status', [200, 404, 500])
-async def test_completed_batch_deletes_its_input_file(allow_model_requests: None, delete_status: int) -> None:
-    """Once every request has run, the input file isn't needed; deleting it is best effort, so failing to is fine."""
-    api = _FakeBatchAPI(batch=_batch_json('in_progress'), delete_status=delete_status)
+@pytest.mark.parametrize(
+    'delete_status, delete_gave_up',
+    [(200, False), (404, False), (500, False), pytest.param(503, True, id='transport-gave-up')],
+)
+async def test_completed_batch_deletes_its_input_file(
+    allow_model_requests: None, delete_status: int, delete_gave_up: bool
+) -> None:
+    """Once every request has run, the input file isn't needed; deleting it is best effort, so failing to is fine.
+
+    That includes a status a retrying transport gave up on, which `openai` lets through unwrapped.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'), delete_status=delete_status, delete_gave_up=delete_gave_up)
     model = _fake_model(api)
     batch = await model.batch_create([await model.batch_encode(_request('ok'))])
     api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
@@ -957,7 +1032,7 @@ async def test_batch_forgets_the_oldest_uploaded_input_files(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a bounded number of uploads are remembered; a forgotten batch's input file is left for OpenAI to delete."""
-    monkeypatch.setattr('pydantic_ai.models._openai_batch._UPLOADED_INPUT_FILES_SIZE', 0)
+    monkeypatch.setattr('pydantic_ai.models.openai._batch._UPLOADED_INPUT_FILES_SIZE', 0)
     api = _FakeBatchAPI(batch=_batch_json('in_progress'))
     model = _fake_model(api)
     batch = await model.batch_create([await model.batch_encode(_request('ok'))])
@@ -1062,17 +1137,43 @@ async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests:
     assert response.cost().total_price < standard.cost().total_price
 
 
-@pytest.mark.parametrize('status_code, deleted', [(429, True), (400, True), (500, False)])
+@pytest.mark.parametrize(
+    'status_code, gave_up, deleted',
+    [(429, False, True), (400, False, True), (500, False, False), (429, True, True), (503, True, False)],
+)
 async def test_a_refused_batch_deletes_its_input_file(
-    allow_model_requests: None, status_code: int, deleted: bool
+    allow_model_requests: None, status_code: int, gave_up: bool, deleted: bool
 ) -> None:
-    """Nothing reads the file of a batch OpenAI refused; after a server error, the batch may exist and read it."""
+    """Nothing reads the file of a batch OpenAI refused; after a server error, the batch may exist and read it.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
     error = {'error': {'message': 'Refused', 'type': 'invalid_request_error'}}
-    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, error))
+    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, error), create_gave_up=gave_up)
     model = _fake_model(api)
     with pytest.raises(ModelHTTPError):
         await model.batch_create([await model.batch_encode(_request())])
     assert (('DELETE', '/files/file-input') in api.requests) is deleted
+
+
+async def test_a_refused_batch_raises_its_refusal_when_deleting_its_input_file_fails(
+    allow_model_requests: None,
+) -> None:
+    """Deleting the input file of a refused batch is best effort, so a status a retrying transport gave up on doesn't
+    replace the refusal.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    error = {'error': {'message': 'Refused', 'type': 'invalid_request_error'}}
+    api = _FakeBatchAPI(
+        batch=_batch_json('validating'), create_error=(400, error), delete_status=503, delete_gave_up=True
+    )
+    model = _fake_model(api)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.batch_create([await model.batch_encode(_request())])
+    assert isinstance(exc_info.value, ModelRequestRejectedError)
+    assert exc_info.value.status_code == 400
+    assert ('DELETE', '/files/file-input') in api.requests
 
 
 @pytest.mark.parametrize(

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin,
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -121,6 +121,32 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
     except TypeError:
         origin = get_origin(type_)
         return origin is not None and isinstance(value, origin)
+
+
+def is_incomplete_json(error: BaseException | None) -> bool:
+    """Whether `error` is the `ValidationError` for JSON that ends before it's complete, as cut-off output does.
+
+    A schema or an output validator rejecting JSON that parsed raises a different error, which keeps its retry.
+    """
+    return isinstance(error, ValidationError) and any(detail['type'] == 'json_invalid' for detail in error.errors())
+
+
+def truncated_output_message(max_tokens: int | None) -> str:
+    """The error message for structured text output that the token limit cut off into incomplete JSON."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating structured output, '
+        'resulting in incomplete JSON. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+
+
+def incomplete_tool_call_message(max_tokens: int | None) -> str:
+    """The `IncompleteToolCall` message for a tool call whose arguments the token limit cut off."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
 
 
 def build_retried_tool_return(
@@ -1033,7 +1059,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             validation_type_adapter: TypeAdapter[Any]
             unwrapped_output = _utils.unwrap_annotated(output)
             if _utils.is_model_like(unwrapped_output):
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
+                # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
+                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
             else:
                 self.outer_typed_dict_key = 'response'
                 output_type: type[OutputDataT] = cast(type[OutputDataT], output)
@@ -1275,9 +1302,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
         # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
         # provider) instead of slipping through to the `_processors` lookup in `validate()`.
-        constrained_result = create_model(
-            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
-        )
+        kind_type: TypeForm[str] = Literal[tuple(self._processors)]  # pyright: ignore[reportAssignmentType]
+        constrained_result = create_model(UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(kind_type, ...))
         union_model = create_model(
             UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
         )
@@ -1566,15 +1592,19 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ):
         self._function_schema = _function_schema.function_schema(output_function, GenerateToolJsonSchema)
 
+        # A model-like arg takes the model's own JSON schema, so a model with one `str` field would pass the
+        # property check below, but the function would be handed the raw text instead of the model.
         if (
-            not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
+            self._function_schema.single_arg_name is not None
+            or not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
             or len(arguments_schema) != 1
             or not (argument_name := next(iter(arguments_schema.keys()), None))
             or arguments_schema.get(argument_name, {}).get('type') != 'string'
         ):
             raise UserError('TextOutput must take a function taking a single `str` argument')
 
-        self._str_argument_name = argument_name
+        # The property is named after the parameter's alias, if it has one, but the function takes its Python name.
+        self._str_argument_name = self._function_schema.parameter_names.get(argument_name) or argument_name
 
     async def call(
         self,
@@ -1790,14 +1820,14 @@ def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
     return [str]
 
 
-def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[TypeForm[object]]:
     outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
-    outputs_flat: list[T | type[str]] = []
+    outputs_flat: list[TypeForm[object]] = []
     for output in outputs:
         if isinstance(output, NativeOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
@@ -1815,8 +1845,9 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif (choices := _ChoicesActions.of(output)) is not None:
             # What a `Choices` set with callable values asks the model for is a key; what the action it
             # stands for returns is only known once it has run, so the keys are what a schema can describe.
-            outputs_flat.append(cast(T, choices.keys_type))
+            outputs_flat.append(choices.keys_type)
         else:
-            outputs_flat.append(cast(T, output))
+            # Function/method detection does not narrow the remaining output specs to type expressions.
+            outputs_flat.append(output)  # pyright: ignore[reportArgumentType]
 
     return outputs_flat

@@ -3,12 +3,12 @@ from __future__ import annotations
 import sys
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import timedelta
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
 
 import anyio
 
@@ -102,12 +102,17 @@ class WrapperModel(Model):
     Does nothing on its own, used as a base class.
     """
 
+    _answers_requests_itself: ClassVar[bool] = False
+
     wrapped: Model
     """The underlying model being wrapped."""
 
-    def __init__(self, wrapped: Model | KnownModelName):
+    def __init__(self, wrapped: Model | KnownModelName | str):
         super().__init__()
         self.wrapped = infer_model(wrapped)
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        return self.wrapped._run_scope()
 
     async def __aenter__(self) -> Self:
         if not _is_borrowed(self.wrapped):
@@ -300,8 +305,8 @@ class WrapperModel(Model):
         # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        return self.wrapped._start_request_deadline(model_settings)
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        return self.wrapped._start_request_deadline(model_settings, stream=stream)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.

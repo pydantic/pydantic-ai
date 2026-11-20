@@ -138,12 +138,9 @@ def parse_macroscope_stream(lines: Iterable[str]) -> MacroscopeReview:
 
 
 class MacroscopeToolset(FunctionToolset[AgentDepsT]):
-    """Exposes a single tool that runs `macroscope codereview` and returns findings.
+    """Exposes a single tool that runs `macroscope codereview` in the run's workspace and returns findings.
 
-    The tool runs the `macroscope` binary installed in the run's workspace (`ctx.workspace`),
-    in its working directory, so the review sees the repository where the agent works, local or in a sandbox. It
-    collects the streamed findings and returns them as a `MacroscopeReview`; validating and
-    fixing the findings is left to the agent's other tools.
+    See [`Macroscope`][pydantic_ai_harness.macroscope.Macroscope] for how the review runs.
 
     Setup problems the model cannot fix (the binary is missing or cannot be
     launched, or the CLI is not signed in) raise `UserError` so the run stops with
@@ -211,13 +208,13 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         try:
             result = await ctx.workspace.run(['sh', '-c', _LAUNCHER, 'sh', *args], timeout=self._timeout)
         # Before `WorkspaceError`: a timeout keeps its partial output, other workspace failures are not retryable.
-        except WorkspaceTimeoutError as e:
-            review = parse_macroscope_stream(_combined_output(e.stdout, e.stderr).splitlines())
+        except WorkspaceTimeoutError as exc:
+            review = parse_macroscope_stream(_combined_output(exc.stdout, exc.stderr).splitlines())
             if review.review_id is None:
                 raise ModelRetry(f'The Macroscope review timed out after {self._timeout}s.') from None
             return _stopped_early(review, 'timed_out')
-        except WorkspaceError as e:
-            raise_tool_failure(e)
+        except WorkspaceError as exc:
+            raise_tool_failure(exc)
         output = _combined_output(result.stdout, result.stderr)
         review = parse_macroscope_stream(output.splitlines())
         if review.review_id is not None:

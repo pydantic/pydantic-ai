@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 from pathlib import Path
 
 import pytest
@@ -11,16 +12,17 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, PrefixT
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.filesystem import READ_FILE_KIND, FileSystem
+from pydantic_ai_harness.file_system import DEFAULT_TOOL_NAMES, READ_FILE_KIND, FileSystem
 from pydantic_ai_harness.tool_output_limits import (
+    GREP_TOOL_NAME,
     READ_TOOL_NAME,
     READ_TOOL_RESULT_KIND,
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore,
     OverflowStore,
     Spill,
     ToolOutputLimits,
-    WorkspaceStore,
+    WorkspaceOverflowStore,
 )
 
 _PAYLOAD = '\n'.join(f'line {i}' for i in range(500))
@@ -33,8 +35,7 @@ def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 class _Recorder:
     """A `FunctionModel` that calls `big_tool`, then reads the spill back with whichever reader is offered."""
 
-    def __init__(self, *, read_back: bool = True) -> None:
-        self.read_back = read_back
+    def __init__(self) -> None:
         self.offered: list[dict[str, str | None]] = []
         self.marker: str | None = None
 
@@ -47,8 +48,6 @@ class _Recorder:
             self.marker = str(spilled[0].content)
             assert spilled[0].metadata is not None
             handle = spilled[0].metadata['overflow_handle']
-            if not self.read_back:
-                return ModelResponse(parts=[TextPart('done')])
             tools = self.offered[-1]
             if reader := next((name for name, kind in tools.items() if kind == READ_TOOL_RESULT_KIND.id), None):
                 return ModelResponse(parts=[ToolCallPart(reader, {'handle': handle})])
@@ -57,10 +56,8 @@ class _Recorder:
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
 
-async def _run(
-    workspace: Path, *capabilities: AbstractCapability[None], read_back: bool = True
-) -> tuple[_Recorder, str]:
-    recorder = _Recorder(read_back=read_back)
+async def _run(workspace: Path, *capabilities: AbstractCapability[None]) -> tuple[_Recorder, str]:
+    recorder = _Recorder()
     agent = Agent(
         FunctionModel(recorder.respond), deps_type=type(None), capabilities=[LocalWorkspace(workspace), *capabilities]
     )
@@ -73,14 +70,14 @@ async def _run(
     return recorder, result.output
 
 
-def _limits(store: OverflowStore | WorkspaceStore | None = None) -> ToolOutputLimits[None]:
+def _limits(store: OverflowStore | WorkspaceOverflowStore | None = None) -> ToolOutputLimits[None]:
     return ToolOutputLimits(bands=[Band(over=100, action=Spill())], store=store)
 
 
 class TestReaderStepsAside:
     async def test_read_file_replaces_read_tool_result(self, tmp_path: Path) -> None:
         recorder, output = await _run(tmp_path, _limits(), FileSystem())
-        assert all(READ_TOOL_NAME not in tools for tools in recorder.offered)
+        assert all(READ_TOOL_NAME not in tools and GREP_TOOL_NAME not in tools for tools in recorder.offered)
         assert recorder.marker is not None
         assert 'Read it with read_file(path=' in recorder.marker
         assert READ_TOOL_NAME not in recorder.marker
@@ -88,12 +85,40 @@ class TestReaderStepsAside:
         assert 'line 100' in output
         assert 'Tool output too large' not in output
 
+    @pytest.mark.parametrize('tool', ['search_files', 'grep'])
+    async def test_searching_a_spill_is_reduced_as_usual(self, tmp_path: Path, tool: str) -> None:
+        """A search bounds how many lines match, not how long a line is, so a one-line spill comes back reduced."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = _returns(messages)
+            if searched := [part for part in returns if part.tool_name == tool]:
+                return ModelResponse(parts=[TextPart(str(searched[0].content))])
+            if returns:
+                assert returns[0].metadata is not None
+                spill_dir = posixpath.dirname(returns[0].metadata['overflow_handle'])
+                return ModelResponse(parts=[ToolCallPart(tool, {'pattern': 'id', 'path': spill_dir})])
+            return ModelResponse(parts=[ToolCallPart('big_tool', {})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace(tmp_path), _limits(), FileSystem(tools=[*DEFAULT_TOOL_NAMES, 'grep'])],
+        )
+
+        @agent.tool_plain
+        def big_tool() -> str:
+            return '[' + ','.join(f'{{"id":{i}}}' for i in range(2_000)) + ']'
+
+        assert (await agent.run('go')).output.startswith('[Tool output too large')
+
     async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
-        # A renamed `FileSystem` tool can be offered but not called yet (#10927), so this checks what is offered.
-        recorder, _ = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'), read_back=False)
+        recorder, output = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'))
         assert all(READ_TOOL_NAME not in tools and 'repo_read_file' in tools for tools in recorder.offered)
         assert recorder.marker is not None
         assert 'Read it with repo_read_file(path=' in recorder.marker
+        # The marker can be followed: the spill is read back through `repo_read_file`, and not spilled again.
+        assert 'line 100' in output
+        assert 'Tool output too large' not in output
 
     async def test_read_file_of_other_files_is_still_reduced(self, tmp_path: Path) -> None:
         (tmp_path / 'big.txt').write_text(_PAYLOAD)
@@ -126,9 +151,9 @@ class TestReaderKept:
         spills = tmp_path / 'spills'
         spills.mkdir()
         store = (
-            WorkspaceStore(workspace=LocalWorkspaceBackend(spills))
+            WorkspaceOverflowStore(workspace=LocalWorkspaceBackend(spills))
             if own_store == 'workspace'
-            else LocalFileStore(base_dir=spills)
+            else LocalFileOverflowStore(base_dir=spills)
         )
         work = tmp_path / 'work'
         work.mkdir()

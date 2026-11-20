@@ -11,16 +11,17 @@ itself.
 from __future__ import annotations
 
 import codecs
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Generic, Literal
 
 import anyio
 
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job, past_secrets
 
 MAX_FOREGROUND_WAIT: float = 270.0
 """Longest a foreground `shell` call waits before returning handles to the still-running command.
@@ -48,17 +49,17 @@ async def _count_lines(job: Job) -> int | None:
     return data.count(b'\n') + int(bool(data) and not data.endswith(b'\n'))
 
 
-async def _output_tail(job: Job) -> str:
+async def _output_tail(job: Job, secrets: Sequence[bytes]) -> str:
     """The last `_OUTPUT_TAIL_BYTES` of the log, from a line start and marked when earlier output is left out."""
-    size = await job.size(job.output_path)
-    start = max(0, size - _OUTPUT_TAIL_BYTES)
-    data = await job.read(job.output_path, start, size - start)
+    start, data = await job.read_tail(job.output_path, _OUTPUT_TAIL_BYTES, secrets=secrets)
     if not start:
         return data.decode('utf-8', errors='replace')
     # Drop the cut first line, unless it is the only one.
     if 0 <= (newline := data.find(b'\n')) < len(data) - 1:
-        start += newline + 1
-        data = data[newline + 1 :]
+        # The newline can be inside a multi-line secret, so the moved cut is checked again.
+        cut = past_secrets(data, newline + 1, secrets)
+        start += cut
+        data = data[cut:]
     return f'[... output truncated, {start} earlier bytes omitted]\n' + data.decode('utf-8', errors='replace')
 
 
@@ -123,7 +124,7 @@ class _CommandOutput(Generic[AgentDepsT]):
             await self.ctx.emit(CommandOutputEvent(text=tail))
         clears = await self._clears()
         size = await self.job.size(self.job.output_path)
-        total_lines = None if clears else await _count_lines(self.job)
+        line_count = None if clears else await _count_lines(self.job)
         # Counted again afterwards: a clear that began meanwhile leaves a size and count from two different logs.
         cleared = clears > 0 or await self._clears() != clears
         await self.ctx.emit(
@@ -134,7 +135,7 @@ class _CommandOutput(Generic[AgentDepsT]):
                 exit_code=(await self.job.status())[1],
                 truncated=cleared or size > self.offset,
                 # An emptied log no longer holds the earlier lines, so their count is unknown.
-                total_lines=None if cleared else total_lines,
+                line_count=None if cleared else line_count,
             )
         )
 
@@ -150,11 +151,16 @@ async def run_persistent_command(
     mode: CommandMode,
     timeout: float,
     log_limit: int | None = None,
+    secrets: Sequence[bytes] = (),
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
     Foreground waits up to `timeout` for the exit status, polling with a backoff from 50 ms to
     1 s, then returns the handles either way; background returns them immediately.
+
+    The wait is counted in the time slept between polls, not read from a clock: each poll is a
+    workspace call, which a durable engine records, so a replayed call makes the same polls
+    however long each one took the first time. A poll's own round trip adds to the wait.
     """
     if not 0 < timeout <= MAX_FOREGROUND_WAIT:
         raise ModelRetry(f'timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds.')
@@ -170,11 +176,13 @@ async def run_persistent_command(
             await output.ctx.emit(CommandStartedEvent(tool_call_id=ctx.tool_call_id, command=command, pid=job.pid))
         if mode == 'foreground':
             interval = POLL_MIN
-            with anyio.move_on_after(timeout):
-                while (await job.status())[0]:
-                    emitted = await output.emit()
-                    await anyio.sleep(interval)
-                    interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
+            waited = 0.0
+            while waited < timeout and (await job.status())[0]:
+                emitted = await output.emit()
+                pause = min(interval, timeout - waited)
+                await anyio.sleep(pause)
+                waited += pause
+                interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
             await output.drain()
         await output.finish()
 
@@ -182,7 +190,7 @@ async def run_persistent_command(
         # result, and the PID and paths are what the model must not lose.
         result = ''
         if mode == 'foreground':
-            result = await _output_tail(job)
+            result = await _output_tail(job, secrets)
             if result and not result.endswith('\n'):
                 result += '\n'
         result += (
@@ -191,10 +199,22 @@ async def run_persistent_command(
         )
         if (status := await job.status_text()) is not None:
             result += f'\n{status}'
-    except BaseException:
-        # A cancelled or failed call cannot hand back its handles, so nothing is left running.
-        with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
-            await job.kill()
-            await job.cleanup()
+    except BaseException as error:
+        # A cancelled or failed call cannot hand back its handles, so it stops the job it started.
+        await _stop_failed_call(job, error)
         raise
     return result
+
+
+async def _stop_failed_call(job: Job, error: BaseException) -> None:
+    """Stop and remove the job of a call that is raising `error`.
+
+    A stop or removal that fails too is noted on `error` rather than replacing it; a failed stop leaves the job's
+    directory.
+    """
+    with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
+        try:
+            await job.kill()
+            await job.cleanup()
+        except (WorkspaceError, OSError) as cleanup_error:
+            error.add_note(f'Cleaning up the command also failed: {cleanup_error}')

@@ -745,6 +745,25 @@ def test_handle_tool_call_deltas_without_args():
     )
 
 
+def test_handle_tool_call_delta_events():
+    """`handle_tool_call_delta_events` yields what `handle_tool_call_delta` returns, and nothing for `None`.
+
+    Provider stream tests reach it through recordings; this pins the `None` case, which few recordings produce.
+    """
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    assert list(manager.handle_tool_call_delta_events(vendor_part_id='tool', args='{"value":')) == []
+    assert list(manager.handle_tool_call_delta_events(vendor_part_id='tool', tool_name='tool')) == snapshot(
+        [PartStartEvent(index=0, part=ToolCallPart(tool_name='tool', args='{"value":', tool_call_id=IsStr()))]
+    )
+    assert list(manager.handle_tool_call_delta_events(vendor_part_id='tool', args=' true}')) == snapshot(
+        [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=' true}', tool_call_id=IsStr()))]
+    )
+    assert manager.get_parts() == snapshot(
+        [ToolCallPart(tool_name='tool', args='{"value": true}', tool_call_id=IsStr())]
+    )
+
+
 def test_handle_tool_call_deltas_without_vendor_id():
     # Note, tool_name should not be specified in subsequent deltas when the vendor_part_id is None
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())

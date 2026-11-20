@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import warnings
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset
+from pydantic_ai_harness._mcp import per_run_connection
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness.stackone._toolset import (
+    STACKONE_API_KEY_ENV,
     STACKONE_BASE_URL,
     MCPToolsetClient,
     StackOneToolset,
@@ -56,8 +62,17 @@ class StackOne(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A StackOne API key or a sync or async function of the run context that returns one.
+
+    Unset, it uses `STACKONE_API_KEY`. A function never does: if it returns `None` or `''`, that run has no
+    StackOne tools.
+    """
+
     api_key: str | None = field(default=None, repr=False)
-    """StackOne API key. Defaults to the `STACKONE_API_KEY` environment variable."""
+    """Deprecated alias of `auth`."""
 
     base_url: str = STACKONE_BASE_URL
     """HTTPS StackOne API host. Point at a regional or staging host if needed."""
@@ -85,14 +100,34 @@ class StackOne(AbstractCapability[AgentDepsT]):
     is not applied to them."""
 
     def __post_init__(self) -> None:
+        if self.api_key is not None:
+            if self.auth is not None:
+                raise UserError('Pass `auth` only; `api_key` is its deprecated name.')
+            warn_argument_renamed('StackOne', 'api_key', 'auth', stacklevel=4)
+            self.auth, self.api_key = self.api_key, None
         self.tool_mode, self.actions = validate_configuration(self.tool_mode, self.actions)
         self.id = self._derived_id()
 
-    def get_toolset(self) -> StackOneToolset[AgentDepsT]:
-        """Build the StackOne toolset."""
+    def get_toolset(self) -> AbstractToolset[AgentDepsT]:
+        """Build the StackOne toolset, connecting per run when `auth` is a function."""
+        if callable(self.auth):
+            return per_run_connection(
+                self.auth, self._connect_for_run, id=self._derived_id(), expects='a StackOne API key'
+            )
+        return self._connect(self.auth)
+
+    def _connect_for_run(self, auth: str) -> AbstractToolset[AgentDepsT]:
+        """Carry the usage instructions on the run's toolset, so a run without a key gets neither."""
+        toolset = self._connect(auth)
+        instructions = self._usage_instructions()
+        if instructions is None:
+            return toolset
+        return CombinedToolset([toolset, FunctionToolset(instructions=instructions)])
+
+    def _connect(self, auth: str | None) -> StackOneToolset[AgentDepsT]:
         return StackOneToolset[AgentDepsT](
             account_id=self.account_id,
-            api_key=self.api_key,
+            api_key=auth,
             base_url=self.base_url,
             actions=self.actions,
             tool_mode=self.tool_mode,
@@ -106,7 +141,13 @@ class StackOne(AbstractCapability[AgentDepsT]):
         return self.id if self.id is not None else f'{_ID_PREFIX}-{self.account_id}'
 
     def get_instructions(self) -> str | None:
-        """StackOne usage guidance; the underlying MCP toolset provides none itself."""
+        """StackOne usage guidance; the underlying MCP toolset provides none itself.
+
+        With a function `auth`, the per-run toolset carries it instead.
+        """
+        return None if callable(self.auth) else self._usage_instructions()
+
+    def _usage_instructions(self) -> str | None:
         if not self.include_instructions:
             return None
         mode = resolve_tool_mode(self.tool_mode, self.actions)
@@ -127,13 +168,23 @@ class StackOne(AbstractCapability[AgentDepsT]):
         include_instructions: bool = True,
         metadata: Mapping[str, object] | None = None,
     ) -> StackOne[AgentDepsT]:
-        """Construct from serializable options, excluding the runtime-only `client`."""
+        """Construct from serializable options, excluding the runtime-only `client` and `auth`.
+
+        Specs take no credential: the API key comes from `STACKONE_API_KEY`. `api_key` is still accepted, deprecated.
+        """
+        if api_key is not None:
+            warnings.warn(
+                f'The `StackOne` spec option `api_key` is deprecated: set the `{STACKONE_API_KEY_ENV}` environment '
+                'variable instead, so the key stays out of the spec. The option will be removed in a future release.',
+                HarnessDeprecationWarning,
+                stacklevel=2,
+            )
         return cls(
             account_id=account_id,
             id=id,
             description=description,
             defer_loading=defer_loading,
-            api_key=api_key,
+            auth=api_key,
             base_url=base_url,
             actions=actions,
             tool_mode=tool_mode,
