@@ -555,6 +555,10 @@ It is the first release that skips `Parse agent logs for step summary` when the 
 run's only failed step, instead of sitting behind a protected-capture error.
 The review failure reporter needs v1.2.1 or newer to read trusted pre-agent eligibility outputs
 after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
+v1.3.1 grants `id-token: write` to every lock's `activation` and `conclusion` jobs, for gh-aw's admission steps
+([gh-aw#78818](https://github.com/github/gh-aw/pull/78818)). The grant does not depend on configuration.
+gh-aw emits admission steps only when `aw.json` sets `"admission": true` or a source sets `on.admission`.
+Neither is set here, so no step in these locks mints a token.
 `shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
 `shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.70.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
