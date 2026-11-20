@@ -499,12 +499,12 @@ agent = Agent(model)
 ...
 ```
 
-OCI names models `<vendor>.<model>`, such as `openai.gpt-oss-120b` or `meta.llama-3.3-70b-instruct`. The provider picks a model family's profile only for a `vendor/model` name, so the `profile` function looks each name up with its first `.` replaced by `/`; the name sent to OCI stays unchanged. Without it, every OCI model gets the profile OpenAI-compatible APIs share.
+OCI [names models](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) `<vendor>.<model>`, such as `openai.gpt-oss-120b` or `meta.llama-3.3-70b-instruct`, so without the `profile` function every OCI model gets the profile OpenAI-compatible APIs share. The function gives each model the family profile of its `vendor/model` spelling, as [Gateways that serve several model families](#custom-openai-compatible-provider) explains.
 
-The [API key documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) lists the model families and regions an API key can use. Meta Llama models support only the Chat Completions API, so use `OpenAIChatModel` for them; xAI Grok and OpenAI gpt-oss models also support the Responses API, which [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] uses.
+The [API key documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) lists the model families and regions an API key can use. Meta Llama models support only the Chat Completions API, so use [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] for them; xAI Grok and OpenAI gpt-oss models also support the Responses API, which [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] uses.
 
 !!! note "Allow API keys in an IAM policy"
-    An API key works only once an IAM policy lets API keys use Generative AI. Oracle recommends creating a policy that authorizes every key in a compartment before you create the key. See [Adding Key Permissions](https://docs.oracle.com/en-us/iaas/Content/generative-ai/add-api-permission.htm) for the policy statements.
+    An API key works only once an IAM policy lets API keys use Generative AI. To authorize every key in a compartment, create the policy before the key. To limit the policy to one key, create the key first and use its OCID. See [Adding Key Permissions](https://docs.oracle.com/en-us/iaas/Content/generative-ai/add-api-permission.htm) for the policy statements.
 
 ## Non-standard finish reasons
 
