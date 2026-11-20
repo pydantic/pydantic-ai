@@ -1,22 +1,20 @@
 """Auxiliary naming never changes the conversation head or stalls a foreground turn."""
 
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from uuid import UUID, uuid5
 
 import anyio
-import httpx2 as httpx
 import pytest
-from pydantic import JsonValue, ValidationError
+from pydantic import ValidationError
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelRequestRejectedError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ThinkingPart, ToolCallPart, UserPromptPart
-from pydantic_ai.models import Model, override_allow_model_requests
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_naming import NamingClient, NamingResult, SessionName, SessionNamer, generate_name
@@ -35,17 +33,20 @@ async def test_structured_name_and_auxiliary_usage() -> None:
     assert name.tags == ['sqlite', 'tools']
 
 
-async def test_a_reasoning_model_has_room_to_think_before_naming() -> None:
+async def test_a_reasoning_model_is_asked_for_no_reasoning_and_has_room_to_answer() -> None:
     """A reasoning model spends output tokens thinking before its title; a tight cap left it no answer (#14082).
 
-    Not a VCR test: a recording doesn't show the `max_tokens` value sent, and only a fake model can stand in for a
+    Naming asks for no reasoning through the unified `thinking` setting, which each provider's adapter turns into
+    its own lowest level; core's model tests pin that translation, so this pins only what Pax sends.
+
+    Not a VCR test: a recording doesn't show the settings sent, and only a fake model can stand in for a
     reasoning model that runs out of a tight cap.
     """
-    caps: list[int | None] = []
+    sent: list[tuple[int | None, ThinkingLevel | None]] = []
 
     async def reasoning_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         cap = (info.model_settings or {}).get('max_tokens')
-        caps.append(cap)
+        sent.append((cap, info.model_request_parameters.thinking))
         # It reasons for about 2000 tokens; a smaller cap leaves no answer, as GLM-5.3 had with 250.
         answered = cap is not None and cap >= 2000
         title = [ToolCallPart(info.output_tools[0].name, {'title': 'Greet the user'})] if answered else []
@@ -54,87 +55,11 @@ async def test_a_reasoning_model_has_room_to_think_before_naming() -> None:
             finish_reason='stop' if answered else 'length',
         )
 
-    result = await generate_name(model=FunctionModel(reasoning_model), prompt='Current conversation tail:\nuser: hi')
+    model = FunctionModel(reasoning_model, profile=ModelProfile(supports_thinking=True))
+    result = await generate_name(model=model, prompt='Current conversation tail:\nuser: hi')
     assert result.name.title == 'Greet the user'
-    # Still bounded, so a model that never stops costs a known amount.
-    assert caps == [4096]
-
-
-def _openai_responses(name: str, client: httpx.AsyncClient) -> Model:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    return OpenAIResponsesModel(name, provider=OpenAIProvider(api_key='test', http_client=client))
-
-
-def _openai_chat(name: str, client: httpx.AsyncClient) -> Model:
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    return OpenAIChatModel(name, provider=OpenAIProvider(api_key='test', http_client=client))
-
-
-def _anthropic(name: str, client: httpx.AsyncClient) -> Model:
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    return AnthropicModel(name, provider=AnthropicProvider(api_key='test', http_client=client))
-
-
-def _openrouter(name: str, client: httpx.AsyncClient) -> Model:
-    from pydantic_ai.models.openrouter import OpenRouterModel
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
-    return OpenRouterModel(name, provider=OpenRouterProvider(api_key='test', http_client=client))
-
-
-def _effort(body: dict[str, JsonValue]) -> JsonValue:
-    """The Responses API's reasoning effort, which OpenRouter also sends."""
-    reasoning = body.get('reasoning')
-    return reasoning.get('effort') if isinstance(reasoning, dict) else None
-
-
-def _chat_effort(body: dict[str, JsonValue]) -> JsonValue:
-    return body.get('reasoning_effort')
-
-
-def _anthropic_effort(body: dict[str, JsonValue]) -> JsonValue:
-    config = body.get('output_config')
-    return config.get('effort') if isinstance(config, dict) else None
-
-
-@pytest.mark.parametrize(
-    ('build', 'name', 'read', 'least'),
-    [
-        pytest.param(_openai_responses, 'gpt-5.6', _effort, 'none', id='openai-responses-off'),
-        pytest.param(_openai_responses, 'gpt-5', _effort, 'minimal', id='openai-responses-minimal'),
-        pytest.param(_openai_chat, 'o3-mini', _chat_effort, 'low', id='openai-chat'),
-        pytest.param(_anthropic, 'claude-fable-5-1', _anthropic_effort, 'low', id='anthropic-always-thinks'),
-        pytest.param(_openrouter, 'openai/gpt-5', _effort, 'low', id='openrouter'),
-    ],
-)
-async def test_naming_asks_for_the_least_reasoning_each_provider_offers(
-    build: Callable[[str, httpx.AsyncClient], Model],
-    name: str,
-    read: Callable[[dict[str, JsonValue]], JsonValue],
-    least: JsonValue,
-) -> None:
-    """A title needs no reasoning, so naming spends neither tokens nor time on it, whatever model names it.
-
-    These are the providers whose SDKs Pax installs; core's own tests cover how the others translate `thinking`.
-
-    Not a VCR test: what matters is the outgoing request, which a recorded cassette keeps matching after it changes.
-    """
-    bodies: list[dict[str, JsonValue]] = []
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        bodies.append(json.loads(request.content))
-        return httpx.Response(400, json={'error': {'message': 'recorded', 'type': 'invalid_request_error'}})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond), timeout=60) as client:
-        with override_allow_model_requests(True), pytest.raises(ModelRequestRejectedError):
-            await generate_name(model=build(name, client), prompt='Current conversation tail:\nuser: hi')
-    assert read(bodies[0]) == least
+    # No reasoning asked for, and still bounded, so a model that never stops costs a known amount.
+    assert sent == [(4096, False)]
 
 
 async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
