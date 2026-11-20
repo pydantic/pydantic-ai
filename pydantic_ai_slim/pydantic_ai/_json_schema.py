@@ -183,7 +183,7 @@ def decode_json_pointer_token(token: str) -> str:
 
     A `$ref` is a URI, so the token is percent-decoded once (section 6), and only then are `~1` and `~0` unescaped
     (section 4), in that order: `%7E1` decodes to `/`. Split the pointer on `/` before decoding its tokens, so that
-    `%2F` stays part of a member name (RFC 3986 section 2.4).
+    `%2F` stays part of a member name, as it does in a `$defs` name `definition_name()` decodes whole.
     """
     return unquote(token).replace('~1', '/').replace('~0', '~')
 
@@ -423,7 +423,8 @@ class JsonSchemaTransformer(ABC):
         # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
         root_ref, root_key = self._root_ref_and_key(defs)
         defs[root_key] = handled
-        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+        # Resolving the `$ref` percent-decodes it, and a `title` can hold a `%`.
+        return {'$defs': defs, '$ref': root_ref or '#/$defs/' + root_key.replace('%', '%25')}
 
     def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
         """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.
@@ -524,6 +525,9 @@ class JsonSchemaTransformer(ABC):
         """
         # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
         key = definition_name(ref) if ref.startswith('#/$defs/') else ref
+        if key not in self.defs and key != ref.removeprefix('#/$defs/'):
+            # A decoded name can appear nowhere in the schema as written, so the `$ref` is named too.
+            raise UserError(f'Could not find $ref definition for {ref} (definition name {key!r})')
         if key in self.refs_stack:
             if key not in self.defs:
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.

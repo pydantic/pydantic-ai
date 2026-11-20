@@ -1144,7 +1144,7 @@ MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
                 'type': 'object',
                 'properties': {
                     'a/b': ADDRESS_SCHEMA,
-                    'a': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+                    'a': {'b': {'type': 'integer'}},
                     'to': {'$ref': '#/properties/a%2Fb'},
                 },
             },
@@ -1152,7 +1152,7 @@ MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
                 'type': 'object',
                 'properties': {
                     'a/b': ADDRESS_SCHEMA,
-                    'a': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+                    'a': {'b': {'type': 'integer'}},
                     'to': ADDRESS_SCHEMA,
                 },
             },
@@ -1251,6 +1251,30 @@ def test_inline_defs_dangling_ref_raises(ref: str):
 
     with pytest.raises(
         UserError, match=f'^Could not find \\$ref definition for {re.escape(ref.removeprefix("#/$defs/"))}$'
+    ):
+        InlineDefsJsonSchemaTransformer(schema).walk()
+
+
+@pytest.mark.parametrize(
+    'ref,name',
+    [
+        ('#/$defs/Display%20Name', 'Display Name'),
+        ('#/$defs/a~1b', 'a/b'),
+        pytest.param('#/$defs/%23/properties/a', '#/properties/a', id='decoded-name-reads-as-a-pointer'),
+    ],
+)
+def test_inline_defs_dangling_escaped_definition_name_raises(ref: str, name: str):
+    """A dangling `$defs` `$ref` with escapes in its name names the `$ref` as written, besides the decoded name.
+
+    The decoded name can appear nowhere in the schema the user wrote. A decoded name that reads as a JSON pointer is
+    still only a definition name, so it doesn't reach `properties.a`.
+    Unit test: the walker raises before any request is built.
+    """
+    schema = {'type': 'object', 'properties': {'a': {'type': 'string'}, 'b': {'$ref': ref}}}
+
+    with pytest.raises(
+        UserError,
+        match=f'^Could not find \\$ref definition for {re.escape(ref)} \\(definition name {re.escape(repr(name))}\\)$',
     ):
         InlineDefsJsonSchemaTransformer(schema).walk()
 

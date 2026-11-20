@@ -9,7 +9,7 @@ from .._json_schema import (
     InlineDefsJsonSchemaTransformer,
     JsonSchema,
     JsonSchemaTransformer,
-    decode_json_pointer_token,
+    definition_name,
     inline_objects,
     resolve_json_pointer,
     split_definitions,
@@ -915,7 +915,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
         if self.root_ref is not None:
-            root_key = decode_json_pointer_token(re.sub(r'^#/\$defs/', '', self.root_ref))
+            root_key = definition_name(self.root_ref)
             root_schema = self.defs.get(root_key)
             if isinstance(root_schema, bool):
                 if not root_schema:
@@ -939,7 +939,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
-            root_key = decode_json_pointer_token(re.sub(r'^#/\$defs/', '', self.root_ref))
+            root_key = definition_name(self.root_ref)
             root_schema = self.defs.get(root_key)
             assert not isinstance(root_schema, bool)
             result.update(root_schema or {})
