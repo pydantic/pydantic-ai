@@ -830,12 +830,15 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
     ) -> _T:
         """Run a file operation with boxd's file API, or as shell commands on a machine whose agent predates it.
 
-        On a machine stopped since it was acquired, the machine is started and the operation tried once more.
+        When boxd refused the operation because the machine is stopped, the machine is started and the operation
+        tried once more. A stop that cut the operation off is not retried: it may have done its work already.
         """
         try:
             return await self._files_once(native, shell, context)
-        except _MachineStoppedError:
-            return await self._files_once(native, shell, context)
+        except _MachineStoppedError as error:
+            if not isinstance(error.__cause__, boxd.ConflictError):
+                raise
+        return await self._files_once(native, shell, context)
 
     async def _files_once(
         self,

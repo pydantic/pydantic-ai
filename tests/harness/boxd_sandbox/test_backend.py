@@ -25,7 +25,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
-from .fake_boxd import FakeBoxd, wait_until_gone
+from .fake_boxd import FakeBoxd, FakeFsTransport, wait_until_gone
 
 pytestmark = [
     pytest.mark.anyio(backends=['asyncio']),
@@ -386,6 +386,28 @@ class TestRun:
 
         assert await backend.read_bytes('new.txt') == b'new'
         assert machine.starts == 3
+
+    async def test_a_file_operation_a_stop_cut_off_is_not_run_again(
+        self, host: FakeBoxd, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = BoxdSandboxBackend()
+        await backend.write_bytes('gone.txt', b'x')
+        machine = host.only
+        call = FakeFsTransport.call
+
+        async def remove_then_stop(self: FakeFsTransport, method: str, request: Any) -> Any:
+            result = await call(self, method, request)
+            if method == 'FsRemove':
+                machine.status = 'stopped'
+                raise boxd.APIConnectionError('lost the connection to the machine: the machine was stopped')
+            return result
+
+        monkeypatch.setattr(FakeFsTransport, 'call', remove_then_stop)
+        # The removal went through before the stop, so running it again would report a missing file.
+        with pytest.raises(WorkspaceUnavailableError, match="'machine-1' was stopped"):
+            await backend.remove('gone.txt')
+        assert machine.starts == 0
+        assert not (tmp_path / 'gone.txt').exists()
 
     async def test_a_machine_deleted_between_commands_is_unavailable(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
