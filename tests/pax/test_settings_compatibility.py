@@ -468,7 +468,10 @@ def test_session_naming_keeps_saved_choices(tmp_path: Path) -> None:
     SettingsStore(path)  # creates the settings table an older build wrote the row into
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'true')")
-    assert SettingsStore(path).load().session_namer is True
+    loaded = SettingsStore(path).load()
+    # Explicit, not the default: naming then covers every session, as it did while it was opt-in.
+    assert loaded.session_namer is True and 'session_namer' in loaded.model_fields_set
+    assert 'session_namer' not in SettingsStore(tmp_path / 'fresh.db').load().model_fields_set
 
 
 def test_session_naming_is_on_by_default_unless_turned_off(tmp_path: Path) -> None:
