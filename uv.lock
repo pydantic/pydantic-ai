@@ -8109,6 +8109,7 @@ source = { editable = "pydantic_evals" }
 dependencies = [
     { name = "anyio" },
     { name = "logfire-api" },
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim" },
     { name = "pyyaml" },
@@ -8125,6 +8126,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "logfire-api", specifier = ">=3.14.1" },
+    { name = "opentelemetry-api", specifier = ">=1.35.0" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pyyaml", specifier = ">=6.0.2" },

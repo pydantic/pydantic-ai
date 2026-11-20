@@ -1534,6 +1534,17 @@ jobs:
         env:
           UV_FROZEN: "0"
 
+      # The all-extras resolution pulls newer OTel through Logfire's HTTPX instrumentation.
+      # Use a separate environment so this checks the evals floor without downgrading that stack.
+      - name: test pydantic-evals OpenTelemetry floor
+        if: matrix.shard == 1 && needs.classify.outputs.harness_only != 'true'
+        run: |
+          uv venv .venv-otel-floor
+          uv pip install --python .venv-otel-floor/bin/python \
+            ./pydantic_graph ./pydantic_ai_slim ./pydantic_evals \
+            'opentelemetry-api==1.35.0' 'opentelemetry-sdk==1.35.0'
+          .venv-otel-floor/bin/python scripts/check_evals_otel_floor.py
+
       # Warm the HF cache out-of-band: full pinned snapshot, then a validation
       # construct (see the matching step in the `test` job for the full rationale).
       - name: pre-download sentence-transformers test model

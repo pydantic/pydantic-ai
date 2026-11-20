@@ -54,6 +54,8 @@ dependencies = [
     "pydantic-ai-slim=={{ version }}",
     "anyio>=4.7.0",
     "pyyaml>=6.0.2",
+    # `LogRecord(event_name=...)` requires OpenTelemetry API 1.35.0 or newer.
+    "opentelemetry-api>=1.35.0",
 ]
 
 [project.optional-dependencies]
