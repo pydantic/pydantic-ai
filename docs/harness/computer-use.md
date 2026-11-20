@@ -66,9 +66,9 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## What the display needs
 
-The agent sees a desktop: a panel along the bottom with a button that opens a terminal. By default, the terminal
-uses a large monospace font, so its text is easier to read in screenshots. If the image already has a
-`~/.Xdefaults` file, or loads X settings with `xrdb`, the terminal uses those instead. Each new window fills the
+The agent sees a desktop: a panel along the bottom with a button labelled Terminal that opens a terminal. By
+default, the terminal uses a large monospace font, so its text is easier to read in screenshots. If the image already
+has a `~/.Xdefaults` file, or loads X settings with `xrdb`, the terminal uses those instead. Each new window fills the
 screen above the panel. There's no web browser unless the image has one, or the agent installs one with
 [`Coder`](coder.md).
 

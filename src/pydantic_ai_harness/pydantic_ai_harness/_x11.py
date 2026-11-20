@@ -281,14 +281,20 @@ _DESKTOP_CONFIG = (
     # xterm's default font is a small bitmap one that models misread, such as `g` as `9`. xterm reads this file
     # however it is opened, from the panel, fluxbox's run box or a shell command, unless `xrdb` loaded settings.
     + _write_unless_present('$HOME/.Xdefaults', 'XTerm*faceName: Monospace', 'XTerm*faceSize: 14')
-    # A panel along the bottom with a button for each launcher whose program is installed, and a button per window.
+    # A panel along the bottom with Firefox's icon when it's installed, a button labelled Terminal, and a button per
+    # window. Models found the labelled button in fewer steps than an icon alone.
     + _write_unless_present(
         f'{_TINT2_DIR}/tint2rc',
+        # Backgrounds 1 (the panel) and 2 (the Terminal button), numbered in the order they're written.
         'rounded = 0',
         'border_width = 0',
         'background_color = #2b2b2b 100',
         'border_color = #2b2b2b 0',
-        'panel_items = LT',
+        'rounded = 0',
+        'border_width = 1',
+        'background_color = #444444 100',
+        'border_color = #888888 100',
+        'panel_items = LPT',
         'panel_position = bottom left horizontal',
         'panel_size = 100% 40',
         'panel_padding = 4 4 6',
@@ -298,7 +304,14 @@ _DESKTOP_CONFIG = (
         'launcher_icon_size = 32',
         'launcher_padding = 2 4 8',
         'launcher_item_app = /usr/share/applications/firefox-esr.desktop',
-        'launcher_item_app = /usr/share/applications/debian-xterm.desktop',
+        'button = new',
+        'button_icon = mini.xterm',
+        'button_text = Terminal',
+        'button_font = Sans 12',
+        'button_font_color = #ffffff 100',
+        'button_padding = 8 4 6',
+        'button_background_id = 2',
+        'button_lclick_command = xterm',
         'taskbar_padding = 2 2 4',
         'task_text = 1',
         'task_icon = 1',
@@ -316,7 +329,7 @@ _START_WINDOW_MANAGER = (
     'setsid fluxbox >&8 2>&1 8>&- 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
-    # tint2 shows only once a window manager answers, so it starts after one. Before running a launcher's program,
+    # tint2 shows only once a window manager answers, so it starts after one. Before running a program its buttons open,
     # tint2 closes every file handle up to its soft open-file limit. Under a Kubernetes pod's 1,073,741,816, its
     # terminal button opened nothing; with the soft limit at 1,048,576 it opened xterm in under a second. So tint2
     # alone starts with its soft limit capped there, and the hard limit, which programs it opens can raise theirs to,

@@ -528,7 +528,10 @@ async def test_the_panel_settings_go_where_tint2_reads_them(
 
     await screen(_desktop(container_dir, image='my-desktop')).display_size()
 
-    assert 'panel_position = bottom left horizontal' in (config / 'tint2' / 'tint2rc').read_text().splitlines()
+    settings = (config / 'tint2' / 'tint2rc').read_text().splitlines()
+    assert 'panel_position = bottom left horizontal' in settings
+    # The terminal opens from a button labelled with words, which models find sooner than an icon.
+    assert {'button_text = Terminal', 'button_lclick_command = xterm'} <= set(settings)
 
 
 async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path) -> None:
