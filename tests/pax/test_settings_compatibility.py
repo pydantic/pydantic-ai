@@ -462,16 +462,18 @@ def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fiel
         store.load()
 
 
-def test_session_naming_is_opt_in_and_keeps_saved_choices(tmp_path: Path) -> None:
-    """Naming costs a model request, so it is off unless a user turned it on, as older builds' rows may say."""
+@pytest.mark.parametrize('saved', ['false', 'true'])
+def test_session_naming_is_on_by_default_and_keeps_saved_choices(tmp_path: Path, saved: str) -> None:
+    """Sessions are named unless a user turned naming off; a choice saved while it was opt-in still holds."""
+    assert Settings().session_namer is True
     path = tmp_path / 'config.db'
     store = SettingsStore(path)
-    assert store.load().session_namer is False
+    assert store.load().session_namer is True
     with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'true')")
-    assert SettingsStore(path).load().session_namer is True
+        connection.execute("INSERT INTO settings VALUES ('sessions.naming', ?)", (saved,))
+    assert SettingsStore(path).load().session_namer is (saved == 'true')
     store.reset('sessions.naming')
-    assert SettingsStore(path).load().session_namer is False
+    assert SettingsStore(path).load().session_namer is True
 
 
 @pytest.mark.parametrize('value_json', ['false', 'true'])

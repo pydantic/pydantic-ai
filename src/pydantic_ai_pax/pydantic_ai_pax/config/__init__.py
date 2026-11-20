@@ -133,7 +133,7 @@ class Settings(BaseModel):
         description='User-only JSON list of trusted target directories for external instruction symlinks. Autoload only.',
     )
     session_namer: bool = Field(
-        default=False, description='Name saved sessions in the background using a model, at extra cost.'
+        default=True, description='Name saved sessions in the background using a model, at extra cost.'
     )
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'

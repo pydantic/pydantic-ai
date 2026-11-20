@@ -110,7 +110,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
-| `sessions.naming` | `false` | Name saved sessions in the background using a model, at extra cost. |
+| `sessions.naming` | `true` | Name saved sessions in the background using a model, at extra cost. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
@@ -2588,7 +2588,7 @@ a new session; `--session-id` then names it. `--continue` works with `-p` and
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
-or execute pending tools. Background naming, when turned on, may make a separate,
+or execute pending tools. Background naming, unless turned off, may make a separate,
 tool-free model request. Your current model, working directory, credentials, and
 approved plugins remain in effect. The saved model name is shown for reference.
 
@@ -2715,9 +2715,9 @@ later turns in Claude Code or Codex are not merged into it.
 
 #### Background names
 
-A saved session immediately gets a fallback title from its first prompt. With
-`sessions.naming` on, a single background worker can replace it with a short
-title, subtitle, and up to four topic tags. The browser refreshes names while
+A saved session immediately gets a fallback title from its first prompt. A
+single background worker can replace it with a short title, subtitle, and up to
+four topic tags. The browser refreshes names while
 idle without moving selection.
 
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
@@ -2731,17 +2731,19 @@ in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
 the browser backfills up to ten eligible sessions. Queue length, request count,
-output size, and a 60-second deadline bound the work. Exiting cancels and joins
-the worker.
+output size, and a 60-second deadline bound the work. Each naming request asks
+for no reasoning, or the least the model accepts, and at most 4,096 output
+tokens, so a reasoning model has room to answer. Exiting cancels and joins the
+worker.
 
 ```text
-/set sessions.naming true
+/set sessions.naming false
 /set sessions.naming_model openai:gpt-5-mini
 /set sessions.naming_model null
 ```
 
-Naming is off by default, so no model request is made without your opt-in, and
-sessions keep their fallback titles. Once on, it uses the current model unless
+Naming is on by default. Turn it off to make no naming requests, and sessions
+keep their fallback titles. It uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
 that model's provider and incurs additional usage. It has no tools and does not
 inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
