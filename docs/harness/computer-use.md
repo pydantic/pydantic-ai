@@ -130,12 +130,17 @@ The providers' own advice:
   For each model's image size limits, see
   [Images and vision](https://developers.openai.com/api/docs/guides/images-vision#model-sizing-behavior).
 
-On `AnthropicModel`, Claude 4 models on the older computer use tools shrink a larger screenshot without saying so, and
-then give positions on the smaller image. Keep the screen at 1280x800 or smaller for them
-([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)). Claude's
-`computer_toolset_20260801` tool refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens,
-where one token covers 28x28 pixels, such as 2549x1457. The request fails with a `ModelHTTPError`, which a
-`FallbackModel` moves on from.
+On `AnthropicModel`, what happens to a screenshot too large for Claude depends on the tool it goes through
+([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)):
+
+- Claude's `computer_toolset_20260801` tool refuses a screenshot over 2576 pixels on its longer side or over 4784 image
+  tokens, where one token covers 28x28 pixels. A 2549x1457 screen is refused. The request fails with Anthropic's 400
+  as a `ModelHTTPError`, which `FallbackModel` and the `ModelFallback` capability move on from.
+- The older computer use tools, such as Claude Haiku 4.5's `computer_20250124`, and `ComputerUse(native=False)` on any
+  Claude model, shrink a larger screenshot without saying so. Claude then gives positions on the smaller image, so its
+  clicks miss: Haiku 4.5 at 1920x1080 clicked at three quarters of the right position, and Claude Sonnet 5.5 through
+  the function tool at 2560x1600 missed a button by about 100 pixels. Keep the screen at a size that fits: Haiku 4.5
+  clicked on target at 1280x800, and Sonnet 5.5 through the function tool at 1920x1200.
 
 GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
 they can miss what they click.
