@@ -38,8 +38,11 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
+    ComputerCallPart,
     ComputerReturnPart,
     Drag,
+    KeyDown,
+    KeyUp,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -66,14 +69,10 @@ from pydantic_ai_harness.computer_use import (
     DisplayAction,
     UnsupportedActionError,
 )
-from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
 from ..display_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
-
-with try_import() as google_imports:
-    pass
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 
@@ -128,6 +127,93 @@ def _scripted(
 
 def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+
+
+def _flagged(*actions: dict[str, object]) -> FunctionModel:
+    """A model whose `computer` call needs a person's confirmation, as a provider's safety check flags one, then answers `done`."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolCallPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        call = ComputerCallPart(
+            'computer', {'actions': list(actions)}, provider_details={'confirmation': 'It deletes files.'}
+        )
+        return ModelResponse(parts=[call])
+
+    return FunctionModel(respond)
+
+
+class TestConfirmation:
+    """A call the provider flags for a person's confirmation."""
+
+    async def test_it_waits_for_approval_and_its_result_says_it_was_confirmed(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
+            capabilities=[provider.capability(), ComputerUse()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+        assert paused.output.metadata == {call.tool_call_id: {'reason': 'It deletes files.'}}
+        assert provider.actions == []
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+        assert provider.actions == [TypeText(text='rm -rf x')]
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.metadata == {'performed': 1, 'confirmed': True}
+
+    async def test_an_approved_call_that_fails_before_it_runs_still_says_it_was_confirmed(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _flagged({'type': 'click', 'x': 5000, 'y': 5}),
+            capabilities=[provider.capability(), ComputerUse()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+        assert provider.actions == []
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.metadata == snapshot(
+            {
+                'performed': 0,
+                'error': 'Action 1 (click) at (5000, 5) is outside the 1280x800 screen, so no action ran.',
+                'confirmed': True,
+            }
+        )
+        assert tool_return.content_items() == snapshot(
+            ['Action 1 (click) at (5000, 5) is outside the 1280x800 screen, so no action ran.']
+        )
+
+    async def test_a_denied_call_does_not_run(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
+            capabilities=[provider.capability(), ComputerUse()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: False}),
+        )
+        assert provider.actions == []
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.outcome == 'denied'
 
 
 class TestComputerUse:
@@ -1065,6 +1151,72 @@ The `computer` tool shows and controls this computer's screen.
         assert tool_return.outcome == 'success'
         assert provider.actions == [MouseUp(button='right')]
 
+    async def test_a_key_stays_pressed_across_calls_and_the_run_end_releases_it(
+        self, durability: list[AbstractCapability[object]]
+    ) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted(
+                [{'type': 'key_down', 'keys': ['shift', 'ctrl']}],
+                [{'type': 'click', 'x': 5, 'y': 5}, {'type': 'key_up', 'keys': ['ctrl']}],
+            ),
+            name='computer',
+            capabilities=[provider.capability(), ComputerUse(), *durability],
+        )
+        returns = _returns((await agent.run('Go.')).all_messages())
+
+        assert [tool_return.content_items()[0] for tool_return in returns] == [
+            'Ran 1 action. The shift and ctrl keys are still pressed. Screenshot attached (1280x800).',
+            'Ran 2 actions. The shift key is still pressed. Screenshot attached (1280x800).',
+        ]
+        assert provider.actions == [
+            KeyDown(keys=('shift', 'ctrl')),
+            Click(x=5, y=5),
+            KeyUp(keys=('ctrl',)),
+            KeyUp(keys=('shift',)),
+        ]
+
+    async def test_a_failed_call_releases_the_keys_and_buttons_it_holds(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted(
+                [
+                    {'type': 'key_down', 'keys': ['shift']},
+                    {'type': 'mouse_down'},
+                    {'type': 'hold_keys', 'keys': ['a'], 'seconds': 1},
+                ]
+            ),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.content_items()[0] == snapshot(
+            "Action 3 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The left mouse button was released. The shift key was released. Screenshot attached (1280x800)."
+        )
+        assert provider.actions == [KeyDown(keys=('shift',)), MouseDown(), KeyUp(keys=('shift',)), MouseUp()]
+
+    async def test_a_key_down_the_display_refuses_leaves_nothing_held(self) -> None:
+        class NoHeldKeys(ScreenBackend):
+            async def act(self, action: DisplayAction) -> None:
+                if isinstance(action, KeyDown | KeyUp):
+                    raise UnsupportedActionError('this display cannot hold keys')
+                await super().act(action)
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return NoHeldKeys(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'key_down', 'keys': ['shift']}]), capabilities=[provider.capability(), ComputerUse()]
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.content_items()[0] == snapshot(
+            'Action 1 of 1 (key_down) failed: this display cannot hold keys. Screenshot attached (1280x800).'
+        )
+        assert provider.actions == []
+
     async def test_the_end_of_a_run_releases_the_buttons_it_still_holds(
         self, durability: list[AbstractCapability[object]]
     ) -> None:
@@ -1225,7 +1377,7 @@ The `computer` tool shows and controls this computer's screen.
             capabilities=[ScreenProvider().capability(), ComputerUse(), durability],
         )
         assert (await agent.run('Go.')).output == 'done'
-        assert "Could not release the mouse buttons ['left'] when the run ended" in caplog.text
+        assert 'Could not release the left mouse button when the run ended' in caplog.text
 
     @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
     async def test_a_computer_use_loaded_mid_run_releases_at_the_end_of_each_call(self) -> None:

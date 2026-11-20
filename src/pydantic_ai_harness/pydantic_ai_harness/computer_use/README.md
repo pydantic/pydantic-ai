@@ -67,7 +67,7 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## Models
 
-The model must accept images. A model that can't gets a note in place of each screenshot, saying it wasn't sent.
+The model has to accept images to see the screen. A model that can't gets a note in place of each screenshot, saying it wasn't sent.
 
 - Claude models on `AnthropicModel` get Anthropic's own computer use tool on the clients and models listed under
   [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use). Other Claude models and clients get the
@@ -128,6 +128,12 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 
 The same hook can refuse a call instead, such as one that waits longer or types more than you allow. [Raise `ToolFailed`](https://pydantic.dev/docs/ai/core-concepts/hooks/#triggering-retries-with-modelretry) with a message for the model. None of the call's actions run.
 
+Some providers flag an action for a person to confirm, and give their reason in the call's
+[`confirmation`](https://pydantic.dev/docs/ai/api/pydantic-ai/computer_use/#pydantic_ai.computer_use.ComputerCallPart.confirmation). `ComputerUse` raises `ApprovalRequired` for
+such a call without a hook, with the reason in the request's `metadata` as `{'reason': ...}`. Once you approve it, its
+result has `confirmed` set, so the provider is told a person approved it, even if the call then fails before any action
+runs.
+
 ## Screen size
 
 A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
@@ -145,12 +151,17 @@ The providers' own advice:
   For each model's image size limits, see
   [Images and vision](https://developers.openai.com/api/docs/guides/images-vision#model-sizing-behavior).
 
-On `AnthropicModel`, Claude 4 models on the older computer use tools shrink a larger screenshot without saying so, and
-then give positions on the smaller image. Keep the screen at 1280x800 or smaller for them
-([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)). Claude's
-`computer_toolset_20260801` tool refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens,
-where one token covers 28x28 pixels, such as 2549x1457. The request fails with a `ModelHTTPError`, which a
-`FallbackModel` moves on from.
+On `AnthropicModel`, what happens to a screenshot too large for Claude depends on the tool it goes through
+([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)):
+
+- Claude's `computer_toolset_20260801` tool refuses a screenshot over 2576 pixels on its longer side or over 4784 image
+  tokens, where one token covers 28x28 pixels. A 2549x1457 screen is refused. The request fails with Anthropic's 400
+  as a `ModelHTTPError`, which `FallbackModel` and the `ModelFallback` capability move on from.
+- The older computer use tools, such as Claude Haiku 4.5's `computer_20250124`, and `ComputerUse(native=False)` on any
+  Claude model, shrink a larger screenshot without saying so. Claude then gives positions on the smaller image, so its
+  clicks miss: Haiku 4.5 at 1920x1080 clicked at three quarters of the right position, and Claude Sonnet 5.5 through
+  the function tool at 2560x1600 missed a button by about 100 pixels. Keep the screen at a size that fits: Haiku 4.5
+  clicked on target at 1280x800, and Sonnet 5.5 through the function tool at 1920x1200.
 
 GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
 they can miss what they click.
@@ -163,7 +174,7 @@ they can miss what they click.
   try again. Each such retry counts against the tool's retry limit.
 - If the workspace is gone, for example because its sandbox was deleted, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Several agents can share one screen, such as sub-agents running in parallel. If they run in the same `asyncio` event loop, they take turns one whole call at a time, so their clicks never mix. Agents in separate event loops or separate processes don't wait for each other.
-- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button may still be pressed.
+- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and a key pressed with `key_down` until a `key_up`. Each result tells the model which buttons and keys are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, they are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button or key may still be pressed.
 
 ## Watching a run
 

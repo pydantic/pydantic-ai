@@ -351,8 +351,16 @@ class _Wait(_Strict):
     duration: float
 
 
+_Region = Annotated[list[int], Field(min_length=4, max_length=4)]
+
+
 class _Zoom(_Strict):
-    region: Annotated[list[int], Field(min_length=4, max_length=4)]
+    region: _Region
+
+
+class _Screenshot(_Strict):
+    region: _Region | None = None
+    """Not documented on `screenshot`, but Claude sends it, in the same frame as `zoom`'s `region`."""
 
 
 class _Press(_Strict):
@@ -375,7 +383,7 @@ _MEMBERS: dict[str, type[_Strict]] = {
     'hold_key': _HoldKey,
     'wait': _Wait,
     'zoom': _Zoom,
-    'screenshot': _NoInput,
+    'screenshot': _Screenshot,
     'cursor_position': _NoInput,
 }
 """The input of each member that has a matching `computer` tool action."""
@@ -459,8 +467,8 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
             # Claude's earlier tools press or release the button at a point, so the pointer moves there first.
             move = [{'type': 'mouse_move', **_point(member.coordinate)}] if member.coordinate else []
             return [*move, {'type': kind}]
-        case _Zoom():
-            left, top, right, bottom = member.region
+        case _Zoom(region=[left, top, right, bottom]) | _Screenshot(region=[left, top, right, bottom]):
+            # A screenshot of a region is a zoom: both capture that part of the screen.
             return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
-        case _:  # `screenshot` and `cursor_position` take no input
+        case _:  # a whole-screen `screenshot`, and `cursor_position`, which takes no input
             return [{'type': kind}]

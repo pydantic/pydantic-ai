@@ -45,6 +45,8 @@ from pydantic_ai.computer_use import (
     Click,
     Drag,
     HoldKeys,
+    KeyDown,
+    KeyUp,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -323,6 +325,14 @@ class DaytonaDesktop:
             case HoldKeys(keys=keys, seconds=seconds):
                 async with self._holding(_keys(keys)):
                     await anyio.sleep(seconds)
+            case KeyDown(keys=keys):
+                keyboard = self._computer_use().keyboard
+                for key in _keys(keys):
+                    await _send_input(partial(keyboard.down, key, request_timeout=REQUEST_TIMEOUT))
+            case KeyUp(keys=keys):
+                keyboard = self._computer_use().keyboard
+                for key in reversed(_keys(keys)):
+                    await _send_input(partial(keyboard.up, key, request_timeout=REQUEST_TIMEOUT))
             case _:
                 raise UnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")
 

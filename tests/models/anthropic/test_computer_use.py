@@ -170,6 +170,39 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert all(r['toolset_name'] == 'computer' for r in results)
 
 
+async def test_a_screenshot_of_a_region_runs_as_a_zoom(allow_model_requests: None) -> None:
+    """Claude Sonnet 5.5 sends `region` on `screenshot`, which Anthropic documents only on `zoom`, in the same frame."""
+    computer = FakeComputer()
+    client = MockAnthropic.create_mock(
+        [
+            _turn(
+                _tool_use('toolu_1', 'left_click', {'coordinate': [52, 221]}),
+                _tool_use('toolu_2', 'wait', {'duration': 1}),
+                _tool_use('toolu_3', 'screenshot', {'region': [0, 0, 1280, 200]}),
+            ),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    result = await _agent(model, computer).run('Go.')
+
+    (call,) = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict()['actions'][-1] == {
+        'type': 'zoom',
+        'region': {'left': 0, 'top': 0, 'right': 1280, 'bottom': 200},
+    }
+    assert computer.actions == [Click(x=52, y=221)]
+    _, second = get_mock_chat_completion_kwargs(client)
+    # The call goes back as Claude sent it, and the whole batch ran: the zoom image is in the result.
+    assert second['messages'][-2]['content'][-1]['input'] == {'region': [0, 0, 1280, 200]}
+    results = second['messages'][-1]['content']
+    assert [(r['is_error'], [block['type'] for block in r['content']]) for r in results] == [
+        (False, ['text']),
+        (False, ['text']),
+        (False, ['text', 'image', 'image']),
+    ]
+
+
 async def test_a_thread_continue_request_answers_every_member_call(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(
         [
@@ -655,6 +688,12 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('scroll', {'scroll_direction': 'up'}, {'type': 'scroll', 'unsupported_fields': ['scroll_amount']}),
         ('wait', {'duration': 2}, {'type': 'wait', 'seconds': 2}),
         ('screenshot', {}, {'type': 'screenshot'}),
+        (
+            'screenshot',
+            {'region': [0, 0, 1280, 200]},
+            {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 1280, 'bottom': 200}},
+        ),
+        ('screenshot', {'region': [0, 0]}, {'type': 'screenshot', 'unsupported_fields': ['region']}),
         (
             'zoom',
             {'region': [1, 2, 30, 40]},
