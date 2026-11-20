@@ -53,7 +53,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.models.fallback import FallbackModel
@@ -721,9 +721,12 @@ The `computer` tool shows and controls this computer's screen.
                 ModelFallback(_answering('fallback', profile, seen, [{'type': 'screenshot'}])),
             ],
         )
-        with pytest.raises(UserError) as error:
+        with pytest.raises(FallbackExceptionGroup) as error:
             await agent.run('Look.')
-        assert error.value.message == message
+        # The primary was unavailable, and the fallback refused the request without being called.
+        unavailable, refused = error.value.exceptions
+        assert isinstance(unavailable, ModelHTTPError)
+        assert isinstance(refused, UserError) and refused.message == message
         assert seen == []
 
     @pytest.mark.parametrize(

@@ -450,9 +450,9 @@ Gotchas:
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
 - Gemini 3 models give positions on a 0-999 grid (profile `computer_use_coordinate_grid`), which `ComputerUse`
   converts to pixels. Under `ModelFallback` or a `FallbackModel`, each model that answers is told its own coordinates. A model that can't
-  take images, or would get the latest screenshot scaled down, refuses the request with a `UserError` before it's called:
-  a `FallbackModel` tries its next model, and `ModelFallback` ends the run. The previous `computer` call's actions have
-  already run by then. A
+  take images, or would get the latest screenshot scaled down, refuses the request before it's called, and both move on
+  to their next model whatever `fallback_on` says; if none can serve it, the run ends with the last model's `UserError`.
+  The previous `computer` call's actions have already run by then. A
   custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
   `ComputerCallPart`, not from the run's model.
 - Screenshots are sent at the screen's full size. If the screen is larger than the model accepts (profile

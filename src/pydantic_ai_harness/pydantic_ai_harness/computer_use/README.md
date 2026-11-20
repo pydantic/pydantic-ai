@@ -158,9 +158,9 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   advisor request with more than 600 images.
 - With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) or a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), each model
   that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't take images, or would
-  get the latest screenshot scaled down, refuses the request with a `UserError` before it's called: a `FallbackModel`
-  then tries its next model, and `ModelFallback` ends the run. The `computer` call before that request has already run
-  its actions on the screen.
+  get the latest screenshot scaled down, refuses the request before it's called, and both move on to their next model,
+  whatever `fallback_on` says. If none can serve it, the run ends with the last model's `UserError`. The `computer` call
+  before that request has already run its actions on the screen.
 
 ## Durable execution
 
