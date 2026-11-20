@@ -481,7 +481,7 @@ its own: the tool call is already spanned, and the reduction happens inside it.
 | `tool_output_limits.original_size` | the measured size of the return, the number its band was matched on |
 | `tool_output_limits.reduced_size` | the size of what the model gets instead, in the same unit |
 | `tool_output_limits.size_unit` | `chars`, `tokens` (with `over_tokens=True`), or `bytes` for a binary return |
-| `tool_output_limits.fallback_from` | the band's own action, `spill`, `summarize`, or `truncate`, when it could not run and its `then` produced the result; absent otherwise |
+| `tool_output_limits.fallback_from` | the band's own action, `spill`, `summarize`, or `truncate`, when it could not run; absent otherwise |
 | `tool_output_limits.fallback_error` | the type name of the exception that stopped the `fallback_from` action, such as `OSError` from a store; absent when that action could not run because the return is binary |
 | `tool_output_limits.handle` | the spill handle, only when the run captures content (`include_content=True`), since it names a path in the workspace |
 
@@ -489,7 +489,10 @@ A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recor
 `tool_output_limits.content.*` with the same names. Nothing is recorded for a return under every
 band or a `Truncate` whose `max_chars` the text already fits. A `then` that produces a result is
 recorded even when it cuts nothing (then both sizes are equal). An action that can't run and has no
-`then`, or whose `then` is `Passthrough()`, leaves the return unchanged and records nothing. When
+`then`, or whose fallbacks all fail or end in `Passthrough()`, leaves the return unchanged and
+records only `fallback_from` and `fallback_error`, with no `action` or sizes. A binary return
+under the default `Spill(then=Truncate())` whose store write fails ends this way, since `Truncate`
+can't take binary. When
 the default `Spill(then=Truncate())` can't write to its store, `action` is `truncate`,
 `fallback_from` is `spill` and `fallback_error` names the store's exception, which is how a failing
 store shows up in a trace. When a `then` also fails and its own `then` produces the result,

@@ -166,6 +166,16 @@ class TestToolOutputLimitsTelemetry:
         # Truncate can't take binary, so no exception stopped it.
         assert 'tool_output_limits.fallback_error' not in attributes
 
+    async def test_a_failed_spill_with_no_fallback_that_works_is_still_recorded(self, instrumented: Instrumented):
+        """The default `Spill(then=Truncate())` on binary: the store fails and `Truncate` can't take binary."""
+        limits = ToolOutputLimits[object](store=FailingStore())
+        instrumentation, exporter = instrumented(False)
+        await agent_with_tool(limits, b'\x00' * 200_000, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {'tool_output_limits.fallback_from': 'spill', 'tool_output_limits.fallback_error': 'OSError'}
+        )
+
     async def test_a_summary_is_recorded(self, instrumented: Instrumented):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Summarize(summarize=short_summarize, then=Truncate(max_chars=50)))]

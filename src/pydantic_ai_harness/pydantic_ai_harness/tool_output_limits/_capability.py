@@ -153,6 +153,16 @@ class _Reduction:
 
 
 @dataclass
+class _Unreduced:
+    """The band's action failed and no `then` fallback produced a replacement, so the unit is kept as is."""
+
+    fallback_from: _ActionName
+    """The band's action."""
+    fallback_error: str | None
+    """The type name of the exception that stopped it, or `None` when it could not take binary."""
+
+
+@dataclass
 class _SpillFailed:
     """What `_write_spill` returns in place of a handle when the store could not take the write."""
 
@@ -561,6 +571,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if action is None:
             return None
         reduction = await self._apply(ctx, call, action, unit)
+        if isinstance(reduction, _Unreduced):
+            self._record_unreduced(ctx, unit, reduction)
+            return None
         # A `Truncate` whose `max_chars` the text already fits returns it unchanged: nothing was cut. A
         # fallback is still recorded: that the band's own action failed is what an operator needs to see.
         if reduction is not None and (reduction.text != unit.text or reduction.fallback_from is not None):
@@ -597,6 +610,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if reduction.handle is not None:
             set_content_attribute(ctx, span, f'{prefix}.handle', reduction.handle)
 
+    def _record_unreduced(self, ctx: RunContext[AgentDepsT], unit: _Unit, unreduced: _Unreduced) -> None:
+        """Say on the call's `execute_tool` span that the band's action failed and the unit was kept as is."""
+        prefix = 'tool_output_limits.content' if unit.suffix == '.content' else 'tool_output_limits'
+        attributes = {f'{prefix}.fallback_from': unreduced.fallback_from}
+        if unreduced.fallback_error is not None:
+            attributes[f'{prefix}.fallback_error'] = unreduced.fallback_error
+        current_span(ctx).set_attributes(attributes)
+
     async def _reduce_content(
         self,
         ctx: RunContext[AgentDepsT],
@@ -629,7 +650,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Action,
         unit: _Unit,
-    ) -> _Reduction | None:
+    ) -> _Reduction | _Unreduced | None:
         """Apply one action to a unit, falling back to its `then` when it cannot run."""
         if isinstance(action, Passthrough):
             return None
@@ -654,21 +675,21 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
         *,
         error: str | None,
-    ) -> _Reduction | None:
+    ) -> _Reduction | _Unreduced:
         """Run the `then` of an action that could not run, or keep the unit unchanged when there is none.
 
         `error` is the type name of the exception that stopped `failed`, or `None` when it can't take binary.
         """
-        if failed.then is None:
-            return None
-        reduction = await self._apply(ctx, call, failed.then, unit)
-        if reduction is not None:
-            # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept,
-            # with the error that stopped it. A later fallback's error is in the log.
-            reduction.fallback_from = (
-                'truncate' if isinstance(failed, Truncate) else 'spill' if isinstance(failed, Spill) else 'summarize'
-            )
-            reduction.fallback_error = error
+        name: _ActionName = (
+            'truncate' if isinstance(failed, Truncate) else 'spill' if isinstance(failed, Spill) else 'summarize'
+        )
+        reduction = await self._apply(ctx, call, failed.then, unit) if failed.then is not None else None
+        # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept,
+        # with the error that stopped it. A later fallback's error is in the log.
+        if not isinstance(reduction, _Reduction):
+            return _Unreduced(name, error)
+        reduction.fallback_from = name
+        reduction.fallback_error = error
         return reduction
 
     def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
@@ -691,7 +712,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Spill,
         unit: _Unit,
-    ) -> _Reduction | None:
+    ) -> _Reduction | _Unreduced:
         key = self._handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
@@ -746,7 +767,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Summarize,
         unit: _Unit,
-    ) -> _Reduction | None:
+    ) -> _Reduction | _Unreduced:
         if unit.binary:
             return await self._fallback(ctx, call, action, unit, error=None)
         assert unit.text is not None
