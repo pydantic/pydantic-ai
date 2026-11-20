@@ -276,7 +276,7 @@ async def test_continue_within_a_tool_call_loop(allow_model_requests: None, stre
 
 
 async def test_continue_after_a_computer_call_is_labelled(allow_model_requests: None):
-    """The agent labels a `computer` call with its model's screenshot limits after the response's digest is taken.
+    """The model labels its `computer` call with its screenshot limits, which the response's digest leaves out.
 
     The labels are never sent, so the request that answers the call still continues the thread.
     """
