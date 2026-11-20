@@ -24,10 +24,11 @@ Choose by the session's model family, not by the harness.
 | Other | session's model | session's model |
 
 Start sessions that drive a PR on the strong tier.
-Use the light tier for the metadata check and, when your environment provides it, local `/review-branch` runs.
+Use the light tier for the metadata check and for `/review-branch` runs.
 Use the light tier for pre-push review until hosted review has commented on two earlier pushes.
 Then use the strong tier for pre-push review.
 Pass the model explicitly when the dispatch accepts one.
+The agent files in `.agents/agents/` carry no model, so pass one on every dispatch of them.
 Set the light model's effort from the PR's complexity.
 
 ## Merge bar
