@@ -30,7 +30,7 @@ import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
-from importlib.resources import as_file, files
+from importlib.resources import files
 from typing import Literal
 
 import anyio
@@ -240,9 +240,7 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-_DESKTOP_DOCKERFILE_FILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile')
-
-DESKTOP_DOCKERFILE = _DESKTOP_DOCKERFILE_FILE.read_text()
+DESKTOP_DOCKERFILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile').read_text()
 """The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
 manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages and for emoji. Firefox
 starts without its first-run pages, and new windows fill the screen."""
@@ -297,10 +295,10 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
     if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
         return
-    # The Dockerfile copies nothing in, so any directory does as the build context.
-    with as_file(_DESKTOP_DOCKERFILE_FILE) as dockerfile:
-        build = [executable, 'build', '--tag', _DESKTOP_IMAGE, '--file', str(dockerfile), '--', str(dockerfile.parent)]
-        result = await runner.run(build)
+    # The Dockerfile copies nothing in, so it goes on stdin with no build context, which `docker` and `podman` both read
+    # from `build -`. The runner gives a command no stdin, so `sh` pipes it in.
+    build = 'printf %s "$1" | "$2" build --tag "$3" -'
+    result = await runner.run(['sh', '-c', build, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE])
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 

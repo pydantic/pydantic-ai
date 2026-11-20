@@ -126,10 +126,10 @@ image)
     [ -f "$bin/images/$3" ] || { echo "Error: No such image: $3" >&2; exit 1; }
     ;;
 build)
-    # `build --tag TAG --file DOCKERFILE -- CONTEXT`: keeps the Dockerfile as the image.
+    # `build --tag TAG -`: keeps the Dockerfile read from stdin as the image.
     [ ! -e "$bin/fail-builds" ] || { echo 'E: Unable to locate package xvfb' >&2; exit 1; }
     mkdir -p "$bin/images"
-    cp "$4" "$bin/images/$2" || exit 1
+    cat > "$bin/images/$2" || exit 1
     ;;
 rm)
     name=$4
