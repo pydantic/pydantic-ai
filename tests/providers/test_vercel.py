@@ -128,6 +128,12 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
+    # Test spacexai provider
+    profile = provider.model_profile('spacexai/grok-4.3')
+    grok_mock.assert_called_with('grok-4.3')
+    assert profile is not None
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
 
 def test_vercel_with_http_client():
     http_client = httpx2.AsyncClient()

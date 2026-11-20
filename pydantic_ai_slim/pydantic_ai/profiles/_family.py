@@ -50,6 +50,7 @@ _VENDOR_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
     'moonshotai': moonshotai_model_profile,
     'openai': _openai_family_profile,
     'qwen': qwen_model_profile,
+    'spacexai': grok_model_profile,
     'x-ai': grok_model_profile,
     'xai': grok_model_profile,
     # Gateways only get the GLM-5.3 schema fix, not Z.AI's native thinking settings, which they may not accept.

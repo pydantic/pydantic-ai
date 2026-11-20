@@ -59,6 +59,7 @@ class VercelProvider(_OpenAISDKProvider):
             'mistral': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
             'openai': openai_model_profile,
+            'spacexai': grok_model_profile,
             'vertex': google_cloud_model_profile,
             'xai': grok_model_profile,
             'zai': _glm_5_3_schema_profile,
