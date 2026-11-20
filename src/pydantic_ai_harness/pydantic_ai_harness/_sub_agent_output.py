@@ -78,7 +78,6 @@ class ServingModelRecorder(AbstractCapability[Any]):
         model = self.model = request_context.model
         # A `FallbackModel` is the request's model whichever of its models answered; the response names that one.
         self.answered_by = f'{response.provider_name or model.system}:{response.model_name or model.model_name}'
-        self.model = request_context.model
         self.output_tools = frozenset(tool.name for tool in request_context.model_request_parameters.output_tools)
         return response
 
