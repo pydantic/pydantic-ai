@@ -94,6 +94,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'authority',
         'connection',
         'description',
+        'desktop',
         'env',
         'id',
         'namespace',
@@ -117,6 +118,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         env={'A': '1'},
         authority='none',
         path_authority={'/work/own': 'operator'},
+        desktop=(1440, 900),
     )
     assert from_spec == KubernetesSandbox(
         id='kubernetes',
@@ -129,6 +131,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         env={'A': '1'},
         authority='none',
         path_authority={'/work/own': 'operator'},
+        desktop=(1440, 900),
     )
 
 
