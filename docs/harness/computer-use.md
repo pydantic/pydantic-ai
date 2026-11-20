@@ -189,11 +189,12 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   out, pass `InstrumentationSettings(include_binary_content=False)`.
 - [`Advisor(forward_history=True)`](advisor.md) sends every screenshot to the advisor model. Anthropic refuses an
   advisor request with more than 600 images.
-- With [`ModelFallback`](../capabilities/model-fallback.md), a model that takes over is told which coordinates it
-  uses: pixels, or Gemini 3's grid. If that model can't take images, or would get the latest screenshot scaled down,
-  the run ends with a `UserError` before the model is called. In a
-  [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets its grid only if every model in the
-  `FallbackModel` uses the grid.
+- With [`ModelFallback`](../capabilities/model-fallback.md) or a [`FallbackModel`](../models/overview.md#fallback-model), each model
+  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't serve the request,
+  because it can't take images or the latest screenshot is larger than it can see, is always skipped, whatever
+  `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's `UserError`;
+  when another model's failure was one `fallback_on` moves on from, with a `FallbackExceptionGroup`. Any other
+  failure is raised by itself. The `computer` call before that request has already run its actions on the screen.
 
 ## Durable execution
 

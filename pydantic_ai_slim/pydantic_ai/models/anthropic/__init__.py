@@ -1473,12 +1473,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        model_request_parameters = self._only_the_computer_when_forced(
-            AnthropicModelSettings(**(prepared_settings or {})), model_request_parameters
-        )
+        anthropic_settings = cast(AnthropicModelSettings, prepared_settings or {})
+        model_request_parameters = self._only_the_computer_when_forced(anthropic_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
-        if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
+        if not extends_max_output(self._request_betas(anthropic_settings)):
             prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
