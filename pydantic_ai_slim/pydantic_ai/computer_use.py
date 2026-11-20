@@ -27,8 +27,9 @@ The summary's wording can change between releases;
 [`ComputerResult`][pydantic_ai.computer_use.ComputerResult], in the result's `metadata`, does not.
 
 A call with a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] must not run until a person
-approves it. A runner that approves it sets `confirmed` on the result, so the adapter tells the provider; without it,
-the provider refuses the result.
+approves it, and the runner asks for that approval while it validates the call's arguments, before anything else can
+fail. A model adapter then reads the person's decision from the call's result: a denial, or a refusal of the call's
+arguments, means nobody approved it, and any other result means a person did.
 
 In the message history, the tool's calls and results become
 [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
@@ -504,10 +505,6 @@ class ComputerResult(TypedDict):
     """`True` when the actions that ran differ from those the model asked for, for example because an approval
     changed them. A model adapter then sends the summary instead of reporting the model's actions as the ones that
     ran."""
-
-    confirmed: NotRequired[bool]
-    """`True` when the call had a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] and a
-    person approved it before it ran. A model adapter tells the provider so only when this is set."""
 
 
 COMPUTER_KIND = ToolKind(
