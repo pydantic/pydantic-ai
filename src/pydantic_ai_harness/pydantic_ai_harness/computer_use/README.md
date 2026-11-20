@@ -42,8 +42,7 @@ async def main():
    [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace, the `computer` tool offers only the actions that change
-nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`. A provider's own computer tool can't be
-narrowed, so on a read-only workspace a call from it that clicks or types is refused, and none of its actions run.
+nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`.
 
 ## What the model is told
 

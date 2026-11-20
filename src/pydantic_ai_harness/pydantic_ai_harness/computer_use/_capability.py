@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import logging
 import math
 import weakref
 from collections.abc import AsyncGenerator, Sequence
@@ -63,6 +64,8 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.run import AgentRunResult
 
+_logger = logging.getLogger(__name__)
+
 _INSTRUCTIONS = """\
 The `computer` tool shows and controls this computer's screen.
 - Put actions whose outcome you can predict in one call, and end the call where you need to see the screen to choose \
@@ -110,10 +113,7 @@ _LOOKING_PARAMETERS = Tool(_look).tool_def.parameters_json_schema
 
 
 async def _offer_what_the_workspace_allows(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
-    """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools there.
-
-    A provider's own computer tool has a fixed list of actions, so a call from it that acts is refused when it runs.
-    """
+    """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools there."""
     if not ctx.workspace.read_only:
         return tool_def
     return replace(tool_def, parameters_json_schema=_LOOKING_PARAMETERS)
@@ -519,7 +519,10 @@ async def _taking_turns(keys: list[object]) -> AsyncGenerator[None]:
 
 
 async def _screenshot(steps: _Steps, summary: list[str]) -> tuple[bytes, tuple[int, int]]:
-    """The settled screenshot ending a call and its size, or a `ToolFailed` that starts with the call's `summary`."""
+    """The settled screenshot ending a call and its size, or a `ToolFailed` that starts with the call's `summary`.
+
+    A screenshot that isn't a PNG raises `UserError`, since every call on that display would fail the same way.
+    """
     try:
         png = await steps.settle() or await steps.display.screenshot()
     except WorkspaceUnavailableError:
@@ -527,7 +530,9 @@ async def _screenshot(steps: _Steps, summary: list[str]) -> tuple[bytes, tuple[i
     except WorkspaceError as e:
         raise ToolFailed(' '.join([*summary, f'Taking the screenshot failed: {e}'])) from e
     if (size := png_size(png)) is None:
-        raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
+        raise UserError(
+            'The display returned a screenshot that is not a PNG. `Display.screenshot` must return PNG bytes.'
+        )
     return png, size
 
 
@@ -767,8 +772,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """The provider's own computer tool, sized to the screenshot the model gives positions on.
 
         That's the latest screenshot, or the display's size before the first screenshot. It's worked out again for
-        each model a step tries.
+        each model a step tries. A read-only workspace gets none: its actions can't be narrowed to the ones that look.
         """
+        if ctx.workspace.read_only:
+            return None
         if (seen := latest_screenshot_size(ctx.messages)) is not None:
             # Once there's a screenshot, the display isn't read, so a reply that doesn't use the screen doesn't start
             # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
@@ -802,7 +809,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
         if held:
             with anyio.CancelScope(shield=True):
-                await self._release_on_display(ctx, held)
+                try:
+                    await self._release_on_display(ctx, held)
+                except Exception:
+                    # The run's result matters more than a button left pressed on the screen.
+                    _logger.warning('Could not release the mouse buttons %s when the run ended', held, exc_info=True)
 
     @durable_operation('release')
     async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:

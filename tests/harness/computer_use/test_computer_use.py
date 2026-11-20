@@ -795,23 +795,10 @@ The `computer` tool shows and controls this computer's screen.
         with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
             await agent.run('Go.', workspace=WorkspaceRef(provider='fake', id='expired'))
 
-    @pytest.mark.parametrize(
-        'screenshot, message',
-        [
-            pytest.param(
-                WorkspaceError('scrot: not found'), 'Taking the screenshot failed: scrot: not found', id='fails'
-            ),
-            pytest.param(b'\xff\xd8\xff not a png', 'The screenshot was not a PNG.', id='not-png'),
-        ],
-    )
-    async def test_a_bad_screenshot_is_a_failed_call_that_says_what_ran(
-        self, screenshot: WorkspaceError | bytes, message: str
-    ) -> None:
+    async def test_a_failed_screenshot_is_a_failed_call_that_says_what_ran(self) -> None:
         class BadScreen(ScreenBackend):
             async def screenshot(self) -> bytes:
-                if isinstance(screenshot, Exception):
-                    raise screenshot
-                return screenshot
+                raise WorkspaceError('scrot: not found')
 
         class Provider(ScreenProvider):
             def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
@@ -825,8 +812,24 @@ The `computer` tool shows and controls this computer's screen.
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
-        assert tool_return.content == f'Ran 1 action. {message}'
+        assert tool_return.content == 'Ran 1 action. Taking the screenshot failed: scrot: not found'
         assert provider.actions == [Click(x=1, y=1)]
+
+    async def test_a_display_whose_screenshot_is_not_a_png_ends_the_run(self) -> None:
+        # Every call would fail the same way, so the model isn't told to try again.
+        class JpegScreen(ScreenBackend):
+            async def screenshot(self) -> bytes:
+                return b'\xff\xd8\xff not a png'
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return JpegScreen(self, ref)
+
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}]), capabilities=[Provider().capability(), ComputerUse()]
+        )
+        with pytest.raises(UserError, match='screenshot that is not a PNG'):
+            await agent.run('Go.')
 
     async def test_when_the_display_size_fails_the_call_fails_and_nothing_runs(self) -> None:
         class NoSize(ScreenBackend):
@@ -987,6 +990,18 @@ The `computer` tool shows and controls this computer's screen.
         )
         assert looked.metadata == {'performed': 1}
         assert provider.actions == []
+
+    async def test_a_read_only_workspace_sends_the_narrowed_tool_instead_of_the_providers(self) -> None:
+        # The provider's computer tool can't be narrowed to the actions that look.
+        natives: list[AbstractNativeTool] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            natives.extend(info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        capabilities = [ScreenProvider().capability(read_only=True), ComputerUse()]
+        await Agent(FunctionModel(respond), capabilities=capabilities).run('Go.')
+        assert natives == []
 
     async def test_a_screenshot_kept_without_its_result_is_sized_from_the_image(self) -> None:
         """A history rebuilt without metadata still scales positions by the screenshot the model last saw."""
@@ -1528,6 +1543,18 @@ The `computer` tool shows and controls this computer's screen.
 
         agent = Agent(_scripted([{'type': 'mouse_down'}]), capabilities=[Provider().capability(), ComputerUse()])
         assert (await agent.run('Go.')).output == 'done'
+
+    async def test_a_release_step_that_fails_at_the_end_of_a_run_leaves_its_result(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        durability = RecordingDurability(fail_operations=frozenset({'computer__capability__computer_use.release'}))
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}]),
+            name='computer',
+            capabilities=[ScreenProvider().capability(), ComputerUse(), durability],
+        )
+        assert (await agent.run('Go.')).output == 'done'
+        assert "Could not release the mouse buttons ['left'] when the run ended" in caplog.text
 
     @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
     async def test_a_computer_use_loaded_mid_run_releases_at_the_end_of_each_call(self) -> None:
