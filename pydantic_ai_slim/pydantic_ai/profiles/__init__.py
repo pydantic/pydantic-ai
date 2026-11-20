@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from textwrap import dedent
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage
 
 __all__ = [
+    'ModelDeprecation',
     'ModelProfile',
     'ModelProfileSpec',
     'ToolAdditionMode',
@@ -51,6 +53,24 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
 
 DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
 """Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelDeprecation:
+    """A provider's announced deprecation of a model on its API.
+
+    Set as a model's [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation], it makes each request to the
+    model emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    """
+
+    source_url: str
+    """The provider's announcement of the deprecation."""
+
+    retirement_date: date | None = None
+    """The date the provider stops serving the model, or `None` if it hasn't announced one."""
+
+    replacement: str | None = None
+    """The model the provider recommends instead, or `None` if it names none."""
 
 
 class ModelProfile(TypedDict, total=False):
@@ -448,6 +468,18 @@ class ModelProfile(TypedDict, total=False):
     When no profile layer sets this, `Model.profile` fills it in from
     [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
     Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
+
+    deprecation: ModelDeprecation | None
+    """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
+
+    When set, each request to the model emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
+    where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
+    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    See [Deprecated models](../models/overview.md#deprecated-models).
     """
 
     tool_call_id_length: int | None
