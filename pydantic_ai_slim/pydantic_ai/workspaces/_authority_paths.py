@@ -30,16 +30,18 @@ def merge_path_authority(paths: Iterable[tuple[str, Authority]]) -> dict[str, Au
     return merged
 
 
-def is_within(path: str, directory: str) -> bool:
-    return path == directory or path.startswith(directory.rstrip('/') + '/')
+def is_within(path: str, directory: str, *, sep: str = '/') -> bool:
+    return path == directory or path.startswith(directory.rstrip(sep) + sep)
 
 
-def longest_match(location: str, path_authority: Mapping[str, Authority], default: Authority) -> Authority:
-    matches = [path for path in path_authority if is_within(location, path)]
+def longest_match(
+    location: str, path_authority: Mapping[str, Authority], default: Authority, *, sep: str = '/'
+) -> Authority:
+    matches = [path for path in path_authority if is_within(location, path, sep=sep)]
     return path_authority[max(matches, key=len)] if matches else default
 
 
-def layer_authority(location: str, layer: AuthorityLayer) -> Authority:
+def layer_authority(location: str, layer: AuthorityLayer, *, sep: str = '/') -> Authority:
     """The level one wrapper gives a location: its longest matching path's, else its own.
 
     Paths also match case-folded, keeping the lower level, so on a case-insensitive filesystem (macOS by
@@ -49,5 +51,8 @@ def layer_authority(location: str, layer: AuthorityLayer) -> Authority:
     level, path_authority = layer
     folded = merge_path_authority((path.casefold(), path_level) for path, path_level in path_authority.items())
     return lowest_authority(
-        (longest_match(location, path_authority, level), longest_match(location.casefold(), folded, level))
+        (
+            longest_match(location, path_authority, level, sep=sep),
+            longest_match(location.casefold(), folded, level, sep=sep),
+        )
     )

@@ -3,7 +3,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
@@ -20,6 +20,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     EndStrategy,
     ExternalToolset,
     FunctionToolset,
@@ -41,7 +42,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
+from pydantic_ai.capabilities import HandleDeferredToolCalls, IncludeToolReturnSchemas, PrepareTools
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -50,7 +51,8 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import AgentStreamEvent, DeferredToolResultsEvent
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import (
@@ -210,6 +212,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -254,6 +257,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -306,6 +310,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -391,8 +396,7 @@ def test_google_style_with_returns():
             'description': """\
 <summary>A function that does something.</summary>
 <returns>
-<type>str</type>
-<description>The result as a string.</description>
+<description>str: The result as a string.</description>
 </returns>\
 """,
             'parameters_json_schema': {
@@ -407,6 +411,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -457,6 +462,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -513,6 +519,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -546,8 +553,7 @@ def test_only_returns_type():
             'name': 'only_returns_type',
             'description': """\
 <returns>
-<type>str</type>
-<description>The result as a string.</description>
+<description>str: The result as a string.</description>
 </returns>\
 """,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
@@ -557,6 +563,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -592,6 +599,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -645,6 +653,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -722,6 +731,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -777,6 +787,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -1177,6 +1188,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -1347,6 +1359,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'durable': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1372,6 +1385,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'durable': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1468,6 +1482,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'durable': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1492,6 +1507,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'durable': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1539,6 +1555,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'durable': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -1883,7 +1900,10 @@ def test_tool_raises_call_deferred():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+        )
     )
 
 
@@ -1958,7 +1978,10 @@ def test_tool_raises_approval_required():
     result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
+            validated_args={'my_tool': {'x': 1}},
+        )
     )
 
     result = agent.run_sync(
@@ -2102,7 +2125,9 @@ def test_prepare_preserves_approval_requirement(
 
     result = agent.run_sync('Run the tool')
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')], validated_args={'call-1': {}}
+        )
     )
     assert not executed
 
@@ -2132,7 +2157,9 @@ def test_toolset_requires_approval_applies_to_tool_instances(added_with: Literal
         'Run the tool'
     )
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')], validated_args={'call-1': {}}
+        )
     )
     assert not executed
 
@@ -2165,6 +2192,124 @@ def test_function_requires_approval_false_overrides_the_toolset_default():
         'decorated': False,
         'added': False,
     }
+
+
+@pytest.mark.parametrize('added_with', ['constructor', 'add_tool'])
+def test_function_toolset_defaults_apply_to_tool(added_with: Literal['constructor', 'add_tool']):
+    """All four toolset defaults reach a `Tool` added directly, whether via the constructor or `add_tool`.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
+
+    def my_tool() -> str:  # pragma: no cover
+        return 'hello'
+
+    if added_with == 'constructor':
+        toolset = FunctionToolset(
+            [Tool(my_tool)], strict=True, sequential=True, defer_loading=True, include_return_schema=True
+        )
+    else:
+        toolset = FunctionToolset(strict=True, sequential=True, defer_loading=True, include_return_schema=True)
+        toolset.add_tool(Tool(my_tool))
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset])
+    agent.run_sync('Hello')
+    assert test_model.last_model_request_parameters is not None
+    tool_def = test_model.last_model_request_parameters.function_tools[0]
+    assert tool_def.name == 'my_tool'
+    assert tool_def.strict is True
+    assert tool_def.sequential is True
+    assert tool_def.defer_loading is True
+    assert tool_def.include_return_schema is True
+
+
+def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():
+    """Toolset `sequential`/`defer_loading=True` wins over a raw `Tool`'s plain `False`.
+
+    An explicit `False` passed to `add_function` survives the toolset default.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
+
+    def plain_tool() -> str:  # pragma: no cover
+        return 'plain'
+
+    def flagged_tool() -> str:
+        return 'flagged'
+
+    toolset = FunctionToolset(
+        [Tool(plain_tool, sequential=False, defer_loading=False)],
+        sequential=True,
+        defer_loading=True,
+    )
+    toolset.add_function(flagged_tool, sequential=False, defer_loading=False)
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset])
+    agent.run_sync('Hello')
+    assert test_model.last_model_request_parameters is not None
+    tool_defs = {tool_def.name: tool_def for tool_def in test_model.last_model_request_parameters.function_tools}
+    assert tool_defs['plain_tool'].sequential is True
+    assert tool_defs['plain_tool'].defer_loading is True
+    assert tool_defs['flagged_tool'].sequential is False
+    assert tool_defs['flagged_tool'].defer_loading is False
+
+
+def test_function_toolset_strict_include_return_schema_fill_when_none():
+    """The nullable defaults fill `Tool` instances that leave them unset and preserve explicit `Tool` values.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
+
+    def unset_tool() -> str:
+        return 'unset'
+
+    def explicit_tool() -> str:
+        return 'explicit'
+
+    toolset = FunctionToolset(
+        [Tool(unset_tool), Tool(explicit_tool, strict=False, include_return_schema=False)],
+        strict=True,
+        include_return_schema=True,
+    )
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset])
+    agent.run_sync('Hello')
+    assert test_model.last_model_request_parameters is not None
+    tool_defs = {tool_def.name: tool_def for tool_def in test_model.last_model_request_parameters.function_tools}
+    assert tool_defs['unset_tool'].strict is True
+    assert tool_defs['unset_tool'].include_return_schema is True
+    assert tool_defs['explicit_tool'].strict is False
+    assert tool_defs['explicit_tool'].include_return_schema is False
+
+
+def test_function_toolset_include_return_schema_false_overrides_capability_for_tool():
+    """A toolset's `include_return_schema=False` beats `IncludeToolReturnSchemas` for a `Tool`, as for a function.
+
+    Not a VCR test: it pins which `ToolDefinition` values the toolset registers; each provider's tests pin how
+    these fields reach the wire.
+    """
+
+    def tool_instance() -> str:
+        return 'tool'
+
+    def plain_function() -> str:
+        return 'function'
+
+    toolset = FunctionToolset([Tool(tool_instance), plain_function], include_return_schema=False)
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset], capabilities=[IncludeToolReturnSchemas()])
+    agent.run_sync('Hello')
+    assert test_model.last_model_request_parameters is not None
+    tool_defs = {tool_def.name: tool_def for tool_def in test_model.last_model_request_parameters.function_tools}
+    assert tool_defs['tool_instance'].include_return_schema is False
+    assert tool_defs['plain_function'].include_return_schema is False
 
 
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
@@ -2205,7 +2350,10 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call')],
+            validated_args={'approval_call': {'x': 1}},
+        )
     )
     message_history = result.all_messages()
 
@@ -2279,6 +2427,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
                 ModelRequest(
                     parts=[
@@ -2383,6 +2532,7 @@ def test_call_deferred_with_metadata():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             metadata={'pyd_ai_tool_call_id__my_tool': {'task_id': 'task-123', 'estimated_cost': 25.5}},
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
         )
     )
 
@@ -2423,6 +2573,7 @@ def test_approval_required_with_metadata():
         DeferredToolRequests(
             approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
             metadata={'my_tool': {'reason': 'High compute cost', 'estimated_time': '5 minutes', 'cost_usd': 100.0}},
+            validated_args={'my_tool': {'x': 1}},
         )
     )
 
@@ -2743,6 +2894,7 @@ def test_parallel_tool_return_with_deferred():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -2752,7 +2904,12 @@ def test_parallel_tool_return_with_deferred():
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-            ]
+            ],
+            validated_args={
+                'buy_apple': {'fruit': 'apple'},
+                'buy_banana': {'fruit': 'banana'},
+                'buy_pear': {'fruit': 'pear'},
+            },
         )
     )
 
@@ -2846,6 +3003,7 @@ def test_parallel_tool_return_with_deferred():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -3040,6 +3198,7 @@ def test_parallel_tool_return_with_deferred():
                     ),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {}},
             ),
         ]
     )
@@ -3064,7 +3223,9 @@ def test_deferred_tool_call_approved_fails():
 
     result = agent.run_sync('foo')
     assert result.output == snapshot(
-        DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')], validated_args={'foo': {'x': 0}}
+        )
     )
 
     with pytest.raises(RuntimeError, match='External tools cannot be called'):
@@ -3194,6 +3355,7 @@ async def test_approval_required_toolset():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -3202,7 +3364,8 @@ async def test_approval_required_toolset():
             approvals=[
                 ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
                 ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
-            ]
+            ],
+            validated_args={'foo1': {'x': 1}, 'foo2': {'x': 2}},
         )
     )
 
@@ -3253,6 +3416,7 @@ async def test_approval_required_toolset():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -3342,6 +3506,7 @@ def test_deferred_tool_results_serializable():
                 'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
             },
             'metadata': {},
+            'answered_by': {},
         }
     )
     # `DeferredToolCallResult` still accepts the deprecated part, and unlike a message history it
@@ -3376,7 +3541,10 @@ def test_deferred_tool_call_result_tool_failed():
 
     result = agent.run_sync('Buy me an apple')
     assert result.output == snapshot(
-        DeferredToolRequests(calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')])
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')],
+            validated_args={'buy_apple': {'fruit': 'apple'}},
+        )
     )
 
     result = agent.run_sync(
@@ -4721,6 +4889,7 @@ def test_args_validator_requests_approval():
         DeferredToolRequests(
             approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
             metadata={'pyd_ai_tool_call_id__my_tool': {'reason': 'sensitive'}},
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
         )
     )
     assert executed == []
@@ -4802,6 +4971,7 @@ def test_args_validator_defers_call():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
             metadata={'pyd_ai_tool_call_id__my_tool': {'job_id': 'abc'}},
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
         )
     )
     assert executed == []
@@ -4825,25 +4995,32 @@ def test_args_validator_defers_call():
     )
 
 
-def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds():
-    """Pins current behavior: a tool that's already deferred by kind ignores the deferral's metadata.
+def test_args_validator_deferral_metadata_kept_for_already_deferred_kinds():
+    """A tool that's already deferred by kind keeps the metadata its `args_validator` deferred it with.
 
     A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
-    executed, so neither its `args_validator` nor its function body can contribute
-    `ApprovalRequired(metadata=...)` to `DeferredToolRequests.metadata` — the validator case behaves
-    exactly like the pre-existing tool-body case, both asserted here. Only tools deferred *by* the
-    deferral itself (a plain function tool) carry metadata through.
+    executed, so its validator runs but its function body doesn't: only the validator's
+    `ApprovalRequired(metadata=...)` reaches `DeferredToolRequests.metadata`. A validator's
+    `CallDeferred` without metadata routes its call to `calls` and adds no metadata entry.
     """
     executed: list[str] = []
 
     def my_validator(ctx: RunContext, x: int) -> None:
         raise ApprovalRequired(metadata={'from': 'validator'})
 
+    def deferring_validator(ctx: RunContext, x: int) -> None:
+        raise CallDeferred()
+
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     @agent.tool(requires_approval=True, args_validator=my_validator)
     def validator_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
         executed.append('validator_defers')
+        return x
+
+    @agent.tool(requires_approval=True, args_validator=deferring_validator)
+    def validator_hands_off(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('validator_hands_off')
         return x
 
     @agent.tool(requires_approval=True)
@@ -4854,16 +5031,27 @@ def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds(
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
         DeferredToolRequests(
+            calls=[
+                ToolCallPart(
+                    tool_name='validator_hands_off',
+                    args={'x': 0},
+                    tool_call_id='pyd_ai_tool_call_id__validator_hands_off',
+                )
+            ],
             approvals=[
                 ToolCallPart(
                     tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
                 ),
                 ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
-            ]
+            ],
+            metadata={'pyd_ai_tool_call_id__validator_defers': {'from': 'validator'}},
+            validated_args={
+                'pyd_ai_tool_call_id__validator_defers': {'x': 0},
+                'pyd_ai_tool_call_id__validator_hands_off': {'x': 0},
+                'pyd_ai_tool_call_id__body_defers': {'x': 0},
+            },
         )
     )
-    assert isinstance(result.output, DeferredToolRequests)
-    assert result.output.metadata == {}  # neither the validator's nor the body's metadata
     assert executed == []
 
 
@@ -4895,7 +5083,8 @@ def test_args_validator_approval_resolved_inline_by_capability():
             DeferredToolRequests(
                 approvals=[
                     ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
-                ]
+                ],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         ]
     )
@@ -5325,6 +5514,7 @@ def test_include_return_schema_via_capability():
                 CapabilityLoadDeltaPart,
                 InstructionBaselinePart,
                 ModelSettingsDeltaPart,
+                CapabilityPart,
             ),
         )
     ]
@@ -5835,3 +6025,619 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
             'type': 'string',
         }
     )
+
+
+def test_admonition_sections_reach_tool_description():
+    """Recognized admonition sections reach the model instead of being dropped.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        """Fetch ad rows for an account.
+
+        Note: the API caps results at 1000 rows and does not say so.
+
+        Warning:
+            Blank spend means no data, not zero.
+
+        Important:
+            Result rows are capped at 1000.
+
+        Trailing prose after the admonition.
+
+        Args:
+            account_id: The ad account id.
+
+        Raises:
+            ValueError: If account_id is not a UUID.
+        """
+        return []
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Note: the API caps results at 1000 rows and does not say so.\n'
+        '\n'
+        'Warning:\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Important:\n'
+        'Result rows are capped at 1000.\n'
+        '\n'
+        'Trailing prose after the admonition.'
+    )
+
+
+def test_admonition_headers_reach_tool_description_as_written():
+    """A Google admonition header reaches the model as written, including multi-word types and inline titles.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Important note:
+            Timestamps are in UTC.
+
+        Note: Mind the gap
+            Blank spend means no data, not zero.
+
+        Args:
+            account_id: The ad account id.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Important note:\n'
+        'Timestamps are in UTC.\n'
+        '\n'
+        'Note: Mind the gap\n'
+        'Blank spend means no data, not zero.'
+    )
+
+
+def test_google_warnings_section_reaches_tool_description():
+    """A Google `Warnings:` section reaches the model as written, in source order, like an admonition.
+
+    Griffe parses it like a `Warns:` section and would drop lines without a colon; the `Warns:` section stays dropped.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Warns:
+            Emitted when the account is archived.
+
+        Warnings:
+            Result rows are capped at 1000.
+            Blank spend means no data, not zero.
+
+        Trailing prose after the warnings.
+
+        Args:
+            account_id: The ad account id.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Warnings:\n'
+        'Result rows are capped at 1000.\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Trailing prose after the warnings.'
+    )
+
+
+def test_google_warnings_section_opening_docstring():
+    """A `Warnings:` section that opens the docstring reaches the model with its written header.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    def fetch_ad_rows(account_id: str) -> str:
+        return 'ok'
+
+    fetch_ad_rows.__doc__ = """
+    Warnings:
+        Result rows are capped at 1000.
+    """
+    agent.tool_plain(fetch_ad_rows)
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == 'Warnings:\nResult rows are capped at 1000.'
+
+
+@pytest.mark.parametrize(
+    ('docstring_format', 'warns_section'),
+    [
+        pytest.param('google', 'Warns:\n            UserWarning: If the account is archived.', id='google'),
+        pytest.param(
+            'numpy', 'Warns\n        -----\n        UserWarning\n            If the account is archived.', id='numpy'
+        ),
+    ],
+)
+def test_warns_section_still_dropped(docstring_format: Literal['google', 'numpy'], warns_section: str):
+    """A structured `Warns` section, listing the warnings a function emits, is dropped from the tool description.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    def fetch_ad_rows(account_id: str) -> str:
+        return 'ok'
+
+    fetch_ad_rows.__doc__ = f"""Fetch ad rows for an account.
+
+        {warns_section}
+        """
+    agent.tool_plain(docstring_format=docstring_format)(fetch_ad_rows)
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == 'Fetch ad rows for an account.'
+
+
+def test_admonition_sections_reach_tool_description_numpy():
+    """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain(docstring_format='numpy')
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Parameters
+        ----------
+        account_id : str
+            The ad account id.
+
+        Warnings
+        --------
+        Blank spend means no data, not zero.
+
+        Notes
+        -----
+        Result rows are capped at 1000.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Warnings:\n'
+        'Blank spend means no data, not zero.\n'
+        '\n'
+        'Notes:\n'
+        'Result rows are capped at 1000.'
+    )
+
+
+def test_raises_and_examples_sections_still_dropped():
+    """`Raises:` and `Examples:` sections are dropped from the tool description.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Raises:
+            ValueError: If account_id is not a UUID.
+
+        Examples:
+            Fetch rows for an account.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == 'Fetch ad rows for an account.'
+
+
+def test_returns_with_colon_whole_text_when_return_annotated():
+    """With a Python return annotation, a `Returns:` section keeps its whole text instead of splitting at the first colon.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Returns:
+            The rows. Example: [{"id": 1}]
+        """
+        return []
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Fetch ad rows for an account.</summary>\n'
+        '<returns>\n'
+        '<description>The rows. Example: [{"id": 1}]</description>\n'
+        '</returns>'
+    )
+
+
+@pytest.mark.parametrize(
+    ('returns_text', 'description'),
+    [
+        pytest.param('Rows (in UTC): one per line.', 'Rows (in UTC): one per line.', id='parens-before-colon'),
+        pytest.param('(Optional) rows: one per line.', '(Optional) rows: one per line.', id='leading-paren'),
+        pytest.param(
+            'list[dict[str, str]]: the rows, one per line.',
+            'list[dict[str, str]]: the rows, one per line.',
+            id='type-prefix',
+        ),
+        pytest.param(
+            'Rows: one per line,\n            keyed: by id.', 'Rows: one per line,\n    keyed: by id.', id='multi-line'
+        ),
+        pytest.param('Rows: one per line.   ', 'Rows: one per line.', id='trailing-whitespace'),
+        pytest.param(
+            'A list of rows, capped at 1000\n        and filtered in UTC.',
+            'A list of rows, capped at 1000\nand filtered in UTC.',
+            id='wrapped',
+        ),
+        pytest.param(
+            'The rows. Example: [1]\n        Dates in UTC: always.',
+            'The rows. Example: [1]\nDates in UTC: always.',
+            id='wrapped-with-colons',
+        ),
+    ],
+)
+def test_returns_with_colon_written_text_when_return_annotated(returns_text: str, description: str):
+    """With a Python return annotation, the `Returns:` description is the text as written, parentheses included.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        return []
+
+    fetch_ad_rows.__doc__ = f"""Returns: the ad rows for an account.
+
+    Args:
+        account_id: The ad account id.
+
+    Returns:
+        {returns_text}
+    """
+    agent.tool_plain(fetch_ad_rows)
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Returns: the ad rows for an account.</summary>\n'
+        '<returns>\n'
+        f'<description>{description}</description>\n'
+        '</returns>'
+    )
+
+
+def test_returns_written_text_skips_fenced_returns_example():
+    """A `Returns:` line inside a code fence is example text, not the function's returns section.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        return []
+
+    fetch_ad_rows.__doc__ = """Fetch ad rows for an account.
+
+    ```
+
+    Returns:
+        Example rows: one.
+    ```
+
+    Returns:
+        Rows (in UTC): one.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+    agent.tool_plain(fetch_ad_rows)
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == snapshot("""\
+<summary>Fetch ad rows for an account.
+
+```
+
+Returns:
+    Example rows: one.
+```</summary>
+<returns>
+<description>Rows (in UTC): one.</description>
+</returns>\
+""")
+
+
+def test_returns_written_text_after_unclosed_fence_in_section():
+    """An unclosed code fence inside an earlier section doesn't hide the written `Returns:` section, as for griffe.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+
+    def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
+        return []
+
+    fetch_ad_rows.__doc__ = """Fetch ad rows for an account.
+
+    Examples:
+        ```
+
+    Returns:
+        Rows (in UTC): one.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+    agent.tool_plain(fetch_ad_rows)
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == snapshot("""\
+<summary>Fetch ad rows for an account.</summary>
+<returns>
+<description>Rows (in UTC): one.</description>
+</returns>\
+""")
+
+
+def test_returns_with_colon_still_split_when_not_annotated():
+    """Without a Python return annotation, a `Returns:` section is split at its first colon into type and description.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str):
+        """Fetch ad rows for an account.
+
+        Args:
+            account_id: The ad account id.
+
+        Returns:
+            str: The rows.
+        """
+        return None
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        '<summary>Fetch ad rows for an account.</summary>\n'
+        '<returns>\n'
+        '<type>str</type>\n'
+        '<description>The rows.</description>\n'
+        '</returns>'
+    )
+
+
+def ask_look_up_and_delete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # Every run ends with a call still pending, so the model is only asked once.
+    return ModelResponse(
+        parts=[
+            ToolCallPart('ask', {}, tool_call_id='question'),
+            ToolCallPart('look_up', {}, tool_call_id='external'),
+            ToolCallPart('delete', {}, tool_call_id='approval'),
+        ]
+    )
+
+
+async def stream_ask_look_up_and_delete(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    for index, part in enumerate(ask_look_up_and_delete(messages, info).parts):
+        assert isinstance(part, ToolCallPart)
+        yield {index: DeltaToolCall(name=part.tool_name, json_args='{}', tool_call_id=part.tool_call_id)}
+
+
+def deferring_agent(**kwargs: Any) -> Agent[None, str | DeferredToolRequests]:
+    agent = Agent(
+        FunctionModel(ask_look_up_and_delete, stream_function=stream_ask_look_up_and_delete),
+        output_type=[str, DeferredToolRequests],
+        deps_type=type(None),
+        **kwargs,
+    )
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(metadata={'topic': 'scope'}, kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    @agent.tool_plain(requires_approval=True)
+    def delete() -> str:
+        raise AssertionError('not approved')  # pragma: no cover
+
+    return agent
+
+
+@pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
+async def test_a_question_is_marked_in_the_requests(end_strategy: Any) -> None:
+    result = await deferring_agent(end_strategy=end_strategy).run('go')
+
+    requests = result.output
+    assert isinstance(requests, DeferredToolRequests)
+    assert [call.tool_call_id for call in requests.calls] == ['question', 'external'], (
+        'in the order the model made them'
+    )
+    assert {call.tool_call_id: requests.kind(call.tool_call_id) for call in [*requests.calls, *requests.approvals]} == {
+        'question': 'question',
+        'external': 'external',
+        'approval': 'approval',
+    }
+    assert requests.metadata == {'question': {'topic': 'scope'}}
+    with pytest.raises(ValueError, match="No pending deferred tool call has ID 'missing'"):
+        requests.kind('missing')
+    assert result.conversation.deferred_tool_requests == requests
+
+
+def test_a_questions_kind_survives_serialization() -> None:
+    """The kinds are internal, but a stored or journaled `DeferredToolRequests` keeps them; one without questions serializes as before."""
+    adapter = TypeAdapter(DeferredToolRequests)
+    requests = DeferredToolRequests(
+        calls=[ToolCallPart('ask', {}, tool_call_id='question'), ToolCallPart('look_up', {}, tool_call_id='external')],
+        _kinds={'question': 'question'},
+    )
+
+    restored = adapter.validate_json(adapter.dump_json(requests))
+
+    assert restored == requests
+    assert (restored.kind('question'), restored.kind('external')) == ('question', 'external')
+    assert '_kinds' not in adapter.dump_python(DeferredToolRequests(calls=requests.calls))
+
+
+async def test_answered_calls_leave_the_kinds_and_answerers_reach_the_results_event() -> None:
+    """A handler answers the question and says who answered; the rest stay pending with their kinds."""
+    events: list[AgentStreamEvent] = []
+
+    def answer_question(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': 'everything'}, answered_by={'question': 'alice'})
+
+    async def record(ctx: RunContext[None], stream: Any) -> None:
+        async for event in stream:
+            events.append(event)
+
+    agent = deferring_agent(capabilities=[HandleDeferredToolCalls(answer_question)])
+    result = await agent.run('go', event_stream_handler=record)
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.kind('external') == 'external'
+    assert [call.tool_call_id for call in result.output.calls] == ['external']
+    [results_event] = [event for event in events if isinstance(event, DeferredToolResultsEvent)]
+    assert results_event.results.answered_by == {'question': 'alice'}
+
+
+def test_answerers_for_calls_that_are_not_pending_are_dropped() -> None:
+    requests = DeferredToolRequests(calls=[ToolCallPart('look_up', {}, tool_call_id='a')])
+    results = DeferredToolResults(calls={'a': 1}, answered_by={'a': 'alice', 'b': 'bob'})
+    merged = DeferredToolResults()
+    merged.update(results)
+
+    assert merged.answered_by == {'a': 'alice', 'b': 'bob'}
+    assert requests.remaining(results) is None
+    assert TypeAdapter(DeferredToolResults).validate_json(
+        TypeAdapter(DeferredToolResults).dump_json(results)
+    ).answered_by == snapshot({'a': 'alice', 'b': 'bob'})
+
+
+async def test_a_question_deferred_by_an_args_validator_is_marked() -> None:
+    def ask_for_scope(ctx: RunContext[None]) -> None:
+        raise CallDeferred(kind='question')
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delete', {}, tool_call_id='approval')])
+
+    agent = Agent(FunctionModel(model), output_type=[str, DeferredToolRequests], deps_type=type(None))
+
+    @agent.tool_plain(requires_approval=True, args_validator=ask_for_scope)
+    def delete() -> str:
+        raise AssertionError('not approved')  # pragma: no cover
+
+    result = await agent.run('go')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.kind('approval') == 'question'
+
+
+async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> None:
+    """A call a handler resolves can defer again when it runs; it joins the calls still pending with its kind."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('look_up', {}, tool_call_id='external'),
+                ToolCallPart('delete', {}, tool_call_id='approval'),
+            ]
+        )
+
+    def approve_delete(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approvals={'approval': True})
+
+    agent = Agent(
+        FunctionModel(model),
+        output_type=[str, DeferredToolRequests],
+        deps_type=type(None),
+        capabilities=[HandleDeferredToolCalls(approve_delete)],
+    )
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    @agent.tool_plain(requires_approval=True)
+    def delete() -> str:
+        raise CallDeferred(kind='question')
+
+    result = await agent.run('go')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
+    assert result.output.kind('approval') == 'question'

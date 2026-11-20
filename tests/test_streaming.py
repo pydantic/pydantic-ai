@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
-from types import AsyncGeneratorType, TracebackType
+from types import AsyncGeneratorType, NoneType, TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -98,13 +98,20 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr, legacy_retry_prompt_part, message_part
+from .canonical_system_utils import PROVIDER_NAME, StampedModel
+from .conftest import (
+    IsDatetime,
+    IsInt,
+    IsNow,
+    IsStr,
+    assert_cancellation_leaks_no_tasks,
+    legacy_retry_prompt_part,
+    message_part,
+)
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
-"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -136,7 +143,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=RequestUsage(input_tokens=51),
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -160,7 +167,7 @@ async def test_streamed_text_response():
             RunUsage(
                 requests=2,
                 input_tokens=103,
-                output_tokens=5,
+                output_tokens=10,
                 tool_calls=1,
             )
         )
@@ -178,7 +185,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=RequestUsage(input_tokens=51),
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -198,7 +205,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    usage=RequestUsage(input_tokens=52, output_tokens=9),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -212,7 +219,7 @@ async def test_streamed_text_response():
             RunUsage(
                 requests=2,
                 input_tokens=103,
-                output_tokens=11,
+                output_tokens=14,
                 tool_calls=1,
             )
         )
@@ -242,7 +249,7 @@ def test_streamed_text_sync_response():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -267,7 +274,7 @@ def test_streamed_text_sync_response():
         RunUsage(
             requests=2,
             input_tokens=103,
-            output_tokens=5,
+            output_tokens=10,
             tool_calls=1,
         )
     )
@@ -278,7 +285,7 @@ def test_streamed_text_sync_response():
     assert result.response == snapshot(
         ModelResponse(
             parts=[TextPart(content='{"ret_a":"a-apple"}')],
-            usage=RequestUsage(input_tokens=52, output_tokens=11),
+            usage=RequestUsage(input_tokens=52, output_tokens=9),
             model_name='test',
             model_id='test:test',
             timestamp=IsDatetime(),
@@ -295,7 +302,7 @@ def test_streamed_text_sync_response():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -315,7 +322,7 @@ def test_streamed_text_sync_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=RequestUsage(input_tokens=52, output_tokens=11),
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -329,7 +336,7 @@ def test_streamed_text_sync_response():
         RunUsage(
             requests=2,
             input_tokens=103,
-            output_tokens=11,
+            output_tokens=14,
             tool_calls=1,
         )
     )
@@ -1666,7 +1673,7 @@ async def test_streamed_structured_response():
                     tool_call_id='pyd_ai_tool_call_id__final_result',
                 )
             ],
-            usage=RequestUsage(input_tokens=50),
+            usage=RequestUsage(input_tokens=50, output_tokens=7),
             model_name='test',
             model_id='test:test',
             timestamp=IsDatetime(),
@@ -3270,6 +3277,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -3280,7 +3288,7 @@ class TestMultipleToolCalls:
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             assert info.output_tools is not None
-            yield {1: DeltaToolCall('deferred_tool')}
+            yield {1: DeltaToolCall('deferred_tool', tool_call_id='deferred_tool')}
             yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
 
         agent = Agent(
@@ -3301,7 +3309,10 @@ class TestMultipleToolCalls:
         async with agent.run_stream('test early strategy with external tool call') as result:
             response = await result.get_output()
             assert response == snapshot(
-                DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+                DeferredToolRequests(
+                    calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                    validated_args={'deferred_tool': {}},
+                )
             )
             messages = result.all_messages()
 
@@ -3350,6 +3361,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -3395,7 +3407,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=RequestUsage(input_tokens=57),
+                    usage=RequestUsage(input_tokens=57, output_tokens=4),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -3424,7 +3436,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=RequestUsage(input_tokens=58, output_tokens=4),
+                    usage=RequestUsage(input_tokens=58, output_tokens=9),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsNow(tz=datetime.UTC),
@@ -5288,17 +5300,25 @@ async def test_tool_raises_call_deferred():
         assert isinstance(result.run_id, str)
         assert isinstance(result.conversation_id, str)
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
+            [
+                DeferredToolRequests(
+                    calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                    validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+                )
+            ]
         )
         assert await result.get_output() == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+            )
         )
         responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
             [
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                    usage=RequestUsage(input_tokens=51),
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     model_id='test:test',
                     timestamp=IsDatetime(),
@@ -5309,9 +5329,12 @@ async def test_tool_raises_call_deferred():
             ]
         )
         assert await result.validate_response_output(responses[0]) == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+            )
         )
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
         assert result.timestamp == IsNow(tz=datetime.UTC)
         assert result.is_complete
 
@@ -5336,7 +5359,10 @@ async def test_tool_raises_approval_required():
         messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
+                validated_args={'my_tool': {'x': 1}},
+            )
         )
         assert result.is_complete
 
@@ -5483,6 +5509,10 @@ async def test_deferred_tool_iter():
                             tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                         )
                     ],
+                    validated_args={
+                        'pyd_ai_tool_call_id__my_tool': {'x': 0},
+                        'pyd_ai_tool_call_id__my_other_tool': {'x': 0},
+                    },
                 ),
             ),
         ]
@@ -5600,6 +5630,10 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                             tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                         )
                     ],
+                    validated_args={
+                        'pyd_ai_tool_call_id__my_tool': {'x': 0},
+                        'pyd_ai_tool_call_id__my_other_tool': {'x': 0},
+                    },
                 ),
             ),
         ]
@@ -5610,6 +5644,7 @@ async def test_tool_raises_call_deferred_approval_required_iter():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}, 'pyd_ai_tool_call_id__my_other_tool': {'x': 0}},
         )
     )
 
@@ -6107,7 +6142,7 @@ async def test_get_output_after_stream_output():
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                     )
                 ],
-                usage=RequestUsage(input_tokens=51),
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 model_id='test:test',
                 timestamp=IsNow(tz=datetime.UTC),
@@ -6498,7 +6533,7 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
     validator_calls: list[tuple[int, int, bool]] = []
 
     async def stream_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(name='add_numbers', tool_call_id='add_numbers')}
         yield {0: DeltaToolCall(json_args='{"x": 1,')}
         yield {0: DeltaToolCall(json_args=' "y": 2}')}
 
@@ -6559,7 +6594,8 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                             args='{"x": 1, "y": 2}',
                             tool_call_id=IsStr(),
                         )
-                    ]
+                    ],
+                    validated_args={'add_numbers': {'x': 1, 'y': 2}},
                 )
             ),
             AgentRunResultEvent(
@@ -6571,7 +6607,8 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                                 args='{"x": 1, "y": 2}',
                                 tool_call_id=IsStr(),
                             )
-                        ]
+                        ],
+                        validated_args={'add_numbers': {'x': 1, 'y': 2}},
                     )
                 )
             ),
@@ -7815,4 +7852,106 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     assert cleanup_finished.is_set()
 
 
+@pytest.mark.parametrize('primed', [False, True], ids=['lazy', 'primed'])
+@pytest.mark.parametrize('entry', ['run_stream', 'run_stream_events'])
+async def test_stream_cancelled_at_any_point_leaves_no_task_behind(
+    entry: Literal['run_stream', 'run_stream_events'], primed: bool
+):
+    """Cancelling a streamed run at any point of its lifecycle must not leave a task it started pending.
+
+    On Python 3.11, draining the finished `ready_waiter` at the stream handoff yields to the event loop, so a
+    cancellation can land after `_streaming_handler` has parked on `stream_done.wait()`, which only the error
+    path's cleanup unblocks. See https://github.com/pydantic/pydantic-ai/issues/13716.
+
+    An `on_model_request_error` hook makes the stream be primed before the handoff, so a cancellation there commits
+    the interrupted response from the error path, which must happen only once.
+    """
+
+    class HandlesErrors(AbstractCapability[None]):
+        async def on_model_request_error(  # pragma: no cover
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise error
+
+    capabilities: list[AbstractCapability[None]] = [HandlesErrors()] if primed else []
+    agent = Agent(TestModel(), deps_type=NoneType, capabilities=capabilities)
+
+    async def consume() -> None:
+        with capture_run_messages() as messages:
+            try:
+                if entry == 'run_stream':
+                    async with agent.run_stream('Hello') as result:
+                        await result.get_output()
+                else:
+                    async with agent.run_stream_events('Hello') as stream:
+                        async for _ in stream:
+                            pass
+            finally:
+                assert len([m for m in messages if isinstance(m, ModelResponse)]) <= 1
+
+    await assert_cancellation_leaks_no_tasks(consume)
+
+
 # endregion
+
+
+async def test_part_events_carry_canonical_system():
+    """Part events carry the response's `canonical_system` when the part is from the response's provider.
+
+    A thinking part's `provider_name` arrives in a delta here, so only its `PartEndEvent` can tell that it applies.
+    """
+
+    def script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+        return [
+            ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME),
+            ThinkingPart(content='Earlier thinking.', signature='other', provider_name='other'),
+            TextPart(content='Done.', provider_name=PROVIDER_NAME),
+            TextPart(content=' Really.'),
+        ]
+
+    agent = Agent(StampedModel(script, canonical_system='stamp-system'))
+    async with agent.run_stream_events('Go') as stream:
+        events = [
+            (event.event_kind, event.index, event.canonical_system)
+            async for event in stream
+            if isinstance(event, PartStartEvent | PartEndEvent)
+        ]
+
+    assert events == snapshot(
+        [
+            ('part_start', 0, None),
+            ('part_end', 0, 'stamp-system'),
+            ('part_start', 1, None),
+            ('part_end', 1, None),
+            ('part_start', 2, 'stamp-system'),
+            ('part_end', 2, 'stamp-system'),
+            ('part_start', 3, None),
+            ('part_end', 3, None),
+        ]
+    )
+
+
+async def test_completed_streamed_response_replays_canonical_system():
+    """A response replayed as a stream, as durable execution and `BatchModel` do, keeps its `canonical_system`."""
+    response = ModelResponse(
+        parts=[TextPart(content='Ours.', provider_name='google'), TextPart(content='Theirs.', provider_name='other')],
+        provider_name='google',
+        canonical_system='google-cloud',
+    )
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=True
+    )
+    events = [
+        (event.event_kind, event.index, event.canonical_system)
+        async for event in stream
+        if isinstance(event, PartStartEvent | PartEndEvent)
+    ]
+
+    assert events == snapshot(
+        [
+            ('part_start', 0, 'google-cloud'),
+            ('part_end', 0, 'google-cloud'),
+            ('part_start', 1, None),
+            ('part_end', 1, None),
+        ]
+    )

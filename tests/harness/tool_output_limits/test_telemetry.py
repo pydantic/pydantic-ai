@@ -14,7 +14,14 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.messages import ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, Summarize, ToolOutputLimits, Truncate
+from pydantic_ai_harness.tool_output_limits import (
+    Band,
+    LocalFileOverflowStore,
+    Spill,
+    Summarize,
+    ToolOutputLimits,
+    Truncate,
+)
 from tests.harness.conftest import Instrumented
 
 
@@ -144,7 +151,7 @@ class TestToolOutputLimitsTelemetry:
         self, tmp_path: Path, instrumented: Instrumented
     ):
         limits = ToolOutputLimits[object](
-            bands=[Band(over=100, action=Truncate(then=Spill()))], store=LocalFileStore(base_dir=tmp_path)
+            bands=[Band(over=100, action=Truncate(then=Spill()))], store=LocalFileOverflowStore(base_dir=tmp_path)
         )
         instrumentation, exporter = instrumented(False)
         await agent_with_tool(limits, b'\x00' * 500, instrumentation).run('go')
@@ -168,7 +175,7 @@ class TestToolOutputLimitsTelemetry:
             {
                 'tool_output_limits.action': 'summarize',
                 'tool_output_limits.original_size': 500,
-                'tool_output_limits.reduced_size': 15,
+                'tool_output_limits.reduced_size': 93,
                 'tool_output_limits.size_unit': 'chars',
             }
         )
@@ -215,7 +222,7 @@ class TestToolOutputLimitsTelemetry:
 
     async def test_a_spill_records_its_handle_only_with_content(self, tmp_path: Path, instrumented: Instrumented):
         spill = ToolOutputLimits[object](
-            bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
+            bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
         )
         output = b'\x00' * 500
 
@@ -244,7 +251,7 @@ class TestToolOutputLimitsTelemetry:
         self, tmp_path: Path, instrumented: Instrumented
     ):
         spill = ToolOutputLimits[object](
-            bands=[Band(over=100, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
+            bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
         )
         output = ToolReturn(return_value='small', content='y' * 300)
 

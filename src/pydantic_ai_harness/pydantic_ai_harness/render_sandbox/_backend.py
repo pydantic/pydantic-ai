@@ -145,7 +145,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
 
     async def _create(self, client: RenderAsync) -> None:
         try:
-            async with asyncio.timeout(_OPERATION_TIMEOUT):
+            async with asyncio.timeout(_OPERATION_TIMEOUT):  # noqa: TID251  (not converted to anyio yet)
                 sandbox = await client.sandboxes.create(
                     timeout_seconds=self._sandbox_timeout,
                     # Render suspends idle sandboxes by default, and a suspended one never reports `running`.
@@ -155,20 +155,13 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         except RateLimitError:
             raise
         except ClientError as error:
-            raise WorkspaceUnavailableError('Could not create a Render sandbox') from error
+            # Render's own reason, such as an account without a payment card, is what the user can act on. An
+            # error with a cause failed before Render answered, and its message can quote the request's API key.
+            reason = '' if error.__cause__ is not None else f': {error}'
+            raise WorkspaceUnavailableError(f'Could not create a Render sandbox{reason}') from error
         self._ref = WorkspaceRef(provider='render', id=sandbox.id)
         self._working_dir_pending = True
         logger.info('Created Render sandbox %s', sandbox.id)
-
-    async def _wait_until_running(self, client: RenderAsync, sandbox_id: str) -> None:
-        async with asyncio.timeout(_READINESS_TIMEOUT):
-            while True:
-                sandbox = await client.sandboxes.from_id(sandbox_id)
-                if sandbox.status == 'running':
-                    return
-                if sandbox.status in ('errored', 'terminated'):
-                    raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
-                await asyncio.sleep(_POLL_INTERVAL)
 
     async def _ensure_ready(self, client: RenderAsync) -> str:
         async with self._lock:
@@ -180,7 +173,14 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     await run_to_completion(lambda: self._create(client))
                 assert self._ref is not None
                 try:
-                    await self._wait_until_running(client, self._ref.id)
+                    async with asyncio.timeout(_READINESS_TIMEOUT):  # noqa: TID251  (not converted to anyio yet)
+                        while True:
+                            sandbox = await client.sandboxes.from_id(self._ref.id)
+                            if sandbox.status == 'running':
+                                break
+                            if sandbox.status in ('errored', 'terminated'):
+                                raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
+                            await asyncio.sleep(_POLL_INTERVAL)  # noqa: TID251  (not converted to anyio yet)
                     resolve = prepare_command(
                         command_argv(self._resolve_script(), shell=True), working_dir='/', env=self._env
                     )
@@ -255,7 +255,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             # After an uncertain stream, report a dead sandbox as unavailable. If the status check itself
             # fails, raise the stream error: the command may have run, so nothing may look retryable.
             try:
-                async with asyncio.timeout(_OPERATION_TIMEOUT):
+                async with asyncio.timeout(_OPERATION_TIMEOUT):  # noqa: TID251  (not converted to anyio yet)
                     sandbox = await client.sandboxes.from_id(self._ref.id)
             except SandboxNotFoundError as status_error:
                 raise WorkspaceUnavailableError('Render sandbox is unavailable') from status_error
@@ -328,7 +328,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 await local.write_bytes(data)
             # The public SDK has per-connection timeouts but no total file deadline.
             # Never retry an uncertain upload or hide failure with a shell fallback.
-            async with asyncio.timeout(self._deadline(size if data is None else len(data))):
+            async with asyncio.timeout(self._deadline(size if data is None else len(data))):  # noqa: TID251  (not converted to anyio yet)
                 if data is not None:
                     await client.sandboxes.copy_to(sandbox_id, str(local), remote)
                     return b''
