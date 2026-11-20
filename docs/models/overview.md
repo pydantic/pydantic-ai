@@ -127,6 +127,25 @@ Individual model adapters expose their resolved profile the same way, so the sam
 
 The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Every model, including a `FallbackModel` and wrappers like [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel], exposes it as [`model.context_window`][pydantic_ai.models.AbstractModel.context_window]; a fallback model reports the smallest window among its candidates, so history that fits it fits whichever candidate answers. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reports the fraction in use, or `None` when it cannot be calculated. See [Compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) for an example that handles this case.
 
+## Deprecated models {#deprecated-models}
+
+When a provider has deprecated or retired a model, each request to it emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning] naming the model, its retirement date and the replacement the provider recommends, with a link to the provider's announcement. Creating the model doesn't warn. Python's [warning filters](https://docs.python.org/3/library/warnings.html#the-warnings-filter) decide how often it's shown: with the default filters, `run_sync` and other code that enters `warnings.catch_warnings()` reset the record of warnings already shown, so a model can warn again on a later request. The warning is a `UserWarning`, so Python shows it by default.
+
+The deprecation comes from the model's profile, whose [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation] holds a [`ModelDeprecation`][pydantic_ai.profiles.ModelDeprecation]. Pydantic AI sets it for models on the [Anthropic](anthropic.md) and [OpenAI](openai.md) APIs, from those providers' deprecation pages, including when you reach them through the [Pydantic AI Gateway](../gateway.md). Anthropic's dates also apply to the platforms it operates: Microsoft Foundry, Claude Platform on AWS and Claude Models on Google Cloud (Anthropic managed). The deprecation isn't set where another platform serves the same model on a schedule of its own: Amazon Bedrock, Google Cloud's Vertex AI, Azure, OpenRouter and the Codex backend. A Gateway [endpoint](../gateway.md#gateway-endpoints) that fails over to one of those platforms still gets the Anthropic or OpenAI date.
+
+To turn the warning into an error, use a [warnings filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter). To stop it for one model, set the profile's `deprecation` to `None`; to warn about a model you serve elsewhere, set it to a `ModelDeprecation` of your own:
+
+```python {test="skip"}
+import warnings
+
+from pydantic_ai import DeprecatedModelWarning
+from pydantic_ai.models.anthropic import AnthropicModel
+
+warnings.filterwarnings('error', category=DeprecatedModelWarning)
+
+model = AnthropicModel('{{ anthropic:medium.name }}', profile={'deprecation': None})
+```
+
 ## HTTP Client Lifecycle
 
 When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager keeps the HTTP client open across every run inside the block, so the runs reuse its connections, and closes it cleanly on exit:

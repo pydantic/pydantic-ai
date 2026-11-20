@@ -647,7 +647,7 @@ class TestRequestModelIsTheOneResolved:
     async def test_a_summarizing_tier_calls_the_request_model(self, monkeypatch: pytest.MonkeyPatch):
         """The same rule for the model a summarizing tier inherits when it has none of its own."""
         self._windows(monkeypatch, run=10_000_000, request=1_000)
-        seen: list[Any] = []
+        seen: list[Model] = []
 
         class _Recording:
             async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
