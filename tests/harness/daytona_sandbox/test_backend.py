@@ -261,9 +261,11 @@ class TestCommands:
         original = sandbox.process.get_session_command
         polls = 0
 
-        async def running_for_three_polls(*args: Any, **kwargs: Any) -> Any:
+        async def running_for_three_polls(
+            session_id: str, command_id: str, request_timeout: float | None = None
+        ) -> SimpleNamespace:
             nonlocal polls
-            result = await original(*args, **kwargs)
+            result = await original(session_id, command_id, request_timeout)
             polls += 1
             if polls <= 3:
                 result.exit_code = None
@@ -553,15 +555,17 @@ class TestCommands:
         if stopped_during == 'output':
             exec_command = sandbox.process.exec
 
-            async def stop_before_output_read(command: str, *args: Any, **kwargs: Any) -> Any:
+            async def stop_before_output_read(
+                command: str, cwd: str | None = None, env: dict[str, str] | None = None, timeout: int | None = None
+            ) -> SimpleNamespace:
                 if command.startswith('for f in '):
                     sandbox.state = daytona.SandboxState.STOPPED
-                return await exec_command(command, *args, **kwargs)
+                return await exec_command(command, cwd, env, timeout)
 
             monkeypatch.setattr(sandbox.process, 'exec', stop_before_output_read)
         elif stopped_during == 'execute':
 
-            async def stop_then_fail(*args: Any, **kwargs: Any) -> Any:
+            async def stop_then_fail(session_id: str, request: object, timeout: int | None = None) -> None:
                 sandbox.state = daytona.SandboxState.STOPPED
                 sandbox.check_running('execute command')
 
