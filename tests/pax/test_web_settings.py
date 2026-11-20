@@ -328,7 +328,7 @@ def test_the_about_menu_shows_the_version_and_asks_before_updating(
     assert rows['updates.channel']['value'] == 'stable'
     assert web_.post('/api/commands/update/fields/updates.channel', {'value': 'main'}).status_code == 200
     assert web_.shell.context.settings.update_channel == 'main'
-    # The real `/update` reinstalls CLAI: this one only says it ran.
+    # The real `/update` reinstalls Pax: this one only says it ran.
     original = web_.shell.commands.get('update')
     assert original is not None
     web_.shell.commands.unregister(['update'])

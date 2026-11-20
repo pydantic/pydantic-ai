@@ -46,7 +46,7 @@ async function readImage(file: File): Promise<Attachment> {
     const scale = Math.min(1, MAX_SIDE / Math.max(picture.width, picture.height))
     if (scale < 1 || !SERVER_TYPES.has(file.type)) return { id: String(++count), name, url: draw(picture, scale, file.type) }
   } else if (!SERVER_TYPES.has(file.type)) {
-    throw new Error(`${name} is not an image CLAI can read. Use PNG, JPEG, GIF, WebP, BMP, or TIFF.`)
+    throw new Error(`${name} is not an image Pax can read. Use PNG, JPEG, GIF, WebP, BMP, or TIFF.`)
   }
   return { id: String(++count), name, url: await dataUrl(file) }
 }

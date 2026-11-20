@@ -2,8 +2,8 @@
 
 Nothing is recorded until a sink subscribes. The built-in `observability` plugin subscribes its own instance when
 it starts, and unsubscribes before it shuts that instance down. UI records and spans need its `ui_events`
-setting; `handled_error`, for failures CLAI shows the user and recovers from, does not. Every span and log uses
-the `pax` instrumentation scope, like everything else CLAI emits itself.
+setting; `handled_error`, for failures Pax shows the user and recovers from, does not. Every span and log uses
+the `pax` instrumentation scope, like everything else Pax emits itself.
 
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
@@ -26,7 +26,7 @@ from pydantic_ai._instrumentation import record_exception, set_error_status
 
 Attribute = str | int | float | bool
 SCOPE = 'clai2'
-"""The instrumentation scope for everything CLAI emits itself: session roots, UI records, and handled errors."""
+"""The instrumentation scope for everything Pax emits itself: session roots, UI records, and handled errors."""
 
 NAMES = frozenset(
     {'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name', 'event'}
@@ -81,7 +81,7 @@ def conversation_selected() -> None:
     """Call every subscriber's `root` once startup has selected the conversation to resume.
 
     A session root opened before then has a provisional ID; binding it right away makes the running session
-    findable by its saved ID, instead of only once a turn runs or CLAI exits.
+    findable by its saved ID, instead of only once a turn runs or Pax exits.
     """
     for sink in list(_sinks):
         sink.root()
@@ -126,7 +126,7 @@ def record(msg_template: str, /, **attributes: Attribute) -> None:
 
 
 def handled_error(msg_template: str, error: BaseException, /, **attributes: Attribute) -> None:
-    """Log a failure CLAI showed the user and recovered from, at `error` level; see `log_error`.
+    """Log a failure Pax showed the user and recovered from, at `error` level; see `log_error`.
 
     It nests under the current span when that belongs to the session, such as a command's UI span, and under the
     session root otherwise. Unlike UI records it does not need `ui_events`. Only the `NAMES` attributes are exempt

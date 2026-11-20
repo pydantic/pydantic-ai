@@ -86,7 +86,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
     SpecialistCheck(
         name='ui',
         title='UI adapters and local web UI',
-        scope="the UI adapters' client/server trust boundary, CLAI 2's local web control UI and its live-session socket",
+        scope="the UI adapters' client/server trust boundary, Pax's local web control UI and its live-session socket",
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/ui/.*'
             r'|src/pydantic_ai_pax/(web-ui/.*|pydantic_ai_pax/builtin_plugins/web/.*|pydantic_ai_pax/cli/web\.py'

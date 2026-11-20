@@ -161,7 +161,7 @@ async def choose_project(dialogs: Dialogs, projects: list[Project]) -> Project |
     picked = await dialogs.choose(
         title='Send traces to which project?',
         options=[Option(value=str(index), label=project.label) for index, project in enumerate(projects)],
-        description='CLAI creates a write token for this project and saves it in /keys.',
+        description='Pax creates a write token for this project and saves it in /keys.',
     )
     return None if picked is None else projects[int(picked)]
 

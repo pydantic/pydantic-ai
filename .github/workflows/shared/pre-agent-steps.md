@@ -4,7 +4,7 @@
 # These steps run after checkout but before the agent container starts, so
 # they still have open-network access.
 #
-# The engine import installs CLAI 2. These steps stage repository policy after
+# The engine import installs Pax. These steps stage repository policy after
 # checkout and install its dependencies before the firewall starts.
 #
 # Usage:

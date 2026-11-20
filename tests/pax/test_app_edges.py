@@ -140,7 +140,7 @@ async def test_plugin_commands_wait_for_a_running_delegated_task(
 async def test_double_interrupt_during_a_background_report_turn_exits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A settled background report starts a turn on its own; pressing Ctrl-C twice there quits CLAI."""
+    """A settled background report starts a turn on its own; pressing Ctrl-C twice there quits Pax."""
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'Reading the report'
@@ -360,7 +360,7 @@ async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypat
     ('width', 'expected'),
     [
         (160, [theme.LITHIUM, theme.LITHIUM, theme.PURPLE, theme.PURPLE, theme.AI_CYAN, theme.AI_CYAN]),
-        (40, [theme.LITHIUM]),
+        (16, [theme.LITHIUM]),
     ],
 )
 async def test_banner_keeps_brand_colours_under_every_theme(
@@ -378,7 +378,7 @@ async def test_banner_keeps_brand_colours_under_every_theme(
     )
     # Before the live panel opens; its frames repaint the same banner from the transcript.
     text = Text.from_ansi(output.getvalue().split(ENTER, 1)[0])
-    logo_rows = [line for line in text.split() if {'█', '═'} & set(line.plain) or line.plain == 'CLAI 2.0']
+    logo_rows = [line for line in text.split() if {'█', '═'} & set(line.plain) or line.plain == 'Pax']
     colours = [
         line.get_style_at_offset(console, len(line.plain) - len(line.plain.lstrip())).color for line in logo_rows
     ]

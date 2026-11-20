@@ -16,7 +16,7 @@ _REJECTED_RETRY_AFTER = 'clai2.rejected_retry_after'
 
 
 def limit_retry_after(*, model: Model) -> None:
-    """Decorate only the Claude Code model returned by CLAI's plugin resolver, once per HTTP client."""
+    """Decorate only the Claude Code model returned by Pax's plugin resolver, once per HTTP client."""
     if not isinstance(model, AnthropicModel) or not isinstance(model.client, AsyncAnthropic):
         return
     # The plugin owns construction/auth and offers no HTTP-client injection through ModelProvider.resolve.
@@ -88,6 +88,6 @@ def retry_after_message(*, error: ModelRateLimitError) -> str | None:
         estimate = f'Retry after about {wait}. '
     return (
         f'Claude Code rate limit (HTTP 429). {estimate}'
-        f'CLAI skipped a wait over {_MAX_RETRY_AFTER:g}s. '
+        f'Pax skipped a wait over {_MAX_RETRY_AFTER:g}s. '
         'Try again later or select a model with /model.'
     )
