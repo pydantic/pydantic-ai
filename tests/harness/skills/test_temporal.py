@@ -29,6 +29,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -86,6 +87,41 @@ class SkillsWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await skills_agent.run(prompt)).output
+
+
+def _list_then_load_reviewer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """List the skills of a workspace the operator doesn't control, load `reviewer`, then answer with what both tools returned."""
+    returns = [
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    if not returns:
+        return ModelResponse(parts=[ToolCallPart('list_skills', {})])
+    if len(returns) == 1:
+        return ModelResponse(parts=[ToolCallPart('load_skill', {'name': 'reviewer'})])
+    return ModelResponse(parts=[TextPart('\n---\n'.join(returns))])
+
+
+untrusted_skills_agent = Agent(
+    FunctionModel(_list_then_load_reviewer),
+    name='untrusted_skills_agent',
+    deps_type=type(None),
+    capabilities=[
+        LocalWorkspace[None](WORK, authority='none'),
+        Skills[None]('skills'),
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class UntrustedSkillsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await untrusted_skills_agent.run(prompt)).output
 
 
 def _read_checklist(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -153,6 +189,30 @@ async def test_skills_are_read_through_the_durable_workspace(client: Client) -> 
 
     directory = (WORK / 'skills' / 'reviewer').resolve()
     assert output == (
+        f'# Skill: reviewer\n\nSkill directory: `{directory}`. Relative paths in this skill resolve against it.'
+        '\n\nCheck the tests.'
+    )
+
+
+async def test_untrusted_skills_tools_run_as_activities(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UntrustedSkillsWorkflow],
+        plugins=[AgentPlugin(untrusted_skills_agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+    ):
+        output = await client.execute_workflow(
+            UntrustedSkillsWorkflow.run,
+            'review this',
+            id='test_untrusted_skills_temporal',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=25),
+        )
+
+    directory = (WORK / 'skills' / 'reviewer').resolve()
+    assert output == (
+        "{'skills': {'reviewer': 'Review changes.'}}\n---\n"
         f'# Skill: reviewer\n\nSkill directory: `{directory}`. Relative paths in this skill resolve against it.'
         '\n\nCheck the tests.'
     )
