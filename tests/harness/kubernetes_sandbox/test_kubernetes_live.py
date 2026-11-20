@@ -390,10 +390,9 @@ async def test_a_desktop_pool_serves_the_display() -> None:
         panel = await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'tint2'])
         assert panel.exit_code == 0 and panel.stdout.strip()
         # The panel's terminal button opens xterm. Under a pod's high open-file limit it once opened nothing.
-        # Firefox's button comes first when the image has it. (95, 780) is the labelled Terminal button's centre
-        # measured live on the Docker desktop image with Firefox; x=18 without Firefox was not measured.
-        firefox = await backend.run(['test', '-e', '/usr/share/applications/firefox-esr.desktop'])
-        await screen(backend).act(Click(x=95 if firefox.exit_code == 0 else 18, y=780))
+        # The labelled Terminal button comes first on the panel; (60, 780) is its centre, measured live on the Docker
+        # desktop image.
+        await screen(backend).act(Click(x=60, y=780))
 
         async def xterm_shows() -> bool:
             return (await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'xterm'])).exit_code == 0
