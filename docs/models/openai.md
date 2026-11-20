@@ -357,7 +357,7 @@ agent = Agent(model, model_settings=settings)
 
 ### Reasoning after history edits {#reasoning-after-history-edits}
 
-On newer OpenAI models, the Responses API [drops replayed reasoning items](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged) that follow a change to the earlier conversation, so the model may have to redo that reasoning. In testing, `gpt-6.2-sol` and `gpt-6.2-astra` did this, and also dropped them after some model switches. When the API reports a drop, Pydantic AI puts the report in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'input_transformations'`, as OpenAI returns it, such as `[{'id': 'rs_…', 'action': 'removed', 'reason': 'prefix_mismatch', 'type': 'reasoning'}]`. With [instrumentation](../logfire.md) on, it also adds the report to the model request's span as an `openai.input_transformations` event.
+On newer OpenAI models, the Responses API [drops replayed reasoning items](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged) that follow a change to the earlier conversation, so the model may have to redo that reasoning. In testing, `gpt-6.2-sol` did this, and reasoning was also dropped after some model switches. When the API reports a drop, Pydantic AI puts the report in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'input_transformations'`, as OpenAI returns it, such as `[{'id': 'rs_…', 'action': 'removed', 'reason': 'prefix_mismatch', 'type': 'reasoning'}]`. With [instrumentation](../logfire.md) on, it also adds the report to the model request's span as an `openai.input_transformations` event.
 
 What happened to earlier reasoning in testing:
 
