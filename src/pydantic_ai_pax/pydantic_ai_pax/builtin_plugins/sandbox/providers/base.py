@@ -66,10 +66,10 @@ class SandboxProvider(Protocol):
 
     @property
     def keep_alive(self) -> Callable[[SandboxBackend], Awaitable[None]] | None:
-        """What keeps a running sandbox from stopping while this session holds it; `None` when nothing stops it.
+        """What keeps a running sandbox from stopping while this session holds it; `None` when a ping cannot.
 
-        A provider that stops an idle sandbox, or one whose lifetime has run out, while a long command still runs
-        in it, sets one. `/sandbox` calls it every few minutes while the sandbox's backend is open. It must leave a
+        A provider that stops a sandbox it counts as idle while a long command still runs in it, as Daytona does,
+        sets one. `/sandbox` calls it every few minutes while the sandbox's backend is open. It must leave a
         stopped or paused sandbox as it is: starting one is the next operation's job.
         """
         ...

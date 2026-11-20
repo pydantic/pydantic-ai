@@ -1081,13 +1081,10 @@ class TestRequestEnv:
 @pytest.fixture
 def fake_e2b(monkeypatch: pytest.MonkeyPatch) -> Iterator['FakeE2B']:
     """The harness's fake E2B SDK as `e2b`; each client it makes is named by its API key."""
-    from e2b import SandboxState
-
     from tests.harness.e2b_sandbox.fake_e2b import FakeE2B
 
     control = FakeE2B()
     module = control.module
-    module.SandboxState = SandboxState  # type: ignore[attr-defined]
     module.__spec__ = importlib.machinery.ModuleSpec('e2b', None)
     module.E2B = lambda api_key: control.client(api_key)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, 'e2b', module)
@@ -1147,37 +1144,6 @@ class TestE2B:
         assert fake_e2b.sandboxes[0].killed
         # `/keys` wins over the environment, for every call.
         assert set(fake_e2b.clients) == {'from-keys'}
-
-    async def test_keep_alive_extends_only_a_running_sandbox(
-        self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from types import SimpleNamespace
-
-        from e2b import SandboxState
-
-        from tests.harness.e2b_sandbox.fake_e2b import FakeAsyncSandboxFactory
-
-        state = SandboxState.RUNNING
-        timeouts: list[tuple[str, int]] = []
-
-        async def get_info(self: object, sandbox_id: str) -> SimpleNamespace:
-            return SimpleNamespace(state=state)
-
-        async def set_timeout(self: object, sandbox_id: str, timeout: int) -> None:
-            timeouts.append((sandbox_id, timeout))
-
-        monkeypatch.setattr(FakeAsyncSandboxFactory, 'get_info', get_info, raising=False)
-        monkeypatch.setattr(FakeAsyncSandboxFactory, 'set_timeout', set_timeout, raising=False)
-        monkeypatch.setenv('E2B_API_KEY', 'from-env')
-        e2b = E2BProvider()
-        ref, backend = await e2b.create(github=None)
-        await e2b.keep_alive(backend)
-        assert timeouts == [(ref.id, e2b_provider.LIFETIME)]
-        state = SandboxState.PAUSED
-        await e2b.keep_alive(e2b.reopen(ref))
-        # A paused sandbox stays paused until an operation resumes it.
-        assert timeouts == [(ref.id, e2b_provider.LIFETIME)]
-        assert fake_e2b.connect_calls == []
 
     async def test_a_sandbox_whose_setup_failed_is_deleted(
         self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch
