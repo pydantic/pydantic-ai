@@ -155,7 +155,12 @@ class _ToXml:
             mapping = value.model_dump(mode='json')
         except PydanticSerializationError as e:
             raise TypeError(f'Unsupported type for XML formatting: {e}') from e
-        self._mapping_to_xml(element, mapping, path)
+        if isinstance(mapping, Mapping):
+            self._mapping_to_xml(element, mapping, path)
+        else:
+            root_element = self._to_xml(mapping, path, element.tag)
+            element.text = root_element.text
+            element.extend(root_element)
 
     def _set_scalar_text(self, element: ElementTree.Element, value: Any) -> bool:
         """Set element.text for scalar types. Return True if handled, False otherwise."""
