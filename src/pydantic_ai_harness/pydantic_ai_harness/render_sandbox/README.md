@@ -115,6 +115,29 @@ if __name__ == '__main__':
 
 The `finally` terminates the sandbox even if setup or the run fails. Read any files you want to keep before it.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse, Shell
+from pydantic_ai_harness.render_sandbox import RenderSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[RenderSandbox(desktop=True), Shell(), ComputerUse()])
+
+result = agent.run_sync(
+    'Install Firefox with `apt-get install -y firefox-esr`, open python.org in it and tell me the latest release.'
+)
+print(result.output)
+```
+
+The agent sees [a desktop](../computer_use/#what-the-display-needs): a panel along the bottom with a button that opens a terminal, and no web browser. Render's default image has none of the desktop's programs, so the first use of the screen installs them with `apt-get`, which takes about 20 seconds. That needs `allow_internet_access`: creating a new sandbox without it raises `UserError`. You can still attach to an existing sandbox that has no internet access, but it can't download anything, so it must already have `xdotool`, `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server is already running on display `:1`, or the first use of the screen raises `WorkspaceUnavailableError` naming what's missing. Without `fluxbox`, `tint2` and `xterm` the screen still works, with no panel. To give the agent a browser or other programs, install them before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
+Render sandboxes have no public URLs, and nothing is published for the screen. There's no live viewer; to watch a run, save each screenshot as it arrives, as in [Watching a run](../computer_use/#watching-a-run).
+
 ## Clean up
 
 The sandbox keeps running, and billing, until `sandbox_timeout` runs out: `RenderSandbox` turns off Render's idle suspension for the sandboxes it creates. Pydantic AI never terminates it. Terminate it with the ref you stored:
@@ -173,6 +196,7 @@ To keep results, read them through `ctx.workspace` in `after_run` before calling
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve from, created on a new sandbox. Default: `None`, the sandbox's home directory. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment is passed. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The first use installs the desktop's programs with `apt-get`, so a new sandbox needs `allow_internet_access`. The size applies when the display first starts, and a reattached sandbox keeps its display's size. Default: `False`. |
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
