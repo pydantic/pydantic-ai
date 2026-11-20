@@ -21,7 +21,7 @@ The actions change only in ways that keep an existing tool doing what the model 
   default. A change a tool must act on, such as scrolling by pixels, is a new action.
 - The values a field accepts, such as the mouse buttons, never grow. A key name is added only for a key no existing
   name covers.
-- A new field never changes what an existing field means.
+- A new field, on an action or a result, never changes what an existing field means.
 
 A result's content is a short summary, what each action returned, then a screenshot of the screen after the call.
 The summary's wording can change between releases;

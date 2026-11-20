@@ -555,8 +555,9 @@ class ModelRequestParameters:
     def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
         """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
 
-        A tool with `defer_loading=True` is included only once the message history has revealed it, unlike in
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind].
+        A tool with `defer_loading=True` is included only once the message history has revealed it.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] also returns a deferred tool,
+        so instructions that name it don't change when it is revealed.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
