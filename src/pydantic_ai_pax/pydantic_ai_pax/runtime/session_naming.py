@@ -201,12 +201,7 @@ class SessionNamer:
         siblings = await self._siblings(saved.summary)
         if not client.may_see(saved.summary):
             return None
-        # Every sibling's title is taken, but the prompt lists only those the naming model may see.
-        others = [sibling.title for sibling in siblings if client.may_see(sibling)]
-        if others:
-            listed = ''.join(f'- {other}\n' for other in others[:10])
-            context += f'Titles of other sessions in this workspace, which this title must differ from:\n{listed}'
-        prompt = f'{context}Current conversation tail:\n{digest}'
+        prompt = f'{context}{_sibling_titles(siblings, client=client)}Current conversation tail:\n{digest}'
         result = await client.generate(prompt)
         if result is None:
             return None
@@ -234,6 +229,15 @@ class SessionNamer:
             siblings += [s for s in page if s.workspace == summary.workspace and s.id != summary.id]
             offset += len(page)
         return siblings
+
+
+def _sibling_titles(siblings: list[ConversationSummary], *, client: NamingClient) -> str:
+    """The prompt's list of sibling titles: every sibling's title is taken, but it lists only those `client` may see."""
+    others = [sibling.title for sibling in siblings if client.may_see(sibling)]
+    if not others:
+        return ''
+    listed = ''.join(f'- {other}\n' for other in others[:10])
+    return f'Titles of other sessions in this workspace, which this title must differ from:\n{listed}'
 
 
 def _distinct(title: str, *, taken: set[str]) -> str:
