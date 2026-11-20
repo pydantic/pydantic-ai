@@ -5996,7 +5996,6 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_restore_tracer",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::deserialize_run_context",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec._resolve_tracer"
       ]
     },
