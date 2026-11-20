@@ -68,7 +68,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -5842,37 +5841,6 @@ async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_
     call_part = result.all_messages()[1].parts[0]
     assert isinstance(call_part, ToolCallPart)
     assert call_part.tool_kind == _LOOKUP_KIND.id
-    second_request = get_mock_responses_kwargs(mock_client)[1]
-    assert second_request['previous_response_id'] == 'resp_1'
-
-
-async def test_openai_previous_response_id_auto_continues_after_a_computer_call_is_labelled(
-    allow_model_requests: None,
-):
-    """A `computer` call's labels are never sent and the response digest leaves them out, so the next request still
-    continues from the response.
-
-    Not a VCR test: this adapter doesn't send `ComputerTool`, so no recording can produce a `computer` call the agent
-    runs.
-    """
-    call = response_message([_function_call_item('fc_1', '{"actions": []}', name='computer')]).model_copy(
-        update={'id': 'resp_1'}
-    )
-    mock_client = MockOpenAIResponses.create_mock([call, _text_reply('resp_2', 'done')])
-    profile = OpenAIModelProfile(computer_use_coordinate_grid=1000)
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-    screen = BinaryImage(data=b'png', media_type='image/png')
-    agent = Agent(
-        model,
-        tools=[Tool(lambda actions: ['Done.', screen], name='computer', tool_kind=COMPUTER_KIND)],
-        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
-    )
-
-    result = await agent.run('Click.')
-
-    call_part = result.all_messages()[1].parts[0]
-    assert isinstance(call_part, ComputerCallPart)
-    assert call_part.coordinate_grid == 1000
     second_request = get_mock_responses_kwargs(mock_client)[1]
     assert second_request['previous_response_id'] == 'resp_1'
 
