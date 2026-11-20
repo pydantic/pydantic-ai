@@ -1081,6 +1081,28 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert 'GITHUB_COPILOT_INTEGRATION_ID' not in invocation.env
 
 
+@pytest.mark.parametrize(
+    ('endpoint', 'logged'),
+    [
+        pytest.param(
+            'https://canary-user:canary-token@endpoint.example/v1?key=canary-query',
+            'https://endpoint.example',
+            id='userinfo-and-query',
+        ),
+        pytest.param('canary-token', '(unparsable)', id='unparsable'),
+    ],
+)
+def test_endpoint_credentials_stay_out_of_the_run_log(tmp_path: Path, endpoint: str, logged: str) -> None:
+    """Endpoint userinfo and query parameters can hold credentials, and workflow run logs are not private."""
+    invocation = launch(
+        tmp_path,
+        {'PAI_MODEL': 'openai/gpt-5', 'PAI_BASE_URL': endpoint, 'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint},
+    )
+
+    assert invocation.env['OPENAI_BASE_URL'] == endpoint
+    assert invocation.stdout == f'[pydantic-ai] provider=(PAI_BASE_URL) model=gpt-5 baseUrl={logged} otlp={logged}\n'
+
+
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_output: _RecorderCapture
 ) -> None:

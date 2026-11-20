@@ -825,21 +825,22 @@ engine:
         const mcpConfig = join(process.env.RUNNER_TEMP || "/tmp", "gh-aw", "mcp-config", "mcp-servers.json");
         delete env.GH_AW_MCP_CONFIG;
         if (existsSync(mcpConfig)) env.GH_AW_MCP_CONFIG = mcpConfig;
-        // Log only the origin because endpoint userinfo and query parameters can
-        // contain credentials, and workflow run logs are not private.
-        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-        let otlpOrigin = "";
-        if (otlpEndpoint) {
+        // Log only the origin of a caller-supplied endpoint because its userinfo
+        // and query parameters can contain credentials, and workflow run logs are
+        // not private.
+        const originOf = url => {
           try {
-            otlpOrigin = new URL(otlpEndpoint).origin;
+            return new URL(url).origin;
           } catch {
-            otlpOrigin = "(unparsable)";
+            return "(unparsable)";
           }
-        }
+        };
+        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
         log(
-          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${baseUrl}` +
+          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model}` +
+            ` baseUrl=${configuredBaseUrl ? originOf(configuredBaseUrl) : baseUrl}` +
             (configuredAgent ? ` agent=${configuredAgent}` : "") +
-            (otlpOrigin ? ` otlp=${otlpOrigin}` : "")
+            (otlpEndpoint ? ` otlp=${originOf(otlpEndpoint)}` : "")
         );
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
