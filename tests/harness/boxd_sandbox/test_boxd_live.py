@@ -198,6 +198,34 @@ async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_a
         assert typed.stdout == text
 
 
+async def test_the_panel_opens_a_terminal_below_it_that_has_the_keyboard(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions that the panel start command, which the fake doesn't run, installs and
+    shows the panel on boxd's desktop, and that its Terminal button opens xterm below the panel with the keyboard,
+    so text typed straight after the click reaches the shell."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        assert (await backend.run(['xdotool', 'search', '--class', 'tint2'], timeout=30)).exit_code == 0
+
+        await display.act(Click(x=60, y=20))
+        found = await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
+        terminal = found.stdout.split()[0]
+        # A new window can take the keyboard only once a computer call has shown it, as the agent's next look does.
+        with anyio.fail_after(10):
+            while (await backend.run(['xdotool', 'getwindowfocus'], timeout=30)).stdout.strip() != terminal:
+                await display.display_size()
+                await anyio.sleep(0.2)
+        await display.act(TypeText(text='echo typed > /tmp/typed.txt\n'))
+
+        with anyio.fail_after(30):
+            while (typed := await backend.run(['cat', '/tmp/typed.txt'], timeout=30)).exit_code != 0:
+                await anyio.sleep(0.5)
+        assert typed.stdout == 'typed\n'
+        window = await backend.run(['xwininfo', '-id', terminal], timeout=30)
+        assert 'Absolute upper-left Y:  40' in window.stdout
+
+
 async def test_boxd_takes_scrolls_key_repeats_and_drags_past_its_per_call_limits(client: boxd.AsyncBoxd) -> None:
     """Validates the fake-encoded assumption that wheel clicks, key repeats and drag points over boxd's limit of 100
     per call are split into calls that boxd accepts."""
