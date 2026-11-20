@@ -641,11 +641,20 @@ class TestSummarizingCompactionTokenRetention:
     'strategy',
     [
         SlidingWindowCompaction[None](max_messages=1, keep_tokens=10),
+        SlidingWindowCompaction[None](max_messages=1, keep_tokens=0),
         SlidingWindowCompaction[None](max_messages=1, keep_messages=1),
         SummarizingCompaction[None](max_messages=1, keep_tokens=10),
+        SummarizingCompaction[None](max_messages=1, keep_tokens=0),
         SummarizingCompaction[None](max_messages=1, keep_messages=1),
     ],
-    ids=['sliding tokens', 'sliding messages', 'summary tokens', 'summary messages'],
+    ids=[
+        'sliding tokens',
+        'sliding no tokens',
+        'sliding messages',
+        'summary tokens',
+        'summary no tokens',
+        'summary messages',
+    ],
 )
 async def test_the_latest_workspace_response_is_kept(
     strategy: SlidingWindowCompaction[None] | SummarizingCompaction[None],
