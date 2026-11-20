@@ -56,8 +56,8 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## Models
 
-The model must accept images. Every model gets `computer` as a regular function tool. Gemini 3 gives positions on a
-grid from 0 to 999 instead of in pixels, and `ComputerUse` converts them to pixels.
+The model must accept images. A model that can't gets a note in place of each screenshot, saying it wasn't sent. Every
+model gets `computer` as a regular function tool.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -104,11 +104,20 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 
 ## Screen size
 
-Some models accept screenshots only up to a set size. Their profile sets it with
-`computer_use_screenshot_max_side` and
-`computer_use_screenshot_max_pixels`. `ComputerUse` sends every screenshot at the screen's full size. A model is
-refused the request that would send it a screenshot larger than it accepts, with a `UserError` that names the largest
-size that fits. Under a fallback, the next model answers instead. A 1280x800 screen fits every model.
+A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
+screen shows more at once, but each screenshot costs more tokens, and every request sends every earlier screenshot
+again: a 1920x1080 screenshot costs about twice as much as a 1280x800 one. Below about 1024x768, models start to miss
+detail.
+
+The providers' own advice:
+
+- Anthropic: "For general desktop tasks, use 1024x768 or 1280x720; for web applications, use 1280x800 or 1366x768"
+  ([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)). For each
+  model's image size limits, see [Vision](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+- OpenAI: 1440x900 and 1600x900 work well
+  ([computer use](https://developers.openai.com/api/docs/guides/tools-computer-use-integration#capture-screenshots)).
+  For each model's image size limits, see
+  [Images and vision](https://developers.openai.com/api/docs/guides/images-vision#model-sizing-behavior).
 
 ## When something goes wrong
 
@@ -150,12 +159,6 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   out, pass `InstrumentationSettings(include_binary_content=False)`.
 - [`Advisor(forward_history=True)`](../advisor/) sends every screenshot to the advisor model. Anthropic refuses an
   advisor request with more than 600 images.
-- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) or a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), each model
-  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't take images, or
-  can't see the latest screenshot, is always skipped, whatever `fallback_on` says. If every model is skipped, the run
-  ends with the last model's `UserError`; if another model failed in a way `fallback_on` moves on from, with a
-  `FallbackExceptionGroup`. Any other failure is raised by itself. The previous `computer` call has already acted on
-  the screen by then.
 
 ## Durable execution
 

@@ -187,8 +187,6 @@ _INTERRUPTED = (
 class _Plan:
     """What a call needs from the run's messages and model, which code inside a durable step can't read."""
 
-    grid: int | None
-    """The grid the model pointed on, if any."""
     seen: tuple[int, int] | None
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: bool
@@ -268,12 +266,12 @@ def _points(action: ComputerToolAction) -> Sequence[Point]:
             return ()
 
 
-def _off_screen(actions: list[ComputerToolAction], width: int, height: int, space: str) -> str | None:
+def _off_screen(actions: list[ComputerToolAction], width: int, height: int) -> str | None:
     """Why the first position outside `width` by `height` is refused, if there is one."""
     for index, action in enumerate(actions, 1):
         for point in _points(action):
             if point.x >= width or point.y >= height:
-                return f'Action {index} ({action.type}) at ({point.x}, {point.y}) is outside the {width}x{height} {space}, so no action ran.'
+                return f'Action {index} ({action.type}) at ({point.x}, {point.y}) is outside the {width}x{height} screen, so no action ran.'
     return None
 
 
@@ -287,7 +285,7 @@ class _CoordinateMapping:
     """One `computer` call's coordinate space and how it maps to the display."""
 
     space: tuple[int, int]
-    """The model's coordinate space: a grid, or the size of the screenshot it pointed on."""
+    """The model's coordinate space: the size of the screenshot it pointed on."""
     display: tuple[int, int]
     """The display's size in pixels."""
 
@@ -625,7 +623,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         made = _the_call(ctx)
         call = made[1] if made else None
         plan = _Plan(
-            grid=call.coordinate_grid if call else None,
             # The model pointed on the latest screenshot before its call.
             seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=call is not None and call.actions != actions,
@@ -689,11 +686,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             try:
                 # Also starts a display that stopped, before anything acts.
                 size = await _display_size(display)
-                # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size.
-                space = (plan.grid, plan.grid) if plan.grid else plan.seen or size
+                # The model pointed on the screenshot it saw, even if the display has changed size.
+                space = plan.seen or size
                 mapping = _CoordinateMapping(space=space, display=size)
                 # A backend would move a position outside the screen to the screen's edge and act there.
-                if refused := _off_screen(actions, *mapping.space, 'grid' if plan.grid else 'screen'):
+                if refused := _off_screen(actions, *mapping.space):
                     raise ModelRetry(refused)
                 pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
                 _leave_presses_for_run_end(ctx, actions)
@@ -744,8 +741,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if held:
             buttons = 'button is' if len(held) == 1 else 'buttons are'
             summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
-        # A model that uses a grid gives grid positions. Telling it the size in pixels would invite pixel positions.
-        summary.append('Screenshot attached.' if plan.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
+        summary.append(f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *steps.outputs, BinaryImage(data=png, media_type='image/png')]
         return ToolReturn(content, metadata=result), held
 
@@ -758,7 +754,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return settings
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        # A grid model is told about its grid in the tool's description, by the model itself.
         return [_INSTRUCTIONS, _shell_instructions]
 
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
