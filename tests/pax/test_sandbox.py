@@ -2206,7 +2206,7 @@ class TestCompaction:
 
         loaded = load(checkout)
         agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
-        # Compacts the second turn's request down to its prompt alone, before the model is called.
+        # Compacts the second turn's history before the model is called, keeping the first answer, which names the sandbox.
         compaction = SlidingWindowCompaction[None](max_messages=4, keep_messages=1)
         session = Session(
             agent,
@@ -2229,5 +2229,5 @@ class TestCompaction:
 
         await session.prompt('third question')
         ref = WorkspaceRef(provider='fake', id='sbx-1')
-        assert sent[1] == 1
+        assert sent[1] == 3
         assert working_dirs[-1] == str(provider.folder(ref))
