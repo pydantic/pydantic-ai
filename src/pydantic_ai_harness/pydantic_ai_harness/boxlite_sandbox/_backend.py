@@ -55,9 +55,10 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
+    check_provider,
     check_timeout,
     command_argv,
-    running_on_asyncio,
+    require_asyncio,
 )
 
 if TYPE_CHECKING:
@@ -227,18 +228,13 @@ def check_ref(ref: WorkspaceRef) -> None:
     For refs from message history and for deletion: `get` opens any box of this BoxLite home by name or
     id, so such a ref could otherwise reach a box made by another tool, with host mounts or published ports.
     """
-    _check_provider(ref)
+    check_provider(ref, 'boxlite')
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
             f'BoxLiteSandbox only uses boxes it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}. '
             'To use another box, pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run; '
             "`workspace='new'` starts a fresh box."
         )
-
-
-def _check_provider(ref: WorkspaceRef) -> None:
-    if ref.provider != 'boxlite':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxlite'")
 
 
 def _key(box: _Box) -> str:
@@ -328,7 +324,7 @@ async def _remove(boxes: _Runtime, name: str) -> None:
         await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
 
 
-class _StaleHandle(Exception):
+class _StaleHandleError(Exception):
     """The box's handle was stopped before a command started on it."""
 
 
@@ -392,7 +388,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the box (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation creates and boots a new box, or boots the one `sandbox`
@@ -435,7 +431,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         box_options: Mapping[str, Any] | None = None,
     ) -> None:
         if ref is not None:
-            _check_provider(ref)
+            check_provider(ref, 'boxlite')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
@@ -475,8 +471,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         create a replacement.
         """
         # Every operation gets the box first, so this one check covers them all.
-        if not running_on_asyncio():
-            raise UserError(ASYNCIO_ONLY)
+        require_asyncio(ASYNCIO_ONLY)
         if self._box is not None:
             return self._box
         # Concurrent first uses wait for each other, so they create one box.
@@ -529,12 +524,9 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     result = await self._exec(
                         box, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT
                     )
-                except _StaleHandle as error:
+                except _StaleHandleError as error:
                     raise WorkspaceUnavailableError(f'The BoxLite box {name!r} was stopped while starting.') from error
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'Could not create working_dir {self._working_dir!r} in BoxLite box {name}: {result.stderr}'
-                    )
+                _check_working_dir_created(result, self._working_dir, name)
             self._box = box
             return box
 
@@ -569,14 +561,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             return await self._exec(
                 await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
             )
-        except _StaleHandle:
+        except _StaleHandleError:
             # `stop()` invalidates every handle to a box for good, but a new one boots it again. The
             # command never started, so it starts on the new handle.
             self._box = None
             box = await self.get_sandbox()
             try:
                 return await self._exec(box, argv, env=env, working_dir=self._working_dir, timeout=timeout)
-            except _StaleHandle as error:
+            except _StaleHandleError as error:
                 raise WorkspaceUnavailableError(f'The BoxLite box {_key(box)!r} was stopped while starting.') from error
 
     async def _exec(
@@ -632,7 +624,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             )
         except boxlite.BoxliteError as error:
             if isinstance(error, boxlite.StoppedError):
-                raise _StaleHandle from error
+                raise _StaleHandleError from error
             if 'spawn_failed' in str(error):
                 raise WorkspaceError(
                     f'Could not start the command in BoxLite box {_key(box)}: {error}. '
@@ -689,6 +681,11 @@ async def _boot(box: _Box) -> None:
     except boxlite.ConfigError as error:
         # Raised for a host that can't run boxes at all, such as one where BoxLite can't jail its engine.
         raise WorkspaceUnavailableError(f'This host cannot run a BoxLite box: {error}') from error
+
+
+def _check_working_dir_created(result: CommandResult, working_dir: str, name: str) -> None:
+    if result.exit_code != 0:
+        raise WorkspaceError(f'Could not create working_dir {working_dir!r} in BoxLite box {name}: {result.stderr}')
 
 
 def _gone_message(name: str) -> str:

@@ -5,45 +5,46 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
-import re
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, TypeAlias
 
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    DataCapabilityPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
-    NativeToolCallPart,
-    NativeToolReturnPart,
+    ModelSource,
+    OperatorSource,
+    OperatorText,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
-    SystemPromptPart,
     TextContent,
-    TextPart,
-    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._judge import claim_offset_limits, render_part
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, user_prompt_text
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.models import ModelRequestContext
-    from pydantic_ai.usage import UsageLimits
 
 
 @dataclass
@@ -62,12 +63,6 @@ class Steer:
 TrajectoryVerdict: TypeAlias = AllGood | Steer
 """What one evaluation concludes: the run is on track, or it needs the enclosed correction."""
 
-# Same ~4 characters-per-token heuristic as `pydantic_ai_harness.compaction`'s
-# `estimate_token_count`. Duplicated here because that helper budgets `ModelMessage`s while
-# the window here is clamped on the rendered transcript string; fold the two together if a
-# shared text-budget helper ever lands.
-_CHARS_PER_TOKEN = 4
-
 _JUDGE_INSTRUCTIONS = (
     "You are a trajectory judge: you review another AI agent's run while it is still in "
     'progress. You are shown the most recent slice of its trajectory: user messages, '
@@ -85,15 +80,50 @@ _EARLIER_ELIDED = '[...]\n'
 _PROMPT_HEADER = "Review the running agent's recent trajectory and deliver your verdict."
 
 _STEERING_ORIGIN = 'pydantic-ai-harness.trajectory_judge.steering.v1'
-"""The `origin` in the `metadata` of both parts that deliver a judge's steering.
+"""The `origin` in the `metadata` of the parts an earlier version delivered a judge's steering as.
 
-The framework note is a `SystemPromptPart` and the judge's message a `TextContent`; both carry
-`{'origin': _STEERING_ORIGIN, 'judge': name, 'ref': ref}`, where `ref` is the random id the note names its
-frame by. Identify steering by this metadata, never by its
-model-visible text.
+A `SystemPromptPart` note and a `TextContent` message, both carrying `{'origin': _STEERING_ORIGIN, 'judge': name,
+'ref': ref}`. Still recognized in a saved history; steering is now a `JudgeSteeringPart` and a `JudgeFeedbackPart`.
 """
 
-_STEERING_TAG = 'judge_feedback'
+_JUDGE_SOURCE = ModelSource('trajectory judge')
+"""Who wrote a judge's feedback: another model, which read the run's tool results, so it has no authority."""
+
+
+@dataclass(kw_only=True)
+class JudgeSteeringPart(InstructionCapabilityPart, namespace='trajectory_judge', name='steering'):
+    """The application's note that a trajectory judge sent a course correction, naming the feedback it's in by `ref`.
+
+    The operator configured the judge, so this note is in the application's voice; the judge's own words are the
+    `JudgeFeedbackPart` that follows it. Find them in history by this type.
+    """
+
+    judge: str
+    """The judge's name. Never sent to the model."""
+
+    ref: str
+    """The random id the note names the feedback's frame by, and that frame carries."""
+
+
+@dataclass(kw_only=True)
+class JudgeFeedbackPart(
+    DataCapabilityPart[str],
+    namespace='trajectory_judge',
+    name='feedback',
+    tag='judge_feedback',
+    attributes=('judge', 'ref'),
+):
+    """A trajectory judge's course correction, as the judge model wrote it.
+
+    Data on the user channel in a `<judge_feedback judge="..." ref="...">` tag, with a note saying the judge wrote
+    it, not the user or the application. Find them in history by this type.
+    """
+
+    judge: str
+    """The judge's name."""
+
+    ref: str
+    """The random id its `JudgeSteeringPart` names it by."""
 
 
 def _steering_note(ref: str) -> str:
@@ -114,20 +144,6 @@ def _steering_note(ref: str) -> str:
     )
 
 
-# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
-# `judge_feedback` as a framing tag there.
-# The slash is grouped with the whitespace after it, so the two whitespace runs can't overlap and
-# backtrack quadratically on a long run of spaces after a `<`. A tag name at the very end of the
-# message also matches: the wrapper's own text right after it would otherwise complete the tag.
-_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?{_STEERING_TAG}(?:[\s/>]|$))', re.IGNORECASE)
-"""The `<` that opens anything a parser could read as a `judge_feedback` tag, opening or closing.
-
-Core's own framing tags, `system` among them, are left to `neutralize_tags`. `system` is the framework's
-voice tag: on a model without inline system prompts, real framework notes reach it as `<system>…</system>`
-user text, so a judge message must not be able to imitate one.
-"""
-
-
 _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(strict=True, ge=1)])
 
 
@@ -135,22 +151,22 @@ _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(stric
 class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     """Review a live run with a second model on a cadence, and steer it mid-run.
 
-    Long-horizon runs drift: instructions fade, unsupported claims compound, and the agent
-    wanders off the goal. A `TrajectoryJudge` evaluates the most recent `window` tokens of
-    the run's trajectory every `every` model requests, concurrently with the run, and
-    delivers exactly one verdict per evaluation: `AllGood`, or `Steer` with a corrective
-    message. Steering is enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a
-    framework note in system voice followed by the judge's message as quoted data, attributed to
-    the judge, so the running agent course-corrects while recovery is still cheap.
+    A `TrajectoryJudge` evaluates the most recent `window` tokens of the run's trajectory
+    every `every` model requests, concurrently with the run outside durable execution, and delivers exactly one
+    verdict per evaluation: `AllGood`, or `Steer` with a corrective message. Steering is
+    enqueued into the run (`RunContext.enqueue`, `'asap'` priority) as a `JudgeSteeringPart`, a note in the
+    application's voice, followed by a `JudgeFeedbackPart` with the judge's message as data the judge wrote, so
+    the running agent can course-correct.
 
     At most one evaluation per judge is in flight at a time; a cadence tick that finds one
     still running is skipped. An evaluation still in flight when the run ends is cancelled.
     The judge's model and tool usage are threaded onto the run's `usage` and respect its
     `usage_limits`: each launch claims one request on the shared usage before the
     evaluation starts, so the parent's next preflight and sibling launches account for the
-    in-flight call, and a launch the request budget cannot fit is skipped. An evaluation
-    failure is raised on the run at the next cadence tick or at run end; give the judge a
-    fallback model (via `agent`) if you need it to degrade instead.
+    in-flight call, and a launch the request budget cannot fit is skipped. Outside durable
+    execution, an evaluation failure is raised on the run at the next cadence tick or at run
+    end; inside a workflow or flow it is raised from the request that launched it. Give the
+    judge a fallback model (via `agent`) if you need it to degrade instead.
 
     ```python
     from pydantic_ai import Agent
@@ -171,10 +187,9 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     Several judges can watch one run: add one `TrajectoryJudge` per concern to
     `capabilities`. Each schedules and evaluates independently.
 
-    A judged run inside a durable workflow or flow (Temporal, DBOS, Prefect) is rejected
-    with `UserError` before the first model request: the evaluation is launched from a
-    capability hook in orchestration context, so its model calls would not be checkpointed
-    and could repeat on replay. Run judged work outside durable execution.
+    Inside a durable workflow or flow (Temporal, DBOS, Prefect) each evaluation is the durable
+    operation `evaluate`, awaited before the run continues so replay delivers the same steering
+    at the same point. This needs an explicit, per-judge `id`; an id-less judge is rejected there.
     """
 
     model: Model | KnownModelName | str | None = None
@@ -207,6 +222,9 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
     on_verdict: Callable[[TrajectoryVerdict], None] | None = None
     """Optional observability callback invoked with each verdict after it is processed
     (after any steering has been enqueued)."""
+
+    _durable_operations_need_id: ClassVar[bool] = False
+    """An id-less judge binds no durable operation; `before_run` rejects it inside a workflow or flow instead."""
 
     _judge: Agent[None, object] = field(init=False, repr=False, compare=False)
     _steps: int = field(default=0, init=False, repr=False, compare=False)
@@ -248,19 +266,11 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         return replace(self)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Reject a judged run inside a durable workflow or flow, before any budget is spent.
-
-        The evaluation is launched from a capability hook, so it would run in orchestration
-        context: its model calls would not be checkpointed (and could repeat on replay,
-        billing included) and enqueued steering would not persist across replay. A
-        durable-capable agent run outside its workflow or flow is unaffected, matching how
-        core's durability capabilities scope their own `before_run` rejections.
-        """
-        if in_durable_context(ctx):
+        """Reject an id-less judged run inside a durable workflow or flow, before any budget is spent."""
+        if self.id is None and in_durable_context(ctx):
             raise UserError(
-                '`TrajectoryJudge` cannot be used inside a durable workflow or flow: the judge '
-                'evaluation runs in orchestration context, so its model calls are not checkpointed '
-                'and can repeat on replay. Run judged work outside durable execution.'
+                '`TrajectoryJudge` needs an `id` inside a durable workflow or flow, so its evaluations can be '
+                "checkpointed: construct it as `TrajectoryJudge(..., id='...')`."
             )
 
     async def after_model_request(
@@ -276,13 +286,28 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         silently dropped. The evaluation itself runs as a background task: the trajectory is
         rendered synchronously (no race with later mutation), the judge call and any
         steering enqueue happen concurrently with the run, and the steering is delivered
-        when the run next drains its pending messages.
+        when the run next drains its pending messages. Inside a durable workflow or flow it
+        is awaited inline instead, so replay delivers the steering at the same point.
+
+        The trajectory is the request as the request hooks left it, before it was rendered for the model: what a hook
+        removed, such as a redacted tool result, never reaches the judge, and steering is still a typed part, found
+        by its type.
         """
         self._collect_finished()
         self._steps += 1
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
-            prompt = _judge_prompt([*request_context.messages, response], self.window, ctx.run_id)
-            self._task = asyncio.create_task(self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}')
+            hooked = request_context._hooked_messages  # pyright: ignore[reportPrivateUsage]
+            # Set on every request the agent makes; a context built by hand has only the request itself.
+            messages = request_context.messages if hooked is None else hooked
+            prompt = _judge_prompt([*messages, response], self.window, ctx.run_id)
+            if in_durable_context(ctx):
+                # The claim stands in for the parent's request, committed only after this hook returns.
+                await self._evaluate(ctx, prompt, ctx.usage_limits)
+            else:
+                self._task = asyncio.create_task(
+                    self._evaluate(ctx, prompt, claim_offset_limits(ctx.usage_limits)),
+                    name=f'trajectory-judge:{self._judge_name()}',
+                )
         return response
 
     def _claim_request(self, ctx: RunContext[AgentDepsT]) -> bool:
@@ -333,38 +358,51 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         await self._discard_in_flight(ctx)
         return result
 
-    async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str) -> None:
+    async def _evaluate(self, ctx: RunContext[AgentDepsT], prompt: str, usage_limits: UsageLimits | None) -> None:
         """Run the judge once and enqueue attributed steering when it says to steer.
 
         `output_type=[AllGood, Steer]` is set here, at the run boundary, so the verdict
         contract holds at runtime whatever output type the judge agent was configured with.
 
-        The judge runs against the shared `usage` under a request limit raised by exactly
-        one: the launch's claim occupies a slot in `usage.requests` for the whole
-        evaluation, so the unadjusted limit would count this evaluation against itself
-        twice. The claim is released once the run has recorded the judge's real spend (or
+        The judge runs against the shared `usage` under `usage_limits`. In the background the
+        request limit is raised by exactly one: the launch's claim occupies a slot in
+        `usage.requests` for the whole evaluation, so the unadjusted limit would count this
+        evaluation against itself twice. The claim is released once the run has recorded the judge's real spend (or
         recorded nothing, on failure or cancellation); a task cancelled before this
         coroutine starts never reaches the `finally`, so `_discard_in_flight` releases the
         claim instead.
 
-        Provider failures propagate out of this task as-is (`ModelAPIError` subclasses from
-        the model layer) and are re-raised on the run by `_collect_finished`.
+        Provider failures propagate as-is (`ModelAPIError` subclasses from the model layer):
+        re-raised on the run by `_collect_finished`, or directly when awaited inline under
+        durable execution.
         """
         try:
+            verdict, ref = await self._judge_verdict(ctx, prompt, usage_limits)
+        finally:
+            self._release_claim(ctx)
+        if isinstance(verdict, Steer):
+            ctx.enqueue(*_steering_parts(self._judge_name(), verdict.message, ref))
+        if self.on_verdict is not None:
+            self.on_verdict(verdict)
+
+    @durable_operation('evaluate')
+    async def _judge_verdict(
+        self, ctx: RunContext[AgentDepsT], prompt: str, usage_limits: UsageLimits | None
+    ) -> tuple[TrajectoryVerdict, str]:
+        """Run the judge, as a durable operation inside a workflow or flow, returning its verdict and a steering `ref`.
+
+        The random `ref` is made here so a replay reuses the recorded one and delivers the same steering.
+        """
+        # Inside the durable operation, which may run in another context (a Temporal activity, say).
+        with second_model_prompt():
             result = await self._judge.run(
                 prompt,
                 output_type=[AllGood, Steer],
                 conversation_id=ctx.conversation_id,
                 usage=ctx.usage,
-                usage_limits=_claim_offset_limits(ctx.usage_limits),
+                usage_limits=usage_limits,
             )
-        finally:
-            self._release_claim(ctx)
-        verdict = result.output
-        if isinstance(verdict, Steer):
-            ctx.enqueue(*_steering_parts(self._judge_name(), verdict.message))
-        if self.on_verdict is not None:
-            self.on_verdict(verdict)
+        return result.output, secrets.token_hex(8)
 
     def _collect_finished(self) -> None:
         """Reap a finished evaluation, re-raising its failure on the run."""
@@ -407,46 +445,32 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         return None
 
 
-def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
-    """The run's limits with `request_limit` raised by the one request the launch claimed.
+def _steering_parts(judge: str, message: str, ref: str) -> tuple[JudgeSteeringPart, JudgeFeedbackPart]:
+    """The application's note that the judge steered, followed by the judge's message as data.
 
-    The claim already occupies a slot in the shared `usage.requests`, so against the
-    unadjusted limit the judge's own preflight would count its in-flight request twice and
-    refuse a call the budget affords. Raising the limit by exactly the claim keeps the
-    judge's effective budget identical to the run's.
+    The note is fixed wording the operator's configuration of a judge implies, so it speaks in the application's
+    voice. The message comes from the judge model, which read the run's tool results, so it has no authority: it goes
+    on the user channel as written, in a `<judge_feedback>` tag, with a note that the judge wrote it, and text in it
+    that looks like a framework frame or its own tag gets a note saying so. Both keep the default conversation scope: a
+    course correction should keep applying on later requests, not only the one it arrives with.
+
+    The random `ref` ties the note to its frame. Both parts store it, so every later request sends them byte for
+    byte and the prompt cache holds.
     """
-    if limits is None or limits.request_limit is None:
-        return limits
-    return replace(limits, request_limit=limits.request_limit + 1)
+    return (
+        JudgeSteeringPart(content=OperatorText(_steering_note(ref)), source=OperatorSource(), judge=judge, ref=ref),
+        JudgeFeedbackPart(content=message, source=_JUDGE_SOURCE, judge=judge, ref=ref),
+    )
 
 
-def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextContent]:
-    """A framework note in system voice, followed by the judge's steering as data.
+def _steering_judge(part: JudgeFeedbackPart | UserPromptPart) -> str | None:
+    """The judge whose feedback `part` is, or `None` for any other user prompt.
 
-    The note is the framework's own fixed wording, so it is a `SystemPromptPart`. The message comes
-    from the judge model, which read the run's tool results, so it is untrusted and goes on the user
-    channel, quoted in a `<judge_feedback>` tag. It can't write that tag's end, any other framing tag core
-    writes, or the `<system>` tag the framework's own voice is rendered in on models without inline system
-    prompts. Both keep the default conversation scope: a course correction should keep applying on later
-    requests, not only the one it arrives with. Both carry the same metadata, which survives merged requests and
-    continued conversations.
-
-    A random `ref`, made once here, ties the note to its frame. Both parts store it in their text (and in
-    the metadata), so every later request sends them byte for byte and the prompt cache holds.
-    """
-    ref = secrets.token_hex(8)
-    metadata = {'origin': _STEERING_ORIGIN, 'judge': judge, 'ref': ref}
-    body = _STEERING_TAG_OPENER.sub('&lt;', neutralize_tags(message))
-    data = f'<{_STEERING_TAG} judge="{html.escape(judge)}" ref="{ref}">\n{body}\n</{_STEERING_TAG}>'
-    return SystemPromptPart(_steering_note(ref), metadata=metadata), TextContent(data, metadata=dict(metadata))
-
-
-def _steering_judge(part: UserPromptPart) -> str | None:
-    """The judge whose steering this user part carries, or `None` for any other user part.
-
-    Only the exact shape `_steering_parts` enqueues counts: a single `TextContent` with the steering
+    A `JudgeFeedbackPart`, or the user text an earlier version enqueued: a single `TextContent` with the steering
     origin and a string judge name, so a part that also holds other content is never misattributed.
     """
+    if isinstance(part, JudgeFeedbackPart):
+        return part.judge
     match part.content:
         case [TextContent(metadata=metadata)] if (
             is_str_dict(metadata)
@@ -469,7 +493,7 @@ def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | N
     """
     earlier, request, rest = (html.escape(part, quote=False) for part in _render_transcript(messages, run_id))
     transcript = '\n'.join(part for part in (earlier, request, rest) if part)
-    max_chars = window * _CHARS_PER_TOKEN
+    max_chars = window * CHARS_PER_TOKEN
     if len(transcript) <= max_chars:
         return _prompt_with(transcript)
     request_budget = max_chars // 2
@@ -515,16 +539,16 @@ def _run_start(messages: Sequence[ModelMessage], run_id: str | None) -> int:
     return 0
 
 
-def _feedback_line(part: ModelRequestPart | ModelResponsePart) -> str | None:
-    """Render retry feedback that answers no tool call, or `None` for any other part."""
-    if isinstance(part, RetryFeedbackPart):
-        return f'retry (output): {part.model_response()}'
-    # TODO(v3): remove RetryPromptPart
-    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # A hand-built history passed as `message_history` can still hold one; the model
-        # translates it only when the request goes out.
-        return f'retry ({part.tool_name or "output"}): {part.model_response()}'
-    return None
+def _steering_line(part: ModelRequestPart | ModelResponsePart) -> str | None:
+    """The rendered line for a judge's steering, or `None` when *part* isn't one."""
+    if isinstance(part, JudgeFeedbackPart):
+        text = part.content
+    elif isinstance(part, UserPromptPart):
+        text = user_prompt_text(part)
+    else:
+        return None
+    judge = _steering_judge(part)
+    return None if judge is None else f'trajectory judge {judge} steered: {text}'
 
 
 def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str]]:
@@ -536,44 +560,23 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
         if isinstance(message, ModelResponse):
             user_lines = lines
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and (judge := _steering_judge(part)) is not None:
-                lines.append(f'trajectory judge {judge} steered: {_prompt_text(part.content)}')
-            elif isinstance(part, UserPromptPart):
-                text = _prompt_text(part.content)
-                if text:
-                    user_lines.append(f'user: {text}')
-            elif isinstance(part, ToolReturnPart):
-                user_lines = lines
-                lines.append(
-                    f'retry ({part.tool_name}): {part.model_response_str(wrap_if_error=False)}'
-                    if part.outcome == 'retried'
-                    else f'tool {part.tool_name} returned: {part.model_response_str()}'
-                )
-            elif isinstance(part, NativeToolReturnPart):
-                lines.append(f'native tool {part.tool_name} returned: {part.model_response_str()}')
-            elif (retry := _feedback_line(part)) is not None:
-                user_lines = lines
-                lines.append(retry)
-            elif isinstance(part, TextPart):
-                if part.content:
-                    lines.append(f'assistant: {part.content}')
-            elif isinstance(part, ToolCallPart):
-                lines.append(f'assistant called tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, NativeToolCallPart):
-                lines.append(f'assistant called native tool {part.tool_name} with {part.args_as_json_str()}')
-            elif isinstance(part, SpeechPart) and part.transcript:
-                (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
+            user_lines = _render_part_line(part, user_lines, lines)
     return request, lines
 
 
-def _prompt_text(content: str | Sequence[object]) -> str:
-    """The text of a user prompt; non-text content (images, files) is omitted."""
-    if isinstance(content, str):
-        return content
-    texts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)
+def _render_part_line(part: ModelRequestPart | ModelResponsePart, user_lines: list[str], lines: list[str]) -> list[str]:
+    """Render `part` into `user_lines` or `lines`, and return where the user's words go from here on."""
+    if (steered := _steering_line(part)) is not None:
+        lines.append(steered)
+        return user_lines
+    if isinstance(part, UserPromptPart):
+        if text := user_prompt_text(part):
+            user_lines.append(f'user: {text}')
+        return user_lines
+    if (line := render_part(part)) is None:
+        return user_lines
+    # A tool return or retry is the agent's activity, so it ends the opening request.
+    if isinstance(part, ToolReturnPart | RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        user_lines = lines
+    (user_lines if isinstance(part, SpeechPart) and part.speaker == 'user' else lines).append(line)
+    return user_lines

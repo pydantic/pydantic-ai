@@ -1,8 +1,7 @@
 """Size measurement, stringification, truncation, and binary detection.
 
-Harvested from PR #185 (`ToolOutputManagement`) and adapted: character-based truncation
-strategies, ANSI stripping, and binary detection. Token measurement reuses the compaction
-heuristic via `estimate_token_count` so the two capabilities stay aligned.
+Token measurement reuses the compaction heuristic via `estimate_token_count` so the two
+capabilities stay aligned.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness.compaction._shared import estimate_token_count
 
 
@@ -33,14 +33,25 @@ class TruncationStrategy(str, Enum):  # noqa: UP042
     """Keep the first and last characters, eliding the middle."""
 
 
-# CSI sequences, OSC sequences, and simple escapes. Terminal tool output is full of color
-# codes that waste tokens and can confuse models.
-_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]()]')
+# CSI sequences, OSC sequences (BEL-terminated, on one line), and simple escapes. Terminal tool
+# output is full of color codes that waste tokens and can confuse models.
+_CSI_OR_SIMPLE = r'\x1b\[[0-9;]*[a-zA-Z]|\x1b[^[\]()]'
+_NON_OSC_RE = re.compile(_CSI_OR_SIMPLE)
+# An OSC match runs to its BEL, or else to the end of its line, so an unterminated one is scanned
+# once rather than once per `ESC ]` in it: no OSC inside that span can be terminated either.
+_ANSI_ESCAPE_RE = re.compile(rf'\x1b\][^\x07\n]*(?:\x07|\n?)|{_CSI_OR_SIMPLE}')
+
+
+def _strip_escape(match: re.Match[str]) -> str:
+    escape = match.group()
+    if escape.startswith('\x1b]') and not escape.endswith('\x07'):
+        return '\x1b]' + _NON_OSC_RE.sub('', escape[2:])
+    return ''
 
 
 def strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from `text`."""
-    return _ANSI_ESCAPE_RE.sub('', text)
+    """Remove ANSI escape sequences from `text`, in linear time."""
+    return _ANSI_ESCAPE_RE.sub(_strip_escape, text)
 
 
 def is_binary(value: object) -> bool:
@@ -133,18 +144,14 @@ def measure(text: str, *, over_tokens: bool, tokenizer: Callable[[str], int] | N
 def json_sketch(value: object) -> str:
     """Build a one-line shape hint for a structured value, or '' for anything else.
 
-    The `_is_*` guards are `TypeGuard`s, so a `Mapping`/`Sequence` value narrows to a known
+    The guards are `TypeGuard`s, so a `Mapping`/`Sequence` value narrows to a known
     element type (`object`) the strict type checker accepts -- no `Any` and no `Unknown`.
     """
-    if _is_mapping(value):
+    if is_mapping(value):
         return _sketch_mapping(value)
     if _is_text_sequence(value):
         return _sketch_sequence(value)
     return ''
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    return isinstance(value, Mapping)
 
 
 def _is_text_sequence(value: object) -> TypeGuard[Sequence[object]]:
@@ -161,6 +168,10 @@ def _sketch_mapping(mapping: Mapping[object, object]) -> str:
 def _sketch_sequence(items: Sequence[object]) -> str:
     elem = type(items[0]).__name__ if items else 'empty'
     return f'[{len(items)} items of {elem}]'
+
+
+RERUN_NOTE = '; rerun the original tool for the full output'
+"""How a marker on a lossy reduction, which keeps no handle, tells the model to recover the rest."""
 
 
 def _tail_line_start(text: str, count: int) -> int:
@@ -186,11 +197,11 @@ def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy, *, ke
         return text
     tail_chars = total - _tail_line_start(text, keep_tail_lines) if keep_tail_lines else 0
     if tail_chars > max_chars:
-        return truncate_tail(text, max_chars)
+        return truncate_tail(text, max_chars, note=RERUN_NOTE)
     if tail_chars == max_chars:
         return text[-max_chars:]
     if strategy is TruncationStrategy.tail:
-        truncated = truncate_tail(text, max_chars)
+        truncated = truncate_tail(text, max_chars, note=RERUN_NOTE)
         if tail_chars and not truncated.endswith(text[total - tail_chars :]):
             return text[-max_chars:]
         return truncated
@@ -206,11 +217,11 @@ def _truncate_head_and_tail(text: str, max_chars: int, strategy: TruncationStrat
     for retained in range(max_chars, max(1, tail_chars) - 1, -1):
         head_chars = (retained - tail_chars) * head_share // 5
         if strategy is TruncationStrategy.head and not tail_chars:
-            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars]'
+            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars{RERUN_NOTE}]'
         else:
             marker = (
                 f'\n\n[truncated: {total - retained:,} chars omitted from the middle; '
-                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars]\n\n'
+                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars{RERUN_NOTE}]\n\n'
             )
         if retained + len(marker) <= max_chars:
             break

@@ -105,7 +105,7 @@ async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsPr
     assert isinstance(part, SpeechPart)
     assert part.transcript == snapshot('Hello there')
     # `response.done` carries no usage.
-    assert session.usage == snapshot(RunUsage(requests=1))
+    assert session.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
 
 async def test_audio_in_semantic_vad_turn(

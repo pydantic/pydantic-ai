@@ -15,7 +15,28 @@ a task the capability is transparent.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![An agent named analyst runs inside an Absurd task handler. On the first attempt its model request and its tool call each finish and are saved to Postgres as Absurd steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. Absurd retries the task: the handler runs from the top, the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](../img/harness/absurd.svg)
+```mermaid
+flowchart TB
+    accTitle: Absurd Durability: resume a crashed run from its last saved step
+    accDescr: On a worker's first attempt, a model request and a tool call each finish, and each is saved to Postgres as an Absurd step. The worker crashes before the next model request's step is saved, so Absurd retries the task. On the retried task, AbsurdDurability returns stored results from the saved steps with no model or tool call, then the next model request runs live.
+    subgraph first["Worker, attempt 1"]
+        done["model request, tool call<br/>each one finishes"]
+        crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked
+    end
+    steps[("Postgres<br/>Absurd steps")]:::external
+    subgraph retry["Task retried"]
+        replay["AbsurdDurability()<br/>returns stored results,<br/>no model or tool call"]:::capability
+        live["next model request<br/>runs live"]
+    end
+    done -.-x crash
+    done -->|"each saved as a step"| steps
+    crash -.->|"Absurd retries<br/>the task"| replay
+    steps -->|"saved steps"| replay
+    replay --> live
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Installation
 
@@ -73,7 +94,9 @@ call. Step names are built from the agent's `name` and each toolset's `id`:
 |---|---|
 | `{name}__model.request` | one model request segment |
 | `{name}__model.request_stream` | one streamed model request segment |
+| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after`, `{name}__model.compact_messages.retry_after`, `{name}__model.cancel_suspended_response.retry_after` | the wait a model error's `retry_after` asked for, before that model operation runs again |
 | `{name}__model.compact_messages` | one model message-compaction operation |
+| `{name}__model.count_tokens` | one token count ahead of a model request, with `count_tokens_before_request` |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
 | `{name}__capability__{capability_id}.{operation}` | an operation contributed by another capability |
 | `{name}__function_toolset__{id}.validate_args` | running a function tool's `args_validator` |
@@ -87,6 +110,9 @@ A model other than the agent's default adds its id to the step name
 (`{name}__model.request.{model_id}`). A step name that recurs, such as a second `agent.run()` in
 the same task or the same tool called twice, gets an encounter-order suffix (`#2`, `#3`, ...). Await
 one run before starting the next in the same task.
+
+An async function tool with [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no step:
+it runs in the task handler on every attempt, so keep it deterministic and free of I/O.
 
 These are not checkpointed and run again on replay:
 
@@ -102,13 +128,24 @@ These are not checkpointed and run again on replay:
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
-  `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
+  `UserError`; register them on the agent instead. `ExternalToolset` is allowed, and so is a
+  `FunctionToolset` whose tools are all async and set `durable=False`.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
   final response is replayed to the caller, one event per part.
 - Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
   steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
   the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
   already did.
+- A model request that fails with a model error that has a `retry_after` (read from a provider's
+  `Retry-After` header, for example) is checkpointed as a failed attempt. The task then sleeps that
+  long with Absurd's durable `sleep_for` (the `{name}__model.request.retry_after` step), which
+  suspends it until then without using one of its attempts, and the request runs again as the next
+  occurrence of its step. The wait is capped at the delay the task's `RetryStrategy` would wait
+  before its next attempt, or at a minute, whichever is longer. Each model request waits at most as
+  many times as the task has attempts left after the current one; after that, the model error fails
+  the run and Absurd's own retry applies.
+  The suspension leaves `agent.run` as Absurd's `SuspendTask`, so an `on_model_request_error` hook
+  that handles every exception has to re-raise it.
 
 ## Parallel execution
 
