@@ -288,8 +288,7 @@ secrets as workflow-side arguments; use a [payload codec](#large-payloads) to pr
 ### Harness Workspace Capabilities {#harness-workspace-capabilities}
 
 [Harness](../harness/index.md) workspace capabilities such as `Coder`, `Shell` and `FileSystem` work in a
-Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capabilities) shows what works
-on each engine. Three things are specific to Temporal.
+Temporal workflow, as they do on DBOS and Prefect. Three things are specific to Temporal.
 
 **Live events.** Tools that write files ask for approval and report the write from the workflow, so
 `FileChangeRequestedEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your

@@ -5871,6 +5871,7 @@
     "InstrumentationSettings.include_content": {
       "engines": [
         "durable_exec",
+        "render",
         "temporal"
       ],
       "kinds": [
@@ -5878,7 +5879,8 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_run_telemetry"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_run_telemetry",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::RenderOperationBackend._include_content"
       ]
     },
     "InstrumentationSettings.tracer": {
