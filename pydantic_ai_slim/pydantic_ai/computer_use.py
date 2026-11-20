@@ -4,8 +4,7 @@ A capability that gives an agent a screen adds a tool of kind
 [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND] and performs its actions on that screen. For a provider
 with a computer tool of its own, the model adapter sends that tool instead and converts its calls and results.
 
-Positions (`x` and `y`) are pixels of the latest screenshot, from its top left corner, unless the call's
-[`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] is set. A click or scroll without a
+Positions (`x` and `y`) are pixels of the latest screenshot, from its top left corner. A click or scroll without a
 position happens at the pointer.
 
 The `type` field picks the action: the class name in snake case, such as `click` or `press_keys`. A key is a single
@@ -41,7 +40,7 @@ from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
-from ._computer_use import COMPUTER_KIND_ID, COORDINATE_GRID
+from ._computer_use import COMPUTER_KIND_ID
 from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 
 __all__ = (
@@ -500,16 +499,6 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         """The actions the model asked for, or `None` if the arguments are incomplete (still streaming) or malformed."""
         typed = self.typed_args
         return typed['actions'] if typed is not None else None
-
-    @property
-    def coordinate_grid(self) -> int | None:
-        """The size of the grid the call's positions are on, such as `1000` for positions from 0 to 999.
-
-        `None` means pixels. The model that made the call records it in `provider_details`, from its profile's
-        `computer_use_coordinate_grid`. A history that lost `provider_details`, such as one a UI rebuilt, gives `None`.
-        """
-        grid = (self.provider_details or {}).get(COORDINATE_GRID)
-        return grid if type(grid) is int and grid >= 2 else None
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):

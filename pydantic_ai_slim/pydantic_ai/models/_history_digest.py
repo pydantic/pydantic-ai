@@ -16,7 +16,6 @@ from typing import Protocol, TypeVar
 
 from pydantic import TypeAdapter
 
-from .._computer_use import COMPUTER_KIND_ID, COORDINATE_GRID
 from ..messages import (
     BaseToolReturnPart,
     ModelMessage,
@@ -82,22 +81,19 @@ def continuation_digest(history: Hasher, parts: Sequence[ModelResponsePart]) -> 
 
 
 def call_as_sent(part: ToolCallPart) -> ToolCallPart:
-    """`part` as the server holds it: a base call, without what's added to it after it arrives.
+    """`part` as the server holds it: a base call, without the `tool_kind` the agent graph stamps on after `request()`.
 
-    The call is promoted to its typed subclass, and a `computer` call gets its model's grid in `provider_details`,
-    before or after the digest is taken. Neither is sent, so leaving them in would make a later response never match.
+    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass. Neither
+    the kind nor the subclass is sent, so leaving them in would make a response compared later never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
-    details = part.provider_details
-    if part.tool_kind == COMPUTER_KIND_ID and details:
-        details = {key: value for key, value in details.items() if key != COORDINATE_GRID} or None
     return ToolCallPart(
         tool_name=part.tool_name,
         args=args,
         tool_call_id=part.tool_call_id,
         id=part.id,
         provider_name=part.provider_name,
-        provider_details=details,
+        provider_details=part.provider_details,
     )
 
 

@@ -90,19 +90,6 @@
       ]
     }
   },
-  "pydantic_ai_slim/pydantic_ai/_computer_use.py": {
-    "UnservableRequestError": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "import"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
-      ]
-    }
-  },
   "pydantic_ai_slim/pydantic_ai/_deferred.py": {
     "DeferredToolResults": {
       "engines": [

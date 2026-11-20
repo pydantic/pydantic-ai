@@ -66,13 +66,6 @@ from .._capability_parts import (
     render_capability_part,
     render_capability_parts,
 )
-from .._computer_use import (
-    computer_call_labels,
-    computer_tool_names,
-    label_calls as label_computer_calls,
-    refuse_unservable_computer_request,
-    with_computer_grid_hint,
-)
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -1247,90 +1240,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
             cls.batch_decode = restoring_batch_decode
 
-    def _refuse_unservable_computer_request(
-        self, messages: Sequence[ModelMessage] | None, model_request_parameters: ModelRequestParameters | None
-    ) -> None:
-        """Refuse a request with a `computer` tool that this model can't serve, before anything is sent."""
-        if messages is None or model_request_parameters is None or not self._answers_requests_itself:
-            return
-        try:
-            profile = self.profile
-        except NotImplementedError:
-            # A third-party router with no profile: the models it routes to check for themselves.
-            return
-        refuse_unservable_computer_request(messages, model_request_parameters, profile, self.model_name)
-
-    @property
-    def _computer_call_labels(self) -> dict[str, int]:
-        """The grid this model labels its `computer` calls with, from its profile."""
-        if not self._answers_requests_itself:
-            return {}
-        try:
-            return computer_call_labels(self.profile)
-        except NotImplementedError:
-            # A third-party router with no profile: the models it routes to label their own calls.
-            return {}
-
-    @classmethod
-    def _apply_computer_use_profile_at_the_model_boundary(cls) -> None:
-        """Wrap the request methods of `cls` to refuse unservable `computer` requests and label `computer` calls.
-
-        Done for every model class, so each call records the grid of the model that made it, which the `computer` tool
-        scales positions by. Under a fallback that's the model that answered.
-        """
-        request = cls.__dict__.get('request')
-        if inspect.iscoroutinefunction(request):
-
-            @wraps(request)
-            async def computer_use_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
-                messages, params = _messages_and_parameters(args, kwargs)
-                self._refuse_unservable_computer_request(messages, params)
-                response = await request(self, *args, **kwargs)
-                if params is not None and (labels := self._computer_call_labels):
-                    label_computer_calls(response.parts, computer_tool_names(params), labels)
-                return response
-
-            cls.request = computer_use_request
-
-        request_stream = cls.__dict__.get('request_stream')
-        if inspect.isfunction(request_stream):
-
-            @wraps(request_stream)
-            @asynccontextmanager
-            async def computer_use_request_stream(
-                self: Model, *args: Any, **kwargs: Any
-            ) -> AsyncGenerator[StreamedResponse, None]:
-                self._refuse_unservable_computer_request(*_messages_and_parameters(args, kwargs))
-                async with request_stream(self, *args, **kwargs) as stream:
-                    # A model that hands over another model's stream, like `FallbackModel`, keeps that model's labels.
-                    if labels := self._computer_call_labels:
-                        stream._parts_manager.computer_call_labels = labels
-                    yield stream
-
-            cls.request_stream = computer_use_request_stream
-
-        batch_encode = cls.__dict__.get('batch_encode')
-        if inspect.iscoroutinefunction(batch_encode):
-
-            @wraps(batch_encode)
-            async def computer_use_batch_encode(self: Model, request: BatchRequest) -> EncodedBatchRequest:
-                self._refuse_unservable_computer_request(request.messages, request.model_request_parameters)
-                return await batch_encode(self, request)
-
-            cls.batch_encode = computer_use_batch_encode
-
-        batch_decode = cls.__dict__.get('batch_decode')
-        if inspect.isfunction(batch_decode):
-
-            @wraps(batch_decode)
-            def labelling_batch_decode(self: Model, result: BatchResult, request: BatchRequest) -> ModelResponse:
-                response = batch_decode(self, result, request)
-                if labels := self._computer_call_labels:
-                    label_computer_calls(response.parts, computer_tool_names(request.model_request_parameters), labels)
-                return response
-
-            cls.batch_decode = labelling_batch_decode
-
     @classmethod
     def _budget_downloads_at_the_model_boundary(cls) -> None:
         """Give each call of a method of `cls` that builds one request its own total for the file URLs it downloads.
@@ -1382,7 +1291,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
         cls._restore_special_tokens_at_the_model_boundary()
-        cls._apply_computer_use_profile_at_the_model_boundary()
         cls._budget_downloads_at_the_model_boundary()
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
@@ -1978,7 +1886,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         params = prepare_return_schemas(
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
-        params = with_computer_grid_hint(params, self.profile)
 
         # Resolve unified thinking setting and strip from model_settings.
         if model_settings and 'thinking' in model_settings:
@@ -3031,15 +2938,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         )
         parts = [announcement, *first_request.parts]
         return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
-
-
-def _messages_and_parameters(
-    args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> tuple[list[ModelMessage] | None, ModelRequestParameters | None]:
-    """The messages and parameters of a `request` or `request_stream` call, by position or name, or `None`."""
-    messages = args[0] if args else kwargs.get('messages')
-    params = args[2] if len(args) > 2 else kwargs.get('model_request_parameters')
-    return messages, params
 
 
 def _with_framing_announcement(

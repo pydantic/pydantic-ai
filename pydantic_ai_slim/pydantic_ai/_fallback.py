@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_neve
 from opentelemetry.trace import Span, Tracer
 
 from . import exceptions as _exceptions
-from ._computer_use import UnservableRequestError
 from ._model_request_attempts import AttemptStart, carried_attempts, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import (
@@ -391,11 +390,8 @@ class FallbackChain:
     log: AttemptLog = field(default_factory=AttemptLog)
 
     async def falls_back(self, failure: Exception | ModelResponse) -> bool:
-        """Whether the chain moves on from `failure`, an error or a response, noting it for the group if so.
-
-        It always moves on from an `UnservableRequestError`, whatever `fallback_on` says: another model may serve it.
-        """
-        if not isinstance(failure, UnservableRequestError) and not await self.predicates.matches(failure):
+        """Whether `fallback_on` moves on from `failure`, an error or a response, noting it for the group if so."""
+        if not await self.predicates.matches(failure):
             return False
         if isinstance(failure, Exception):
             self.exceptions.append(failure)
@@ -404,17 +400,7 @@ class FallbackChain:
         return True
 
     def exhausted(self) -> NoReturn:
-        """Raise the `FallbackExceptionGroup` for a chain with no model left to attempt.
-
-        When every model refused the request as unservable, the last refusal is raised instead, as a `UserError`
-        the user can act on.
-        """
-        if (
-            self.exceptions
-            and not self.rejected_responses
-            and all(isinstance(error, UnservableRequestError) for error in self.exceptions)
-        ):
-            raise self.exceptions[-1]
+        """Raise the `FallbackExceptionGroup` for a chain with no model left to attempt."""
         raise_fallback_exception_group(self.exceptions, self.rejected_responses, self.log.attempts, owner=self.owner)
 
     def warn_if_streamed_responses_unjudged(self) -> None:
