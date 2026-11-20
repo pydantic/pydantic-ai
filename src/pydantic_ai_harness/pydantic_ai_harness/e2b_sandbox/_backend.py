@@ -173,7 +173,7 @@ def _unavailable_message(sandbox_id: str, *, found: bool, resumes: bool = False)
     if not found:
         reason = 'it was killed'
     else:
-        wake = 'the next operation resumes it' if resumes else 'a later run that attaches to it resumes it'
+        wake = 'using it again resumes it' if resumes else 'a later run that attaches to it resumes it'
         reason = f'it was killed, or it was paused when its `sandbox_timeout` ran out ({wake})'
     return (
         f'The E2B sandbox {sandbox_id!r} is no longer running: {reason}. '
