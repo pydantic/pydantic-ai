@@ -35,10 +35,9 @@ from pydantic_ai.messages import (
     ToolPartKind,
 )
 
-from ._computer_use import label_calls as label_computer_calls
+from ._computer_use import COMPUTER_KIND_ID, label_calls as label_computer_calls
 from ._special_tokens import StreamRestorer
 from ._utils import generate_tool_call_id as _generate_tool_call_id
-from .computer_use import COMPUTER_KIND
 
 if TYPE_CHECKING:
     from .models import ModelRequestParameters
@@ -154,7 +153,7 @@ class ModelResponsePartsManager:
 
     def _label_computer_calls(self) -> None:
         if self.computer_call_labels:
-            names = {name for name, kind in self._tool_kind_by_name.items() if kind == COMPUTER_KIND.id}
+            names = {name for name, kind in self._tool_kind_by_name.items() if kind == COMPUTER_KIND_ID}
             label_computer_calls(self._parts, names, self.computer_call_labels)
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:

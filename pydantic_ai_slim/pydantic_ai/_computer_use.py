@@ -138,7 +138,7 @@ def fit_screenshot(size: tuple[int, int], *, max_side: int | None, max_pixels: i
 
 def refuse_unservable_computer_request(
     messages: Sequence[_messages.ModelMessage],
-    params: ModelRequestParameters | None,
+    params: ModelRequestParameters,
     profile: ModelProfile,
     model_name: str,
 ) -> None:
@@ -147,10 +147,10 @@ def refuse_unservable_computer_request(
     Every `computer` call returns a screenshot, so a model that can't see images can't use the tool. A model shown a
     screenshot larger than it can see would see it scaled down and give positions on the smaller image.
 
-    `messages` are the ones passed to the model's request. A model that takes images but not PNGs gets a note in place of each
-    screenshot, so there is no size to check and it isn't refused for one.
+    `messages` are the ones passed to the model's request. A model that takes images but not PNGs gets a note in place
+    of each screenshot, so there is no size to check and it isn't refused for one.
     """
-    if params is None or not computer_tool_names(params):
+    if not computer_tool_names(params):
         return
     if not profile.get('supports_image_input', True):
         raise UnservableRequestError(
