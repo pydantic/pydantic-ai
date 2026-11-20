@@ -16,7 +16,7 @@ from typing import Literal, TypeAlias
 from opentelemetry.trace import INVALID_SPAN, Span
 from opentelemetry.util.types import AttributeValue
 
-from .._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content
+from .._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content_attribute
 from ..messages import WorkspaceRef
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
@@ -70,6 +70,7 @@ in a backend) add none, while a run started inside it, with its own telemetry, t
 
 def operation_span(operation: Operation, workspace: WorkspaceBackend) -> AbstractContextManager[Span]:
     """Open a `workspace {operation}` span, unless the calling run's workspace span is already open."""
+    # By identity: each run publishes a new `RunTelemetry`, so a run started inside this one is never taken for it.
     if (telemetry := current_run_telemetry()) is not None and _opened_by.get() is telemetry:
         return nullcontext(INVALID_SPAN)
     not_errors = (FileNotFoundError,) if operation in _LOOKUPS else ()
@@ -105,9 +106,9 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
 def set_command(span: Span, command: WorkspaceCommand) -> None:
     """Record `command` on a `workspace run` span, only when the run captures content."""
     if isinstance(command, str):
-        set_content(span, 'process.command_line', command)
+        set_content_attribute(current_run_telemetry(), span, 'process.command_line', command)
     else:
-        set_content(span, 'process.command_args', list(command))
+        set_content_attribute(current_run_telemetry(), span, 'process.command_args', list(command))
 
 
 @contextmanager
@@ -119,9 +120,10 @@ def _span(
     not_errors: tuple[type[Exception], ...] = (),
 ) -> Generator[Span]:
     """Open `workspace {name}`, naming the environment it ran in when given `backend`."""
-    token = _opened_by.set(current_run_telemetry())
+    telemetry = current_run_telemetry()
+    token = _opened_by.set(telemetry)
     try:
-        with open_span(f'workspace {name}', attributes=attributes, not_errors=not_errors) as span:
+        with open_span(telemetry, f'workspace {name}', attributes=attributes, not_errors=not_errors) as span:
             # The ref is read only when recording, so an untraced call never touches it.
             traced = backend if span.is_recording() else None
             if traced is not None:

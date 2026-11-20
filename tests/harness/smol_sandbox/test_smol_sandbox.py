@@ -12,16 +12,11 @@ from typing import Any, cast
 import anyio
 import pytest
 import smol
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import (
@@ -33,6 +28,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend, _backend
+from tests.harness.conftest import Instrumented
 
 from .._tool_calls import call_tools
 from .fake_smol import FakeMachine, FakeSmol, FakeVM
@@ -390,16 +386,18 @@ async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) 
     assert backend.ref is not None
 
 
-async def test_a_failed_creation_span_names_the_vm(fake_smol: FakeSmol, working_dir: str) -> None:
+async def test_a_failed_creation_span_names_the_vm(
+    fake_smol: FakeSmol,
+    working_dir: str,
+    instrumented: Instrumented,
+) -> None:
     """The backend drops the VM's ref when creating it fails, but the `workspace create` span keeps it."""
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracing, exporter = instrumented(False)
     agent = Agent(
         TestModel(call_tools=['look']),
         capabilities=[
             SmolSandbox(working_dir=working_dir),
-            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider)),
+            tracing,
         ],
     )
 

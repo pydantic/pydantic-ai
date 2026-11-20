@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from render import Options, Retry, TaskContext, Workflows
 from render.workflows import TaskDefinition
 
-from pydantic_ai._telemetry import run_telemetry_scope
+from pydantic_ai._telemetry import RunTelemetry, run_telemetry_scope
 from pydantic_ai.durable_exec import (
     JournalOperationNamer,
     ParameterTransports,
@@ -226,7 +226,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
                 with (
                     self._runtime.activate(context),
-                    run_telemetry_scope(ctx.tracer, include_content=self._include_content(ctx.trace_include_content)),
+                    run_telemetry_scope(RunTelemetry(ctx.tracer, self._include_content(ctx.trace_include_content))),
                 ):
                     value = await operation.handler(params)
             except RenderProtocolError as exc:

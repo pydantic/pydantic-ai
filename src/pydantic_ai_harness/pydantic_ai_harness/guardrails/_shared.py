@@ -13,12 +13,13 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, assert_never
+from typing import Annotated, Any, Literal, TypeAlias, assert_never
 
 from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
@@ -152,6 +153,13 @@ TextDetector = Callable[[str], GuardrailResult]
 
 GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
+
+
+GuardrailDirection: TypeAlias = Literal['input', 'output', 'stream', 'tool args', 'tool result']
+"""The edge of the run where a guardrail made its decision."""
+
+SpanAction: TypeAlias = Literal['block', 'replace', 'retry', 'approve']
+"""The `GuardrailResult` actions that record a span; `allow` records none."""
 
 
 GuardCallable = Callable[..., object]
@@ -299,9 +307,10 @@ async def evaluate_all(
     handing something unusable to the next one.
 
     Returns the verdict and the position of the guard that produced it, so an
-    error about an inapplicable verdict can say which guard to go and look at.
+    error about an inapplicable verdict, or a span, can say which guard to go and
+    look at. For a `replace` that is the last guard that replaced.
     """
-    replaced = False
+    last_replaced: int | None = None
     for position, guard in enumerate(guards):
         verdict = await evaluate(guard, ctx, value)
         if verdict.action == 'allow':
@@ -310,10 +319,12 @@ async def evaluate_all(
             if check_replacement is not None:
                 check_replacement(verdict.replacement, position)
             value = verdict.replacement
-            replaced = True
+            last_replaced = position
             continue
         return verdict, position
-    return (GuardrailResult.replace(value) if replaced else GuardrailResult.allow()), len(guards) - 1
+    if last_replaced is None:
+        return GuardrailResult.allow(), len(guards) - 1
+    return GuardrailResult.replace(value), last_replaced
 
 
 _JSON_TYPES = (str, int, float, bool, type(None), dict, list)
@@ -408,9 +419,33 @@ def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[Guardra
     return verdict, recorded.position
 
 
-def direction_attributes(direction: str, action: str, tool_name: str | None) -> dict[str, str]:
-    """Attributes every guardrail span carries, regardless of content settings."""
-    attributes = {'guardrail.direction': direction, 'guardrail.action': action}
+def guard_at(guards: Sequence[GuardCallable], position: int) -> GuardCallable | None:
+    """The guard at `position`, or `None` when a replayed verdict names a position the chain no longer has.
+
+    A durable run replays the position recorded with its verdict, and the chain can have been
+    shortened since. The verdict still applies as it did before; only the span loses the guard's name.
+    """
+    return guards[position] if position < len(guards) else None
+
+
+def decision_attributes(
+    direction: GuardrailDirection,
+    action: SpanAction,
+    *,
+    guard: GuardCallable | None,
+    position: int,
+    tool_name: str | None,
+) -> dict[str, str | int]:
+    """Attributes every guardrail span carries, regardless of content settings.
+
+    `guardrail.guard` is the deciding guard's qualified name, defined by code, never by its `repr`,
+    which can show bound arguments such as keys. It is left out when `guard` is `None` (see `guard_at`).
+    `guardrail.position` is its index in the chain.
+    """
+    attributes: dict[str, str | int] = {'guardrail.direction': direction, 'guardrail.action': action}
+    if guard is not None:
+        attributes['guardrail.guard'] = _guard_name(guard)
+    attributes['guardrail.position'] = position
     if tool_name is not None:
         attributes['guardrail.tool'] = tool_name
     return attributes
@@ -419,46 +454,78 @@ def direction_attributes(direction: str, action: str, tool_name: str | None) -> 
 def trace_block(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
+    guard: GuardCallable | None,
+    position: int,
     message: str,
     tool_name: str | None = None,
 ) -> None:
-    """Record a zero-duration span marking a guardrail refusal.
+    """Record a zero-duration span marking a guardrail refusal by `guard`, at `position` in its chain.
 
     The refusal message is attached only when `ctx.trace_include_content` is
     set -- it can quote sensitive content from the guarded value, and ops
     audiences are broader than the user who sees the refusal text.
     """
-    attributes = direction_attributes(direction, 'block', tool_name)
-    if ctx.trace_include_content:
-        attributes['guardrail.message'] = message
-    ctx.tracer.start_span(f'guardrail blocked {direction}', attributes=attributes).end()
+    record_decision(
+        ctx,
+        f'guardrail blocked {direction}',
+        attributes=decision_attributes(direction, 'block', guard=guard, position=position, tool_name=tool_name),
+        content={'guardrail.message': message},
+    )
+
+
+def trace_retry(
+    ctx: RunContext[AgentDepsT],
+    *,
+    direction: GuardrailDirection,
+    guard: GuardCallable | None,
+    position: int,
+    message: str,
+) -> None:
+    """Record a zero-duration span marking a guardrail sending the value back to the model to try again.
+
+    Without it a retry leaves no trace of the guard when content is off: the run's only sign is a
+    second model request. The retry message, which can quote the value, is content.
+    """
+    record_decision(
+        ctx,
+        f'guardrail retried {direction}',
+        attributes=decision_attributes(direction, 'retry', guard=guard, position=position, tool_name=None),
+        content={'guardrail.message': message},
+    )
 
 
 def trace_redaction(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
+    guard: GuardCallable | None,
+    position: int,
     replacement: object,
     tool_name: str | None = None,
 ) -> None:
-    """Record a zero-duration span marking a guardrail redaction.
+    """Record a zero-duration span marking a guardrail redaction by `guard`, at `position` in its chain.
 
     The replacement value is attached only when `ctx.trace_include_content` is
-    set. The original value never is: it is the content the guard removed, and
-    recording it would put a redacted secret into the trace that core's own
-    spans, which see the rewritten value, keep out.
+    set, and only then turned into text, since `str()` of a guard's replacement
+    can raise or be costly. The original value never is: it is the content the
+    guard removed, and recording it would put a redacted secret into the trace
+    that core's own spans, which see the rewritten value, keep out.
     """
-    attributes = direction_attributes(direction, 'replace', tool_name)
-    if ctx.trace_include_content:
-        attributes['guardrail.replacement'] = str(replacement)
-    ctx.tracer.start_span(f'guardrail redacted {direction}', attributes=attributes).end()
+    record_decision(
+        ctx,
+        f'guardrail redacted {direction}',
+        attributes=decision_attributes(direction, 'replace', guard=guard, position=position, tool_name=tool_name),
+        content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None,
+    )
 
 
 def trace_approval(
     ctx: RunContext[AgentDepsT],
     *,
-    direction: str,
+    direction: GuardrailDirection,
+    guard: GuardCallable | None,
+    position: int,
     tool_name: str,
     tool_call_id: str,
     args: object,
@@ -471,8 +538,12 @@ def trace_approval(
     application answers, and the arguments when `trace_include_content` allows
     it -- the one case where an operator most needs to see them.
     """
-    attributes = direction_attributes(direction, 'approve', tool_name)
-    attributes['guardrail.tool_call_id'] = tool_call_id
-    if ctx.trace_include_content:
-        attributes['guardrail.arguments'] = str(args)
-    ctx.tracer.start_span(f'guardrail deferred {direction}', attributes=attributes).end()
+    record_decision(
+        ctx,
+        f'guardrail deferred {direction}',
+        attributes={
+            **decision_attributes(direction, 'approve', guard=guard, position=position, tool_name=tool_name),
+            'guardrail.tool_call_id': tool_call_id,
+        },
+        content={'guardrail.arguments': str(args)} if ctx.trace_include_content else None,
+    )

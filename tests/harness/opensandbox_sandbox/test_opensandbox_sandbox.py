@@ -15,22 +15,18 @@ import pytest
 from inline_snapshot import snapshot
 from opensandbox.config import ConnectionConfig
 from opensandbox.models.sandboxes import NetworkPolicy
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import pydantic_ai_harness.opensandbox_sandbox as opensandbox_package
 from pydantic_ai import Agent, RunContext, models
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
+from tests.harness.conftest import Instrumented
 
 from .._docs_examples import python_blocks
 from .fake_opensandbox import FakeOpenSandbox
@@ -327,17 +323,19 @@ class TestRuns:
         await capability.destroy(ref)
         assert server.sandboxes == {}
 
-    async def test_the_sandboxes_lifecycle_is_traced(self, server: FakeOpenSandbox, working_dir: str) -> None:
+    async def test_the_sandboxes_lifecycle_is_traced(
+        self,
+        server: FakeOpenSandbox,
+        working_dir: str,
+        instrumented: Instrumented,
+    ) -> None:
         """Creating, reattaching to and destroying the sandbox each get a span, under the call or tool that needed it."""
-        exporter = InMemorySpanExporter()
-        tracer_provider = TracerProvider()
-        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-        settings = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+        tracing, exporter = instrumented(False)
         capability = OpenSandbox[None](image='fake-image', connection=server.connection, working_dir=working_dir)
         agent = Agent(
             TestModel(call_tools=['pwd']),
             deps_type=type(None),
-            capabilities=[capability, Instrumentation(settings=settings)],
+            capabilities=[capability, tracing],
         )
 
         @agent.tool
@@ -347,7 +345,7 @@ class TestRuns:
         ref = (await agent.run('go')).workspace.ref
         assert ref is not None
         await agent.run('go', workspace=ref)
-        cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[Instrumentation(settings=settings)])
+        cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[tracing])
 
         @cleanup.tool_plain
         async def destroy() -> None:

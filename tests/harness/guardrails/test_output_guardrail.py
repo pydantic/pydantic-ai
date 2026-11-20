@@ -16,12 +16,14 @@ from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import GuardrailError
+from tests.harness.conftest import Instrumented
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -234,12 +236,16 @@ class TestOutputGuardrailStreaming:
                 await result.get_output()
 
 
+def _refuse_ssn(_: object) -> GuardrailResult:
+    return GuardrailResult.block('contains SSN')
+
+
 class TestOutputGuardrailTracing:
     """Spans emitted on block and redaction."""
 
     async def test_block_span_includes_message_when_enabled(self):
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.block('contains SSN'))
+        og = OutputGuardrail(guard=_refuse_ssn)
 
         with pytest.raises(OutputBlocked):
             await og.after_output_process(
@@ -253,13 +259,15 @@ class TestOutputGuardrailTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'output',
             'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_ssn',
+            'guardrail.position': 0,
             'guardrail.message': 'contains SSN',
         }
 
     async def test_block_span_omits_message_by_default(self):
         """The refusal message may quote sensitive output, so it is gated like redactions are."""
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.block('contains SSN'))
+        og = OutputGuardrail(guard=_refuse_ssn)
 
         with pytest.raises(OutputBlocked):
             await og.after_output_process(
@@ -268,7 +276,106 @@ class TestOutputGuardrailTracing:
 
         span = _only_span(exporter)
         assert span.name == 'guardrail blocked output'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'output', 'guardrail.action': 'block'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'output',
+            'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_ssn',
+            'guardrail.position': 0,
+        }
+
+    async def test_the_span_names_the_deciding_guard_in_a_chain(self):
+        tracer, exporter = _recording_tracer()
+        og = OutputGuardrail(guard=[_allow, _refuse_ssn])
+
+        with pytest.raises(OutputBlocked):
+            await og.after_output_process(
+                _run_ctx(tracer=tracer), output_context=_TEXT_OUTPUT_CONTEXT, output='leaks SSN'
+            )
+
+        attributes = dict(_only_span(exporter).attributes or {})
+        assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_refuse_ssn', 1)
+
+    async def test_a_chain_redaction_names_the_last_guard_that_replaced(self):
+        tracer, exporter = _recording_tracer()
+        og = OutputGuardrail(guard=[_replace_clean, _allow])
+
+        await og.after_output_process(_run_ctx(tracer=tracer), output_context=_TEXT_OUTPUT_CONTEXT, output='dirty')
+
+        attributes = dict(_only_span(exporter).attributes or {})
+        assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_replace_clean', 0)
+
+    async def test_a_retry_records_a_span(self, instrumented: Instrumented):
+        """Without it a retry shows only as a second model request."""
+        tracing, exporter = instrumented(False)
+        agent = Agent(
+            TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once()), tracing]
+        )
+
+        assert (await agent.run('hello')).output == 'answer'
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name.startswith('guardrail')]
+        assert span.name == 'guardrail retried output'
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'output',
+            'guardrail.action': 'retry',
+            'guardrail.guard': '_retry_once.<locals>.guard',
+            'guardrail.position': 0,
+        }
+
+    async def test_a_retry_span_carries_the_message_when_content_is_included(self, instrumented: Instrumented):
+        tracing, exporter = instrumented(True)
+        agent = Agent(
+            TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once()), tracing]
+        )
+
+        await agent.run('hello')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail retried output']
+        assert (span.attributes or {})['guardrail.message'] == 'try again'
+
+    @pytest.mark.parametrize('instrument', [None, InstrumentationSettings(include_content=False)])
+    async def test_a_replacement_is_not_stringified_when_content_is_off(
+        self, instrument: InstrumentationSettings | None
+    ):
+        """`str()` of a replacement runs only to record it, so one whose `__str__` raises doesn't fail the run."""
+        replacement = _Unprintable()
+        agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=lambda _: GuardrailResult.replace(replacement))])
+        agent.instrument = instrument
+
+        assert (await agent.run('hello')).output is replacement
+
+    async def test_a_replacement_is_stringified_when_content_is_on(self, instrumented: Instrumented):
+        tracing, exporter = instrumented(True)
+        agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=_replace_clean), tracing])
+
+        await agent.run('hello')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail redacted output']
+        assert (span.attributes or {})['guardrail.replacement'] == 'clean'
+
+
+class _Unprintable:
+    # Never called: without content, the replacement is not turned into text.
+    def __str__(self) -> str:  # pragma: no cover
+        raise RuntimeError('a replacement that cannot be turned into text')
+
+
+def _allow(_: object) -> bool:
+    return True
+
+
+def _retry_once():
+    calls: list[object] = []
+
+    def guard(output: object) -> GuardrailResult:
+        calls.append(output)
+        return GuardrailResult.retry('try again') if len(calls) == 1 else GuardrailResult.allow()
+
+    return guard
+
+
+def _replace_clean(_: object) -> GuardrailResult:
+    return GuardrailResult.replace('clean')
 
 
 class TestOutputGuardrailOrdering:
@@ -280,7 +387,7 @@ class TestOutputGuardrailOrdering:
 
     async def test_redaction_span_records_only_the_replacement_when_enabled(self):
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.replace('clean'))
+        og = OutputGuardrail(guard=_replace_clean)
 
         out = await og.after_output_process(
             _run_ctx(tracer=tracer, trace_include_content=True),
@@ -294,15 +401,22 @@ class TestOutputGuardrailOrdering:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'output',
             'guardrail.action': 'replace',
+            'guardrail.guard': '_replace_clean',
+            'guardrail.position': 0,
             'guardrail.replacement': 'clean',
         }
 
     async def test_redaction_span_omits_content_by_default(self):
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.replace('clean'))
+        og = OutputGuardrail(guard=_replace_clean)
 
         await og.after_output_process(_run_ctx(tracer=tracer), output_context=_TEXT_OUTPUT_CONTEXT, output='dirty')
 
         span = _only_span(exporter)
         assert span.name == 'guardrail redacted output'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'output', 'guardrail.action': 'replace'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'output',
+            'guardrail.action': 'replace',
+            'guardrail.guard': '_replace_clean',
+            'guardrail.position': 0,
+        }

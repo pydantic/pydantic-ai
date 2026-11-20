@@ -18,16 +18,12 @@ from pathlib import Path
 
 import anyio
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import pydantic_ai_harness
 import pydantic_ai_harness.bubblewrap_sandbox as bubblewrap_sandbox
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -48,6 +44,7 @@ from pydantic_ai_harness.bubblewrap_sandbox import (
 )
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
+from tests.harness.conftest import Instrumented
 
 from .. import _fake_remote_tools
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools, require_bwrap
@@ -706,15 +703,13 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
 
 
 async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
-    tools: FakeRemoteTools, tmp_path: Path
+    tools: FakeRemoteTools, tmp_path: Path, instrumented: Instrumented
 ) -> None:
     """The wrapped workspace only sees the `bwrap` launcher, whose arguments carry the call's `env` values."""
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracing, exporter = instrumented(True)
     agent = Agent(
         TestModel(call_tools=['greet']),
-        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=provider))],
+        capabilities=[tracing],
     )
 
     @agent.tool

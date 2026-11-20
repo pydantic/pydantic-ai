@@ -9,22 +9,19 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
+from tests.harness.conftest import Instrumented
+
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from render.client.errors import ClientError, RateLimitError, ServerError
     from render.sandbox import SandboxNotFoundError
 
     from pydantic_ai import Agent
     from pydantic_ai.agent.spec import AgentSpec
-    from pydantic_ai.capabilities import Instrumentation
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
@@ -135,14 +132,13 @@ async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
 
 
 @posix_only
-async def test_the_sandboxes_lifecycle_is_traced(workspace_harness: WorkspaceHarness) -> None:
+async def test_the_sandboxes_lifecycle_is_traced(
+    workspace_harness: WorkspaceHarness, instrumented: Instrumented
+) -> None:
     """Creating, reattaching to and destroying the sandbox each get a span, under the call or tool that needed it."""
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)
+    tracing, exporter = instrumented(False)
     capability = RenderSandbox(client=workspace_harness.client, working_dir=str(workspace_harness.root))
-    agent = Agent(TestModel(call_tools=['pwd']), capabilities=[capability, Instrumentation(settings=settings)])
+    agent = Agent(TestModel(call_tools=['pwd']), capabilities=[capability, tracing])
 
     @agent.tool
     async def pwd(ctx: RunContext[object]) -> str:
@@ -151,7 +147,7 @@ async def test_the_sandboxes_lifecycle_is_traced(workspace_harness: WorkspaceHar
     ref = (await agent.run('go')).workspace.ref
     assert ref is not None
     await agent.run('go', workspace=ref)
-    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[Instrumentation(settings=settings)])
+    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[tracing])
 
     @cleanup.tool_plain
     async def destroy() -> None:

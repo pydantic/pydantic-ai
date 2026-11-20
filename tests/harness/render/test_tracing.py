@@ -18,6 +18,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.render import RenderWorkflows
+from tests.harness.conftest import Instrumented
 
 from .conftest import P, R, RecordingTaskContext, json_round_trip
 
@@ -128,14 +129,12 @@ class WorkerTaskContext(RecordingTaskContext):
         return json_round_trip(await asyncio.create_task(run_task(), context=contextvars.Context()))
 
 
-async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path) -> None:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path, instrumented: Instrumented) -> None:
+    tracing, exporter = instrumented(False)
     model = TestModel(call_tools=['look'])
     runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
     agent = Agent(model, name='workspace-agent', deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), runtime])
-    agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+    agent.instrument = tracing.settings
 
     @agent.tool
     async def look(ctx: RunContext[None]) -> bool:

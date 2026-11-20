@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import importlib.util
 import json
 import re
@@ -29,7 +28,6 @@ from unittest.mock import patch
 
 import anyio
 import pytest
-from opentelemetry import trace as otel_trace
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
@@ -73,7 +71,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._telemetry import RunTelemetry, current_run_telemetry
+from pydantic_ai._telemetry import open_span, set_content_attribute
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
@@ -195,7 +193,7 @@ try:
         TemporalFunctionToolset,
         temporalize_function_toolset,
     )
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
 
 except ImportError:  # pragma: lax no cover
@@ -8719,6 +8717,7 @@ _content_free_worker_agent = Agent(
 
 _WORKSPACE_PATH_MARKER = 'workspace-path-marker-41c7'
 _WORKSPACE_COMMAND_MARKER = 'workspace-command-marker-41c7'
+_CTX_CONTENT_MARKER = 'ctx-content-marker-41c7'
 _activity_content_flags: list[bool] = []
 """`ctx.trace_include_content` as each `probe_workspace_content` call saw it inside its activity."""
 
@@ -8726,6 +8725,8 @@ _activity_content_flags: list[bool] = []
 @_content_free_worker_agent.tool
 async def probe_workspace_content(ctx: RunContext[WorkspaceProbeDeps]) -> str:
     _activity_content_flags.append(ctx.trace_include_content)
+    with open_span(ctx, 'capability probe', content={'probe.content': _CTX_CONTENT_MARKER}) as span:
+        set_content_attribute(ctx, span, 'probe.later_content', _CTX_CONTENT_MARKER)
     path = f'{_WORKSPACE_PATH_MARKER}.txt'
     await ctx.workspace.write_text(path, 'hello')
     await ctx.workspace.read_text(path)
@@ -8775,37 +8776,10 @@ async def test_temporal_workspace_activity_keeps_the_workers_content_setting(
     assert {span['name'] for span in spans} >= {'workspace write_bytes', 'workspace read_bytes', 'workspace run'}
     assert _WORKSPACE_PATH_MARKER not in exported
     assert _WORKSPACE_COMMAND_MARKER not in exported
+    # Spans a capability opens from `ctx` follow the worker's policy too, though `ctx` reads the run's flag.
+    assert 'capability probe' in {span['name'] for span in spans}
+    assert _CTX_CONTENT_MARKER not in exported
     assert _activity_content_flags == [True]
-
-
-class ContentFlaglessRunContext(TemporalRunContext[None]):
-    """Carries everything but `trace_include_content`, as a subclass that serializes only what it needs may."""
-
-    @classmethod
-    def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
-        serialized = super().serialize_run_context(ctx)
-        del serialized['trace_include_content']
-        return serialized
-
-
-def test_temporal_restore_of_a_context_without_the_content_flag_publishes_no_content(capfire: CaptureLogfire):
-    """Restoring a context that didn't carry `trace_include_content` on an instrumented worker doesn't fail.
-
-    Its workspace calls are traced without content. Model activities read the flag through `ctx` on their own,
-    so this restores the context directly rather than through a run.
-    """
-    agent = Agent(TestModel(), capabilities=[Instrumentation()])
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), trace_include_content=True)
-    serialized = ContentFlaglessRunContext.serialize_run_context(ctx)
-
-    def restore() -> RunTelemetry | None:
-        with otel_trace.get_tracer('test').start_as_current_span('activity'):
-            deserialize_run_context(ContentFlaglessRunContext, serialized, deps=None, agent=agent)
-            return current_run_telemetry()
-
-    telemetry = contextvars.copy_context().run(restore)
-    assert telemetry is not None
-    assert telemetry.include_content is False
 
 
 _untraced_workspace_probe_agent = Agent(

@@ -3,22 +3,30 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 import pytest
 
 import pydantic_ai.models
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
+from tests.conftest import try_import
+
+with try_import():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -48,6 +56,7 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
+    'instrumented',
 )
 
 # Temporal markers live in `tests/harness/_temporal.py`: modules defining workflows must not import
@@ -123,6 +132,23 @@ def allow_model_requests() -> Iterator[None]:
     """Temporarily allow real model requests within a test."""
     with pydantic_ai.models.override_allow_model_requests(True):
         yield
+
+
+Instrumented: TypeAlias = 'Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]'
+"""The `instrumented` fixture: builds an `Instrumentation` and the exporter its spans go to, by `include_content`."""
+
+
+@pytest.fixture
+def instrumented() -> Instrumented:
+    def factory(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
+        exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return Instrumentation(
+            settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=include_content)
+        ), exporter
+
+    return factory
 
 
 @pytest.fixture
