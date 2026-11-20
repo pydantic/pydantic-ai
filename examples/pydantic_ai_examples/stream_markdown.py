@@ -27,7 +27,7 @@ agent = Agent(capabilities=[Caching()])
 
 # models to try, and the appropriate env var
 models: list[tuple[KnownModelName, str]] = [
-    ('google:gemini-3.8-flash', 'GEMINI_API_KEY'),
+    ('google:gemini-4-hydrogen', 'GEMINI_API_KEY'),
     ('openai:gpt-6-luna', 'OPENAI_API_KEY'),
     ('groq:openai/gpt-oss-120b', 'GROQ_API_KEY'),
 ]

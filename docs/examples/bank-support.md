@@ -18,7 +18,7 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 python/uv-run -m pydantic_ai_examples.bank_support
 ```
 
-(or `PYDANTIC_AI_MODEL=gemini-3-flash-preview ...`)
+(or `PYDANTIC_AI_MODEL=gemini-4-hydrogen ...`)
 
 ## Example Code
 
