@@ -864,8 +864,10 @@ The native tool is sent only when the request has exactly one `computer` tool th
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | On GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the pointer position. |
+| OpenAI Responses | ✅ | On GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the pointer position. With an Azure client, the model gets the function tool; to send the native tool, add `ComputerTool` in the model's `profile=` argument, as [Models](harness/computer-use.md#models) shows. |
 | Anthropic | ✅ | On Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock. See [Anthropic computer use](models/anthropic.md#computer-use). |
+| OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
+| OpenRouter | ❌ | The model gets the function tool. |
 | Google | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
