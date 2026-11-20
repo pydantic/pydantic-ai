@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import UTC
 
+import anyio
 import pydantic_core
 import pytest
 from pydantic import BaseModel
@@ -38,6 +39,8 @@ from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
+
+READINESS_WAIT_TIMEOUT = 5
 
 
 def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
@@ -735,3 +738,81 @@ async def test_return_empty():
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass
+
+
+class InitialPullStream:
+    def __init__(self, error: Exception | None = None, close_error: Exception | None = None):
+        self.error = error
+        self.close_error = close_error
+        self.started = anyio.Event()
+        self.close_calls = 0
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self
+
+    async def __anext__(self) -> str:
+        self.started.set()
+        if self.error is not None:
+            raise self.error
+        while True:
+            await anyio.sleep_forever()
+
+    async def aclose(self) -> None:
+        await anyio.lowlevel.checkpoint()
+        self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error
+
+
+async def test_stream_cancelled_before_first_chunk_closes_source():
+    source = InitialPullStream()
+    agent = Agent(FunctionModel(stream_function=lambda _messages, _info: source))
+
+    async def cancel_after_pull_starts(scope: anyio.CancelScope) -> None:
+        await source.started.wait()
+        scope.cancel()
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tasks:
+            with anyio.CancelScope() as scope:
+                tasks.start_soon(cancel_after_pull_starts, scope)
+                async with agent.run_stream('hello'):
+                    pass
+            assert scope.cancelled_caught
+
+    assert source.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    'error, expected_error, message',
+    [
+        (StopAsyncIteration(), ValueError, 'Stream function must return at least one item'),
+        (RuntimeError('initial pull failed'), RuntimeError, 'initial pull failed'),
+    ],
+    ids=['empty', 'error'],
+)
+async def test_stream_initial_pull_failure_closes_source(
+    error: Exception, expected_error: type[Exception], message: str
+):
+    source = InitialPullStream(error)
+    agent = Agent(FunctionModel(stream_function=lambda _messages, _info: source))
+
+    with pytest.raises(expected_error, match=message):
+        async with agent.run_stream('hello'):
+            pass
+
+    assert source.close_calls == 1
+
+
+async def test_stream_initial_pull_and_close_failures():
+    error = RuntimeError('initial pull failed')
+    close_error = RuntimeError('close failed')
+    source = InitialPullStream(error, close_error)
+    agent = Agent(FunctionModel(stream_function=lambda _messages, _info: source))
+
+    with pytest.raises(RuntimeError, match='close failed') as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert exc_info.value is close_error
+    assert source.close_calls == 1
