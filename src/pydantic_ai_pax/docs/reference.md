@@ -2745,12 +2745,14 @@ worker.
 Naming is on by default. Turn it off to make no naming requests, and sessions
 keep their fallback titles. It uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider and incurs additional usage. Without
-`sessions.naming_model`, it names only sessions held with the current model, and
-lists only their titles: a session held with another model, such as a local
-one, keeps its fallback title, and neither its text nor its title reaches the
-current provider. With it, any untitled or stale session, from any workspace,
-and its siblings' titles may be sent to the model it names. It has no tools and does not
+that model's provider and incurs additional usage. While naming is on only by
+default, it names only sessions held with the current model, and lists only
+their titles: a session held with another model, such as a local one or another
+model of the same provider, keeps its fallback title, and neither its text nor
+its title is sent. Switching models therefore leaves older sessions unnamed.
+Saving `sessions.naming true`, or choosing `sessions.naming_model`, names every
+untitled or stale session, from any workspace, sending it and its siblings'
+titles to the naming model. It has no tools and does not
 inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
 results leave the existing name usable and do not interrupt foreground work.
 `/usage` and the browser preview show persisted naming token counts separately;

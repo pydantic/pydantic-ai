@@ -136,6 +136,14 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
     await chosen.listing()
     assert not chosen.namer.submit(local.id, client=chosen.naming)
 
+    # Turned on while naming was opt-in: that saved choice already covered every session, and still does.
+    settings = SettingsStore(tmp_path / 'opted-in.db')
+    settings.set('sessions.naming', True)
+    opted_in = CommandContext(settings=settings.load(), store=settings, apply_setting=lambda key, s: None)
+    kept = Sessions(session=session, store=store, context=opted_in, namer=SessionNamer(store=store))
+    await kept.listing()
+    assert not kept.namer.submit(local.id, client=kept.naming)
+
 
 async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')

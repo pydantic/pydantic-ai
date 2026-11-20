@@ -170,10 +170,13 @@ class Sessions(Generic[DepsT, OutputT]):
     def naming_may_see(self, summary: ConversationSummary) -> bool:
         """Whether a naming request may carry `summary`'s excerpts or title.
 
-        Naming is on by default, so without a chosen `sessions.naming_model` it uses only sessions held with the
-        current model: a provider is never sent another conversation's text it was not already sent.
+        When naming is on only by default, it uses only sessions held with the current model, so a model is never
+        sent another conversation's text it was not already sent. Saving `sessions.naming true` or choosing a
+        `sessions.naming_model` opts into naming every session, as it did while naming was opt-in.
         """
-        return bool(self.context.settings.session_namer_model) or summary.model == self.session.model
+        settings = self.context.settings
+        chosen = 'session_namer' in settings.model_fields_set or settings.session_namer_model is not None
+        return chosen or summary.model == self.session.model
 
     async def usage(self, *, console: Console) -> str:
         """Report auxiliary tokens separately from retained foreground-history cost."""
