@@ -1,16 +1,20 @@
 """Auxiliary naming never changes the conversation head or stalls a foreground turn."""
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from uuid import UUID, uuid5
 
 import anyio
+import httpx2 as httpx
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelRequestRejectedError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ThinkingPart, ToolCallPart, UserPromptPart
+from pydantic_ai.models import Model, override_allow_model_requests
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
@@ -50,6 +54,95 @@ async def test_a_reasoning_model_has_room_to_think_before_naming() -> None:
     assert result.name.title == 'Greet the user'
     # Still bounded, so a model that never stops costs a known amount.
     assert caps == [4096]
+
+
+def _openai_responses(name: str, client: httpx.AsyncClient) -> Model:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    return OpenAIResponsesModel(name, provider=OpenAIProvider(api_key='test', http_client=client))
+
+
+def _openai_chat(name: str, client: httpx.AsyncClient) -> Model:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    return OpenAIChatModel(name, provider=OpenAIProvider(api_key='test', http_client=client))
+
+
+def _anthropic(name: str, client: httpx.AsyncClient) -> Model:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    return AnthropicModel(name, provider=AnthropicProvider(api_key='test', http_client=client))
+
+
+def _google(name: str, client: httpx.AsyncClient) -> Model:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+    return GoogleModel(name, provider=GoogleProvider(api_key='test', http_client=client))
+
+
+def _openrouter(name: str, client: httpx.AsyncClient) -> Model:
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    return OpenRouterModel(name, provider=OpenRouterProvider(api_key='test', http_client=client))
+
+
+def _effort(body: dict[str, JsonValue]) -> JsonValue:
+    """The Responses API's reasoning effort, which OpenRouter also sends."""
+    reasoning = body.get('reasoning')
+    return reasoning.get('effort') if isinstance(reasoning, dict) else None
+
+
+def _chat_effort(body: dict[str, JsonValue]) -> JsonValue:
+    return body.get('reasoning_effort')
+
+
+def _anthropic_effort(body: dict[str, JsonValue]) -> JsonValue:
+    config = body.get('output_config')
+    return config.get('effort') if isinstance(config, dict) else None
+
+
+def _google_thinking(body: dict[str, JsonValue]) -> JsonValue:
+    config = body.get('generationConfig')
+    return config.get('thinkingConfig') if isinstance(config, dict) else None
+
+
+@pytest.mark.parametrize(
+    ('build', 'name', 'read', 'least'),
+    [
+        pytest.param(_openai_responses, 'gpt-5.6', _effort, 'none', id='openai-responses-off'),
+        pytest.param(_openai_responses, 'gpt-5', _effort, 'minimal', id='openai-responses-minimal'),
+        pytest.param(_openai_chat, 'o3-mini', _chat_effort, 'low', id='openai-chat'),
+        pytest.param(_anthropic, 'claude-fable-5-1', _anthropic_effort, 'low', id='anthropic-always-thinks'),
+        pytest.param(_google, 'gemini-2.5-flash', _google_thinking, {'thinking_budget': 0}, id='google-budget'),
+        pytest.param(_google, 'gemini-3-pro-preview', _google_thinking, {'thinking_level': 'LOW'}, id='google-level'),
+        pytest.param(_openrouter, 'openai/gpt-5', _effort, 'low', id='openrouter'),
+    ],
+)
+async def test_naming_asks_for_the_least_reasoning_each_provider_offers(
+    build: Callable[[str, httpx.AsyncClient], Model],
+    name: str,
+    read: Callable[[dict[str, JsonValue]], JsonValue],
+    least: JsonValue,
+) -> None:
+    """A title needs no reasoning, so naming spends neither tokens nor time on it, whatever model names it.
+
+    Not a VCR test: what matters is the outgoing request, which a recorded cassette keeps matching after it changes.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(400, json={'error': {'message': 'recorded', 'type': 'invalid_request_error'}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond), timeout=60) as client:
+        with override_allow_model_requests(True), pytest.raises(ModelRequestRejectedError):
+            await generate_name(model=build(name, client), prompt='Current conversation tail:\nuser: hi')
+    assert read(bodies[0]) == least
 
 
 async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:

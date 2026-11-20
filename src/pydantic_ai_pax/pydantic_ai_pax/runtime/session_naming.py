@@ -75,8 +75,11 @@ async def generate_name(*, model: Model | str, prompt: str) -> NamingResult:
             'naming what sets this conversation apart from them. Given a previous title, keep it and describe the current task in the subtitle. Do not expose secrets in names.'
         ),
     )
+    # A title needs no reasoning: `thinking=False` turns it off, or to the least a model accepts, on every provider.
     result = await agent.run(
-        prompt, usage_limits=UsageLimits(request_limit=2), model_settings={'max_tokens': _MAX_TOKENS}
+        prompt,
+        usage_limits=UsageLimits(request_limit=2),
+        model_settings={'max_tokens': _MAX_TOKENS, 'thinking': False},
     )
     return NamingResult(name=result.output, tokens=result.usage.total_tokens)
 
