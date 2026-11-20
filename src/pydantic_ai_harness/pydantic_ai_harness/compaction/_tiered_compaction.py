@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
+from pydantic_ai_harness.compaction._receipts import (
+    drain_receipts,
+    open_receipt_scope,
+    record_receipt,
+    reset_receipt_scope,
+)
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
@@ -19,12 +28,17 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_context_tokens,
     estimate_token_count,
     record_compaction_reclaim,
+    record_failed_compaction,
+    record_span_attributes,
     resolve_token_trigger,
     validate_token_trigger,
 )
 
 if TYPE_CHECKING:
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
+
+_logger = logging.getLogger(__name__)
+_escalating: ContextVar[bool] = ContextVar('pydantic_ai_harness.compaction.escalating', default=False)
 
 
 @dataclass
@@ -37,7 +51,11 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     only reached when the cheap passes cannot reclaim enough.
 
     Each tier's own trigger is bypassed -- `TieredCompaction` drives the tiers directly via
-    their `compact` method and decides when to stop.
+    their `compact` method and decides when to stop -- so tiers need none.
+
+    On its own trigger, a tier that raises a `skip_on` exception is skipped and escalation
+    moves on to the next tier; other exceptions propagate. A direct `compact` call lets
+    every exception propagate.
 
     Example:
         ```python
@@ -52,8 +70,8 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             'openai:gpt-4o',
             capabilities=[TieredCompaction(
                 tiers=[
-                    ClearToolResults(max_tokens=1),
-                    SummarizingCompaction(model='openai:gpt-4o-mini', max_messages=1),
+                    ClearToolResults(),
+                    SummarizingCompaction(model='openai:gpt-4o-mini'),
                 ],
                 target_tokens=100_000,
             )],
@@ -95,12 +113,26 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When `None`, uses a ~4 characters-per-token heuristic.
+    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII
+    scripts, base64 and compact JSON higher than prose.
+    """
+
+    skip_on: tuple[type[Exception], ...] = field(
+        default=(ModelAPIError, FallbackExceptionGroup, UnexpectedModelBehavior), kw_only=True
+    )
+    """Exceptions that skip a failing tier on this capability's own trigger, rather than failing the run.
+
+    Defaults to model failures, so programming errors and usage limits propagate. Pass `()` to
+    propagate every exception. Unlike `FallbackCompaction.fallback_on`, this includes
+    `UnexpectedModelBehavior`, which a summary tier raises when it exhausts its retries: the next
+    tier can still shrink the history without that tier's model.
     """
 
     def __post_init__(self) -> None:
         if not self.tiers:
             raise ValueError('tiers must not be empty.')
+        if not all(isinstance(error, type) and issubclass(error, Exception) for error in self.skip_on):
+            raise ValueError('skip_on must contain only Exception subclasses.')
         if self.target_tokens is None and self.target_fraction is None:
             raise ValueError('One of target_tokens or target_fraction must be set.')
         validate_token_trigger(
@@ -142,8 +174,9 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         target: int,
         model_request_parameters: ModelRequestParameters | None = None,
+        skip_on: tuple[type[Exception], ...] = (),
     ) -> list[ModelMessage]:
-        """Apply tiers in order until the history fits *target* or tiers run out."""
+        """Apply tiers in order until the history fits *target* or tiers run out, skipping any raising *skip_on*."""
         original = messages
         # The usage anchor describes the request as it was sent, so a tier's rewrite of older
         # messages is invisible to re-anchoring. Subtract the estimated tokens of the text a
@@ -154,21 +187,69 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         baseline = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=model_request_parameters)
         heuristic_baseline = estimate_token_count(messages, self.tokenizer)
         estimate = baseline
-        for tier in self.tiers:
-            if estimate <= target:
-                break
-            messages = await tier.compact(messages, ctx)
-            # Before the next stop decision, so escalation measures the history it would return.
-            messages = reinject_pinned(original, messages)
-            after = estimate_token_count(messages, self.tokenizer)
-            reclaimed = heuristic_baseline - after
-            # The two counts are on different bases, and the anchor's can be the smaller one: content a
-            # provider's tokenizer merges costs it far fewer tokens than the heuristic charges it. Crediting
-            # that text's removal against the smaller baseline subtracts more than the anchor ever counted;
-            # flooring the result at 0 would then report the history the tier just rewrote as fitting while
-            # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
-            estimate = max(baseline - reclaimed, after)
+        nested = _escalating.get()
+        token = _escalating.set(True)
+        try:
+            for tier in self.tiers:
+                if estimate <= target:
+                    break
+                compacted = await self._run_tier(tier, messages, ctx, skip_on)
+                if compacted is None:
+                    continue
+                # Before the next stop decision, so escalation measures the history it would return.
+                messages = reinject_pinned(original, compacted)
+                after = estimate_token_count(messages, self.tokenizer)
+                reclaimed = heuristic_baseline - after
+                # The two counts are on different bases, and the anchor's can be the smaller one: content a
+                # provider's tokenizer merges costs it far fewer tokens than the heuristic charges it. Crediting
+                # that text's removal against the smaller baseline subtracts more than the anchor ever counted;
+                # flooring the result at 0 would then report the history the tier just rewrote as fitting while
+                # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
+                estimate = max(baseline - reclaimed, after)
+        finally:
+            _escalating.reset(token)
+        if estimate > target and not nested:
+            # Every tier ran and the history is still over target: what the tiers keep (a `keep_tokens`
+            # floor, the first user message, the current turn) costs more than the target allows.
+            record_span_attributes(
+                {
+                    'compaction.target_unreached': True,
+                    'compaction.target_tokens': target,
+                    'compaction.estimate': estimate,
+                }
+            )
+            _logger.warning(
+                '`TieredCompaction` ran every tier and left the history at an estimated %d tokens, above its '
+                'target of %d. The messages its tiers keep cost more than the target.',
+                estimate,
+                target,
+            )
         return messages
+
+    async def _run_tier(
+        self,
+        tier: CompactionStrategy[AgentDepsT],
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        skip_on: tuple[type[Exception], ...],
+    ) -> list[ModelMessage] | None:
+        """*tier*'s result, or `None` when it raised *skip_on*, recorded and with its receipts discarded."""
+        token = open_receipt_scope()
+        try:
+            compacted = await tier.compact(messages, ctx)
+            receipts = drain_receipts()
+        except skip_on as error:
+            strategy = type(tier).__name__
+            record_failed_compaction(
+                ctx, strategy=strategy, skipped='tier_failed', error=error, messages=messages, tokenizer=self.tokenizer
+            )
+            _logger.warning('`TieredCompaction` skipped its `%s` tier, which raised %s', strategy, type(error).__name__)
+            return None
+        finally:
+            reset_receipt_scope(token)
+        for receipt in receipts:
+            record_receipt(receipt)
+        return compacted
 
     async def compact(
         self,
@@ -208,7 +289,9 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             request_ctx,
             strategy='TieredCompaction',
             messages=messages,
-            compact=lambda: self._escalate(messages, request_ctx, target, request_context.model_request_parameters),
+            compact=lambda: self._escalate(
+                messages, request_ctx, target, request_context.model_request_parameters, self.skip_on
+            ),
             tokenizer=self.tokenizer,
         )
         ctx.messages[:] = compacted

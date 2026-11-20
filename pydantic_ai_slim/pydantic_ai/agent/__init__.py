@@ -63,11 +63,15 @@ from .. import (
 )
 from .._agent_graph import (
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     ModelRequestNode,
     UserPromptNode,
     build_run_context,
+    capture_conversation_of,
+    capture_run_conversation,
     capture_run_messages,
+    end_captured_run,
 )
 from .._cancel import (
     CancellationToken,
@@ -82,6 +86,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._run_conversation import failed_run_conversation
 from .._telemetry import publish_run_telemetry
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
@@ -102,6 +107,7 @@ from ..capabilities.abstract import (
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
     _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
     _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputs,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
     select_workspace,
 )
@@ -123,6 +129,7 @@ from ..tools import (
     AgentDepsT,
     AgentNativeTool,
     ArgsValidatorFunc,
+    DeferredToolRequests,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -156,7 +163,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces.unavailable import NO_WORKSPACE
+from ..workspaces.unavailable import HOST_WORKSPACE, NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
@@ -210,6 +217,8 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
@@ -357,6 +366,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
         await asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)
+        # Inside the `try`: on Python 3.11, draining even a finished `_ready_waiter` yields to the event loop, so a
+        # cancellation can land here after `_do_run` has parked on `_run_done.wait()`, and needs the same cleanup.
+        await _utils.cancel_and_drain(_ready_waiter)
     except BaseException as exc:
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
@@ -370,8 +382,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
         _run_done.set()
         await _utils.cancel_and_drain(_ready_waiter, _wrap.task)
         raise
-    else:
-        await _utils.cancel_and_drain(_ready_waiter)
 
     # Propagate context vars set by wrap_run/before_run to the caller's task.
     context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
@@ -1633,6 +1643,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1663,6 +1674,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_revision: str | None = None,
         conversation_unsaved: list[_messages.ModelMessage] | None = None,
         conversation_unchecked: bool = False,
+        conversation_deferred_tool_requests: DeferredToolRequests | None = None,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1808,10 +1820,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
         # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
         # default ids, so a re-execution of this code gets the same ones.
-        resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability.get_default_run_id(),
-            message_history,
-        )
+        if run_id is None:
+            run_id = await bootstrap_capability._get_default_run_id_for_inputs(  # pyright: ignore[reportPrivateUsage]
+                functools.partial(
+                    self._get_run_id_inputs,
+                    user_prompt=user_prompt,
+                    message_history=message_history,
+                    conversation_id=conversation_id,
+                    deps=deps,
+                    metadata=metadata,
+                    # Metadata can wrap the spec dict in a callback; retain its static layer for identity.
+                    spec_metadata=resolved.metadata if resolved is not None else None,
+                )
+            )
+        resolved_run_id = _agent_graph.resolve_run_id(run_id, message_history)
         state = _agent_graph.GraphAgentState(
             message_history=list(message_history) if message_history else [],
             usage=usage,
@@ -1826,6 +1848,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation_deferred_tool_requests,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
@@ -2343,21 +2366,53 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
         )
 
+    def _get_run_id_inputs(
+        self,
+        *,
+        user_prompt: str | Sequence[_messages.UserContent] | None,
+        message_history: Sequence[_messages.ModelMessage] | None,
+        conversation_id: str | None,
+        deps: AgentDepsT,
+        metadata: AgentMetadata[AgentDepsT] | None,
+        spec_metadata: dict[str, object] | None,
+    ) -> _RunIdInputs:
+        first, *remaining = self._get_metadata_sources(metadata, spec_metadata=spec_metadata)
+        # Metadata callbacks receive IDs, so only static values can determine those same IDs.
+        static_metadata = first if first is not None and not callable(first) else None
+        for source in remaining:
+            if source is not None and not callable(source):
+                static_metadata = _merge_metadata(static_metadata, source)
+        return {
+            'prompt': user_prompt,
+            'messages': list(message_history) if message_history else [],
+            # Result caching drops these IDs for cross-run reuse, but identity retains its lineage.
+            'message_history_ids': [(message.run_id, message.conversation_id) for message in message_history or ()],
+            'conversation_id': conversation_id,
+            'deps': deps,
+            'metadata': static_metadata or None,
+        }
+
+    def _get_metadata_sources(
+        self,
+        additional_metadata: AgentMetadata[AgentDepsT] | None,
+        *,
+        spec_metadata: dict[str, object] | None = None,
+    ) -> tuple[AgentMetadata[AgentDepsT] | None, ...]:
+        metadata_override = self._override_metadata.get()
+        if metadata_override is not None:
+            return (metadata_override.value,)
+        return self._metadata, spec_metadata, additional_metadata
+
     def _get_metadata(
         self,
         ctx: RunContext[AgentDepsT],
         additional_metadata: AgentMetadata[AgentDepsT] | None = None,
     ) -> dict[str, Any] | None:
-        metadata_override = self._override_metadata.get()
-        if metadata_override is not None:
-            return self._resolve_metadata_config(metadata_override.value, ctx)
-
-        base_metadata = self._resolve_metadata_config(self._metadata, ctx)
-        run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
-
-        if base_metadata and run_metadata:
-            return {**base_metadata, **run_metadata}
-        return run_metadata or base_metadata
+        first, *remaining = self._get_metadata_sources(additional_metadata)
+        metadata = self._resolve_metadata_config(first, ctx)
+        for source in remaining:
+            metadata = _merge_metadata(metadata, self._resolve_metadata_config(source, ctx))
+        return metadata
 
     def _resolve_metadata_config(
         self,
@@ -2849,7 +2904,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref].
                 `on_change='append'` makes the prompt dynamic whatever this says.
-            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a system prompt with
+            name: The name in the id `'system_prompt:<name>'` of the `<pyai:context>` element a system prompt with
                 `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
                 It has no effect without `on_change='append'`. Existing histories tie the prompt to the
                 function's `__qualname__` whether or not this is set, so renaming or moving the function
@@ -2858,7 +2913,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
                 message history (the default), which changes the start of every later request and so misses the
                 provider's prompt cache, or is appended to the history as a replacement that keeps the cached
-                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<context>` element from the
+                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<pyai:context>` element from the
                 first request on; see [appending system prompt changes](../agent.md#appending-system-prompt-changes).
 
         Example:
@@ -2904,7 +2959,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None,
         on_change: _messages.InstructionChangePolicy,
     ) -> str | None:
-        """The `<context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
+        """The `<pyai:context>` id an appending dynamic system prompt is sent as, unique among the agent's."""
         if on_change != 'append':
             return None
         name = name if name is not None else func.__name__
@@ -3078,6 +3133,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -3101,6 +3157,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -3124,6 +3181,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3188,6 +3246,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3216,6 +3277,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3245,6 +3307,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -3268,6 +3331,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -3291,6 +3355,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3356,6 +3421,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3382,6 +3450,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3540,7 +3609,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
         _reject_second_of_a_kind([self._effective_root_capability(), *extra_capabilities])
-        return [capability.for_agent(self) for capability in extra_capabilities]
+        return [capability._keep_authority(capability.for_agent(self)) for capability in extra_capabilities]  # pyright: ignore[reportPrivateUsage]
 
     async def _resolve_model_selection(
         self,
@@ -3731,7 +3800,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
-        resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
+        resolved_layers = await _utils.gather(
+            *(cap._for_run_keeping_authority(ctx) for cap in run_layers)  # pyright: ignore[reportPrivateUsage]
+        )
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
@@ -4940,10 +5011,15 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         pending_message_queue = state.pending_messages
         assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
 
+        _failed_conversation = functools.partial(failed_run_conversation, state, graph_deps)
+        capture_conversation_of(_failed_conversation)
+
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
             def _run_cancelled(message: str, *, timed_out: bool = False) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
+                cancelled = _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
+                cancelled._pydantic_ai_conversation = _failed_conversation()  # pyright: ignore[reportPrivateUsage]
+                return cancelled
 
             try:
                 yield
@@ -4996,6 +5072,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             stack.callback(graph_deps.release_tool_error_caches)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.enter_context(_carrying_conversation(_failed_conversation))
             stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]
             stack.callback(refresh_workspace_ref)
             # This run's usage is credited to no span until one of its own is opened (by
@@ -5144,6 +5221,30 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                         self.resolve_metadata(agent_run.ctx)
 
 
+@contextmanager
+def _carrying_conversation(build: Callable[[], Conversation]) -> Generator[None]:
+    """Give an `AgentRunError` the run raises the run's conversation, so a store can record the failed turn.
+
+    A nested run's error is stamped again with this run's conversation, so its caller gets the one it can store.
+    """
+    try:
+        yield
+    except exceptions.RunCancelled:
+        # The run's own cancellation handling replaces it with one it stamps, keeping this one, and its conversation, as the cause.
+        raise
+    except exceptions.AgentRunError as error:
+        error._pydantic_ai_conversation = build()  # pyright: ignore[reportPrivateUsage]
+        raise
+    finally:
+        end_captured_run(build)
+
+
+def _merge_metadata(base: dict[str, object] | None, additional: dict[str, object] | None) -> dict[str, object] | None:
+    if base and additional:
+        return {**base, **additional}
+    return additional or base
+
+
 def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:
     """The exception types the run's capabilities declare their environment cancels a run with."""
     error_types: list[type[BaseException]] = []
@@ -5272,7 +5373,7 @@ def _raise_for_unresolved_workspace(
     if workspace == 'new':
         raise exceptions.UserError(
             "`workspace='new'` needs a capability that can create a workspace, but none returned one. "
-            "Attach one, such as `capabilities=[LocalWorkspace('.')]`."
+            f"Attach one, such as `capabilities=[{HOST_WORKSPACE}('.')]`."
         )
     if isinstance(workspace, WorkspaceRef):
         named = f'`{workspace.provider}:{workspace.id}`'

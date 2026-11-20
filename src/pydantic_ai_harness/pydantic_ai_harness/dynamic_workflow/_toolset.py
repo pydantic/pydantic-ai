@@ -7,14 +7,16 @@ and composes their results -- fan-out, chaining, voting, loops -- in one step.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import copy
 import json
+import sys
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Annotated, Any, Generic, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -23,13 +25,23 @@ from typing_extensions import TypedDict
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
+from pydantic_ai.messages import (
+    InstructionCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    OperatorSource,
+    OperatorText,
+    SystemPromptPart,
+    post_compaction_window,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
     from pydantic_monty import (
@@ -46,23 +58,31 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from pydantic_ai_harness._monty_exec import (
+    DispatchFn,
     MontyExecutor,
     MontyRunState,
     PrintCapture,
     in_temporal_workflow,
-    is_sandbox_panic,
 )
+from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
     resumable_output_reason,
     without_resumable_outputs,
 )
+from pydantic_ai_harness._warn import renamed_duration_limit
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.aws_lambda._bridge import StepBridge
+    from pydantic_ai_harness.aws_lambda._operation_backend import AWSLambdaOperationConfig
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
 # schedules, so concurrently-dispatched sub-agents inherit this flag (the capability is asyncio-only).
-_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar('pydantic_ai_harness_in_workflow', default=False)
+_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    'pydantic_ai_harness.dynamic_workflow.in_workflow', default=False
+)
 
 
 class WorkflowResourceLimits(TypedDict, total=False):
@@ -73,7 +93,7 @@ class WorkflowResourceLimits(TypedDict, total=False):
     keeps its backstop value.
     """
 
-    max_duration_secs: float
+    max_duration_seconds: float
     """Ceiling on the time the script spends executing sandbox code. Monty checks it per bytecode
     step, so time spent awaiting sub-agents does not count against it -- neither a single `await`
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
@@ -83,27 +103,31 @@ class WorkflowResourceLimits(TypedDict, total=False):
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
+    max_duration_secs: float
+    """Deprecated: renamed to `max_duration_seconds`."""
+
     max_memory: int
     """Maximum sandbox memory, in bytes."""
 
 
 def _default_resource_limits() -> ResourceLimits:
-    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_secs`."""
+    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_seconds`."""
     return {
         'max_memory': 256 * 1024 * 1024,
     }
 
 
-# The keys `WorkflowResourceLimits` accepts. A `total=False` TypedDict does not validate keys at
-# runtime, so a typo (e.g. `max_durations_secs`) would otherwise merge through and be silently
-# dropped -- quietly disabling the only guard against a pure-CPU `while True`. We reject unknowns.
-_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__)
+# The keys `WorkflowResourceLimits` accepts, without the deprecated one `__post_init__` renames.
+# A `total=False` TypedDict does not validate keys at runtime, so a typo (e.g. `max_durations_seconds`)
+# would otherwise merge through and be silently dropped -- quietly disabling the only guard against
+# a pure-CPU `while True`. We reject unknowns.
+_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__) - {'max_duration_secs'}
 _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
 _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
 _MAX_RESULT_PREVIEW_CHARS = 300
 _TRUNCATED_MARKER = ' ... [truncated]'
-# `SystemPromptPart.metadata` keys marking a reveal announcement, so a later step can find it in history.
+# `SystemPromptPart.metadata` keys marking a reveal announcement an earlier version enqueued, before `AgentRevealPart`.
 _REVEAL_TOOL_KEY = 'dynamic_workflow_tool'
 _REVEAL_AGENT_KEY = 'dynamic_workflow_revealed_agent'
 _STUB_BODY = 'raise NotImplementedError()'
@@ -127,21 +151,21 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     resolved = _default_resource_limits()
     if 'max_memory' in limits:
         resolved['max_memory'] = limits['max_memory']
-    if 'max_duration_secs' in limits:
-        resolved['max_feed_duration_secs'] = limits['max_duration_secs']
+    if 'max_duration_seconds' in limits:
+        resolved['max_feed_duration_secs'] = limits['max_duration_seconds']
     return resolved
 
 
-class _WorkflowArguments(TypedDict):
+class _WorkflowArgs(TypedDict):
     code: Annotated[str, Field(description='The Python orchestration script to execute in the sandbox.')]
 
 
-_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArguments)
+_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArgs)
 _WORKFLOW_ARGS_JSON_SCHEMA = _WORKFLOW_ARGS_ADAPTER.json_schema()
 _WORKFLOW_ARGS_VALIDATOR: SchemaValidatorProt = _WORKFLOW_ARGS_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 
 
-class _BudgetExhausted(RuntimeError):
+class _BudgetExhaustedError(RuntimeError):
     """The run's `max_agent_calls` budget is spent; no further sub-agent runs are allowed."""
 
     def __init__(self, max_agent_calls: int) -> None:
@@ -204,6 +228,151 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
 }
 
 
+@dataclass(frozen=True)
+class WorkflowCall:
+    """One sub-agent call a workflow script made, handed to a `WorkflowCallScheduler`."""
+
+    agent_name: str
+    """The sandbox function name the script called."""
+
+    start: Callable[[], Awaitable[object]]
+    """Runs the sub-agent and returns its output."""
+
+
+class WorkflowCallScheduler(Protocol):
+    """Decides when the sub-agent calls of one workflow script start.
+
+    `DynamicWorkflow(call_scheduler=...)` creates one for each `run_workflow` call.
+    """
+
+    async def run(self, call: WorkflowCall) -> object:
+        """Run one sub-agent call by awaiting `call.start()`, and return its output."""
+        ...
+
+    async def flush(self) -> None:
+        """Called each time the script waits on its calls, once every call it made before the wait has reached `run`.
+
+        A call the script is waiting on only completes once `run` awaits its `call.start()`, so a
+        scheduler that holds calls back must release them here. A durable engine that batches the
+        calls, like `AWSLambdaDurability`, takes its batch right after this returns, so under one a
+        released call has to await `call.start()` without suspending first, or it misses the batch
+        and the script waits on it indefinitely.
+        """
+        ...
+
+
+def _apply_scheduler(
+    scheduler: WorkflowCallScheduler, dispatch: DispatchFn, flush: Callable[[], Awaitable[None]] | None
+) -> tuple[DispatchFn, Callable[[], Awaitable[None]]]:
+    """Route each dispatch through `scheduler`, and run its `flush` before the engine's own."""
+
+    async def scheduled(agent_name: str, kwargs: dict[str, Any]) -> object:
+        dispatch_errors: list[Exception] = []
+
+        async def start() -> object:
+            try:
+                return await dispatch(agent_name, kwargs)
+            except Exception as exc:
+                dispatch_errors.append(exc)
+                raise
+
+        try:
+            return await scheduler.run(WorkflowCall(agent_name, start))
+        except Exception as exc:
+            if exc in dispatch_errors:
+                raise
+            # Like a sub-agent failure, a scheduler's own error reaches the script without host details.
+            raise RuntimeError(f'call scheduler raised {type(exc).__name__}') from exc
+
+    async def flush_scheduler() -> None:
+        # Let a call dispatched in the last loop iteration reach `scheduler.run`.
+        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
+        await scheduler.flush()
+        if flush is not None:
+            await flush()
+
+    return scheduled, flush_scheduler
+
+
+def _lambda_bridge() -> StepBridge | None:
+    """The AWS Lambda step bridge of the durable handler this runs in, if any."""
+    # Only `run_durable` publishes a bridge, so a process that never imported it has none.
+    if 'pydantic_ai_harness.aws_lambda._bridge' not in sys.modules:
+        return None  # pragma: lax no cover - whether a test imported it first depends on test order
+    from pydantic_ai_harness.aws_lambda._bridge import current_bridge
+
+    return current_bridge()
+
+
+@dataclass
+class _Branch:
+    run: Callable[[], Awaitable[Any]]
+    config: AWSLambdaOperationConfig
+    future: asyncio.Future[Any]
+
+
+@dataclass
+class _LambdaBranches:
+    """Collects sub-agent runs and runs them as the branches of a Lambda `parallel` operation.
+
+    Lambda numbers a context's steps in the order they start, so the steps of concurrent sub-agents
+    would interleave by timing, and replay could hand one sub-agent's checkpoints to another. In a
+    branch of their own, a sub-agent's steps are numbered within the branch, and a branch's ID derives
+    from its position, which is the order the script dispatched the calls.
+    """
+
+    bridge: StepBridge
+    name: str
+    _pending: list[_Branch] = field(default_factory=list[_Branch])
+
+    def submit(
+        self, agent: AbstractAgent[Any, object], operation: Callable[[], Awaitable[Any]]
+    ) -> asyncio.Future[Any] | None:
+        """Add the run to the batch if `agent` runs under `AWSLambdaDurability`, else return `None`."""
+        # The bridge is only active in a durable handler, which imported this.
+        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, operation_config
+
+        durability = BaseDurabilityCapability.from_agent(agent)
+        if not isinstance(durability, AWSLambdaDurability) or not durability.in_durable_context:
+            return None
+        branch = _Branch(operation, operation_config(durability), asyncio.get_running_loop().create_future())
+        self._pending.append(branch)
+        return branch.future
+
+    async def flush(self) -> None:
+        """Run the runs collected so far. `MontyExecutor` calls this before it resolves futures."""
+        # Let a call dispatched in the last loop iteration reach `submit`.
+        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
+        pending, self._pending = self._pending, []
+        # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
+        groups: dict[int, list[_Branch]] = {}
+        for branch in pending:
+            groups.setdefault(id(branch.config.serdes), []).append(branch)
+        for group in groups.values():
+            # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
+            results = await self.bridge.run_parallel(
+                self.name, [branch.run for branch in group], group[0].config.parallel_config
+            )
+            for branch, result in zip(group, results):
+                if not branch.future.done():  # pragma: no branch - only a cancelled dispatch is done early
+                    branch.future.set_result(result)
+
+
+def _runs_under_dbos(agent: AbstractAgent[Any, object]) -> bool:
+    """Whether the agent runs under `DBOSDurability` in a workflow.
+
+    DBOS numbers steps in the order they start, so the steps of concurrent sub-agents would
+    interleave by timing, and recovery could replay one sub-agent's results into another call.
+    """
+    durability = BaseDurabilityCapability.from_agent(agent)
+    # Only an agent with `DBOSDurability` attached has imported it, so other engines import nothing.
+    if durability is None or 'pydantic_ai.durable_exec.dbos' not in sys.modules:
+        return False
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+    return isinstance(durability, DBOSDurability) and durability.in_durable_context
+
+
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
     """The sub-agent's output JSON schema, or `None` when it cannot be derived.
 
@@ -259,37 +428,65 @@ def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_age
     return f'{_WORKFLOW_BASE_DESCRIPTION}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
 
 
+@dataclass(kw_only=True)
+class AgentRevealPart(InstructionCapabilityPart, namespace='dynamic_workflow', name='agent_reveal'):
+    """The notice `DynamicWorkflow` enqueues when `reveal()` makes a sub-agent callable mid-run.
+
+    Its text carries the new function's signature, so the `run_workflow` description stays frozen and the prompt-cache
+    prefix doesn't move. Find announcements in history by this type.
+    """
+
+    tool_name: str
+    """The workflow tool the sub-agent can be called from. Never sent to the model."""
+
+    agent_name: str
+    """The name of the sub-agent it announces. Never sent to the model."""
+
+
 def _reveal_announcement(
     name: str,
     catalog: Mapping[str, WorkflowAgent[AgentDepsT]],
     tool_name: str,
-) -> SystemPromptPart:
+) -> AgentRevealPart:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
-    Delivered as a system-level conversation message (not folded into the cached tool description),
-    so the prompt-cache prefix stays stable while the model still learns the agent is now callable.
-    `catalog` holds the agents up to and including `name`, in reveal order. The metadata marks
-    the part so `_visible_revealed_agents` can find it again.
+    Delivered in the application's voice mid-conversation (not folded into the cached tool description), so the
+    prompt-cache prefix stays stable while the model still learns the agent is now callable. `catalog` holds the agents
+    up to and including `name`, in reveal order.
     """
     block = '\n\n'.join(_signature_blocks(catalog, [name], body='...'))
-    return SystemPromptPart(
-        content=(
+    return AgentRevealPart(
+        content=OperatorText(
             f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
         ),
-        metadata={_REVEAL_TOOL_KEY: tool_name, _REVEAL_AGENT_KEY: name},
+        source=OperatorSource(),
+        tool_name=tool_name,
+        agent_name=name,
     )
+
+
+def _revealed_agent(part: object, tool_name: str) -> str | None:
+    """The sub-agent `part` announces for `tool_name`, or `None` if it isn't a reveal announcement.
+
+    An announcement an earlier version enqueued is a `SystemPromptPart` marked by its metadata.
+    """
+    if isinstance(part, AgentRevealPart):
+        return part.agent_name if part.tool_name == tool_name else None
+    metadata = part.metadata if isinstance(part, SystemPromptPart) else None
+    if metadata is not None and metadata.get(_REVEAL_TOOL_KEY) == tool_name:
+        return metadata[_REVEAL_AGENT_KEY]
+    return None
 
 
 def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str) -> set[str]:
     """Names of the sub-agents whose reveal announcement is still in history after the latest compaction."""
-    revealed: set[str] = set()
-    for message in post_compaction_window(messages):
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                metadata = part.metadata if isinstance(part, SystemPromptPart) else None
-                if metadata is not None and metadata.get(_REVEAL_TOOL_KEY) == tool_name:
-                    revealed.add(metadata[_REVEAL_AGENT_KEY])
-    return revealed
+    return {
+        name
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if (name := _revealed_agent(part, tool_name)) is not None
+    }
 
 
 def _workflow_result(result: object, printed: str) -> object:
@@ -538,6 +735,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Sandbox limits guarding the orchestration script's own memory (not sub-agents).
     See `DynamicWorkflow.resource_limits` for the `None`/`'unlimited'`/partial-dict semantics."""
 
+    call_scheduler: Callable[[RunContext[AgentDepsT]], WorkflowCallScheduler] | None = None
+    """Creates the scheduler that decides when each script's sub-agent calls start.
+    See `DynamicWorkflow.call_scheduler`."""
+
     toolset_id: str | None = None
     """Stable toolset id; defaults to the tool name."""
 
@@ -570,6 +771,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     _description: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflowToolset')
         validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         self._rebuild()
 
@@ -701,7 +903,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             )
         }
 
-    async def _run_one(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
+    async def _run_one(
+        self, agent_name: str, task: str, ctx: RunContext[AgentDepsT], branches: _LambdaBranches | None = None
+    ) -> Any:
         """Run one sub-agent against the shared per-run budget.
 
         The budget check + increment must stay suspension-free: there must be no `await`
@@ -718,8 +922,27 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         caps stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
         """
         if self._call_count >= self.max_agent_calls:
-            raise _BudgetExhausted(self.max_agent_calls)
+            raise _BudgetExhaustedError(self.max_agent_calls)
         self._call_count += 1
+        agent = self._by_name[agent_name].agent
+        # Also suspension-free: concurrent dispatches join the batch in dispatch order.
+        branch = branches.submit(agent, partial(self._run_recorded, agent_name, task, ctx)) if branches else None
+        if branch is not None:
+            recorded = await branch
+            if 'error' in recorded:
+                raise RuntimeError(recorded['error'])
+            return recorded['output']
+        return await self._run_sub_agent(agent_name, task, ctx)
+
+    async def _run_recorded(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
+        """Run one sub-agent with its failure carried as data, so its branch records it rather than failing."""
+        try:
+            return {'output': await self._run_sub_agent(agent_name, task, ctx)}
+        except RuntimeError as exc:
+            return {'error': str(exc)}
+
+    async def _run_sub_agent(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
+        """Run one sub-agent and return its output as JSON-compatible data."""
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
         # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
         # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
@@ -732,6 +955,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if usage_limits is None and self.forward_usage:
             # Shared usage is checked against the parent's limits, so they bound the whole tree.
             usage_limits = ctx.usage_limits
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
@@ -739,7 +964,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
-                capabilities=[serving_model],
+                capabilities=[serving_model, *([deny] if deny is not None else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:
@@ -784,6 +1009,24 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         names = list(self._by_name)
         return {known: self._by_name[known] for known in names[: names.index(name) + 1]}
 
+    def _schedule(
+        self,
+        ctx: RunContext[AgentDepsT],
+        dispatch: DispatchFn,
+        branches: _LambdaBranches | None,
+        *,
+        sequential: bool,
+    ) -> tuple[DispatchFn, Callable[[], Awaitable[None]] | None]:
+        """The executor's `dispatch` and `flush`, routed through `call_scheduler` when one is set."""
+        # Exclusive: under `global_sequential`, calls start only after `flush`, one at a time in
+        # dispatch order, so neither the Lambda batch nor a scheduler applies.
+        if sequential:
+            return dispatch, None
+        flush = branches.flush if branches is not None else None
+        if self.call_scheduler is None:
+            return dispatch, flush
+        return _apply_scheduler(self.call_scheduler(ctx), dispatch, flush)
+
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
@@ -795,14 +1038,18 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             nonlocal budget_exhausted
             task = _dispatched_task(agent_name, kwargs)
             try:
-                output = await self._run_one(agent_name, task, ctx)
-            except _BudgetExhausted:
+                output = await self._run_one(agent_name, task, ctx, branches)
+            except _BudgetExhaustedError:
                 budget_exhausted = True
                 raise
             completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))
             return output
 
         in_temporal = in_temporal_workflow()
+        bridge = _lambda_bridge()
+        branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
+        sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
+        scheduled_dispatch, flush = self._schedule(ctx, dispatch, branches, sequential=sequential)
         limits = _resolve_resource_limits(self.resource_limits)
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
@@ -814,21 +1061,22 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
-            # the whole script. Sub-agents always run concurrently (the executor's defaults);
-            # durable ordering (global_sequential) lands with durability.
+            # the whole script.
             completed = await MontyExecutor(
-                dispatch=dispatch,
+                dispatch=scheduled_dispatch,
                 valid_names=self._by_name,
+                flush=flush,
+                global_sequential=sequential,
                 portal=monty.portal,
-                max_sleep_secs=limits.get('max_feed_duration_secs'),
+                max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
-        except MontyTypingError as e:
-            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
+        except MontyTypingError as exc:
+            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(exc.display())}') from exc
         # Backstop: the type checker parses the code first. `lax` because the errors handled below
         # are still matched against this clause.
-        except MontySyntaxError as e:  # pragma: lax no cover
-            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
-        except MontyRuntimeError as e:
+        except MontySyntaxError as exc:  # pragma: lax no cover
+            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(exc.display())}') from exc
+        except MontyRuntimeError as exc:
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -836,27 +1084,27 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 # failure from the same batch.
                 return _budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
-                    last_error=capture.prepend_to(e.display()),
+                    last_error=capture.prepend_to(exc.display()),
                     completed_dispatches=completed_dispatches,
                 )
             raise ModelRetry(
-                f'Runtime error in workflow:\n{capture.prepend_to(e.display())}'
+                f'Runtime error in workflow:\n{capture.prepend_to(exc.display())}'
                 f'{_completed_retry_section(completed_dispatches)}'
-            ) from e
-        except MontyCrashedError as e:
+            ) from exc
+        except MontyCrashedError as exc:
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
             return _worker_crash_result(
-                crash=e,
+                crash=exc,
                 budget_exhausted=budget_exhausted,
                 max_agent_calls=self.max_agent_calls,
                 completed_dispatches=completed_dispatches,
             )
-        except BaseException as e:
+        except BaseException as exc:
             # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
             # anything else (CancelledError, ...) re-raises unchanged.
-            if not is_sandbox_panic(e):
+            if not is_sandbox_panic(exc):
                 raise
             if budget_exhausted:
                 return _budget_terminal_result(
@@ -867,10 +1115,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             raise ModelRetry(
                 'The workflow script aborted inside the sandbox. Revise the script and try again.'
                 f'{_completed_retry_section(completed_dispatches)}'
-            ) from e
+            ) from exc
         finally:
             _in_workflow.reset(in_workflow_token)
-            await monty.close()
+            await monty.aclose()
 
         # Monty lets workflow code catch host exceptions. Exhausting the budget remains
         # terminal even if the script catches that error and otherwise finishes normally.
