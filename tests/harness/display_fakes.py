@@ -80,6 +80,8 @@ class ScreenBackend(
             'scroll',
             'type_text',
             'press_keys',
+            'key_down',
+            'key_up',
         }:
             raise UnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self.screens.actions.append(action)
