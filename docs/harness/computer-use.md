@@ -99,6 +99,11 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 
 The same hook can refuse a call instead, such as one that waits longer or types more than you allow. [Raise `ToolFailed`](../hooks.md#triggering-retries-with-modelretry) with a message for the model. None of the call's actions run.
 
+Some providers flag an action for a person to confirm, and give their reason in the call's
+[`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation]. `ComputerUse` raises `ApprovalRequired` for
+such a call without a hook, with the reason in the request's `metadata` as `{'reason': ...}`. Once you approve it, its
+result has `confirmed` set, so the provider is told a person approved it.
+
 ## Screen size
 
 A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
@@ -124,7 +129,7 @@ The providers' own advice:
   try again. Each such retry counts against the tool's retry limit.
 - If the workspace is gone, for example because its sandbox was deleted, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Several agents can share one screen, such as sub-agents running in parallel. If they run in the same `asyncio` event loop, they take turns one whole call at a time, so their clicks never mix. Agents in separate event loops or separate processes don't wait for each other.
-- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button may still be pressed.
+- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and a key pressed with `key_down` until a `key_up`. Each result tells the model which buttons and keys are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, they are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button or key may still be pressed.
 
 ## Watching a run
 
