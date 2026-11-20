@@ -8,9 +8,9 @@ files, SQLite, MongoDB, PostgreSQL, or your own store, and keeps an append-only
 step-event trail and a ledger of tool side effects, so after a crash you can
 tell which tool calls completed and which may or may not have run.
 
-Snapshots hold only the message history: capability state, workspace files, and
-resuming from the middle of a step are tracked in `pydantic-ai-harness` issues
-#149 and #196. For recovery inside a step, also run the agent on
+Snapshots hold only the message history. Capability state, workspace files, and
+resuming from the middle of a step are not covered (see `pydantic-ai-harness`
+issues #149 and #196). For recovery inside a step, also run the agent on
 [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/).
 
 > [!NOTE]
