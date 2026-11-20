@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "Harness 0.x: `pydantic_ai_harness.peers.PeerNetwork` is renamed to `PeerConnection`, since it is one peer's connection to a network and `InMemoryPeerNetwork` is not one; the old name still imports through the module `__getattr__`, with a `HarnessDeprecationWarning`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13777"
+}

@@ -10,7 +10,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.models.function import FunctionModel
-from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.conftest import try_import
 
 from ._durable_agent import judge_calls, judge_respond, respond, steering, trajectory_judge, work
 
@@ -31,13 +31,12 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         'name': 'durable_trajectory_judge',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 async def test_replay_reuses_the_recorded_evaluation(dbos: DBOS) -> None:

@@ -221,14 +221,18 @@ async def test_anthropic_batches_split_by_beta_flags(
         'OK.',
     ]
     creates = [
-        ([item['custom_id'] for item in json.loads(raw)['requests']], headers.get('anthropic-beta'))
+        (
+            [item['custom_id'] for item in json.loads(raw)['requests']],
+            # Before anthropic 2.9.0, the SDK adds `message-batches-2024-09-24` to every batch create.
+            [b for b in headers.get('anthropic-beta', '').split(',') if b not in ('', 'message-batches-2024-09-24')],
+        )
         for path, raw, headers in zip(request_capture.paths, request_capture.raw_bodies, request_capture.headers)
         if path == '/v1/messages/batches' and raw
     ]
     assert creates == snapshot(
         [
-            (['no-betas'], 'message-batches-2024-09-24'),
-            (['with-betas'], 'interleaved-thinking-2025-05-14,message-batches-2024-09-24'),
+            (['no-betas'], []),
+            (['with-betas'], ['interleaved-thinking-2025-05-14']),
         ]
     )
 
