@@ -90,9 +90,10 @@ def deserialize_run_context(
     if 'trace_include_content' not in ctx.__dataclass_fields__:
         return ctx
     if settings is not None and get_current_span().is_recording():
-        # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them.
+        # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them,
+        # on the tool's own tracer (a subclass may have restored its own).
         # They capture content only if both the run and this worker do.
-        publish_run_telemetry(settings.tracer, include_content=ctx.trace_include_content and settings.include_content)
+        publish_run_telemetry(ctx.tracer, include_content=ctx.trace_include_content and settings.include_content)
     return ctx
 
 
