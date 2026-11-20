@@ -18,6 +18,7 @@ import anyio
 import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry.trace import NoOpTracer
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
@@ -119,6 +120,8 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+        tracer: NoOpTracer = dataclasses.field(default_factory=NoOpTracer)
+        trace_include_content: bool = False
         # The hook reads the step the run is on, so a fake context needs one; nothing here may read
         # the history, which the integration tests cover by compacting it away mid-run.
         run_step: int = 0
