@@ -23,7 +23,7 @@ from typing import Literal, Protocol, get_args
 
 import anyio
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
@@ -33,7 +33,7 @@ from playwright.async_api import Error as PlaywrightError, StorageState, Timeout
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn, ToolReturnPart
@@ -3774,6 +3774,23 @@ def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
     return provider.get_tracer('test'), exporter
 
 
+async def _run_browser_operation(
+    instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
+    operation: Callable[[], Awaitable[object]],
+    include_content: bool = True,
+) -> list[ReadableSpan]:
+    tracing, exporter = instrumented(include_content)
+    agent = Agent(TestModel(call_tools=['drive']), capabilities=[tracing])
+
+    @agent.tool_plain
+    async def drive() -> str:
+        await operation()
+        return ''
+
+    await agent.run('drive')
+    return [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
+
+
 class TestBrowserEvents:
     """What the page did between tool calls: console, network, refusals, popups."""
 
@@ -3913,6 +3930,38 @@ class TestBrowserEvents:
         assert event.attributes['http.response.status_code'] == 503
         # A response carries no message, so no empty attribute is emitted for one.
         assert 'browser.event.message' not in event.attributes
+
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_page_urls_and_event_text_are_recorded_only_with_content(
+        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
+        # What the page logged and the URLs it touched are content; the event's shape is not.
+        page = _FakePage()
+        session = self._session(page)
+        toolset = _toolset(page, session=session)
+
+        class _BusyPage(_FakePage):
+            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
+                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
+                return await super().inner_text(selector, timeout=timeout)
+
+        session.page = _BusyPage()
+
+        async def drive() -> None:
+            await toolset.get_text()
+
+        (span,) = await _run_browser_operation(instrumented, drive, include_content)
+        assert span.attributes is not None
+        assert ('url.full' in span.attributes) is include_content
+        console, response = span.events
+        assert console.attributes is not None and response.attributes is not None
+        assert ('browser.event.message' in console.attributes) is include_content
+        assert ('url.full' in response.attributes) is include_content
+        assert response.attributes['browser.event.kind'] == 'response'
+        assert response.attributes['browser.event.level'] == 'error'
+        assert response.attributes['http.request.method'] == 'POST'
+        assert response.attributes['http.response.status_code'] == 503
 
     async def test_failed_operation_is_marked_on_the_span(self) -> None:
         page = _FakePage(click_error=PlaywrightTimeoutError('Timeout 5000ms exceeded.'))
@@ -4512,6 +4561,21 @@ class TestEgressPolicy:
 
 
 class TestSpanOutcome:
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_an_escaping_exception_keeps_its_message_only_with_content(
+        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+    ) -> None:
+        # An exception message can quote what the model passed, so it follows the run's content setting.
+        async def drive() -> None:
+            with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
+                await PlaywrightBrowserToolset[None](session=PlaywrightBrowserSession()).snapshot()
+
+        (span,) = await _run_browser_operation(instrumented, drive, include_content)
+        (event,) = span.events
+        assert event.attributes is not None and event.attributes['exception.type'] == 'RuntimeError'
+        assert ('exception.message' in event.attributes) is include_content
+        assert ('not running' in (span.status.description or '')) is include_content
+
     async def test_a_returned_error_marks_the_span_failed(self) -> None:
         page = _FakePage(selector_raises=True)
         session = PlaywrightBrowserSession()

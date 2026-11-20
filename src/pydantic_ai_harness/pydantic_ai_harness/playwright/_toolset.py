@@ -141,6 +141,7 @@ import anyio
 import idna
 from opentelemetry import trace
 
+from pydantic_ai._telemetry import current_run_telemetry, open_span
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
@@ -164,6 +165,7 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Sequence
+    from contextlib import AbstractContextManager
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -176,6 +178,8 @@ if TYPE_CHECKING:
         StorageState,
         WebSocketRoute as PlaywrightWebSocketRoute,
     )
+
+    from pydantic_ai._telemetry import RunTelemetry
 
 _T = TypeVar('_T')
 
@@ -1056,17 +1060,18 @@ class BrowserEvent:
             parts.append(self.message)
         return ' '.join(parts)
 
-    def attributes(self) -> dict[str, str | int]:
+    def attributes(self, *, include_content: bool = True) -> dict[str, str | int]:
         """Render the event as OpenTelemetry span-event attributes.
 
         Names follow the OTel HTTP semantic conventions where one applies, so a
         backend that already understands `url.full` or `http.response.status_code`
-        reads these without a custom mapping.
+        reads these without a custom mapping. A span event keeps `browser.event.message`
+        and `url.full` only when `include_content` is true.
         """
         attributes: dict[str, str | int] = {'browser.event.kind': self.kind, 'browser.event.level': self.level}
-        if self.message:
+        if include_content and self.message:
             attributes['browser.event.message'] = self.message
-        if self.url is not None:
+        if include_content and self.url is not None:
             attributes['url.full'] = self.url
         if self.method is not None:
             attributes['http.request.method'] = self.method
@@ -1205,6 +1210,18 @@ class PlaywrightBrowserSession:
         operation's span cannot be recovered from the OpenTelemetry context there.
         The toolset publishes it here for the length of an operation instead.
         """
+        self._operation_includes_content = False
+        """Whether the run that opened `operation_span` includes content in traces, published with it."""
+
+    def _begin_operation(self, span: Span, *, include_content: bool) -> None:
+        """Publish the running operation's span, with whether its run includes content in traces."""
+        self.operation_span = span
+        self._operation_includes_content = include_content
+
+    def _end_operation(self) -> None:
+        """Clear what `_begin_operation` published, once the operation ends."""
+        self.operation_span = None
+        self._operation_includes_content = False
 
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
@@ -1224,7 +1241,7 @@ class PlaywrightBrowserSession:
         self.events_recorded += 1
         span = self.operation_span
         if span is not None and span.is_recording():
-            span.add_event(f'browser.{event.kind}', event.attributes())
+            span.add_event(f'browser.{event.kind}', event.attributes(include_content=self._operation_includes_content))
 
     def failure_since_operation_start(self) -> BrowserEvent | None:
         """The last refused or failed request caused by the running operation, if any.
@@ -2149,13 +2166,19 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             # The configured budget, not what is left of it: the error copy tells the
             # model how long the call was allowed, which a countdown would understate.
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}',
+            # The session can outlive a run, so the telemetry is the calling run's, read now.
+            telemetry = current_run_telemetry()
+            include_content = telemetry is None or telemetry.include_content
+            with self._operation_span(
+                telemetry,
+                action,
                 # The outcome starts at `ok` and every failure path overwrites it,
                 # because a tool failure is a returned string, not an exception.
-                attributes={'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
+                {'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
-                self._session.operation_span = span
+                self._session._begin_operation(  # pyright: ignore[reportPrivateUsage]
+                    span, include_content=include_content
+                )
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -2178,9 +2201,9 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     # because `tabs` can have moved it, and the span should name the
                     # tab the operation left rather than the one it started on.
                     ended_on = self._session.page if self._session.page is not None else page
-                    if ended_on is not None:
+                    if ended_on is not None and include_content:
                         span.set_attribute('url.full', _without_credentials(ended_on.url))
-                    self._session.operation_span = None
+                    self._session._end_operation()  # pyright: ignore[reportPrivateUsage]
 
     async def _refuse(self, action: str, timeout_ms: int | None, message: str) -> str:
         """Return a bounded refusal without acquiring a page.
@@ -2197,14 +2220,26 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         async with self._operation_lock:
             if (error := self._timeout_error(timeout_ms)) is not None:
                 return error
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
-            ) as span:
-                self._session.operation_span = span
+            telemetry = current_run_telemetry()
+            with self._operation_span(telemetry, action, {'browser.action': action, 'browser.outcome': 'ok'}) as span:
+                self._session._begin_operation(  # pyright: ignore[reportPrivateUsage]
+                    span, include_content=telemetry is None or telemetry.include_content
+                )
                 try:
                     return self._error(message)
                 finally:
-                    self._session.operation_span = None
+                    self._session._end_operation()  # pyright: ignore[reportPrivateUsage]
+
+    def _operation_span(
+        self, telemetry: RunTelemetry | None, action: str, attributes: dict[str, str | int]
+    ) -> AbstractContextManager[Span]:
+        """Open an operation's span on the calling run's telemetry, or on the session's `tracer` outside a run.
+
+        Outside a run there is no content setting to follow, so the span records as it always has.
+        """
+        if telemetry is not None:
+            return open_span(telemetry, f'browser {action}', attributes=attributes)
+        return self._session.tracer.start_as_current_span(f'browser {action}', attributes=attributes)
 
     async def _settle(self, page: _Page, action: str, deadlines: _Deadlines) -> str | None:
         """Let the navigation finish, then re-check where it landed.
@@ -2900,8 +2935,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         is producing or about to consume.
         """
         async with self._operation_lock:
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
+            with self._operation_span(
+                current_run_telemetry(), action, {'browser.action': action, 'browser.outcome': 'ok'}
             ):
                 return body()
 

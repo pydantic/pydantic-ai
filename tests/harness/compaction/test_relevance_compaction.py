@@ -917,6 +917,31 @@ Say more.
         # The judge's own runs are not instrumented, so the transcript never reaches a trace through them.
         assert not any(span['name'] == 'agent run' and 'relevance_compaction' in str(span) for span in spans)
 
+    @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_a_judge_error_keeps_its_message_only_with_content(
+        self, capfire: CaptureLogfire, include_content: bool
+    ) -> None:
+        """A model error can quote the request, so the selection span keeps its message only with content."""
+
+        def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('judge', 'unavailable')
+
+        compaction = RelevanceCompaction(FunctionModel(broken), max_tokens=2_500, target_tokens=2_000, keep_tokens=10)
+        agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])))
+        agent.instrument = InstrumentationSettings(include_content=include_content)
+        history = _history('KEEP a ', 'GIST b ', 'junk c ', 'last d ')
+
+        with pytest.raises(ModelAPIError, match='unavailable'):
+            await agent.run('go', message_history=history[:-1], capabilities=[compaction])
+
+        [select] = [
+            span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'select compaction steps'
+        ]
+        [event] = select['events']
+        assert event['attributes']['exception.type'] == 'pydantic_ai.exceptions.ModelAPIError'
+        assert ('unavailable' in str(select)) is include_content
+
 
 class _FakeRealtimeModel(AbstractModel):
     """A realtime model, which has no token window to compact toward."""
