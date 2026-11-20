@@ -86,17 +86,13 @@ def deserialize_run_context(
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
     settings = agent_instrumentation_settings(agent) if agent is not None else None
     _restore_tracer(ctx, settings)
-    # The run's flag crossed the boundary, but this worker traces with its own settings: content is captured
-    # only if both allow it, so every reader of `ctx.trace_include_content` here follows the worker's policy.
-    # A context that didn't carry the flag leaves the activity untraced and keeps raising on read, as for
-    # any field that didn't cross.
+    # A context that didn't carry the run's content flag leaves the activity untraced, as `ctx`-based spans are.
     if 'trace_include_content' not in ctx.__dataclass_fields__:
         return ctx
-    if not (settings is not None and settings.include_content):
-        ctx.trace_include_content = False
     if settings is not None and get_current_span().is_recording():
         # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them.
-        publish_run_telemetry(settings.tracer, include_content=ctx.trace_include_content)
+        # They capture content only if both the run and this worker do.
+        publish_run_telemetry(settings.tracer, include_content=ctx.trace_include_content and settings.include_content)
     return ctx
 
 
