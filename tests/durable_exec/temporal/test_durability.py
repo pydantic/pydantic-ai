@@ -71,6 +71,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._computer_use import UnservableRequestError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
@@ -95,6 +96,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -467,6 +469,95 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
+
+
+# --- A model's refusal of a `computer` request it can't serve, raised in its activity ---
+
+
+def _computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
+    """Act on the screen."""
+    return ['Done.']
+
+
+def _blind_model() -> FunctionModel:
+    # It can't take images, so it refuses any request with a `computer` tool, in its activity, before it's called.
+    return FunctionModel(_fallback_target_fn, model_name='blind', profile=ModelProfile(supports_image_input=False))
+
+
+refused_durable_agent = Agent(
+    _blind_model(),
+    name='durability_refused_agent',
+    tools=[Tool(_computer, name='computer', tool_kind=COMPUTER_KIND)],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RefusedDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            await refused_durable_agent.run(prompt)
+        except UnservableRequestError as error:
+            return error.message
+        return 'not refused'  # pragma: no cover
+
+
+async def test_durability_a_refusal_in_the_model_activity_reaches_the_workflow_as_itself(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RefusedDurableAgentWorkflow],
+        plugins=[AgentPlugin(refused_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            RefusedDurableAgentWorkflow.run,
+            args=['Look.'],
+            id=RefusedDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot(
+        "The `computer` tool needs a model that accepts images, and 'blind' does not: every `computer` call returns a "
+        'screenshot.'
+    )
+
+
+refused_fallback_durable_agent = Agent(
+    _blind_model(),
+    name='durability_refused_fallback_agent',
+    tools=[Tool(_computer, name='computer', tool_kind=COMPUTER_KIND)],
+    capabilities=[
+        ModelFallback('seeing'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'seeing': FunctionModel(_fallback_target_fn, model_name='seeing')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class RefusedFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, str | None]:
+        result = await refused_fallback_durable_agent.run(prompt)
+        return result.output, result.response.model_id
+
+
+async def test_durability_fallback_moves_on_from_a_refusal_in_the_model_activity(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RefusedFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(refused_fallback_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            RefusedFallbackDurableAgentWorkflow.run,
+            args=['Look.'],
+            id=RefusedFallbackDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ('from fallback', 'seeing')
 
 
 def _echo_sent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
