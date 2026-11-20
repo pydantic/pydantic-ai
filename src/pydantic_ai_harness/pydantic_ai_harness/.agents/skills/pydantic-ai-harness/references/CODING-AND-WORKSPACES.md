@@ -418,12 +418,11 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
-- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`. Pass
-  `desktop=(w, h)` for another size. The size is fixed when the sandbox is created. The desktop can't press F13 to
-  F24, keypad Enter, the keypad's `+ - * / .` keys, print screen, pause, scroll lock, the menu key or media keys. It
-  can't use side mouse buttons or type characters beyond U+FFFF (most emoji). Anyone with the sandbox's preview link
-  can see and control its desktop. So a public sandbox gets no desktop: its first desktop use or shell command
-  raises `UserError`.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
+  sets another size, fixed at creation. It can't press F13 to F24, keypad Enter, the keypad's `+ - * / .` keys, print
+  screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond U+FFFF
+  (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
+  desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 

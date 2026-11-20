@@ -71,10 +71,7 @@ class LazyDisplay:
         self._lock = anyio.Lock()
 
     def reset(self) -> None:
-        """Forget that the display is running, such as when the environment may have restarted.
-
-        The next call starts it.
-        """
+        """Forget that the display runs, so the next call starts it, such as after the environment restarted."""
         self._running = False
 
     async def start(self) -> None:
