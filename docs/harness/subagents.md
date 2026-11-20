@@ -7,11 +7,26 @@ description: "Let a Pydantic AI agent delegate tasks to named subagents through 
 
 `SubAgents` lets an agent delegate self-contained tasks to named child agents. It takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/subagents/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.](../img/harness/subagents.svg)
+```mermaid
+flowchart TB
+    accTitle: Subagents: hand a task to another agent run
+    accDescr: The parent model calls delegate_task and gets a result. The SubAgents capability passes the task to researcher, writer or self, a new run with its own message history, and gets str(result.output) back. It does not run the child on an unknown agent name, max_calls used up or max_depth reached, and a child stops early if timeout_seconds or usage_limits is reached or it failed.
+    model(["parent model"])
+    subagents["SubAgents()<br/>delegate_task"]:::capability
+    child["researcher, writer or self<br/>a new run with its<br/>own message history"]
+    refused["unknown agent name,<br/>max_calls used up,<br/>or max_depth reached"]:::blocked
+    stopped["timeout_seconds or<br/>usage_limits reached,<br/>or the child failed"]:::blocked
+    model <-->|"tool call, result"| subagents
+    subagents <-->|"task, str(result.output)"| child
+    subagents -.-x|"does not run the child"| refused
+    child -.-x|"stopped early"| stopped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -80,7 +95,7 @@ agent = Agent(
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](../deferred-tools.md) or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
-- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, which has no access to the parent run's model, so a delegate needs a model of its own or a `models` option; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+- **On Temporal, `agent_folders` is not supported.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, or in a child workflow when you opt in (see [Delegates as child workflows](#delegates-as-child-workflows)), neither of which has access to the parent run's model, so a delegate needs a model of its own (or, in an activity, a `models` option); see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -113,8 +128,10 @@ orchestrator = Agent(
 | `usage_limits` | A request/token budget for one delegation. The child runs with its own usage accounting, so the budget counts only that child's requests and tokens (not the parent's or siblings'). With `forward_usage=True`, the child's usage is added to the parent's usage after the delegation. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
 | `timeout_seconds` | A wall-clock budget for one delegation. When the child exceeds it, its run is cancelled and the parent gets a soft steering message instead of hanging on the child. The cancelled child's `event_stream_handler` (if any) stops receiving events without a terminal event. |
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
-| `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. Setting it also makes child failures soft (see below). |
+| `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. While `on_model_error` is unset, setting it also makes child failures soft (see below). |
+| `on_model_error` | What the parent gets when the child fails with a soft model error: `'retry'` raises a parent `ModelRetry`, `'return'` returns the error and the steering message as a normal tool result (see below). Unset keeps `'return'` with the `on_failure` message alone when `on_failure` is set, and `'retry'` otherwise. |
 | `contain_errors` | Whether an unexpected crash in this delegate is caught and returned to the parent as a bounded `ModelRetry` instead of aborting the parent run (see below). Unset inherits the `SubAgents(contain_errors=...)` default (off). |
+| `keep_partial_output` | Whether a child stopped by `timeout_seconds` or its own `usage_limits` passes on its last text response to the parent (see below). Off by default. |
 
 ## Per-delegation model selection
 
@@ -124,7 +141,7 @@ The orchestrator knows how hard a task is at the moment it writes the brief, so 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import SubAgent, SubAgents
-from pydantic_ai_harness.subagents import ModelOption
+from pydantic_ai_harness.sub_agents import ModelOption
 
 reviewer = Agent('{{ anthropic:large }}', name='reviewer', description='Reviews a diff')
 linter = Agent('{{ anthropic:large }}', name='linter', description='Runs the linter and reports failures')
@@ -167,8 +184,8 @@ the tool omits `working_directory` and children inherit the parent's workspace.
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
+from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.sub_agents import DelegationWorkspaceRequest, SubAgent, SubAgents
 
 workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
 
@@ -202,9 +219,11 @@ change where disk agent definitions are discovered: `SubAgents.workspace` contro
 
 A *soft outcome* returns a steering message to the parent as a normal tool result, so its model reads the message and decides what to do next (rather than immediately re-delegating, which a `ModelRetry` invites). A timeout, a reached `usage_limits` budget, and an exhausted `max_calls` budget are always soft. When `on_failure` is set, the message it carries replaces the built-in default for these outcomes.
 
+With `keep_partial_output=True`, a delegation stopped by its timeout or its own usage budget also hands the parent the child's last text response, so the work the child did before it stopped reaches the parent. It follows the steering message (or `on_failure`), framed as `<partial_output>...</partial_output>`, and the outcome stays `timeout` or `budget`. `DelegationFinishedEvent.output` carries the same text, bounded like any other output. The text has not passed the child's output validation. It is the last thing the child said, not an answer it approved, and can be text the child's output validator or `OutputGuardrail` rejected, so leave this off for a child whose guardrails keep content from its parent. Text from a response the child answered with a retry is skipped, as is a final response the run stopped before acting on, or one with an output tool call the stop cut off before its verdict. A child with no such text returns the steering message alone.
+
 A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is a soft outcome too. The parent cannot approve the child's tool calls or resume its run, and delegating the same task again would most likely stop the same way, so instead of returning the marker as output the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message when that is set. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md), never ends this way and returns its output as usual. A run that ends with `PendingModelResponse` (its `output_type` includes it and a model request was left waiting on the provider, for example in a batch) returns a steering message the same way, including on a remote worker, and the request is cancelled, since nobody will check on it later. Cancelling is best effort, and a [batch](../batch.md) is only cancelled once no other request in it is still waiting.
 
-A sub-agent run that fails with a *soft model error* (`ModelRetry`, `UnexpectedModelBehavior`, e.g. it exhausted its own retries) is, by default, converted into a `ModelRetry` for the parent -- so the parent's model sees `Sub-agent '<name>' failed: ...` and can react by re-delegating. The delegate tool defaults to `tool_retries=2`, so the parent aborts only after that many consecutive delegate failures; the counter resets after any successful delegation. Raise `tool_retries` to tolerate a flakier sub-agent, or set `None` to inherit the parent agent's default tool retries. Set `on_failure` for a delegate to make its failures soft instead: the child error returns the `on_failure` message as a normal tool result.
+A sub-agent run that fails with a *soft model error* (`ModelRetry`, `UnexpectedModelBehavior`, e.g. it exhausted its own retries) is, by default, converted into a `ModelRetry` for the parent -- so the parent's model sees `Sub-agent '<name>' failed: ...` and can react by re-delegating. The delegate tool defaults to `tool_retries=2`, so the parent aborts only after that many consecutive delegate failures; the counter resets after any successful delegation. Raise `tool_retries` to tolerate a flakier sub-agent, or set `None` to inherit the parent agent's default tool retries. Set `on_model_error='return'` for a delegate to make its failures soft instead: the child error comes back as a normal tool result, `Sub-agent '<name>' failed: ...` followed by the `on_failure` message or a default steering message. `on_model_error='retry'` keeps the parent `ModelRetry` even when `on_failure` is set, so `on_failure` only customizes the other soft outcomes. With `on_model_error` unset, setting `on_failure` makes failures soft and returns the `on_failure` message alone, without the error.
 
 Hard errors propagate to stop the whole run. A `UsageLimitExceeded` from a child that has *no* per-delegate `usage_limits` (so it shares the parent's accounting) means the whole tree is out of budget and propagates; a child reaching its *own* `usage_limits` is soft, as above.
 
@@ -216,12 +235,12 @@ An *unexpected crash* -- any other exception the child raises, such as a provide
 
 | Event | Dispatch | When | Payload |
 |---|---|---|---|
-| `DelegationStartEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`), `inherits_tools` |
-| `DelegationEndEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_seconds` |
+| `DelegationStartedEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`), `inherits_tools` |
+| `DelegationFinishedEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_ms` |
 
-Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel.
+Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel. `duration_ms` is in milliseconds. `duration_seconds` is its deprecated name: it still reads, in seconds and with a warning, and a payload saved under it still loads.
 
-`outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as `on_failure` or raised as a `ModelRetry`, or a child run that ended with `DeferredToolRequests` or `PendingModelResponse`, returned as a steering message), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
+`outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as a tool result or raised as a `ModelRetry` per `on_model_error`, or a child run that ended with `DeferredToolRequests` or `PendingModelResponse`, returned as a steering message), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
 
 A delegation refused before the child runs (an unknown sub-agent, a model key off the menu, an exhausted `max_calls` budget) emits nothing; the tool result says why. An exception that propagates out of the delegate tool (a shared usage limit, an uncontained crash, a cancellation) ends without an end event. A `SubAgentToolset` registered directly in `Agent(toolsets=[...])` has no owning capability and emits nothing. As with any capability event, a listener that raises aborts the parent run.
 
@@ -230,13 +249,13 @@ Their `task` and `output` are cut at `MAX_EVENT_TEXT_CHARS` (4096) with a `trunc
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.subagents import DelegationEndEvent, SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import DelegationFinishedEvent, SubAgent, SubAgents
 
 
 class ReportDelegations(AbstractCapability):
-    @on_event(DelegationEndEvent)
-    async def on_delegation_end(self, ctx, event: DelegationEndEvent) -> None:
-        print(f'{event.agent_name}: {event.outcome} in {event.duration_seconds:.1f}s')
+    @on_event(DelegationFinishedEvent)
+    async def on_delegation_end(self, ctx, event: DelegationFinishedEvent) -> None:
+        print(f'{event.agent_name}: {event.outcome} in {event.duration_ms / 1000:.1f}s')
 
 
 researcher = Agent('{{ anthropic:large }}', name='researcher')
@@ -281,7 +300,7 @@ By default a delegation finishes inside the `delegate_task` call that started it
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent, SubAgents
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 
 researcher = Agent('{{ anthropic:large }}', name='researcher', description='Researches a topic and reports findings')
 
@@ -295,7 +314,8 @@ orchestrator = Agent(
 |---|---|
 | `delegate_task(agent_name, task, background=False, resume=None)` | Start a task, or resume a finished one with its task ID. `background=True` returns a receipt right away. |
 | `list_tasks()` | The tasks this run started and the tasks they started, with status and IDs (the 50 most relevant). |
-| `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. |
+| `check_task(task_id)` | What one of those tasks is doing now, without waiting for it: its elapsed time, the model requests, last five tool calls and latest text of its current run, and any question it waits on. A finished task shows only its outcome. |
+| `message_task(task_id, message)` | Steer a running task; it reads the message, as sent, at its next model request. A task's instructions tell it its delegating agent may send it messages. A finished task resumes with the message as its prompt, in the background if it ran there, through a `delegate_task(resume=...)` call that the delegate tool's hooks and approvals see and that counts as a second tool call. |
 | `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
 | `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
 
@@ -304,7 +324,11 @@ orchestrator = Agent(
 - **Limits.** `TaskControl(auto_background_after=...)` moves a task still running after that many seconds to the background. `TaskControl(max_running_tasks=...)` caps how many tasks a conversation runs at once, across its whole delegation tree. `SubAgent(resumable=False)` makes a delegate one-shot (see [Managed delegation sessions](#managed-delegation-sessions) for `one_shot`). All are off by default.
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
-- Only one `SubAgents` on an agent can set `task_control`. Task control, and `dynamic_agents` within a bound `DelegationTasks` owner, are not supported under durable execution: such a run under a durability capability raises a `UserError`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so this check can't catch them; don't use task control or `dynamic_agents` with them.
+- Only one `SubAgents` on an agent can set `task_control`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so the checks below can't catch them; don't use task control or `dynamic_agents` with them.
+- On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in a durable unit of its own, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. A durable task's history is not updated while it runs, so `check_task` shows only its status and elapsed time. Under durable execution, these raise a `UserError`:
+    - task control with `include_self`, `remote_agents` or `forward_events`
+    - task control with `auto_background_after` or `max_running_tasks` outside Temporal
+    - task control or `dynamic_agents` on another durable engine, or within a bound `DelegationTasks` owner
 - On Temporal and DBOS, `dynamic_agents` keeps the roster in the workflow and runs each delegation other than to `self` in a durable unit of its own, on the parent run's model unless the created agent has one, so recovery rebuilds the created agents and reuses each delegation's result. The `factory` runs again on replay, so keep it deterministic. Engines that record each tool call in a unit of its own would lose the roster on replay, so they raise a `UserError`. Under any durability capability, `SubAgents` needs an `id`, which it has by default; `id=None` raises a `UserError`.
 - Task control and `DelegationTasks` run tasks as asyncio tasks, so they need the asyncio event loop: AnyIO's Trio backend is not supported.
 
@@ -314,24 +338,26 @@ With task control, every step of a task is a typed capability event in the `sub_
 
 | Event | When | A listener can |
 |---|---|---|
-| `TaskAssignedEvent`, `TaskFollowUpEvent` (`TaskRequestEvent` matches both) | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
+| `TaskAssignedEvent`, `TaskResumedEvent` (`TaskRequestEvent` matches both) | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
 | `TaskStartedEvent` | the task's run is starting, locally or on a worker | |
 | `TaskBackgroundedEvent` | the task moved to the background; `reason` is `requested`, `auto`, or `question` | |
 | `TaskProgressEvent` | an event of the task's own run, with `TaskControl(forward_events=True)` | |
-| `TaskQuestionEvent` | the task asked a question | set `answer`, so the model is not asked |
-| `TaskAnswerEvent` | an answer is about to reach the task | rewrite `answer`, or `veto()` it |
-| `TaskMessageEvent` | a steering message is about to reach the task | rewrite `message`, or `veto()` it |
-| `TaskCancelRequestEvent`, `TaskForceCancelEvent` | a cancellation is about to reach the task | `veto()` it |
-| `TaskRetryEvent` | a worker is running a failed remote task again | |
+| `TaskQuestionAskedEvent` | the task asked a question | set `answer`, so the model is not asked |
+| `TaskAnsweredEvent` | an answer is about to reach the task | rewrite `answer`, or `veto()` it |
+| `TaskSteeredEvent` | a steering message is about to reach the task | rewrite `message`, or `veto()` it |
+| `TaskCancelRequestedEvent`, `TaskForceCancelRequestedEvent` | a cancellation is about to reach the task | `veto()` it |
+| `TaskRetriedEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
 
-Unlike `DelegationStartEvent` and `DelegationEndEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. Nor is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
+Unlike `DelegationStartedEvent` and `DelegationFinishedEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. Nor is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
 
-Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartEvent` and `DelegationEndEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
+Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartedEvent` and `DelegationFinishedEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
+
+Earlier releases named some of these differently. The old class names still import from the deprecated `pydantic_ai_harness.subagents` path, with a `HarnessDeprecationWarning`: `SubAgentMessage`, `ParentMessage` and `ChildMessage` (each now ends in `Event`), `TaskFollowUpEvent` (`TaskResumedEvent`), `TaskMessageEvent` (`TaskSteeredEvent`), `TaskAnswerEvent` (`TaskAnsweredEvent`), `TaskCancelRequestEvent` (`TaskCancelRequestedEvent`), `TaskForceCancelEvent` (`TaskForceCancelRequestedEvent`), `TaskQuestionEvent` (`TaskQuestionAskedEvent`) and `TaskRetryEvent` (`TaskRetriedEvent`). Each event's `kind` is unchanged. `AgentCreatedEvent.name` is now `agent_name`, and `parent_id` on `DelegationStartedEvent` and `DelegationFinishedEvent` is now `parent_task_id`: the old attributes still read, with the same warning, and an event serialized under an old key still loads. Constructing one of these events takes the new keyword only. They serialize under the new keys: update code that reads a serialized event by key, and upgrade any process that loads events this release writes.
 
 ```python
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.subagents import TaskAssignedEvent, TaskQuestionEvent
+from pydantic_ai_harness.sub_agents import TaskAssignedEvent, TaskQuestionAskedEvent
 
 
 class DelegationPolicy(AbstractCapability):
@@ -340,8 +366,8 @@ class DelegationPolicy(AbstractCapability):
         if 'production' in event.prompt:
             event.veto('ask the user before touching production')
 
-    @on_event(TaskQuestionEvent)
-    async def answer_known(self, ctx, event: TaskQuestionEvent) -> None:
+    @on_event(TaskQuestionAskedEvent)
+    async def answer_known(self, ctx, event: TaskQuestionAskedEvent) -> None:
         if event.question == 'Which branch?':
             event.answer = 'main'
 ```
@@ -352,7 +378,7 @@ A `SubAgentWorker` serves agents to delegating agents in other processes. The de
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import RemoteSubAgent, SubAgents, SubAgentWorker, TaskControl
+from pydantic_ai_harness.sub_agents import RemoteSubAgent, SubAgents, SubAgentWorker, TaskControl
 
 transport = ...  # a SubAgentTransport both processes reach
 
@@ -377,20 +403,20 @@ orchestrator = Agent(
 )
 ```
 
-- **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessage` events above. `InMemoryTransport` serves a worker in the same process.
+- **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessageEvent`s above. `InMemoryTransport` serves a worker in the same process.
 - **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model like a local delegate's: in the foreground as tool results, in the background as framed reports.
 - **A transport reports a lost worker.** A worker that stops sends `TaskFailedEvent` for the tasks it was running. One that dies without doing so can't: the delegating run then waits for its report until the run is cancelled, unless `receive` raises when the worker is gone. Heartbeats are not part of the protocol.
 - **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. It takes the agents it serves by name, without per-delegate run controls: those belong to the delegating side's `SubAgents`. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
 - **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `TaskControl.accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
-- `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetryEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed. The conversation stays in that worker, so serve each remote agent name from one worker: a follow-up that reaches another worker fails, since it has no conversation to resume.
-- A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartEvent` or `DelegationEndEvent`.
+- `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetriedEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed. The conversation stays in that worker, so serve each remote agent name from one worker: a follow-up that reaches another worker fails, since it has no conversation to resume.
+- A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartedEvent` or `DelegationFinishedEvent`.
 
 ### Agents the model creates
 
 With `dynamic_agents`, the model gets a `create_agent(name, description, instructions, model=None)` tool and can delegate to the agents it creates until the run ends. This works with or without task control.
 
 ```python
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
+from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgents
 
 SubAgents(models={'fast': '{{ anthropic:small }}'}, dynamic_agents=DynamicAgents(models=['fast'], max_agents=3))
 ```
@@ -409,11 +435,15 @@ stable conversation ID, and owns every worker, an asyncio task, until shutdown. 
 is implemented.
 
 Use `DelegationReports` on the parent run to deliver settled background reports through core's
-queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
-`<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
-didn't succeed, like a background tool's `<tool_result>`. The output was written by a model, so it
-never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
-the frame: the acceptance receipt the parent got at launch already said a report would follow.
+queued-message API. Each report is a `TaskOutputPart` holding the child's output as
+`<task_output task_id="..." agent_name="...">` data on the user channel, with `outcome="..."` added
+when the task didn't succeed, like a background tool's `<tool_result>`. The output was written by a
+model, so it never enters system voice: a note in the application's voice says the sub-agent wrote
+it, not the user or the application. The output goes out as the child wrote it; text in it that
+looks like the frame's own tag or an application frame such as `<system>` gets a further note naming
+the sub-agent as its author, so it can't end the frame early or speak as the application. Nothing
+else precedes the frame: the acceptance receipt the parent got at launch already said a report would
+follow.
 
 Reports default to `priority='when_idle'` so active parents finish their current work first. A host
 that starts an idle continuation should use `DelegationReports(..., priority='asap')` and
@@ -421,20 +451,18 @@ that starts an idle continuation should use `DelegationReports(..., priority='as
 prompt. The host owns wake-up scheduling between runs. A report or question that arrives after a
 run has read its last queued messages is kept for the conversation's next run.
 
-Use `is_task_report(part)` to recognize the output part, or a task's question, which arrives the
-same way framed as `<task_question task_id="..." agent_name="...">`, for example to keep it out of
-a transcript of what the user typed. Like `BackgroundTools` completions, the metadata is never sent
-to the model, but the Vercel AI and AG-UI message conversions omit it: a history that round-trips
-through them returns the report or question as plain user text, and `is_task_report` no longer
-matches it. History passed in `message_history` is trusted as the caller's own, this metadata
-included. Load history from an untrusted client with a UI adapter, which never puts client metadata
-on message content, or pass it through `sanitize_messages`, which resets `TextContent.metadata`.
+A task's question arrives the same way, as a `TaskQuestionPart` framed as
+`<task_question task_id="..." agent_name="...">`. Find reports and questions in history by these
+types, or with `is_task_report(part)`, which also recognizes the user text an earlier version
+delivered them as, for example to keep them out of a transcript of what the user typed. The Vercel AI
+and AG-UI message conversions leave capability parts out, so reports and questions stay in
+server-side history.
 
 ```python {test="skip"}
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
+from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks, SubAgents
 
 agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
 tasks = DelegationTasks(directory=Path('.task-history'))
@@ -451,8 +479,10 @@ async def converse():
             # Keep this owner open across subsequent parent turns.
 ```
 
-`opened()` drains workers on exit. A task still running when its process exited is
-loaded as cancelled when the owner next opens; if it was waiting for an answer, its output
+`opened()` cancels and drains workers on exit. If a child hasn't released its resources within
+ten seconds, `opened()` raises `RuntimeError`, or only logs it when an error is already closing the
+owner, so that error isn't masked. A task still running when its process exited is loaded as
+cancelled when the owner next opens; if it was waiting for an answer, its output
 names the question, so the parent can resume it with the answer. Keep workspace and plugin
 resources alive outside that scope. Detached execution is refused for run-owned non-local workspaces;
 foreground delegation still works. `max_depth=4` counts the main run and allows
@@ -492,19 +522,75 @@ An observer receives `DelegationTaskEvent`, with the task identity and an option
 correlated child stream event. Events from the child's own stream also carry the
 `model_name` and `context_window` of the model streaming that request, so a UI can
 show the child's context usage. Managed start/end events carry `task_id` and
-`parent_id`. Managed cancellation and uncontained exceptions produce terminal
+`parent_task_id`. Managed cancellation and uncontained exceptions produce terminal
 outcomes; unmanaged events and exception propagation keep their original contract.
 Metadata and final/interrupted histories are atomically saved under `directory`.
+Once a task settles and is saved, the owner keeps its history in that file only, so a
+directory of long-finished tasks doesn't fill memory: an observer is told a task settled
+with its history, and after that the task in `records` has empty `messages`.
+`history(task_id)` reads its history from the file (from async code, call it in a worker
+thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
+back. To copy a settled task with its history, use
+`replace(task, messages=owner.history(task.id))`.
+`snapshot(task_id)` returns a `DelegationSnapshot` of a running task, read from its live
+history without waiting on it: status, `elapsed_seconds`, the `usage` of its current run's model
+responses, its `recent_tool_calls` as `DelegationToolCall`s, and its `latest_text` and
+`pending_question`, both cut at `MAX_EVENT_TEXT_CHARS`. The child's final result is left out, so
+a snapshot doesn't show a result before `TaskCompletedEvent` listeners process it. A host can
+render a task list or status line from it, for example on each `DelegationTaskEvent`. `usage` is
+`None`, with no tool calls or text, when the owner doesn't see the run's history as it streams:
+before the child's first model request, for a remote task (its history stays on its worker) or a
+durable one, and once the task settles (its history is in its file). `check_task` gives the model
+the same view.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
 calls the interruption left unanswered with an `interrupted` tool return, so the child
 sees they did not complete.
 
+Each saved file loads on its own. A file that cannot be read or validated, whose name
+does not match its task ID, or whose saved ancestry loops is skipped and left on disk:
+`opened()` logs a warning and lists it in `problems` as a `SavedTaskProblem` (its path
+and the reason), and the other tasks still load. To list a saved task tree without
+opening an owner or resuming anything, for example from a dashboard or another process,
+call `DelegationTasks.discover(directory)`. It returns `SavedTasks`, with the loaded
+`tasks` by ID (follow `parent_id` for the tree) and the same `problems`. `discover()`
+writes nothing, and returns a task saved as `running` unchanged, since the process that
+owns it may still be running it.
+
+```python
+from pathlib import Path
+
+from pydantic_ai_harness.sub_agents import DelegationTasks
+
+
+async def show_saved_tasks():
+    saved = await DelegationTasks.discover(Path('.task-history'))
+    for task in saved.tasks.values():
+        print(task.id, task.parent_id, task.agent_name, task.status, task.outcome)
+    for problem in saved.problems:
+        print(f'Skipped {problem.path}: {problem.reason}')
+```
+
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
 concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
 parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
+
+A locally run child that inherits `count_tokens_before_request=True` from the run's
+limits checks each child request against the token and cost ceilings before it is
+sent when its model implements `count_tokens`. When a child run raises
+`NotImplementedError` before its first request (such as a child model that does not
+implement `count_tokens`), the delegation starts the child once more without the
+up-front count (under a new run ID when the delegation is recorded as a task), so
+those ceilings are checked against each response's usage instead. There is no second
+start once the `usage` the child counts into has counted a request since the child
+started, so a tool that raises `NotImplementedError` does not run twice; when
+`forward_usage=True`, a sibling's request in that window also rules it out. A
+per-child `usage_limits` that sets `count_tokens_before_request=True` itself is kept,
+so on such a model the child fails as a top-level run would. A remote worker applies
+the announced limits as received, so on a model without `count_tokens` the remote
+task fails.
 
 `agents`, `aliases`, and `instructions` extend the roster and guidance only inside
 the bound scope; they do not add delegation to an agent without `SubAgents`.
@@ -515,6 +601,39 @@ readers and expose no shell, code execution, or parent plugin tools.
 
 Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
 and child run IDs provide correlation. This owner adds no logging exporter.
+
+## Durable execution
+
+### Delegates as child workflows
+
+By default, on Temporal a delegation to an agent other than `self` runs in an activity, and on DBOS it runs inline in the parent workflow, so a delegate's own durability does nothing. To keep it, run the delegate tool as a child workflow ([Temporal](../durable_execution/temporal.md#child-workflows), [DBOS](../durable_execution/dbos.md#child-workflows)) with [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
+
+worker = Agent('{{ anthropic:large }}', name='worker', capabilities=[TemporalDurability()])
+
+lead = Agent(
+    '{{ anthropic:large }}',
+    name='lead',
+    capabilities=[
+        SubAgents(agents=[SubAgent(worker)]),
+        SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}}),
+        TemporalDurability(),
+    ],
+)
+```
+
+On DBOS, use `DBOSDurability()` and `SetToolMetadata(tools=['delegate_task'], dbos={'child_workflow': {}})`. The delegate's model requests and tool calls are then recorded in the child's history rather than the parent's.
+
+- Every delegate must be durable on the parent's engine: the tool body runs as workflow code.
+- On Temporal, register each delegate with the worker too, for example with an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin].
+- `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, `task_control`, and a delegate's `max_calls` rely on parent-run state the child workflow doesn't receive, so a delegation with any of them raises a `UserError`.
+- The delegate's usage isn't reliably counted in the parent run's usage, and the parent's usage limits don't bound it.
+- The delegation depth isn't carried into the child workflow, so if a delegate's own `SubAgents` also opts in, `max_depth` counts again from each child workflow and no longer bounds the tree.
 
 ## Discovery
 
@@ -588,7 +707,7 @@ Disk agents inherit the parent run's model by default. Per agent, the caller can
 
 ```python
 from pydantic_ai_harness import SubAgents
-from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.sub_agents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
@@ -598,7 +717,7 @@ SubAgents(
 
 When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
 
-`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable from the deprecated `pydantic_ai_harness.subagents` path, with a `HarnessDeprecationWarning`. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 
@@ -666,13 +785,15 @@ SubAgent(
     max_calls=None,        # max delegations to this sub-agent per parent run
     on_failure=None,       # steering message for soft degradations of this delegate
     contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
+    on_model_error=None,   # 'retry' or 'return' for a child ModelRetry/UnexpectedModelBehavior; None: 'return' iff on_failure is set
     resumable=True,        # whether a finished task can be resumed, with a task owner
     can_ask_questions=True,  # give the sub-agent `ask_parent`, with task_control
+    keep_partial_output=False,  # pass on the child's last text when its timeout or usage budget stops it
 )
 ```
 
 ```python {names="defined"}
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 
 TaskControl(
     remote_agents=(),      # Sequence[RemoteSubAgent] -- agents a SubAgentWorker serves
@@ -698,100 +819,100 @@ TaskControl(
 
 ## API reference
 
-::: pydantic_ai_harness.subagents.SubAgents
+::: pydantic_ai_harness.sub_agents.SubAgents
 
-::: pydantic_ai_harness.subagents.SubAgent
+::: pydantic_ai_harness.sub_agents.SubAgent
 
-::: pydantic_ai_harness.subagents.ModelOption
+::: pydantic_ai_harness.sub_agents.ModelOption
 
-::: pydantic_ai_harness.subagents.AgentOverride
+::: pydantic_ai_harness.sub_agents.AgentOverride
 
-::: pydantic_ai_harness.subagents.DelegationStartEvent
+::: pydantic_ai_harness.sub_agents.DelegationStartedEvent
 
-::: pydantic_ai_harness.subagents.DelegationEndEvent
+::: pydantic_ai_harness.sub_agents.DelegationFinishedEvent
 
-::: pydantic_ai_harness.subagents.TaskControl
+::: pydantic_ai_harness.sub_agents.TaskControl
 
-::: pydantic_ai_harness.subagents.RemoteSubAgent
+::: pydantic_ai_harness.sub_agents.RemoteSubAgent
 
-::: pydantic_ai_harness.subagents.SubAgentWorker
+::: pydantic_ai_harness.sub_agents.SubAgentWorker
 
-::: pydantic_ai_harness.subagents.SubAgentTransport
+::: pydantic_ai_harness.sub_agents.SubAgentTransport
 
-::: pydantic_ai_harness.subagents.InMemoryTransport
+::: pydantic_ai_harness.sub_agents.InMemoryTransport
 
-::: pydantic_ai_harness.subagents.serialize_message
+::: pydantic_ai_harness.sub_agents.serialize_message
 
-::: pydantic_ai_harness.subagents.deserialize_message
+::: pydantic_ai_harness.sub_agents.deserialize_message
 
-::: pydantic_ai_harness.subagents.DynamicAgents
+::: pydantic_ai_harness.sub_agents.DynamicAgents
 
-::: pydantic_ai_harness.subagents.DynamicAgentSpec
+::: pydantic_ai_harness.sub_agents.DynamicAgentSpec
 
-::: pydantic_ai_harness.subagents.DynamicAgentFactory
+::: pydantic_ai_harness.sub_agents.DynamicAgentFactory
 
-::: pydantic_ai_harness.subagents.SubAgentMessage
+::: pydantic_ai_harness.sub_agents.SubAgentMessageEvent
 
-::: pydantic_ai_harness.subagents.ParentMessage
+::: pydantic_ai_harness.sub_agents.ParentMessageEvent
 
-::: pydantic_ai_harness.subagents.ChildMessage
+::: pydantic_ai_harness.sub_agents.ChildMessageEvent
 
-::: pydantic_ai_harness.subagents.Recipient
+::: pydantic_ai_harness.sub_agents.Recipient
 
-::: pydantic_ai_harness.subagents.TaskSettledEvent
+::: pydantic_ai_harness.sub_agents.TaskSettledEvent
 
-::: pydantic_ai_harness.subagents.BackgroundReason
+::: pydantic_ai_harness.sub_agents.BackgroundReason
 
-::: pydantic_ai_harness.subagents.TaskRequestEvent
+::: pydantic_ai_harness.sub_agents.TaskRequestEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskAssignedEvent
+::: pydantic_ai_harness.sub_agents.TaskAssignedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskFollowUpEvent
+::: pydantic_ai_harness.sub_agents.TaskResumedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskStartedEvent
+::: pydantic_ai_harness.sub_agents.TaskStartedEvent
 
-::: pydantic_ai_harness.subagents.TaskBackgroundedEvent
+::: pydantic_ai_harness.sub_agents.TaskBackgroundedEvent
 
-::: pydantic_ai_harness.subagents.TaskProgressEvent
+::: pydantic_ai_harness.sub_agents.TaskProgressEvent
 
-::: pydantic_ai_harness.subagents.TaskQuestionEvent
+::: pydantic_ai_harness.sub_agents.TaskQuestionAskedEvent
 
-::: pydantic_ai_harness.subagents.TaskAnswerEvent
+::: pydantic_ai_harness.sub_agents.TaskAnsweredEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskMessageEvent
+::: pydantic_ai_harness.sub_agents.TaskSteeredEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskCancelRequestEvent
+::: pydantic_ai_harness.sub_agents.TaskCancelRequestedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskForceCancelEvent
+::: pydantic_ai_harness.sub_agents.TaskForceCancelRequestedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskRetryEvent
+::: pydantic_ai_harness.sub_agents.TaskRetriedEvent
 
-::: pydantic_ai_harness.subagents.TaskCompletedEvent
+::: pydantic_ai_harness.sub_agents.TaskCompletedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskFailedEvent
+::: pydantic_ai_harness.sub_agents.TaskFailedEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.TaskCancelledEvent
+::: pydantic_ai_harness.sub_agents.TaskCancelledEvent
     options:
         inherited_members: true
 
-::: pydantic_ai_harness.subagents.AgentCreatedEvent
+::: pydantic_ai_harness.sub_agents.AgentCreatedEvent
     options:
         inherited_members: true

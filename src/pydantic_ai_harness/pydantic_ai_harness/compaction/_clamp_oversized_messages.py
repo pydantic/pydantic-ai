@@ -103,7 +103,8 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When `None`, uses a ~4 characters-per-token heuristic.
+    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII
+    scripts, base64 and compact JSON higher than prose.
     """
 
     def __post_init__(self) -> None:
@@ -162,21 +163,21 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     ) -> list[ModelMessage]:
         """Clamp every oversized response text part (and tool-call args, if enabled)."""
         out: list[ModelMessage] = []
-        for msg in messages:
-            if not isinstance(msg, ModelResponse):
-                out.append(msg)
+        for message in messages:
+            if not isinstance(message, ModelResponse):
+                out.append(message)
                 continue
 
             new_parts: list[ModelResponsePart] = []
             changed = False
-            for part in msg.parts:
+            for part in message.parts:
                 clamped_part = self._clamp_part(part)
                 if clamped_part is None:
                     new_parts.append(part)
                 else:
                     new_parts.append(clamped_part)
                     changed = True
-            out.append(replace(msg, parts=new_parts) if changed else msg)
+            out.append(replace(message, parts=new_parts) if changed else message)
         return out
 
     async def before_model_request(

@@ -27,6 +27,27 @@ together when it changed. Pinned in the `[playwright]` extra as
   Source: <https://playwright.dev/python/docs/api/class-browsercontext>
   (`serviceWorkers` option). Re-check: inspect the `service_workers` parameter of
   `Browser.new_context`.
+- That `service_workers='block'` is an init script stubbing
+  `ServiceWorkerContainer.prototype.register`, which the default-context path
+  installs itself. Verified 2026-11-16 against the 1.64.1 driver source
+  (`addInitScript` in `BrowserContext._initialize`). Re-check: search the bundled
+  `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+- Playwright routes service-worker requests through `BrowserContext.route` in
+  Chromium, including those of a worker registered before a CDP attach;
+  `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK=1` turns that off. Verified
+  2026-11-16 against Chromium 156 with 1.64.1: a refused host received the
+  worker's request only with the variable set. Source:
+  <https://github.com/microsoft/playwright/releases/tag/v1.57.0>. Re-check: have a
+  worker registered before attachment fetch a refused host.
+- `connect_over_cdp(no_defaults=True)` leaves the default context's downloads and
+  focus and media emulation at the browser's own settings; without it, Playwright
+  sends `Browser.setDownloadBehavior` with `allowAndName` into its temporary
+  artifacts directory. The parameter is present since 1.60.0, below the extra's
+  `>=1.61.0` floor. Verified 2026-11-16
+  against the 1.64.1 driver source (`_connectOverCDPImpl`,
+  `CRBrowserContext.initialize`). Source:
+  <https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp>.
+  Re-check: `inspect.signature(BrowserType.connect_over_cdp)` lists `no_defaults`.
 - `new_context` accepts downloads by default; `accept_downloads=False` refuses
   them, so a page cannot write attachments to the host's temporary storage.
   Verified 2026-08-18 (parameter documented as "Defaults to `true` where all the
@@ -108,6 +129,7 @@ import socket
 import sys
 import warnings
 from collections import deque
+from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -141,7 +163,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Sequence
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -179,6 +201,22 @@ frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
 
+_FRAME_URL_WAIT_MS: int = 1_000
+"""How long the default-context document check waits for a frame that reports no URL yet.
+
+The check runs on every tool call, so the wait is kept short: a frame still loading
+costs each call at most this long before the call is refused as one to retry.
+"""
+
+_DOCUMENT_CHECK_DEADLINE_MS: int = 5_000
+"""Bound on one call's check of the default context's loaded documents, all frames together.
+
+A page can carry many frames, each waiting on a lookup, so the bound covers the
+whole check rather than each frame. It outlasts one frame's worst case (the URL
+wait plus a host lookup), and documents that passed are remembered, so each
+retry checks at least one more document than the last.
+"""
+
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
@@ -188,6 +226,22 @@ _BLANK_PAGE = 'about:blank'
 
 _ERROR_PAGE_SCHEME = 'chrome-error://'
 """Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
+
+_INLINE_SUBFRAME_PREFIXES = ('about:srcdoc', 'data:', 'blob:')
+"""URL prefixes of subframes whose document the page supplied itself, so no request loads it."""
+
+_WEB_URL_PREFIXES = ('http://', 'https://')
+"""URL prefixes of documents loaded from a web origin, as opposed to pages the browser or a page supplies."""
+
+_BLOCK_SERVICE_WORKER_REGISTRATION = (
+    'if (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => {'
+    " console.warn('Service Worker registration blocked by PlaywrightBrowser'); };"
+)
+"""What `new_context(service_workers='block')` installs, for a context the session did not create.
+
+Playwright implements that option as this init script. Re-check: search the bundled
+driver's `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+"""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
@@ -254,6 +308,9 @@ class _Frame(Protocol):
 
     @property
     def url(self) -> str: ...  # pragma: no cover
+    async def wait_for_load_state(
+        self, state: Literal['domcontentloaded'], *, timeout: float | None = None
+    ) -> None: ...  # pragma: no cover
     async def inner_text(self, selector: str, *, timeout: float | None = None) -> str: ...  # pragma: no cover
     async def wait_for_selector(
         self, selector: str, *, timeout: float | None = None, state: _WaitState | None = None
@@ -271,6 +328,7 @@ class _Page(Protocol):
 
     @property
     def url(self) -> str: ...  # pragma: no cover
+    def remove_listener(self, event: str, f: Callable[..., object]) -> None: ...  # pragma: no cover
     @property
     def mouse(self) -> _Mouse: ...  # pragma: no cover
     @property
@@ -473,7 +531,7 @@ async def _resolve_host(host: str) -> tuple[str, ...] | None:
     if cached is not None and cached[0] > now:
         return cached[1]
     try:
-        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
+        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)  # noqa: TID251  (not converted to anyio yet)
     except (TimeoutError, OSError, UnicodeError):
         return None
     if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
@@ -786,6 +844,10 @@ _CREDENTIAL_VALUE = re.compile(
 )
 
 
+_URL_ORIGIN = re.compile(r'^([^:/?#]*:(?://[^/?#]*)?|).*', re.DOTALL)
+"""Keeps a URL's scheme and authority, and drops everything after them."""
+
+
 def _without_credentials(url: str) -> str:
     """Return `url` with userinfo removed and credential parameter values redacted.
 
@@ -804,6 +866,23 @@ def _without_credentials(url: str) -> str:
     return _CREDENTIAL_VALUE.sub(r'\1REDACTED', _USERINFO.sub(r'\1', url))
 
 
+def _url_origin(url: str) -> str:
+    """Name a page the session refuses to expose by its scheme and authority only.
+
+    The rest of its URL is part of what it withholds: a path and query on an internal
+    host, or, for a `data:` URL, the document itself.
+    """
+    return _without_credentials(_URL_ORIGIN.sub(r'\1', url, count=1))
+
+
+_URL_IN_TEXT = re.compile(r'[a-zA-Z][\w+.\-]{0,31}://\S+')
+"""A URL anywhere in a message, up to the next whitespace.
+
+The scheme is capped so a long run of word characters costs a linear scan rather
+than a quadratic one. A longer scheme still matches, from partway into it.
+"""
+
+
 def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     """Replace the CDP endpoint in `message` with a form carrying no credentials.
 
@@ -812,6 +891,13 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     put a token in that URL's query string or path, so only the scheme, host and
     port survive -- enough to see which endpoint was unreachable, which the driver
     reports separately anyway.
+
+    Playwright also quotes forms of the endpoint that do not contain `cdp_url`
+    verbatim: the `/json/version/` URL it builds for an `http(s)` endpoint, and the
+    endpoint as its URL parser normalized it (host lower-cased, query
+    percent-encoded). Every URL left after the exact replacement is cut to its
+    origin too, so a credential there does not depend on `_without_credentials`
+    knowing its parameter name.
     """
     try:
         parsed = urlparse(cdp_url)
@@ -820,11 +906,10 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
         # read inside the guard: this runs while an error is already being built.
         if parsed.port is not None:
             host = f'{host}:{parsed.port}'
-        scheme = parsed.scheme
+        safe = f'{parsed.scheme}://{host}' if parsed.scheme else host
     except ValueError:
-        return message.replace(cdp_url, '<cdp_url>')
-    safe = f'{scheme}://{host}' if scheme else host
-    return message.replace(cdp_url, safe)
+        safe = '<cdp_url>'
+    return _URL_IN_TEXT.sub(lambda url: _url_origin(url.group()), message.replace(cdp_url, safe))
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -871,7 +956,7 @@ async def _auto_install_chromium() -> str | None:
     mocked test surface. On failure the merged stdout/stderr is returned so the
     launch path can surface why the install failed instead of the generic hint.
     """
-    proc = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         sys.executable,
         '-m',
         'playwright',
@@ -881,12 +966,12 @@ async def _auto_install_chromium() -> str | None:
         stderr=asyncio.subprocess.STDOUT,
     )
     try:
-        stdout, _ = await proc.communicate()
+        stdout, _ = await process.communicate()
     except asyncio.CancelledError:
-        proc.terminate()
-        await proc.wait()
+        process.terminate()
+        await process.wait()
         raise
-    if proc.returncode == 0:
+    if process.returncode == 0:
         return None
     return stdout.decode(errors='replace')
 
@@ -1021,6 +1106,10 @@ class _FailedRequest(Protocol):
     def failure(self) -> str | None: ...  # pragma: no cover
 
 
+CdpContextMode = Literal['new', 'default']
+"""Whether a CDP-attached session creates an isolated context or uses the browser's default one."""
+
+
 class PlaywrightBrowserSession:
     """One agent run's Chromium: how a page is obtained, guarded, and released.
 
@@ -1029,13 +1118,17 @@ class PlaywrightBrowserSession:
     Exiting closes whatever was started, in the order that a half-built session
     still tears down cleanly.
 
-    `PlaywrightBrowser` creates one per run (via `for_run`), so concurrent runs
-    never share a page. It can also be driven directly:
+    `PlaywrightBrowser` creates one session per run. Sessions using the same
+    default CDP context share its pages. It can also be driven directly:
 
     ```python
     async with PlaywrightBrowserSession(policy=EgressPolicy()) as session:
         page = await session.ensure_page()
     ```
+
+    `cdp_url` can also be a function, sync or async, that takes no arguments and
+    returns the endpoint: the first connect calls it, and its result is reused
+    until the session is entered again.
     """
 
     def __init__(
@@ -1044,16 +1137,26 @@ class PlaywrightBrowserSession:
         policy: EgressPolicy | None = None,
         headless: bool = True,
         storage_state: StorageState | None = None,
-        cdp_url: str | None = None,
+        cdp_url: str | Callable[[], str | Awaitable[str]] | None = None,
+        cdp_context: CdpContextMode = 'new',
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         launch_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
     ) -> None:
+        if cdp_context not in ('new', 'default'):
+            raise UserError('`cdp_context` must be `new` or `default`.')
+        if cdp_context == 'default':
+            if cdp_url is None:
+                raise UserError('`cdp_context="default"` requires `cdp_url`.')
+            if storage_state is not None:
+                raise UserError('`storage_state` cannot be applied to the default CDP context.')
         self.policy = policy if policy is not None else EgressPolicy()
         """Egress policy the route guard enforces, and the default for a toolset built on this session."""
         self._headless = headless
         self._storage_state = storage_state
-        self._cdp_url = cdp_url
+        self._cdp_url_function = None if cdp_url is None or isinstance(cdp_url, str) else cdp_url
+        self._cdp_url = cdp_url if isinstance(cdp_url, str) else None
+        self._cdp_context = cdp_context
         self._auto_install_chromium = auto_install_chromium
         self._chromium_sandbox = chromium_sandbox
         self._launch_timeout_ms = launch_timeout_ms
@@ -1079,6 +1182,10 @@ class PlaywrightBrowserSession:
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
         self._launch_lock = anyio.Lock(fast_acquire=True)
+        # The policy is fixed for the session, so a document's verdict depends only on its URL
+        # and whether it is the top-level one. Kept across attach attempts: a retried attach
+        # reconnects and gets new frame objects for the same documents.
+        self._admitted_documents: set[tuple[str, bool]] = set()
         self.tracer: Tracer = _FALLBACK_TRACER
         """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
@@ -1206,7 +1313,105 @@ class PlaywrightBrowserSession:
                 raise BrowserUnavailableError(self.launch_error)
             if self.page is None:
                 raise BrowserUnavailableError('Browser failed to launch.')  # pragma: no cover
+        if self._cdp_context == 'default':
+            await self._leave_tabs_off_the_web()
+            await self._validate_default_context_pages(self.pages)
         return self.page
+
+    async def _leave_tabs_off_the_web(self) -> None:
+        """Stop using every tracked tab that moved off the web, and refuse the call that found one.
+
+        The tab is neither navigated nor closed: in the default context it can be the
+        profile owner's, so it stays open in the browser, unwired and unlisted, the way
+        attaching leaves such a tab out. The active tab moves to another tracked one, or
+        to a new blank tab when none is left, so the next call works. The blank tab opens
+        whenever the active pointer names a tab the session no longer tracks, so an open
+        that failed is retried on the next call rather than handing the dropped tab back,
+        whatever URL it shows by then.
+        """
+        left = [(page, url) for page in self.pages if (url := self._off_web_document(page)) is not None]
+        for page, _ in left:
+            # Every listener `_wire_page` added, so the tab reports nothing more.
+            for event, handler in (
+                ('popup', self._on_popup),
+                ('console', self._on_console),
+                ('pageerror', self._on_page_error),
+                ('response', self._on_response),
+                ('requestfailed', self._on_request_failed),
+                ('dialog', self._on_dialog),
+                ('close', self._on_page_closed),
+            ):
+                page.remove_listener(event, handler)
+            # The same bookkeeping as a tab that closed.
+            self._on_page_closed(page)
+        if self.page is not None and self.page not in self.pages:
+            # The tab was dropped by this call or by one whose open failed, or it was the last one and closed.
+            await self._bounded(self.open_tab())
+        if not left:
+            return
+        raise BrowserUnavailableError(self._off_web_tab_message([url for _, url in left]))
+
+    async def _validate_default_context_pages(self, pages: Sequence[_Page]) -> None:
+        """Check loaded documents before listeners or tools can expose their contents.
+
+        Request routes cannot check documents loaded before attachment. Recheck
+        every tab because listing reads inactive titles and closing the active
+        tab can select another inherited page. A document that passed is not checked
+        again, and one deadline covers the whole check: a call that runs out of time
+        is refused as one to retry, and the next starts from what this one admitted.
+        """
+        try:
+            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):  # noqa: TID251  (not converted to anyio yet)
+                for page in pages:
+                    for index, frame in enumerate(page.frames):
+                        await self._check_inherited_frame(frame, top_level=index == 0)
+        except TimeoutError:
+            raise BrowserUnavailableError(
+                'The default CDP context holds more documents than one call can check against the browser '
+                f'policy in {_DOCUMENT_CHECK_DEADLINE_MS // 1000} seconds. The documents checked so far are '
+                'remembered: retry the call to check the rest.'
+            ) from None
+
+    async def _check_inherited_frame(self, frame: _Frame, *, top_level: bool) -> None:
+        """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet.
+
+        A document outside the web, top-level or a subframe other than an inline one, is
+        refused whatever the policy says: in this mode it holds the profile's own state,
+        such as its history or an extension's UI, and no request the policy could judge
+        loaded it.
+        """
+        if not frame.url:
+            # CDP can expose a cross-origin frame before its URL is populated.
+            try:
+                await frame.wait_for_load_state('domcontentloaded', timeout=_FRAME_URL_WAIT_MS)
+            except PlaywrightTimeoutError:
+                pass
+            if not frame.url:
+                raise BrowserUnavailableError(
+                    'A frame in the default CDP context is still loading, so its document cannot be '
+                    'checked against the browser policy yet. Retry the call in a moment.'
+                )
+        if frame.url.startswith(_ERROR_PAGE_SCHEME) or (
+            not top_level and frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)
+        ):
+            # Chromium's error page holds nothing from the origin that failed to load, and an
+            # inline subframe's document came from a page this check covers, not a request.
+            return
+        if self._is_off_web(frame.url):
+            # Reached when the URL arrived during the wait above: the next call leaves the tab out.
+            raise BrowserUnavailableError(self._off_web_tab_message([frame.url]))
+        admitted = (frame.url, top_level)
+        if admitted in self._admitted_documents:
+            return
+        document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
+        if (reason := await self.decide(document)) is None:
+            self._admitted_documents.add(admitted)
+            return
+        raise BrowserUnavailableError(
+            f'The default CDP context contains a document blocked by the browser policy '
+            f'({reason}): {_url_origin(document.url)}. Close its tab in the provider browser, '
+            'or navigate that tab to an allowed URL, then retry.'
+        )
 
     async def _launch(self) -> None:
         """Start the driver and Chromium, then open the guarded page.
@@ -1240,26 +1445,98 @@ class PlaywrightBrowserSession:
         # Assigned before the context and page are built, so teardown closes Chromium
         # even when a later setup step raises.
         self._browser = browser
-        # Service workers can issue requests that context routes never see, so they
-        # are blocked to keep all traffic on the routable path. Downloads are refused
-        # because no tool exposes them: accepting them only lets a page write to the
-        # host's temporary storage for the length of the run.
-        context = await self._bounded(
-            browser.new_context(
-                storage_state=self._storage_state,
-                service_workers='block',
-                accept_downloads=False,
+        if self._cdp_context == 'default':
+            if not browser.contexts:
+                raise BrowserUnavailableError('The CDP browser has no default context.')
+            context = browser.contexts[0]
+            self._context = context
+            # The inherited pages keep running while the checks below wait on a lookup or a
+            # loading frame, so the guards go on first.
+            await self._install_guards(context)
+            # A tab showing anything outside the web, such as the browser's own start page or an
+            # extension's frame, is left out whatever the policy says, rather than failing every
+            # attach to a browser that opened on one.
+            pages = [page for page in context.pages if self._off_web_document(page) is None]
+            if len(pages) > _MAX_TABS:
+                raise BrowserUnavailableError(
+                    f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
+                )
+            await self._validate_default_context_pages(pages)
+            if not pages:
+                pages = [await self._bounded(context.new_page())]
+        else:
+            # Blocked workers stay off the request path even with Playwright's worker routing
+            # off; downloads have no tool-level contract.
+            context = await self._bounded(
+                browser.new_context(
+                    storage_state=self._storage_state,
+                    service_workers='block',
+                    accept_downloads=False,
+                )
             )
+            self._context = context
+            pages = [await self._bounded(context.new_page())]
+            await self._install_guards(context)
+        for page in pages:
+            self._wire_page(page)
+            self.pages.append(page)
+        self.page = pages[0]
+
+    @staticmethod
+    def _off_web_tab_message(urls: Sequence[str]) -> str:
+        """The error for a default-context tab found showing a page outside the web.
+
+        Each page is named by its scheme and authority only: the rest of such a URL can
+        be the document itself, such as a `data:` URL's content or a `file:` path.
+        """
+        pages = ', '.join(_url_origin(url) for url in urls)
+        return (
+            f'A tab in the default CDP context is showing a page the agent cannot read ({pages}). The agent '
+            'stops using that tab, which stays open in the browser. Retry the call.'
         )
-        self._context = context
-        page = await self._bounded(context.new_page())
-        if self.policy.enforced():
-            await self._bounded(context.route('**/*', self._route_guard))
-            # A network route never sees a WebSocket, so sockets get a guard of their own.
-            await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
-        self._wire_page(page)
-        self.pages.append(page)
-        self.page = page
+
+    def _off_web_document(self, page: _Page) -> str | None:
+        """The URL of the first document in `page` the session never exposes, or `None` when there is none.
+
+        That is a top-level page outside the web, or a subframe outside it other than an
+        inline one. Extensions inject such frames into the pages they run on, such as a
+        password manager's menu, and the frame holds the extension's own UI, which
+        `snapshot` would read along with the page.
+        """
+        for index, frame in enumerate(page.frames):
+            if self._is_off_web(frame.url) and (index == 0 or not frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)):
+                return frame.url
+        return None
+
+    @staticmethod
+    def _is_off_web(url: str) -> bool:
+        """Whether a default-context tab's page is one the session never exposes: anything but a web page or a blank one.
+
+        Covers the browser's own pages (`chrome://newtab/`, settings, history),
+        extension pages, and `file:`, `data:` and `blob:` documents. Chromium's
+        error page stays in: it holds nothing from the origin that failed to load.
+        A tab that reports no URL yet is still loading, and stays in for the
+        document check to wait on.
+        """
+        return bool(url) and url != _BLANK_PAGE and not url.startswith((_ERROR_PAGE_SCHEME, *_WEB_URL_PREFIXES))
+
+    async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
+        """Keep requests of `context` on a path routes see, and route them when the policy enforces anything.
+
+        A context the session did not create keeps the service-worker setting it was
+        created with, so registrations are refused the way `service_workers='block'`
+        refuses them, whatever the policy. Playwright routes a worker's requests like a
+        page's unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set, and the refusal
+        covers that case too. It reaches each document created or navigated from now on:
+        documents already loaded can register a worker until they navigate.
+        """
+        if self._cdp_context == 'default':
+            await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))
+        if not self.policy.enforced():
+            return
+        await self._bounded(context.route('**/*', self._route_guard))
+        # A network route never sees a WebSocket, so sockets get a guard of their own.
+        await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
 
     async def _bounded(self, awaitable: Awaitable[_T]) -> _T:
         """Run a setup step that has no `timeout` parameter under `launch_timeout_ms`.
@@ -1270,7 +1547,7 @@ class PlaywrightBrowserSession:
         if self._launch_timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
@@ -1290,9 +1567,16 @@ class PlaywrightBrowserSession:
         A browser reached over `cdp_url` is already running, so its own
         configuration decides this.
         """
+        if self._cdp_url is None and self._cdp_url_function is not None:
+            endpoint = self._cdp_url_function()
+            self._cdp_url = await self._bounded(endpoint) if isinstance(endpoint, Awaitable) else endpoint
         if self._cdp_url is not None:
             try:
-                return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
+                # Without `no_defaults`, Playwright makes the default context save downloads to
+                # its own temporary directory and emulates focus in the user's tabs.
+                return await pw.chromium.connect_over_cdp(
+                    self._cdp_url, timeout=self._launch_timeout_ms, no_defaults=self._cdp_context == 'default'
+                )
             except PlaywrightError as exc:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
         if await anyio.Path(pw.chromium.executable_path).exists():
@@ -1528,8 +1812,11 @@ class PlaywrightBrowserSession:
         self._driver_cm = async_playwright()
         self._driver = None
         self._driver_entered = False
+        if self._cdp_url_function is not None:
+            self._cdp_url = None
         self.launch_error = None
         self.dialog_decision = None
+        self._admitted_documents.clear()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, *_: object) -> None:
@@ -1580,9 +1867,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     The tools read the active page from a shared `PlaywrightBrowserSession`, which
     `PlaywrightBrowser.wrap_run` populates lazily on the first tool call. Use the
-    toolset through `PlaywrightBrowser` rather than directly; construct it
-    directly (with a `session` whose `page` you set) only to drive tools against a
-    page double.
+    toolset through `PlaywrightBrowser`, or supply a session held open with
+    `async with` when driving the toolset directly.
 
     Page text is extracted with Playwright itself (`inner_text`), across the main
     frame and any child frames, and every textual result is truncated to
@@ -1665,7 +1951,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     texts.append(f'[frame {_without_credentials(frame.url)}]\n{text}')
 
         try:
-            await asyncio.wait_for(sweep(), budget_ms / 1000)
+            await asyncio.wait_for(sweep(), budget_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             pass
         return texts
@@ -1771,7 +2057,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc

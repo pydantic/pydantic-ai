@@ -9,7 +9,10 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
@@ -81,7 +84,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     harmony_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert harmony_profile is not None
     assert isinstance(harmony_profile, dict)
-    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert harmony_profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
     # gpt-oss follows Harmony rules: prior reasoning is replayed in the `reasoning` field, not `<think>` tags.
     assert harmony_profile.get('openai_chat_send_back_thinking_parts', None) == 'auto'
 

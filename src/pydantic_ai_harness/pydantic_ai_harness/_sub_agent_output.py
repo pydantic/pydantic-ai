@@ -59,7 +59,7 @@ class ServingModelRecorder(AbstractCapability[Any]):
     """Records the model that served a sub-agent run's last request, to name it and to cancel a request it left pending.
 
     The model is the one capabilities like `BatchModelRequests` wrapped, so cancelling through it also releases the
-    request from a batch shared with other runs.
+    request from a batch shared with other runs. The names of that request's output tools are recorded too.
     """
 
     # It only observes the request, so it can be added to a sub-agent run under durable execution too.
@@ -70,6 +70,7 @@ class ServingModelRecorder(AbstractCapability[Any]):
         self.answered_by: str | None = None
         """The model that answered the last request, as `<system>:<model_name>`, from the response as core's
         `gen_ai.response.model` is."""
+        self.output_tools: frozenset[str] = frozenset()
 
     async def after_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
@@ -77,6 +78,8 @@ class ServingModelRecorder(AbstractCapability[Any]):
         model = self.model = request_context.model
         # A `FallbackModel` is the request's model whichever of its models answered; the response names that one.
         self.answered_by = f'{response.provider_name or model.system}:{response.model_name or model.model_name}'
+        self.model = request_context.model
+        self.output_tools = frozenset(tool.name for tool in request_context.model_request_parameters.output_tools)
         return response
 
 
