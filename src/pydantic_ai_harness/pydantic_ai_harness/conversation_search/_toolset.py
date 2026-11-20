@@ -23,6 +23,7 @@ from pydantic_core import ErrorDetails
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -43,7 +44,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource, message_hash
 
@@ -237,15 +238,15 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
             return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
         case CompactionPart():
             # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
-            if not part.content:
-                return None
-            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}'
+            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}' if part.content else None
         case SpeechPart():
             # A realtime user turn: index the spoken transcript so speech is searchable, not the
             # raw audio. `transcript` is optional, so an audio-only part contributes no text.
             if not part.transcript:
                 return None
             return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
+        case CapabilityPart():
+            return _format_capability_part(part, terms=terms)
         # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
         # fallback below stays a real runtime branch.
         case (
@@ -262,6 +263,17 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
             if TYPE_CHECKING:
                 assert_never(part)
             return None
+
+
+def _format_capability_part(part: CapabilityPart, *, terms: frozenset[str] | None) -> str | None:
+    """What a capability told the model, such as a sub-agent's report or a background tool's result, or `None`.
+
+    Labeled with its kind, never as the user's, the way `SummarizingCompaction` shows it. A request-scoped part applied
+    to its own request only, so it isn't conversation.
+    """
+    if part.scope == 'request':
+        return None
+    return f'[{part.kind}]: {_clip(capability_part_text(part), _EXCERPT_CHARS, terms)}'
 
 
 def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> str:
@@ -475,10 +487,10 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         # index-aligned across the flattened sections; context windows stay within one section.
         flat_index_lines: list[str] = []
         locations: list[tuple[int, int]] = []
-        for section_idx, section in enumerate(sections):
-            for line_idx, line in enumerate(section.index_lines):
+        for section_index, section in enumerate(sections):
+            for line_index, line in enumerate(section.index_lines):
                 flat_index_lines.append(line)
-                locations.append((section_idx, line_idx))
+                locations.append((section_index, line_index))
 
         ranked = _bm25_rank(query, flat_index_lines, self._params)
         if not ranked:
@@ -487,19 +499,19 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         terms = frozenset(_tokenize(query))
         results: list[str] = []
         shown: set[tuple[int, int]] = set()
-        for doc_idx, score in ranked:
+        for doc_index, score in ranked:
             if len(results) == self._max_matches:
                 break
-            section_idx, line_idx = locations[doc_idx]
-            if (section_idx, line_idx) in shown:
+            section_index, line_index = locations[doc_index]
+            if (section_index, line_index) in shown:
                 continue
-            section = sections[section_idx]
-            start = max(0, line_idx - self._context_lines)
-            end = min(len(section.messages), line_idx + self._context_lines + 1)
+            section = sections[section_index]
+            start = max(0, line_index - self._context_lines)
+            end = min(len(section.messages), line_index + self._context_lines + 1)
             # Record the whole emitted window so a neighbouring match whose context
             # overlaps this one is skipped instead of repeating the same lines.
-            shown.update((section_idx, idx) for idx in range(start, end))
-            excerpt = '\n'.join(section.display_line(idx, terms) for idx in range(start, end))
+            shown.update((section_index, index) for index in range(start, end))
+            excerpt = '\n'.join(section.display_line(index, terms) for index in range(start, end))
             results.append(f'[score: {score:.1f} | {section.label}]\n{excerpt}')
 
         header = f"Found {len(results)} match(es) for '{query}' in {total_messages} persisted messages:\n\n"

@@ -79,7 +79,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`. Pass `workspace='new'` to create a fresh sandbox even when the message history names one. `image`, `resource`, `allow_internet_access` and `secure_access` only shape a new sandbox; `working_dir`, `env` and `sandbox_timeout` apply to an attached one too.
+The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`. Pass `workspace='new'` to create a fresh sandbox even when the message history names one. `image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox; `working_dir`, `env` and `sandbox_timeout` apply to an attached one too.
 
 A ref is trusted input: whoever passes one runs commands in that sandbox, and the server serves every sandbox to every holder of its API key. Only pass refs your application stored itself.
 
@@ -160,6 +160,72 @@ mode = "dns+nft"
 
 In the default `dns` mode the sidecar filters DNS lookups only, so a command can still connect to an IP address directly. Server-level allow and deny rules apply in both modes. See [OpenSandbox egress configuration](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/configuration.md#egress) for runtime requirements and configuration.
 
+## Keep a token out of the sandbox
+
+Pass `credential_proxy` and `network_policy` to `OpenSandboxBackend` to have OpenSandbox's [Credential Vault](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/credential-vault.md) add a token to the sandbox's requests itself, so the token is never inside the sandbox. Both take the SDK's own objects and pass them on unchanged. In an image with `git` and `gh`, these work as the token's owner, while `echo $GH_TOKEN` in the sandbox prints `placeholder`:
+
+```python {test="skip"}
+import base64
+
+from opensandbox.models.sandboxes import (
+    Credential,
+    CredentialAuth,
+    CredentialBinding,
+    CredentialMatch,
+    CredentialProxyConfig,
+    InlineCredentialSource,
+    NetworkPolicy,
+    NetworkRule,
+)
+
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
+
+token = '...'  # a GitHub token, such as the output of `gh auth token`
+basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+hosts = ['github.com', 'api.github.com', 'uploads.github.com']
+
+
+async def github_sandbox() -> OpenSandboxBackend:
+    backend = OpenSandboxBackend(
+        image='python:3.13-slim',
+        env={'GH_TOKEN': 'placeholder'},  # `gh` sends a token only when one is set; the vault replaces it
+        network_policy=NetworkPolicy(
+            defaultAction='deny', egress=[NetworkRule(action='allow', target=host) for host in hosts]
+        ),
+        credential_proxy=CredentialProxyConfig(enabled=True),
+    )
+    sandbox = await backend.get_sandbox()
+    await sandbox.credential_vault.create(
+        credentials=[
+            Credential(name='github-basic', source=InlineCredentialSource(value=basic)),
+            Credential(name='github-token', source=InlineCredentialSource(value=token)),
+        ],
+        bindings=[
+            CredentialBinding(  # git over HTTPS
+                name='git',
+                match=CredentialMatch(hosts=['github.com']),
+                auth=CredentialAuth(type='basic', credential='github-basic'),
+            ),
+            CredentialBinding(  # gh, including release uploads
+                name='gh',
+                match=CredentialMatch(hosts=['api.github.com', 'uploads.github.com']),
+                auth=CredentialAuth(type='bearer', credential='github-token'),
+            ),
+        ],
+    )
+    return backend
+```
+
+Pass the backend as `workspace=`, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run). `credential_proxy` is on `OpenSandboxBackend` only, because the vault has to be filled after the sandbox exists and before the agent's first command.
+
+- The server must filter traffic in `dns+nft` mode (see [Network access](#network-access)), or creating the sandbox fails.
+- The policy must allow every host in the vault, and any other host the agent needs, such as a package index.
+- Only HTTPS requests get the token, replacing any `Authorization` header they carried. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- The agent can't see the token, but it can use it for anything the token allows.
+- The vault doesn't hide the token in responses. List only hosts that never send request headers back, or a command could read the token there.
+- The vault is kept in memory next to the sandbox. Pausing and resuming a Kubernetes sandbox, or restarting the server's network proxy, empties it, so fill it again after you reattach. To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
+- `allow_internet_access=False` already means a deny-all policy, so pass one or the other: `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError` for both.
+
 ## Clean up
 
 A run never destroys its sandbox. Destroy it, files included, with the ref you stored:
@@ -201,7 +267,7 @@ Set `sandbox_timeout` above the longest gap between workspace operations, includ
 
 ## Security model
 
-The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`. The capability passes `allow_internet_access` and `secure_access` to the server when it creates a sandbox, and the server applies them.
+The sandbox's isolation is the server's runtime: a Docker container shares the host's kernel, and a Kubernetes pod shares its node's, unless the server is configured with a secure runtime such as gVisor or Kata Containers. Inside, commands run as the image's user, usually `root`. The capability passes `allow_internet_access`, `network_policy` and `secure_access` to the server when it creates a sandbox, and the server applies them.
 
 - With the default `allow_internet_access=True`, a Docker-backed sandbox can reach its host and LAN, including the OpenSandbox server if it listens there. `False` on a server in `dns+nft` mode blocks that; see [Network access](#network-access).
 - Requests to the server's API carry the server API key. Command and file requests carry commands, file contents and `env` values. Over plain `http` all of them are unencrypted. Without a `connection`, an `https://` domain in `OPEN_SANDBOX_DOMAIN` sends every request over HTTPS. A `ConnectionConfig` you pass is used as given, so set both an `https://` domain and `protocol='https'` on it; see [Run on Kubernetes](#run-on-kubernetes).
@@ -211,7 +277,7 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 
 ## Configuration
 
-[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir` and `env`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
+[Agent specs](../agent.md#agent-specs) can set `image`, `resource`, `allow_internet_access`, `secure_access`, `sandbox_timeout`, `working_dir`, `env`, `authority` and `path_authority`. Configure the server connection through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`; a custom `ConnectionConfig` is a Python-only option.
 
 | Option | What it does |
 | --- | --- |
@@ -219,10 +285,13 @@ The sandbox's isolation is the server's runtime: a Docker container shares the h
 | `connection` | The SDK's `ConnectionConfig` for your server. Default: `None`, which reads `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. A config you pass is used as given; see [Security model](#security-model) for HTTPS. |
 | `resource` | Resource limits for a new sandbox, such as `{'cpu': '500m', 'memory': '1Gi'}`. Default: `None`, one CPU and 2 GiB. |
 | `allow_internet_access` | Default: `True`, which sends no policy, so the server's configuration applies. `False` asks the server for deny-all egress on a new sandbox; see [Network access](#network-access). |
+| `network_policy` | The SDK's `NetworkPolicy` for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. Cannot be combined with `allow_internet_access=False`. A spec cannot set it. |
 | `secure_access` | Default: `False`. `True` asks the server to make its Kubernetes ingress gateway and proxy require a token for a new sandbox's endpoints; see [Endpoint authentication](#endpoint-authentication). Docker rejects `True`. |
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included; every operation renews it, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
+| `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
+| `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 
 ## Telemetry
 

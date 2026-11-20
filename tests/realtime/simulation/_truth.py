@@ -95,10 +95,12 @@ class ToolCallTruth:
     call_id: str
     response: str
     name: str
-    seq: int = 0
+    seq: int
     """When the server made the call."""
     output_received: bool = False
     cancelled_by_server: bool = False
+    abandoned_by: str | None = None
+    """The response whose start made the server give up on the call before its result came in (Eleven Realtime)."""
     read: bool = False
     """Whether the client read the call (a cancelled response's calls can be dropped as stragglers)."""
     read_seq: int | None = None

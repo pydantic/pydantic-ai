@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 
-from ..filesystem.conftest import tools_path
+from ..file_system.conftest import tools_path
 from .conftest import PY_SOURCE, FakeJev, VanishingBackend, judged, search, search_agent, search_all, search_error
 
 pytestmark = pytest.mark.usefixtures('allow_model_requests')  # `FakeJev` is a real `DecisionModel`

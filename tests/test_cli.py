@@ -911,7 +911,7 @@ async def test_ask_agent_accumulates_usage(env: TestEnv):
 
     # Usage is the sum of both runs: the first turn calls the tool (2 requests, 1 tool call), the second
     # replays that history without re-calling it (1 request). Prior usage is not re-counted from history.
-    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=14, requests=3, tool_calls=1))
+    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=15, requests=3, tool_calls=1))
 
 
 async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):
@@ -1078,7 +1078,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1101,7 +1101,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1139,7 +1139,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1168,7 +1168,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         models=[],
         tools=['web_search', 'code_execution'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1189,7 +1189,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         models=['openai:gpt-5'],
         tools=[],
         instructions='You are a helpful coding assistant',
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1216,7 +1216,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1250,7 +1250,7 @@ def test_run_web_command_generic_agent_no_model(mocker: MockerFixture, capfd: Ca
     mock_uvicorn_run.assert_called_once()
     # Verify default model was passed
     call_kwargs = mock_create_app.call_args.kwargs
-    assert call_kwargs['models'] == ['openai:gpt-5']
+    assert call_kwargs['models'] == ['openai:gpt-6.1-sol']
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
@@ -1517,7 +1517,7 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=custom_url,
         allowed_hosts=[],
     )
@@ -1538,7 +1538,7 @@ def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=['ui.example.com', '*.corp.example'],
     )
@@ -1607,6 +1607,7 @@ def _plain(output: str) -> str:
 def test_clai_intro_shows_banner(
     capfd: CaptureFixture[str],
     mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
     env: TestEnv,
     terminal_clai: None,
     uvx_path: str | None,
@@ -1615,6 +1616,9 @@ def test_clai_intro_shows_banner(
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
     mocker.patch('pydantic_ai._cli.shutil.which', return_value=uvx_path)
+    # Earlier tests run the module-level `cli_agent`, and its first run names it `agent`. A fresh `clai`
+    # process has no name to show, and the extra `agent: agent • ` wraps the line asserted below.
+    monkeypatch.setattr(cli_agent, 'name', None)
 
     assert cli(['hello']) == 0
 
@@ -1623,12 +1627,12 @@ def test_clai_intro_shows_banner(
     # clai shows the same banner a script gets, rather than heading it with its own name and version.
     assert f'pydantic-ai v{__version__}' in output
     assert 'clai - Pydantic AI CLI' not in output
-    assert 'model: openai:gpt-5 • tools: 0 • capabilities: 0' in output
+    assert 'model: openai:gpt-6.1-sol • tools: 0 • capabilities: 0' in output
     # The banner carries the observability pointer, so clai doesn't repeat its own header line.
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
     assert expected in output
-    assert 'with openai:gpt-5' not in output
+    assert 'with openai:gpt-6.1-sol' not in output
 
 
 def test_clai_nested_in_an_agent_still_opens_with_a_banner(
@@ -1832,7 +1836,7 @@ def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
     assert LOGO_MARKER not in output
     assert 'observability' not in output
     assert 'clai - Pydantic AI CLI' in output
-    assert 'openai:gpt-5' in output
+    assert 'openai:gpt-6.1-sol' in output
 
 
 def test_clai_run_does_not_print_a_second_banner(capfd: CaptureFixture[str], env: TestEnv, terminal_clai: None):
