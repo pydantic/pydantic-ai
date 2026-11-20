@@ -159,6 +159,30 @@ shows a file loader, and
 [Loading runbooks from a database](../capabilities/on-demand.md#loading-runbooks-from-a-database)
 reads the instructions at run time.
 
+## Load skills from an MCP server
+
+`MCPSkills` offers the skills an MCP server serves, the same way `Skills`
+offers a library's. Pass it the server's toolset; the agent can use the same
+toolset for the server's tools:
+
+```python {test="skip"}
+from fastmcp import Client
+from fastmcp.skills import SkillsClientExtension
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai_harness import MCPSkills
+
+server = MCPToolset(Client('https://example.com/mcp', extensions=[SkillsClientExtension()]))
+agent = Agent('{{ anthropic:large }}', toolsets=[server], capabilities=[MCPSkills(server)])
+```
+
+The skills are read at the start of each run, through the
+[Skills extension](https://github.com/modelcontextprotocol/ext-skills) when the
+client opted into it, and otherwise from the server's `skill://` resources.
+FastMCP checks every file against the server's manifest first. This needs
+FastMCP 4.2 or later.
+
 ## Choose which skills to expose
 
 By default, all discovered skills are included. Use `include` or `exclude` to

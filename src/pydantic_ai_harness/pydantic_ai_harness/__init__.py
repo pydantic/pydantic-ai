@@ -93,7 +93,7 @@ if TYPE_CHECKING:
     from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
-    from .skills import Skills
+    from .skills import MCPSkills, Skills
     from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend_limits import SpendLimits
@@ -173,6 +173,7 @@ __all__ = [
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
+    'MCPSkills',
     'Macroscope',
     'ManagedPrompt',
     'Memory',
@@ -302,6 +303,7 @@ _LAZY_EXPORTS = {
     'LabelCrossModelHistory': 'label_cross_model_history',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
+    'MCPSkills': 'skills',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
     'Memory': 'memory',

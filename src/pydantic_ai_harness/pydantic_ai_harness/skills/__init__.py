@@ -10,9 +10,11 @@ from pydantic_ai_harness.skills._loader import (
     SkipReason,
     UnknownNames,
 )
+from pydantic_ai_harness.skills._mcp import MCPSkills
 
 __all__ = [
     'DuplicateNames',
+    'MCPSkills',
     'MissingDirectories',
     'SkillCatalog',
     'SkillDefinition',
