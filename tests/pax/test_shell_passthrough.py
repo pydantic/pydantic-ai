@@ -8,7 +8,7 @@ import shlex
 import signal
 import sys
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -21,7 +21,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, WorkspaceCommand
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_pax import chat
 from pydantic_ai_pax.cli.shell_passthrough import (
@@ -42,6 +42,7 @@ from pydantic_ai_pax.runtime.session import ShellLineWorkspace
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 from tests.pax.test_app_edges import inputs
 
@@ -673,23 +674,32 @@ async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, mon
     from pydantic_ai_pax.cli import shell_passthrough
 
     leader, follower = os.openpty()
+    os.set_blocking(leader, False)  # The test's key press never waits on the event loop.
     monkeypatch.setattr(shell_passthrough, 'attached_terminal', lambda: Terminal(input=follower, output=follower))
+
+    class Sandbox(LocalWorkspaceBackend):
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            # While the command runs, the terminal cannot turn Ctrl-C into SIGINT. Press it, as a user would.
+            assert not termios.tcgetattr(follower)[3] & termios.ISIG
+            os.write(leader, b'\x03')
+            await anyio.sleep_forever()
+            raise AssertionError('unreachable')  # pragma: no cover
+
     output = io.StringIO()
-    place = ShellLineWorkspace(workspace=LocalWorkspaceBackend(tmp_path), name='the Fake sandbox')
-
-    async def press_ctrl_c() -> None:
-        while termios.tcgetattr(follower)[3] & termios.ISIG:
-            await anyio.sleep(0.01)
-        os.write(leader, b'\x03')
-
+    place = ShellLineWorkspace(workspace=Sandbox(tmp_path), name='the Fake sandbox')
     try:
-        async with anyio.create_task_group() as keys:
-            keys.start_soon(press_ctrl_c)
-            with anyio.fail_after(10):
-                context = await run_workspace_command(
-                    'sleep 30', place=place, console=Console(file=output), interrupts=Interrupts()
-                )
-        assert termios.tcgetattr(follower)[3] & termios.ISIG
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            context = await run_workspace_command(
+                'sleep 30', place=place, console=Console(file=output), interrupts=Interrupts()
+            )
+        assert termios.tcgetattr(follower)[3] & termios.ISIG  # Restored once the command ends.
     finally:
         os.close(leader)
         os.close(follower)
