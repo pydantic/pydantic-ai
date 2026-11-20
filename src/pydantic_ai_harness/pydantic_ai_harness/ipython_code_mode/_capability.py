@@ -9,6 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Too
 from pydantic_ai.tools import AgentDepsT, ToolSelector
 from pydantic_ai_harness.ipython_code_mode._kernel import IPythonKernel
 from pydantic_ai_harness.ipython_code_mode._toolset import IPythonCodeModeToolset
+from pydantic_ai_harness.tool_bridge import ToolBridge
 
 
 @dataclass
@@ -71,8 +72,8 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
     """
 
     def get_ordering(self) -> CapabilityOrdering:
-        """Wrap around `ToolSearch` so that `search_tools` stays native, as `CodeMode` does."""
-        return CapabilityOrdering(position='outermost', wraps=[ToolSearch])
+        """Wrap around `ToolSearch`, so `search_tools` stays native, and `ToolBridge`, so its dispatchers are sandboxed."""
+        return CapabilityOrdering(position='outermost', wraps=[ToolSearch, ToolBridge])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, splitting it into native tools and kernel functions."""

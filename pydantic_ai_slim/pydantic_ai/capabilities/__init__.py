@@ -11,6 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 )
 from pydantic_ai.output import OutputContext
 
+from ..toolsets._tool_search import keywords_search
 from ._dynamic import CapabilityFunc, DynamicCapability
 from ._on_event import on_event
 from ._tool_search import ToolSearch
@@ -61,6 +62,7 @@ from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .request_input import RequestInput  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RequestInput
 from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .retry_on_model_errors import TRANSIENT_MODEL_ERRORS, RetryOnModelErrors
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -99,6 +101,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         PrepareTools,
         ProcessHistory,
         ReinjectSystemPrompt,
+        RetryOnModelErrors,
         SetToolMetadata,
         Thinking,
         ToolSearch,
@@ -149,6 +152,7 @@ __all__ = [
     'Capability',
     'Citations',
     'CAPABILITY_TYPES',
+    'TRANSIENT_MODEL_ERRORS',
     'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
@@ -163,6 +167,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'RetryOnModelErrors',
     'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
@@ -173,6 +178,7 @@ __all__ = [
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
     'ToolSearchStrategy',
+    'keywords_search',
     'Toolset',
     'UseThreadExecutor',
     'WebFetch',

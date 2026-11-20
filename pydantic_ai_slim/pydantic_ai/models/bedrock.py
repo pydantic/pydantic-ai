@@ -76,6 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES, KNOWN_VIDEO_MEDIA_TYPES
 from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
@@ -84,6 +85,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelServerError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -236,6 +238,17 @@ def _map_api_errors(
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
+def _model_error_category(e: ClientError, message: str | None) -> _model_errors.HTTPErrorCategory:
+    """A 424 `ModelErrorException` is the model failing; the model's own status, when present, says more than the 424."""
+    original_status_code = e.response.get('originalStatusCode')
+    category = (
+        _model_errors.http_status_category(original_status_code, message)
+        if isinstance(original_status_code, int)
+        else None
+    )
+    return category or ModelServerError
+
+
 def _map_client_error(
     e: ClientError, model_name: str, model_id_namespace: str, *, strict_schema_limits: bool
 ) -> ModelAPIError:
@@ -245,6 +258,8 @@ def _map_client_error(
     code, message = error.get('Code'), error.get('Message')
     provider_error_code = code if isinstance(code, str) else None
     category = _model_errors.bedrock_code_category(provider_error_code, message)
+    if provider_error_code == 'ModelErrorException':
+        category = _model_error_category(e, message)
     # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
     # exception has before the stream opens.
     in_stream = not isinstance(status_code, int)
@@ -862,8 +877,10 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
-    # The Converse API has no audio content block.
+    # The Converse API has no audio content block, and names each image's and video's format, which only the media
+    # types core knows have.
     _unsupported_file_inputs = frozenset({'audio'})
+    _supported_media_types = {'image': KNOWN_IMAGE_MEDIA_TYPES, 'video': KNOWN_VIDEO_MEDIA_TYPES}
     # A tool's files that a tool result can't carry here go on the user channel, framed.
     _relocates_tool_files = True
 
@@ -1117,6 +1134,11 @@ class BedrockConverseModel(Model[BaseClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        if prepared_settings and 'stop_sequences' in self._unsupported_settings():
+            # `super().prepare_request()` has already warned that it's ignored.
+            without_stop_sequences: ModelSettings = {**prepared_settings}
+            without_stop_sequences.pop('stop_sequences', None)
+            prepared_settings = without_stop_sequences or None
         # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not self._has_provider_cache_settings(prepared_settings or {}):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
@@ -1152,6 +1174,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 'Bedrock does not support thinking and output tools at the same time. '
                 f'Use `output_type={suggested_output_type}(...)` instead.'
             )
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('bedrock_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
@@ -1986,7 +2013,7 @@ class BedrockConverseModel(Model[BaseClient]):
             content.append({'reasoningContent': reasoning_content})
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and part.content:
                 content.append({'text': thinking_text})
             elif part.content:
                 # A redacted block arrives with its reasoning stripped (`content=''`), and
