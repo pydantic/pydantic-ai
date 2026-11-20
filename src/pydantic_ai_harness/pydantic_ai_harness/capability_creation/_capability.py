@@ -13,6 +13,7 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore
@@ -51,21 +52,23 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     rather than as a spec.
 
     Pydantic AI resolves the capability set once at the start of each run, so an
-    authored capability becomes usable on the next run: pass the store's active
-    capabilities as `capabilities=`.
+    authored capability becomes usable on the next run: pass the result of
+    `load_active(workspace)` as `capabilities=`.
 
     ```python
     from pathlib import Path
 
     from pydantic_ai import Agent
-    from pydantic_ai.capabilities import LocalWorkspace
+    from pydantic_ai.workspaces import LocalWorkspaceBackend
     from pydantic_ai_harness.capability_creation import CapabilityCreation
 
+    workspace = LocalWorkspaceBackend('.')
     creation = CapabilityCreation(directory=Path('.authored'))
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[LocalWorkspace('.'), creation])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[creation])
 
     # Inject whatever the agent has authored so far.
-    result = await agent.run('build a logging capability', capabilities=creation.store.load_active())
+    extra = await creation.load_active(workspace)
+    result = await agent.run('build a logging capability', capabilities=extra, workspace=workspace)
     ```
 
     Authoring imports model-written Python into the agent's own process, on this
@@ -75,7 +78,8 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     nothing. The run is also refused unless `directory` has `'operator'`
     [authority][pydantic_ai.messages.Authority] in that workspace, because the
     code there runs as the operator's. With `defer_loading`, which skips
-    `before_run`, the same checks refuse each authoring tool call instead.
+    `before_run`, the same checks refuse each authoring tool call instead, and
+    `load_active` makes them against the workspace it is given before it loads anything.
 
     Each store read and write runs as a durable operation, so under durable
     execution a recovered run reuses the recorded result instead of writing
@@ -106,29 +110,38 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
 
     @property
     def store(self) -> CapabilityStore:
-        """The disk-backed store. Call `store.load_active()` to inject authored capabilities into the next run."""
+        """The disk-backed store. Its `load_active()` runs the authored code without checking `directory`'s authority."""
         return CapabilityStore(self.directory)
+
+    async def load_active(self, workspace: WorkspaceBackend) -> list[AbstractCapability[object]]:
+        """Construct every active authored capability for the next run in `workspace`, as `store.load_active()` does.
+
+        Raises `UserError`, before running any authored code, when `workspace` would refuse a run. Only `workspace` is
+        checked, so pass the one the run uses, as `agent.run(..., workspace=...)`.
+        """
+        await self._check_workspace(workspace if isinstance(workspace, Workspace) else Workspace(workspace))
+        return await anyio.to_thread.run_sync(self.store.load_active, abandon_on_cancel=True)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Refuse the run up front, rather than on the first tool call, when the workspace doesn't allow authoring."""
-        await self._check_workspace(ctx)
+        await self._check_workspace(ctx.workspace)
 
     async def before_tool_execute(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
         """Check again before an authoring tool runs: a capability loaded with `defer_loading` skips `before_run`."""
         if tool_def.metadata and tool_def.metadata.get(AUTHORING_TOOL_METADATA_KEY):
-            await self._check_workspace(ctx)
+            await self._check_workspace(ctx.workspace)
         return args
 
-    async def _check_workspace(self, ctx: RunContext[AgentDepsT]) -> None:
+    async def _check_workspace(self, workspace: Workspace) -> None:
         """Raise unless the workspace is this machine and writable, and holds `directory` at `'operator'`."""
-        workspace = ctx.workspace
         if workspace.ref is None or workspace.ref.provider != 'local' or workspace.read_only:
             raise UserError(
                 '`CapabilityCreation` imports model-written Python into the agent process, so it only runs when '
-                "the run's workspace is this machine and writable. Attach a writable `LocalWorkspace('.')`, not "
-                'a sandbox or a read-only workspace.'
+                "the workspace is this machine and writable. Use a writable `LocalWorkspaceBackend('.')` as the run's "
+                "`workspace=` and in `load_active`, or a `LocalWorkspace('.')` capability, not a sandbox or a "
+                'read-only workspace.'
             )
         written = await self._absolute_directory()
         # `authority_of` collapses `..` as text, while the store's file operations climb from a link's target.
@@ -137,7 +150,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
             if authority != 'operator':
                 raise UserError(
                     f"`CapabilityCreation` runs the code in its `directory` as the operator's, but {directory!r} has "
-                    f"`'{authority}'` authority in the run's workspace. Point `directory` at a location that holds "
+                    f"`'{authority}'` authority in the workspace. Point `directory` at a location that holds "
                     "only operator-written code and give it `'operator'` authority with `path_authority`, which a "
                     "directory outside the workspace's working directory needs too."
                 )

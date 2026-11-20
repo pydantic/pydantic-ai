@@ -10,8 +10,10 @@ import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
+from typing_extensions import deprecated
 
 from pydantic_ai import CapabilityEvent
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -19,45 +21,57 @@ from pydantic_ai_harness.planning._types import PlanItem
 
 PLANNING_EVENTS = 'planning'
 
+_PreviousItem = Annotated[PlanItem | None, Field(validation_alias=AliasChoices('previous_item', 'previous_state'))]
+
+
+class _PreviousState:
+    previous_item: PlanItem | None
+
+    @property
+    @deprecated('`previous_state` is deprecated, use `previous_item` instead.', category=HarnessDeprecationWarning)
+    def previous_state(self) -> PlanItem | None:
+        """Deprecated alias for `previous_item`."""
+        return self.previous_item
+
 
 @dataclass(kw_only=True)
-class PlanCreatedEvent(CapabilityEvent, namespace=PLANNING_EVENTS, name='created'):
+class PlanCreatedEvent(_PreviousState, CapabilityEvent, namespace=PLANNING_EVENTS, name='created'):
     """A plan step was created through a planning tool."""
 
     item: PlanItem
-    previous_state: PlanItem | None = None
+    previous_item: _PreviousItem = None
 
 
 @dataclass(kw_only=True)
-class PlanUpdatedEvent(CapabilityEvent, namespace=PLANNING_EVENTS, name='updated'):
+class PlanUpdatedEvent(_PreviousState, CapabilityEvent, namespace=PLANNING_EVENTS, name='updated'):
     """A plan step was updated through a planning tool."""
 
     item: PlanItem
-    previous_state: PlanItem | None = None
+    previous_item: _PreviousItem = None
 
 
 @dataclass(kw_only=True)
-class PlanStatusChangedEvent(CapabilityEvent, namespace=PLANNING_EVENTS, name='status_changed'):
+class PlanStatusChangedEvent(_PreviousState, CapabilityEvent, namespace=PLANNING_EVENTS, name='status_changed'):
     """A plan step changed status through a planning tool."""
 
     item: PlanItem
-    previous_state: PlanItem | None = None
+    previous_item: _PreviousItem = None
 
 
 @dataclass(kw_only=True)
-class PlanCompletedEvent(CapabilityEvent, namespace=PLANNING_EVENTS, name='completed'):
+class PlanCompletedEvent(_PreviousState, CapabilityEvent, namespace=PLANNING_EVENTS, name='completed'):
     """A plan step transitioned to `completed` through a planning tool."""
 
     item: PlanItem
-    previous_state: PlanItem | None = None
+    previous_item: _PreviousItem = None
 
 
 @dataclass(kw_only=True)
-class PlanDeletedEvent(CapabilityEvent, namespace=PLANNING_EVENTS, name='deleted'):
+class PlanDeletedEvent(_PreviousState, CapabilityEvent, namespace=PLANNING_EVENTS, name='deleted'):
     """A plan step was deleted through a planning tool."""
 
     item: PlanItem
-    previous_state: PlanItem | None = None
+    previous_item: _PreviousItem = None
 
 
 # Preserve string formatting of existing public enum members.

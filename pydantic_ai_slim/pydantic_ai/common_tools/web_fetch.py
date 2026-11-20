@@ -12,7 +12,7 @@ import re
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, TypeAlias
 
 import anyio
 import httpx2
@@ -172,21 +172,24 @@ class WebFetchLocalTool:
         media_type = response.headers.get('content-type', '')
         media_type = media_type.split(';')[0].strip().lower()
 
+        if media_type and not is_text_like_media_type(media_type):
+            return BinaryContent(data=response.content, media_type=media_type)
+
         title = ''
 
-        if not media_type or is_text_like_media_type(media_type):
-            # The server picks the charset, and decoding costs time proportional to the body, or
-            # worse for some codecs, so run it in a worker thread rather than on the event loop.
-            try:
-                text = await run_in_executor(_decode_text, response)
-            except (UnicodeError, LookupError) as e:
-                # Not every registered codec can decode a document (`idna`, say), and some aren't
-                # text encodings at all (`rot_13`), so don't let a bad label take the run down.
-                raise ModelRetry(f'Failed to decode {url}: {e}') from e
+        # The server picks the charset, and decoding costs time proportional to the body, or
+        # worse for some codecs, so run it in a worker thread rather than on the event loop.
+        try:
+            text = await run_in_executor(_decode_text, response)
+        except (UnicodeError, LookupError) as e:
+            # Not every registered codec can decode a document (`idna`, say), and some aren't
+            # text encodings at all (`rot_13`), so don't let a bad label take the run down.
+            raise ModelRetry(f'Failed to decode {url}: {e}') from e
 
-            if media_type in ('text/markdown', 'text/x-markdown'):
+        match media_type:
+            case 'text/markdown' | 'text/x-markdown':
                 content = text
-            elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
+            case '' | 'text/html' | 'application/xhtml+xml':
                 # Parsing and converting is CPU-bound and scales with the (server-controlled) body
                 # size, so run it in a worker thread rather than on the event loop.
                 limiter = _HTML_CONVERSION_LIMITER.get(None)
@@ -202,14 +205,12 @@ class WebFetchLocalTool:
                     raise ModelRetry(f'Failed to convert {url}: the HTML is nested too deeply') from e
                 except ModelRetry as e:
                     raise ModelRetry(f'Failed to convert {url}: {e}') from e
-            elif media_type == 'application/json':
+            case 'application/json':
                 # Indentation grows with nesting depth, so the formatted document can be far larger
                 # than the body: format it in a worker thread, and only as much as will be returned.
                 content = await run_in_executor(_format_json, text, self.max_content_length)
-            else:
+            case _:
                 content = text
-        else:
-            return BinaryContent(data=response.content, media_type=media_type or 'application/octet-stream')
 
         content = _clean_whitespace(content)
 
@@ -319,7 +320,7 @@ class _HTMLMarkupBudget(HTMLParser):
         self._count()
 
 
-def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
+def _convert_html(html: str) -> tuple[str, str]:
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
     if html.count('<') + html.count('&') > _MAX_HTML_MARKUP_DELIMITERS:
         raise ModelRetry('the document is too complex')
@@ -328,223 +329,278 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     budget.close()
     soup = BeautifulSoup(html, 'html.parser')
     converter = _MarkdownConverter(strip=['img'])
-    # `markdownify` repeatedly scans each descendant's converted text as it walks back up the
-    # tree. Blockquotes, definition items, and list items also indent every line at each level.
-    # Estimate scans beyond 16 levels and indentation at any depth before conversion so a small,
-    # deeply nested page cannot produce a huge intermediate string or hold the GIL for seconds.
-    cost = 0
-    text_scan_cost = 0
-    nodes: list[PageElement] = []
-    contentful: set[int] = set()
-    text_metrics: dict[int, tuple[int, int]] = {}
-    direct_link_text: dict[int, str] = {}
-    anchors: list[tuple[Tag, int, bool]] = []
-    videos: list[tuple[Tag, int, bool]] = []
-    code_tags: list[tuple[Tag, int, bool]] = []
-    headings: list[tuple[Tag, int, bool]] = []
-    rows: list[Tag] = []
-    pending: list[tuple[PageElement, int, int, int, bool, bool, bool]] = [(soup, 0, 0, 0, False, False, False)]
-    while pending:
-        node, depth, indent_depth, indent_width, inline, noformat, in_pre = pending.pop()
-        nodes.append(node)
-        if node.next_sibling is not None:
-            pending.append((node.next_sibling, depth, indent_depth, indent_width, inline, noformat, in_pre))
-        if isinstance(node, (Comment, Doctype)):
-            continue
-        if isinstance(node, Tag):
-            depth += 1
-            if node.name == 'li' or (node.name in ('blockquote', 'dd') and not inline):
-                indent_depth += 1
-                if node.name == 'li' and isinstance(node.parent, Tag) and node.parent.name == 'ol':
-                    start_attr = node.parent.get('start')
-                    start_digits = 1
-                    if isinstance(start_attr, str) and start_attr.isdecimal():
-                        start_digits = len(start_attr.lstrip('0')) or 1
-                    marker_width = max(start_digits, len(str(len(node.parent.contents)))) + 3
-                    indent_width += marker_width
-                else:
-                    indent_width += 4
-            # A tag can emit line breaks even without any text children (for example, `<br>`).
-            cost += indent_width + indent_depth
-            work = 8 * (indent_depth + 1)
-            if node.name in ('td', 'th'):
-                colspan_attr = node.get('colspan')
-                digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
-                colspan = min(1000, int(digits[:4] or '1'))
-                # A first-row cell can also generate two full-width header lines.
-                work += 8 * colspan
-                cost += 8 * colspan
-            if node.name == 'a' and depth > 16:
-                anchors.append((node, depth, noformat))
-            elif node.name == 'video':
-                videos.append((node, depth, inline))
-            if node.name in ('code', 'kbd', 'samp') and depth > 16:
-                code_tags.append((node, depth, noformat))
-            elif node.name in ('h1', 'h2') and depth > 16:
-                headings.append((node, depth, inline))
-            if node.name == 'tr':
-                rows.append(node)
-            if node.contents:
-                child_inline = inline or node.name in ('td', 'th') or _HTML_HEADING_RE.match(node.name) is not None
-                child_noformat = noformat or node.name in ('pre', 'code', 'kbd', 'samp')
-                child_in_pre = in_pre or node.name == 'pre'
-                pending.append(
-                    (node.contents[0], depth, indent_depth, indent_width, child_inline, child_noformat, child_in_pre)
-                )
-            cost += max(depth - 16, 0) * work
-        else:
-            assert isinstance(node, NavigableString)
-            parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
-            converted_text = converter.process_text(node, parent_tags)
-            text_metrics[id(node)] = (len(converted_text), converted_text.count('`'))
-            direct_link_text[id(node)] = converted_text
-            if converted_text.strip():
-                contentful.add(id(node))
-            # Inline and preformatted containers can discard these lines before an outer tag
-            # sees them; the converter's output meter charges what actually survives.
-            if not inline and not in_pre:
-                cost += (indent_depth + indent_width) * converted_text.count('\n')
-                text_scan_cost += max(depth - 16, 0) * len(converted_text)
-        if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+    _HTMLConversionEstimate(converter).check(soup)
+    return _extract_title(html), converter.convert_soup(soup)
+
+
+# Depth, indent depth, indent width, and whether the node is inline, unformatted, and inside `<pre>`.
+_HTMLWalkContext: TypeAlias = tuple[int, int, int, bool, bool, bool]
+
+
+class _HTMLConversionEstimate:
+    """Estimates `markdownify`'s work on a parsed document, and raises `ModelRetry` once it passes a budget.
+
+    `markdownify` repeatedly scans each descendant's converted text as it walks back up the
+    tree. Blockquotes, definition items, and list items also indent every line at each level.
+    Estimate scans beyond 16 levels and indentation at any depth before conversion so a small,
+    deeply nested page cannot produce a huge intermediate string or hold the GIL for seconds.
+    """
+
+    def __init__(self, converter: _MarkdownConverter) -> None:
+        self.converter = converter
+        self.cost = 0
+        self.text_scan_cost = 0
+        self.link_probe_cost = 0
+        self.nodes: list[PageElement] = []
+        self.contentful: set[int] = set()
+        self.text_metrics: dict[int, tuple[int, int]] = {}
+        self.direct_link_text: dict[int, str] = {}
+        self.anchors: list[tuple[Tag, int, bool]] = []
+        self.videos: list[tuple[Tag, int, bool]] = []
+        self.code_tags: list[tuple[Tag, int, bool]] = []
+        self.headings: list[tuple[Tag, int, bool]] = []
+        self.rows: list[Tag] = []
+        self.subtree_sizes: dict[int, int] = {}
+        self.first_sources: dict[int, str] = {}
+        self.descendant_td: set[int] = set()
+
+    def check(self, soup: BeautifulSoup) -> None:
+        self._walk(soup)
+        self._measure_subtrees()
+        self._charge_anchors()
+        self._charge_code_and_headings()
+        self._charge_rows()
+        self._charge_videos()
+
+    @staticmethod
+    def _check_limit(cost: int, limit: int) -> None:
+        if cost > limit:
             raise ModelRetry('the document is too complex')
 
-    subtree_sizes: dict[int, int] = {}
-    first_sources: dict[int, str] = {}
-    descendant_td: set[int] = set()
-    video_inline = {id(node): inline for node, _, inline in videos}
-    for node in reversed(nodes):
-        if isinstance(node, Tag):
-            node_id = id(node)
-            subtree_sizes[node_id] = 1
-            text_length = backticks = 0
-            if node.name == 'td':
-                descendant_td.add(node_id)
-            if node.name == 'source' and node.has_attr('src'):
-                first_sources[node_id] = str(node.get('src') or '')
-            for child in node.contents:
-                child_id = id(child)
-                subtree_sizes[node_id] += subtree_sizes.get(child_id, 1)
-                child_length, child_backticks = text_metrics.get(child_id, (0, 0))
-                text_length += child_length
-                backticks += child_backticks
-                if child_id in contentful:
-                    contentful.add(node_id)
-                if child_id in descendant_td:
-                    descendant_td.add(node_id)
-                if node_id not in first_sources and child_id in first_sources:
-                    first_sources[node_id] = first_sources[child_id]
-            text_metrics[node_id] = (text_length, backticks)
-            if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
-                node.name == 'video'
-                and not video_inline[node_id]
-                and (node.get('src') or node.get('poster') or first_sources.get(node_id))
-            ):
-                contentful.add(node_id)
-
-    link_probe_cost = 0
-    for node, depth, noformat in anchors:
-        href = node.get('href')
-        if href and not noformat and any(id(child) in contentful for child in node.contents):
-            title = str(node.get('title') or '')
-            autolink = False
-            if not title:
-                # Keep only direct child references. Flattening text fragments at every
-                # transparent ancestor would retain depth * fragment-count references.
-                link_nodes: list[PageElement] = [node]
-                for child in node.descendants:
-                    if isinstance(child, (Comment, Doctype)):
-                        continue
-                    cost += 8
-                    if cost > _MAX_HTML_CONVERSION_COST:
-                        raise ModelRetry('the document is too complex')
-                    if isinstance(child, Tag) and _upstream_get_conv_fn(converter, child.name) is not None:
-                        break
-                    link_nodes.append(child)
-                else:
-                    rendered: dict[int, str] = {}
-                    for child in reversed(link_nodes):
-                        if isinstance(child, Tag):
-                            child_strings: list[str] = []
-                            for grandchild in child.contents:
-                                child_string = rendered.pop(id(grandchild), '')
-                                if child_string:
-                                    child_strings.append(child_string)
-                            if len(child_strings) > 1:
-                                # Match markdownify's collapse at *each* tag boundary. A flat
-                                # leaf join is different when a nested child is all newlines.
-                                parts = ['']
-                                for child_string in child_strings:
-                                    link_probe_cost += len(child_string)
-                                    if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
-                                        raise ModelRetry('the document is too complex')
-                                    leading_count = len(child_string) - len(child_string.lstrip('\n'))
-                                    trailing_count = len(child_string) - len(child_string.rstrip('\n'))
-                                    if leading_count == len(child_string):
-                                        trailing_count = 0
-                                    leading = child_string[:leading_count]
-                                    middle = child_string[leading_count : len(child_string) - trailing_count]
-                                    trailing = (
-                                        child_string[len(child_string) - trailing_count :] if trailing_count else ''
-                                    )
-                                    if parts[-1] and leading:
-                                        previous = parts.pop()
-                                        leading = '\n' * min(2, max(len(previous), len(leading)))
-                                    parts.extend((leading, middle, trailing))
-                                text = ''.join(parts)
-                                link_probe_cost += len(text)
-                                if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
-                                    raise ModelRetry('the document is too complex')
-                            else:
-                                text = child_strings[0] if child_strings else ''
-                            rendered[id(child)] = text
-                        else:
-                            rendered[id(child)] = direct_link_text[id(child)]
-                    candidate = rendered[id(node)]
-                    link_probe_cost += len(candidate)
-                    if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
-                        raise ModelRetry('the document is too complex')
-                    autolink = candidate.strip().replace(r'\_', '_') == href
-            if not autolink:
-                text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
-            if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+    def _walk(self, soup: BeautifulSoup) -> None:
+        pending: list[tuple[PageElement, _HTMLWalkContext]] = [(soup, (0, 0, 0, False, False, False))]
+        while pending:
+            node, context = pending.pop()
+            self.nodes.append(node)
+            if node.next_sibling is not None:
+                pending.append((node.next_sibling, context))
+            match node:
+                case Comment() | Doctype():
+                    continue
+                case Tag():
+                    self._visit_tag(node, context, pending)
+                case _:
+                    assert isinstance(node, NavigableString)
+                    self._visit_text(node, context)
+            if self.cost > _MAX_HTML_CONVERSION_COST or self.text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
                 raise ModelRetry('the document is too complex')
 
-    for node, depth, noformat in code_tags:
-        if not noformat:
-            text_scan_cost += (depth - 16) * 2 * text_metrics[id(node)][1]
-    for node, depth, inline in headings:
-        if not inline:
-            text_scan_cost += (depth - 16) * text_metrics[id(node)][0]
-    if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
-        raise ModelRetry('the document is too complex')
+    def _visit_tag(
+        self, tag: Tag, context: _HTMLWalkContext, pending: list[tuple[PageElement, _HTMLWalkContext]]
+    ) -> None:
+        depth, indent_depth, indent_width, inline, noformat, in_pre = context
+        depth += 1
+        if tag.name == 'li' or (tag.name in ('blockquote', 'dd') and not inline):
+            indent_depth += 1
+            indent_width += self._indent_step(tag)
+        # A tag can emit line breaks even without any text children (for example, `<br>`).
+        self.cost += indent_width + indent_depth
+        work = 8 * (indent_depth + 1)
+        if tag.name in ('td', 'th'):
+            colspan_attr = tag.get('colspan')
+            digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
+            colspan = min(1000, int(digits[:4] or '1'))
+            # A first-row cell can also generate two full-width header lines.
+            work += 8 * colspan
+            self.cost += 8 * colspan
+        match tag.name:
+            case 'a' if depth > 16:
+                self.anchors.append((tag, depth, noformat))
+            case 'video':
+                self.videos.append((tag, depth, inline))
+            case 'code' | 'kbd' | 'samp' if depth > 16:
+                self.code_tags.append((tag, depth, noformat))
+            case 'h1' | 'h2' if depth > 16:
+                self.headings.append((tag, depth, inline))
+            case 'tr':
+                self.rows.append(tag)
+            case _:
+                pass
+        if tag.contents:
+            child_inline = inline or tag.name in ('td', 'th') or _HTML_HEADING_RE.match(tag.name) is not None
+            child_noformat = noformat or tag.name in ('pre', 'code', 'kbd', 'samp')
+            child_in_pre = in_pre or tag.name == 'pre'
+            child_context = (depth, indent_depth, indent_width, child_inline, child_noformat, child_in_pre)
+            pending.append((tag.contents[0], child_context))
+        self.cost += max(depth - 16, 0) * work
 
-    for row in rows:
-        cost += 8 * subtree_sizes[id(row)]
-        parent = row.parent
-        if isinstance(parent, Tag) and parent.name == 'thead' and id(row) in descendant_td:
-            cost += 8 * subtree_sizes[id(parent)]
-        elif (
-            isinstance(parent, Tag)
-            and parent.name == 'tbody'
-            and row.find_previous_sibling() is None
-            and isinstance(parent.parent, Tag)
-        ):
-            cost += 8 * subtree_sizes[id(parent.parent)]
-        if cost > _MAX_HTML_CONVERSION_COST:
-            raise ModelRetry('the document is too complex')
+    @staticmethod
+    def _indent_step(tag: Tag) -> int:
+        """Return the indent width a list item, blockquote, or definition item adds to each line."""
+        parent = tag.parent
+        if tag.name != 'li' or not isinstance(parent, Tag) or parent.name != 'ol':
+            return 4
+        start_attr = parent.get('start')
+        start_digits = 1
+        if isinstance(start_attr, str) and start_attr.isdecimal():
+            start_digits = len(start_attr.lstrip('0')) or 1
+        return max(start_digits, len(str(len(parent.contents)))) + 3
 
-    for node, depth, inline in videos:
-        if not inline:
-            src = node.get('src')
+    def _visit_text(self, text: NavigableString, context: _HTMLWalkContext) -> None:
+        depth, indent_depth, indent_width, inline, noformat, in_pre = context
+        parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
+        converted_text = self.converter.process_text(text, parent_tags)
+        self.text_metrics[id(text)] = (len(converted_text), converted_text.count('`'))
+        self.direct_link_text[id(text)] = converted_text
+        if converted_text.strip():
+            self.contentful.add(id(text))
+        # Inline and preformatted containers can discard these lines before an outer tag
+        # sees them; the converter's output meter charges what actually survives.
+        if not inline and not in_pre:
+            self.cost += (indent_depth + indent_width) * converted_text.count('\n')
+            self.text_scan_cost += max(depth - 16, 0) * len(converted_text)
+
+    def _measure_subtrees(self) -> None:
+        video_inline = {id(node): inline for node, _, inline in self.videos}
+        for node in reversed(self.nodes):
+            if isinstance(node, Tag):
+                self._measure_tag(node, video_inline)
+
+    def _measure_tag(self, tag: Tag, video_inline: dict[int, bool]) -> None:
+        tag_id = id(tag)
+        self.subtree_sizes[tag_id] = 1
+        text_length = backticks = 0
+        if tag.name == 'td':
+            self.descendant_td.add(tag_id)
+        if tag.name == 'source' and tag.has_attr('src'):
+            self.first_sources[tag_id] = str(tag.get('src') or '')
+        for child in tag.contents:
+            child_id = id(child)
+            self.subtree_sizes[tag_id] += self.subtree_sizes.get(child_id, 1)
+            child_length, child_backticks = self.text_metrics.get(child_id, (0, 0))
+            text_length += child_length
+            backticks += child_backticks
+            if child_id in self.contentful:
+                self.contentful.add(tag_id)
+            if child_id in self.descendant_td:
+                self.descendant_td.add(tag_id)
+            if tag_id not in self.first_sources and child_id in self.first_sources:
+                self.first_sources[tag_id] = self.first_sources[child_id]
+        self.text_metrics[tag_id] = (text_length, backticks)
+        if self._converts_to_content(tag, video_inline):
+            self.contentful.add(tag_id)
+
+    def _converts_to_content(self, tag: Tag, video_inline: dict[int, bool]) -> bool:
+        """Whether `markdownify` emits content for the tag even when its text is blank."""
+        if tag.name in ('hr', 'q', 'td', 'th', 'tr'):
+            return True
+        return (
+            tag.name == 'video'
+            and not video_inline[id(tag)]
+            and bool(tag.get('src') or tag.get('poster') or self.first_sources.get(id(tag)))
+        )
+
+    def _charge_anchors(self) -> None:
+        for anchor, depth, noformat in self.anchors:
+            href = anchor.get('href')
+            if not href or noformat or not any(id(child) in self.contentful for child in anchor.contents):
+                continue
+            title = str(anchor.get('title') or '')
+            if title or not self._probe_autolink(anchor, href):
+                self.text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
+            self._check_limit(self.text_scan_cost, _MAX_HTML_TEXT_SCAN_COST)
+
+    def _probe_autolink(self, anchor: Tag, href: object) -> bool:
+        """Whether `markdownify` renders the anchor as an autolink, which adds no `href` or title to its text."""
+        # Keep only direct child references. Flattening text fragments at every
+        # transparent ancestor would retain depth * fragment-count references.
+        link_nodes: list[PageElement] = [anchor]
+        for child in anchor.descendants:
+            if isinstance(child, (Comment, Doctype)):
+                continue
+            self.cost += 8
+            self._check_limit(self.cost, _MAX_HTML_CONVERSION_COST)
+            if isinstance(child, Tag) and _upstream_get_conv_fn(self.converter, child.name) is not None:
+                return False
+            link_nodes.append(child)
+        rendered: dict[int, str] = {}
+        for child in reversed(link_nodes):
+            if isinstance(child, Tag):
+                rendered[id(child)] = self._render_link_tag(child, rendered)
+            else:
+                rendered[id(child)] = self.direct_link_text[id(child)]
+        candidate = rendered[id(anchor)]
+        self.link_probe_cost += len(candidate)
+        self._check_limit(self.link_probe_cost, _MAX_HTML_TEXT_SCAN_COST)
+        return candidate.strip().replace(r'\_', '_') == href
+
+    def _render_link_tag(self, tag: Tag, rendered: dict[int, str]) -> str:
+        child_strings: list[str] = []
+        for child in tag.contents:
+            child_string = rendered.pop(id(child), '')
+            if child_string:
+                child_strings.append(child_string)
+        if len(child_strings) <= 1:
+            return child_strings[0] if child_strings else ''
+        # Match markdownify's collapse at *each* tag boundary. A flat
+        # leaf join is different when a nested child is all newlines.
+        parts = ['']
+        for child_string in child_strings:
+            self.link_probe_cost += len(child_string)
+            self._check_limit(self.link_probe_cost, _MAX_HTML_TEXT_SCAN_COST)
+            leading_count = len(child_string) - len(child_string.lstrip('\n'))
+            trailing_count = len(child_string) - len(child_string.rstrip('\n'))
+            if leading_count == len(child_string):
+                trailing_count = 0
+            leading = child_string[:leading_count]
+            middle = child_string[leading_count : len(child_string) - trailing_count]
+            trailing = child_string[len(child_string) - trailing_count :] if trailing_count else ''
+            if parts[-1] and leading:
+                previous = parts.pop()
+                leading = '\n' * min(2, max(len(previous), len(leading)))
+            parts.extend((leading, middle, trailing))
+        text = ''.join(parts)
+        self.link_probe_cost += len(text)
+        self._check_limit(self.link_probe_cost, _MAX_HTML_TEXT_SCAN_COST)
+        return text
+
+    def _charge_code_and_headings(self) -> None:
+        for tag, depth, noformat in self.code_tags:
+            if not noformat:
+                self.text_scan_cost += (depth - 16) * 2 * self.text_metrics[id(tag)][1]
+        for tag, depth, inline in self.headings:
+            if not inline:
+                self.text_scan_cost += (depth - 16) * self.text_metrics[id(tag)][0]
+        self._check_limit(self.text_scan_cost, _MAX_HTML_TEXT_SCAN_COST)
+
+    def _charge_rows(self) -> None:
+        for row in self.rows:
+            self.cost += 8 * self.subtree_sizes[id(row)]
+            parent = row.parent
+            if isinstance(parent, Tag) and parent.name == 'thead' and id(row) in self.descendant_td:
+                self.cost += 8 * self.subtree_sizes[id(parent)]
+            elif (
+                isinstance(parent, Tag)
+                and parent.name == 'tbody'
+                and row.find_previous_sibling() is None
+                and isinstance(parent.parent, Tag)
+            ):
+                self.cost += 8 * self.subtree_sizes[id(parent.parent)]
+            self._check_limit(self.cost, _MAX_HTML_CONVERSION_COST)
+
+    def _charge_videos(self) -> None:
+        for video, depth, inline in self.videos:
+            if inline:
+                continue
+            src = video.get('src')
             if not src:
                 # `markdownify` searches descendants for the first source without its own URL.
-                cost += 8 * subtree_sizes[id(node)]
-                src = first_sources.get(id(node))
+                self.cost += 8 * self.subtree_sizes[id(video)]
+                src = self.first_sources.get(id(video))
             if depth > 16:
-                text_scan_cost += (depth - 16) * (len(str(src or '')) + len(str(node.get('poster') or '')))
-            if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
-                raise ModelRetry('the document is too complex')
-    return _extract_title(html), converter.convert_soup(soup)
+                self.text_scan_cost += (depth - 16) * (len(str(src or '')) + len(str(video.get('poster') or '')))
+            self._check_limit(self.cost, _MAX_HTML_CONVERSION_COST)
+            self._check_limit(self.text_scan_cost, _MAX_HTML_TEXT_SCAN_COST)
 
 
 class _MarkdownConverter(MarkdownConverter):

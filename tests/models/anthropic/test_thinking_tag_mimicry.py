@@ -32,12 +32,14 @@ from __future__ import annotations as _annotations
 
 import json
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Literal
 
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai._framing import second_model_prompt
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
@@ -292,7 +294,10 @@ async def test_thinking_tag_mimicry(
     # The output budget every case was recorded with, so the request stays the one the recording answered
     # rather than following the adapter's default.
     agent = Agent(model, model_settings={'max_tokens': 4096})
-    result = await agent.run(_FOLLOWUP, message_history=_history(case))
+    # A user-turn block stands in for the frame `AnthropicModel` renders itself, which gets no lookalike note, so the
+    # request is sent without notes, as it was recorded.
+    with second_model_prompt() if case.channel == 'user' else nullcontext():
+        result = await agent.run(_FOLLOWUP, message_history=_history(case))
 
     assert _THINKING_TAG.findall(result.output) == case.expected_tags
 

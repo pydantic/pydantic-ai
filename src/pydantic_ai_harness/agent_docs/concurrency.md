@@ -104,7 +104,7 @@ before writing cleanup.
   exceptions (`CallDeferred`, `ApprovalRequired`, `SkipModelRequest`, ...)
   from a single `_ALWAYS_PROPAGATE` tuple, and re-raises a shared
   `UsageLimitExceeded`, before its `contain_errors` branch turns anything else
-  into a `ModelRetry` (`subagents/_toolset.py`). `CancelledError` is a
+  into a `ModelRetry` (`sub_agents/_toolset.py`). `CancelledError` is a
   `BaseException`, so `except Exception` never catches it; the file says so at
   the top, so a reader does not go looking for a missing branch.
 
@@ -172,8 +172,9 @@ before writing cleanup.
   `__aenter__` or `agen.aclose()` by hand. Core's realtime early-break tests
   called `aclose()` themselves and passed while the shipped syntax leaked its
   tasks.
-- Order steps with `Event`s, not sleeps, and wait on them with a module-level
-  readiness timeout, not a one-second literal: short waits flake under `xdist`
+- Order steps with `Event`s, not sleeps, and wait on them with
+  `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, not a one-second
+  literal: short waits flake under `xdist`
   (pydantic/pydantic-ai#5399). `tests/harness/shell/test_shell.py` and
   `tests/harness/guardrails/test_input_guardrail.py` already carry sleeps; when you touch
   one, convert it.
