@@ -12,7 +12,15 @@ from typing import Any
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
+    ComputerResult,
+    ComputerToolAction,
+    HoldKeys,
+    Screenshot,
+    Wait,
+    Zoom,
+)
 from pydantic_ai.messages import BinaryImage, ToolReturn
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.toolsets import FunctionToolset
@@ -44,31 +52,47 @@ _LOOKING = (Wait, Screenshot)
 class FakeComputer(AbstractCapability[Any]):
     """A `computer` tool that records the actions it runs. It refuses to act on a read-only workspace.
 
-    With `native=True`, it also adds a `ComputerTool`, as `ComputerUse` does.
+    It refuses `hold_keys`, so tests can see an action refused. It returns what the zoom and screenshot actions before
+    the last one read, before its screenshot. With `native=True`, it also adds a `ComputerTool` that declares
+    `display_size`, as `ComputerUse` does.
     """
 
-    def __init__(self, *, requires_approval: bool = False, native: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        requires_approval: bool = False,
+        native: bool = True,
+        display_size: tuple[int, int] = FAKE_DISPLAY_SIZE,
+    ) -> None:
         self.native = native
+        self.display_size = display_size
         self.actions: list[ComputerToolAction] = []
         tool = Tool(self._computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
         self._toolset = FunctionToolset[Any]([tool])
 
     async def _computer(self, ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
-        for action in actions:
-            if not isinstance(action, _LOOKING):
+        outputs: list[str | BinaryImage] = []
+        for index, action in enumerate(actions):
+            if isinstance(action, Zoom) or (isinstance(action, Screenshot) and index < len(actions) - 1):
+                outputs.append(BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png'))
+            elif not isinstance(action, _LOOKING):
                 if ctx.workspace.read_only:
                     result['error'] = 'This workspace is read-only.'
+                    break
+                if isinstance(action, HoldKeys):
+                    result['error'] = "the fake display cannot perform 'hold_keys'"
                     break
                 self.actions.append(action)
             result['performed'] += 1
         summary = f'Ran {result["performed"]} of {len(actions)} actions.'
         if 'error' in result:
             summary += f' The next one failed: {result["error"]}'
-        return ToolReturn([summary, BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')], metadata=result)
+        screenshot = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
+        return ToolReturn([summary, *outputs, screenshot], metadata=result)
 
     def get_toolset(self) -> FunctionToolset[Any]:
         return self._toolset
 
     def get_native_tools(self) -> list[ComputerTool]:
-        return [ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)] if self.native else []
+        return [ComputerTool(display_size=self.display_size, optional=True)] if self.native else []

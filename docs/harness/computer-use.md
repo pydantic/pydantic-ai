@@ -57,6 +57,8 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 The model must accept images.
 
+- Claude models on `AnthropicModel` get Anthropic's own computer use tool on the clients and models listed under
+  [Anthropic](../models/anthropic.md#computer-use). Other Claude models and clients get the function tool.
 - GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool when you use them
   through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
@@ -119,9 +121,19 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 
 Some models accept screenshots only up to a set size. Their profile sets it with
 [`computer_use_screenshot_max_side`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side] and
-`computer_use_screenshot_max_pixels`. `ComputerUse` sends every screenshot at the screen's full size and doesn't
-shrink it. If the screen is larger than the model accepts, the run stops with a `UserError` that names the largest
-size that fits. A 1280x800 screen fits every model.
+`computer_use_screenshot_max_pixels`. Claude models get these limits only on `AnthropicModel`:
+
+- Claude Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and about 3.75 megapixels (2576x1456).
+- Claude Opus 4.7: 2576 pixels on the longer side and 3.6 megapixels.
+- Claude Opus 4.5 and 4.6, Sonnet 4.6 and Haiku 4.5: 1568 pixels on the longer side and about 1.15 megapixels.
+
+`ComputerUse` sends every screenshot at the screen's full size and doesn't shrink it. If the screen is larger than the
+model accepts, the run stops with a `UserError` that names the largest size that fits. A 1280x800 screen fits every
+model.
+
+Claude's `computer_toolset_20260801` tool also caps a screenshot at 4784 image tokens, where one token covers 28x28
+pixels. It refuses a larger screenshot, such as 2549x1457, even when it fits the limits above, and the run stops with
+Anthropic's error.
 
 GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
 they can miss what they click.

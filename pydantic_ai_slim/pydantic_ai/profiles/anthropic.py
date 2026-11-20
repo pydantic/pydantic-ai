@@ -7,6 +7,7 @@ from .._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
@@ -18,8 +19,8 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ComputerTool`, which are turned on
+per model in the profile below."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -73,6 +74,9 @@ model, because `models/bedrock.py` cannot import from `models/anthropic/` withou
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+AnthropicComputerToolVersion: TypeAlias = Literal['computer_toolset_20260801', 'computer_20251124', 'computer_20250124']
+"""Anthropic computer use tool version to send for `ComputerTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -183,6 +187,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
+    """
+
+    anthropic_computer_tool_version: AnthropicComputerToolVersion
+    """Which Anthropic computer use tool or toolset is sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. Default: `'computer_20250124'`.
+
+    Whether `ComputerTool` is sent at all depends on `supported_native_tools`.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -377,6 +387,17 @@ def resolve_anthropic_effort(
     if effort == 'max' and not supports_max:
         return 'xhigh' if supports_xhigh else 'high'
     return effort
+
+
+_COMPUTER_TOOLSET_MODELS = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-5',
+    'claude-opus-4-8',
+)
+"""The models that take Anthropic's `computer_toolset_20260801`."""
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
@@ -709,6 +730,57 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # native mid-conversation system role on any transport, where the announcement would be a system message.
         profile['default_framing_announcement'] = 'always'
     return profile
+
+
+def anthropic_computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
+    """The computer use facts to merge onto `profile`, the model's profile on a client that sends Anthropic's API.
+
+    Anthropic's computer use tool is part of Anthropic's own request format. So only `AnthropicProvider` adds these.
+    The Bedrock Converse API and the OpenAI-compatible gateways that share `anthropic_model_profile()` don't get the
+    tool, its version or its screenshot limits, and Claude gets the `computer` function tool there.
+    """
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is None:
+        return AnthropicModelProfile()
+    supported_native_tools = (profile or {}).get('supported_native_tools', _ANTHROPIC_BASE_BUILTINS)
+    computer = AnthropicModelProfile(
+        supported_native_tools=supported_native_tools | {ComputerTool},
+        anthropic_computer_tool_version=computer_tool_version,
+    )
+    # The earlier tools scale a larger screenshot down, and Claude then gives coordinates in the smaller image's
+    # pixels. So the profile caps the screenshot size. Both limits matter: 1568x882 has an allowed longer side but too
+    # many pixels, and is scaled down too. Opus 4.7 takes the larger size on `computer_20251124`. The toolset refuses an
+    # image over 2576 pixels on a side or over 4784 image tokens, at one token per 28x28 pixels. The function tool these
+    # models get on Vertex AI or Foundry takes a larger image and scales it down. In live probes, Haiku 5.5 and Opus 4.8
+    # pointed about 5% short of the target on 2560x1600, and exactly on it on 2576x1456 (4784 tokens) and 2549x1457.
+    if model_name.startswith('claude-opus-4-7'):
+        computer['computer_use_screenshot_max_side'] = 2576
+        computer['computer_use_screenshot_max_pixels'] = 3_600_000
+    elif computer_tool_version == 'computer_toolset_20260801':
+        computer['computer_use_screenshot_max_side'] = 2576
+        computer['computer_use_screenshot_max_pixels'] = 2576 * 1456
+    else:
+        computer['computer_use_screenshot_max_side'] = 1568
+        computer['computer_use_screenshot_max_pixels'] = 1_150_000
+    return computer
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool from Anthropic's compatibility table, or `None` if it gets the function tool.
+
+    A model with a tool gets `ComputerTool` in its supported native tools on `AnthropicProvider`. It is sent on the
+    Claude API and both Bedrock APIs, the clients it has recorded test runs on. `AnthropicModel` removes it on Vertex
+    AI, Foundry and Claude Platform on AWS. Claude 5.5 and later take only the toolset. Retired and retiring models
+    (Opus 4 and 4.1, Sonnet 4 and 4.5) get the function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
 
 
 def _code_execution_tool_versions(
