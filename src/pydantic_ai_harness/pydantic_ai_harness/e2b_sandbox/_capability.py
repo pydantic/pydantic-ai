@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env_types,
@@ -89,11 +90,16 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     commands can use the token without it ever being inside the sandbox.
     """
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a screen for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800,
+    or a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
+        desktop_size(self.desktop)
         try:
             check_env_types(self.env)
         except TypeError:
@@ -113,6 +119,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> E2BSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -131,6 +138,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             authority=authority,
             path_authority=path_authority,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
@@ -141,6 +149,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -166,4 +175,5 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             network=self.network,
+            desktop=self.desktop,
         )

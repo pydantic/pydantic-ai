@@ -6,6 +6,7 @@ The environment runs an X server, the program that draws the screen.
 from __future__ import annotations as _annotations
 
 import re
+import shlex
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
@@ -200,11 +201,68 @@ def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
 
+_MAX_CHAIN_BYTES = 100_000
+"""The most bytes of `xdotool` arguments sent in one command. Longer input is split across several commands.
+
+E2B runs a command as a single `bash -l -c` argument, and Linux limits one argument to 131,072 bytes. In a live
+probe, a 130,630-byte line ran and a 130,664-byte line failed with "argument list too long". Typing 25,000
+characters in one command also failed. The gap between 100,000 and the limit leaves room for the text the backend
+wraps around each command."""
+
+
+def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[str]]:
+    """Group `steps`, in order, into `xdotool` commands that each start with `prefix` and fit in `_MAX_CHAIN_BYTES`."""
+    chains: list[list[str]] = []
+    size = _MAX_CHAIN_BYTES
+    for step in steps:
+        step_size = len(shlex.join(step)) + 1
+        if size + step_size > _MAX_CHAIN_BYTES:
+            chains.append(list(prefix))
+            size = len(shlex.join(prefix))
+        chains[-1] += step
+        size += step_size
+    return chains
+
+
 _ENV = {'DISPLAY': DISPLAY}
 
 _START_TIMEOUT = 70
 """Seconds a start script may take. It waits up to 10 seconds three times. Before that, it can wait as long again
 behind `START_LOCK` for another start. Its commands get 10 more seconds."""
+
+
+_X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
+
+
+def start_x_server(log: str) -> str:
+    """Return a shell fragment that starts Xvfb on `DISPLAY` unless an X server already runs there.
+
+    `$1` is the screen size, such as `1280x800`. The fragment checks the display's X lock file to see whether an X
+    server runs. It does not ask the X server itself.
+
+    The fragment fails if the X server exits, or if it isn't ready after 10 seconds. It then prints the end of `log`.
+
+    The fragment takes `START_LOCK`, so a second start waits for the first and then finds its X server. The lock stays
+    held until the whole script exits, so the rest of the script runs under it too. Anything the script starts in the
+    background must close the lock with `9>&-`.
+    """
+    return (
+        # Read the X lock instead of asking for an X server. With a shared network, such as Docker's `--network host`,
+        # another X server on the same display number answers through Linux's shared abstract socket.
+        # A stale lock, such as one `docker stop` leaves, holds a process ID that is gone or now belongs to another
+        # program. A running X server's lock holds that server's process ID, whichever server it is, such as `Xvnc`.
+        f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+        f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
+        # Without `-noreset`, X resets whenever its last program disconnects, such as an `xdotool` command when no
+        # window manager runs. A reset moves the pointer back to the middle and lets go of held buttons.
+        # `-nolisten local` turns off Linux's abstract socket. With a shared network, such as Docker's `--network host`,
+        # every user on the host could reach that socket. Commands in the container or sandbox still use the socket
+        # file in /tmp/.X11-unix.
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset >/dev/null 2>{log} 9>&- & '
+        + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
+        + ';; esac; '
+    )
 
 
 class RunCommand(Protocol):
@@ -263,18 +321,22 @@ class X11Computer:
         return result
 
     async def _xdotool(
-        self, chain: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
+        self, *chains: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
     ) -> None:
-        """Run an `xdotool` command chain with the keys in `hold` held down. If it fails or is cancelled, let go of all.
+        """Run `xdotool` command chains one after another, with the `hold` keys held down the whole time.
 
-        `release` is an `xdotool` chain that lets go of what the chain presses. The command may take `pauses` seconds
-        on top of the usual time limit.
+        If a chain fails or is cancelled, everything is let go. `release` is an `xdotool` chain that lets go of what
+        the chains press. Each command gets `pauses` extra seconds on top of the usual time limit.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
         try:
-            await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *keydown, *chain, *keyup], pauses=pauses)
+            for index, chain in enumerate(chains):
+                # The held keys go down in the first command and come up in the last one.
+                first = keydown if index == 0 else []
+                last = keyup if index == len(chains) - 1 else []
+                await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *first, *chain, *last], pauses=pauses)
         except BaseException as error:
             # Each release runs on its own, so one that fails doesn't keep the other from running.
             failures = await self._release([list(release), keyup])
@@ -348,10 +410,10 @@ class X11Computer:
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
                 steps = drag_steps(path)
-                moves = [arg for point in steps for arg in ['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)]]
+                moves = [['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in steps]
                 pause = ['sleep', str(DRAG_PRESS_PAUSE)]
                 await self._xdotool(
-                    [*_move(start.x, start.y), 'mousedown', '1', *pause, *moves, *pause, 'mouseup', '1'],
+                    *_chains([[*_move(start.x, start.y), 'mousedown', '1', *pause], *moves, [*pause, 'mouseup', '1']]),
                     hold=modifiers,
                     release=('mouseup', '1'),
                     pauses=2 * DRAG_PRESS_PAUSE + len(steps) * DRAG_STEP_PAUSE,
@@ -373,7 +435,7 @@ class X11Computer:
                 # If a cancel lands between a key's press and its release, X repeats the key forever.
                 # `xdotool` holds Shift_L for a shifted character such as `!`.
                 await self._xdotool(
-                    ['key', '--delay', _TYPING_DELAY_MS, '--', *keysyms],
+                    *_chains([[keysym] for keysym in keysyms], prefix=('key', '--delay', _TYPING_DELAY_MS, '--')),
                     release=('keyup', 'Shift_L', *dict.fromkeys(keysyms)),
                     pauses=len(keysyms) * _KEY_SECONDS,
                 )

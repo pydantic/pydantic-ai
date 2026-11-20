@@ -51,7 +51,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, DISPLAY_NUMBER, START_LOCK, wait_until_ready, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
@@ -248,28 +248,10 @@ starts without its first-run pages, and new windows fill the screen."""
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
 
-_X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
-_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
-
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 _START_DESKTOP = (
-    # Whether a display runs is read from this container's own lock file, not from an X server answering. With
-    # `--network host`, an X server of the host or of another container, on the same display number, would answer
-    # through Linux's abstract socket, which every process on the same network shares.
-    # A stale lock, such as one `docker stop` leaves, names a process that is gone or is now another program.
-    # The lock of a running X server names that server, whichever kind it is, such as `Xvnc`.
-    f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
-    f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
-    # Without `-noreset`, X resets when its last client program exits, such as an `xdotool` command while no window
-    # manager runs. The reset moves the pointer back to the middle and lets go of held buttons.
-    # `-nolisten local` turns off the abstract socket. With `--network host`, every user on the host could reach it.
-    # The socket file in /tmp/.X11-unix stays, for commands run in the container.
-    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
-    f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
-    + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
-    + ';; esac; '
-    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
+    start_x_server(f'{_PID_DIR}/xvfb.log') + 'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
     # The tint2 panel shows only once a window manager answers, so it starts after the window manager.
@@ -280,14 +262,10 @@ _START_DESKTOP = (
 )
 """Starts an X display of the size given as `$1`, then a window manager, then the panel.
 
-It skips the X display when this container's X lock names a running X server, and skips the panel when it already
-shows. A second start waits for the first to finish, then finds its X server.
-
-It fails if the X server exits, or doesn't answer within 10 seconds. A second `fluxbox` exits when one already runs, so
-starting it every time brings back one that died. The script then waits up to 10 seconds for the window manager to
-answer `xprop`, so the first click focuses and raises the window it lands on. It waits up to 10 more seconds for the
-panel window, so the first screenshot isn't black. It fails if the panel exits first, and goes on without the panel
-after 10 seconds.
+A second `fluxbox` exits when one already runs, so starting it every time brings back one that died. The script then
+waits up to 10 seconds for the window manager to answer `xprop`, so the first click focuses and raises the window it
+lands on. It waits up to 10 more seconds for the panel window, so the first screenshot isn't black. It fails if the
+panel exits first, and goes on without the panel after 10 seconds.
 """
 
 

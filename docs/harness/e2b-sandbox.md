@@ -256,6 +256,35 @@ E2B adds the header as each request leaves the sandbox, replacing any header wit
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
 
+## Give the agent a desktop
+
+Pass `desktop=True` to give the sandbox a screen. Add [`ComputerUse`](computer-use.md) so the agent can see that screen and use its mouse and keyboard:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.')
+    print(result.output)
+```
+
+A new sandbox uses E2B's `desktop` template: Ubuntu with the XFCE desktop, a terminal and Google Chrome. The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. To also give the agent the sandbox's shell and files, add `Coder`.
+
+XFCE keeps some keys for itself, so the window in front never receives them. `printscreen` opens XFCE's screenshot tool. The media and volume keys also go to XFCE.
+
+If you pass your own `template`, it must include these programs: Xvfb draws the screen, `xdotool` moves the mouse and types, `xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen running after the command that started it ends. For the XFCE desktop, it also needs `startxfce4`.
+
+The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
+
+When `sandbox_timeout` runs out, a run that is still going fails. Set `sandbox_timeout` longer than your longest task.
+
+E2B has no live view of the desktop. To watch a run, save each screenshot as it arrives, as shown in [Watching a run](computer-use.md#watching-a-run).
+
 ## Clean up
 
 The sandbox keeps running, and billing, after the run ends. Pydantic AI does not kill it. If a run is cancelled while E2B creates the sandbox, the ref is still recorded once E2B answers; the id is also logged (see [Telemetry](#telemetry)). If E2B's answer never arrives, the sandbox can exist with no ref or log entry; find and kill it in the E2B dashboard. Kill the others with the ref you stored:
@@ -313,6 +342,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
+| `desktop` | Give the sandbox a screen for [`ComputerUse`](computer-use.md): `True` for 1280x800, or a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template. A sandbox that a later run reconnects to keeps its screen size. A sandbox you created with E2B's Desktop SDK shows its windows on another display, so the agent can't see them. Default: `False`. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
