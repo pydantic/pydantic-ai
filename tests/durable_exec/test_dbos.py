@@ -10,7 +10,7 @@ import time
 import uuid
 import warnings
 from collections import Counter, deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -4682,6 +4682,32 @@ async def test_dbos_durability_override_registered_model(dbos: DBOS) -> None:
     assert await run_agent() == 'alt-response'
 
 
+async def test_dbos_durability_register_model_after_construction(dbos: DBOS) -> None:
+    """A model registered with `register_model` after the agent was built can be selected by key or instance.
+
+    This is how tests use a test model with a durable agent built at module level, without putting the
+    test model in production code's `models=`.
+    """
+    durability = DBOSDurability()
+    agent = Agent(_durability_fn_model, name='durability_register_model_later', capabilities=[durability])
+    durability.register_model('test', _dbos_alt_model)
+
+    @DBOS.workflow()
+    async def run_agent() -> tuple[str, str]:
+        with agent.override(model='test'):
+            by_key = await agent.run('hello')
+        with agent.override(model=_dbos_alt_model):
+            by_instance = await agent.run('hello')
+        return by_key.output, by_instance.output
+
+    assert await run_agent() == ('alt-response', 'alt-response')
+
+
+def test_dbos_durability_register_model_rejects_default_id() -> None:
+    with pytest.raises(UserError, match="Model ID 'default' is reserved"):
+        DBOSDurability().register_model('default', _dbos_alt_model)
+
+
 async def test_dbos_durability_unregistered_model_instance_errors(dbos: DBOS) -> None:
     """An unregistered `Model` instance is rejected in the workflow, before any step runs.
 
@@ -5666,14 +5692,8 @@ def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
     return FunctionToolset()
 
 
-async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
-    """Capabilities added per-run inside a workflow are rejected; `Instrumentation` is exempt.
-
-    Construction-time capability toolsets are wrapped by `for_agent` (see the
-    capability-contributed test above); a per-run capability's toolset arrives after that
-    wrapping has happened, so it would run un-checkpointed inside the workflow. A
-    `DynamicToolset` with a module-level factory keeps the workflow input serializable.
-    """
+async def test_per_run_capability_contributing_executing_toolset_still_rejected_inside_workflow(dbos: DBOS) -> None:
+    """A per-run capability that contributes an executing toolset remains unsupported."""
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_toolset', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
@@ -5686,17 +5706,78 @@ async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
             'Capabilities added per-run inside a DBOS workflow are not supported: Toolset. DBOS registers '
             'durable steps when a capability is bound to the agent, before the workflow starts. A capability '
             'added per-run therefore has no registered durable steps for the toolsets it contributes or its own '
-            '`@durable_operation` methods. Attach all capabilities at agent construction time so '
-            '`DBOSDurability.for_agent()` can register their durable steps.'
+            '`@durable_operation` methods. A per-run capability that chooses or wraps the model (`resolve_model_id`, '
+            '`get_model` or `get_wrapper_model`) is refused too, because only the model ID reaches the model request '
+            'step, so it would be bypassed there. Only capabilities that add hooks, instructions or settings can be '
+            'added per-run; attach the rest at agent construction time so `DBOSDurability.for_agent()` can register '
+            'their durable steps.'
         ),
     ):
         await run_with_toolset_capability()
 
-    @DBOS.workflow()
-    async def run_with_instrumentation() -> str:
-        return (await agent.run('Hello', capabilities=[Instrumentation(InstrumentationSettings())])).output
 
-    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+class _CustomExecutingToolset(AbstractToolset[Any]):
+    """A custom executing toolset the runtime-toolset guard has no kind for."""
+
+    @property
+    def id(self) -> str | None:  # pragma: no cover
+        return 'custom_executing'
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:  # pragma: no cover
+        return {}
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:  # pragma: no cover
+        return None
+
+
+def _per_run_function_toolset() -> FunctionToolset[Any]:
+    toolset = FunctionToolset[Any](id='per_run_function')
+
+    @toolset.tool_plain
+    def per_run_tool() -> str:  # pragma: no cover
+        return 'ran inline'
+
+    return toolset
+
+
+@pytest.mark.parametrize(
+    'toolset_factory',
+    [
+        pytest.param(_per_run_function_toolset, id='function-toolset'),
+        pytest.param(_CustomExecutingToolset, id='custom-toolset'),
+    ],
+)
+async def test_per_run_capability_with_executing_toolset_rejected_inside_workflow(
+    dbos: DBOS, toolset_factory: Callable[[], AbstractToolset[Any]]
+) -> None:
+    """Per-run capability toolsets are default-deny: only known non-executing leaves are allowed.
+
+    A `FunctionToolset` is refused even though DBOS runs function tools inline, and so is a custom toolset the
+    runtime-toolset guard doesn't know.
+    """
+    agent = Agent(_durability_fn_model, name='durability_per_run_executing_toolset', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_with_toolset_capability() -> None:
+        await agent.run('Hello', capabilities=[Toolset(toolset_factory())])
+
+    with pytest.raises(Exception, match='Capabilities added per-run inside a DBOS workflow are not supported: Toolset'):
+        await run_with_toolset_capability()
+
+
+async def test_per_run_hooks_only_capability_allowed_inside_workflow(dbos: DBOS) -> None:
+    class _HooksOnlyInstrumentation(Instrumentation):
+        _safe_at_runtime = False
+
+    agent = Agent(_durability_fn_model, name='durability_per_run_hooks_only', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_with_hooks_only() -> str:
+        return (await agent.run('Hello', capabilities=[_HooksOnlyInstrumentation(InstrumentationSettings())])).output
+
+    assert await run_with_hooks_only() == snapshot('Echo: Hello')
 
 
 async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:
