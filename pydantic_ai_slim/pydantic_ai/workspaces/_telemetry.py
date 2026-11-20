@@ -58,6 +58,9 @@ Step: TypeAlias = Literal[
     'realpath',
 ]
 """What a shell-filesystem command does within its file operation."""
+_LOOKUPS: frozenset[Operation] = frozenset({'stat', 'read_bytes', 'list_dir', 'remove', 'realpath'})
+"""Operations where a missing file is often the expected answer, so `FileNotFoundError` leaves the status unset.
+Every other span, such as `workspace run` with a missing `cwd`, records it as an error."""
 _SpanName: TypeAlias = Operation | Literal['create', 'attach', 'destroy']
 
 _opened_by: ContextVar[RunTelemetry | None] = ContextVar('pydantic_ai.workspace_span_opened_by', default=None)
@@ -69,7 +72,8 @@ def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Abstrac
     """Open a `workspace {operation}` span, unless the calling run's workspace span is already open."""
     if (telemetry := current_run_telemetry()) is not None and _opened_by.get() is telemetry:
         return nullcontext(INVALID_SPAN)
-    return _span(operation, backend=workspace)
+    not_errors = (FileNotFoundError,) if operation in _LOOKUPS else ()
+    return _span(operation, backend=workspace, not_errors=not_errors)
 
 
 def acquire_span(action: Literal['create', 'attach'], backend: WorkspaceBackend) -> AbstractContextManager[Span]:
@@ -91,7 +95,10 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
     # The message names the step, so it can't pass for a command the agent ran. It never holds the
     # command: Logfire does not scrub `logfire.msg`.
     return _span(
-        'run', attributes={'logfire.msg': f'workspace run ({step})', 'pydantic_ai.workspace.command.step': step}
+        'run',
+        attributes={'logfire.msg': f'workspace run ({step})', 'pydantic_ai.workspace.command.step': step},
+        # Each step is part of a file operation, where a missing file can be the expected answer.
+        not_errors=(FileNotFoundError,),
     )
 
 
@@ -109,12 +116,12 @@ def _span(
     *,
     attributes: Mapping[str, AttributeValue] | None = None,
     backend: WorkspaceBackend | None = None,
+    not_errors: tuple[type[Exception], ...] = (),
 ) -> Generator[Span]:
     """Open `workspace {name}`, naming the environment it ran in when given `backend`."""
     token = _opened_by.set(current_run_telemetry())
     try:
-        # A missing file is often an expected answer, not a failure.
-        with open_span(f'workspace {name}', attributes=attributes, not_errors=(FileNotFoundError,)) as span:
+        with open_span(f'workspace {name}', attributes=attributes, not_errors=not_errors) as span:
             # The ref is read only when recording, so an untraced call never touches it.
             traced = backend if span.is_recording() else None
             if traced is not None:
