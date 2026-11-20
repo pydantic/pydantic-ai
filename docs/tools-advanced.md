@@ -665,6 +665,8 @@ The exception message is recorded in message history as a [`ToolReturnPart`][pyd
 
 Unlike `ModelRetry`, `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level — specifically [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit], since [`tool_calls_limit`][pydantic_ai.usage.UsageLimits.tool_calls_limit] only counts successful tool invocations.
 
+The mirror image is a `ModelRetry` returned by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler: it isn't charged to the per-tool budget either, so a handler that keeps answering `ModelRetry` for the same call is bounded by `request_limit` rather than by that tool's `max_retries`. [`RetryInfo.attempt`][pydantic_ai.messages.RetryInfo.attempt] is `None` for those retries, while a `ModelRetry` raised by the tool itself still counts against `max_retries`. See [Deferred Tools](deferred-tools.md) for the handler flow.
+
 Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. For MCP server tool errors, the same choice is available as the [`tool_error_behavior`](mcp/client.md#tool-errors) configuration.
 
 You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
