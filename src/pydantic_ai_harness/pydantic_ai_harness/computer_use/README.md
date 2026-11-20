@@ -166,8 +166,11 @@ allow. When the engine stops retrying, the model is told that some actions may h
 
 On Temporal, those settings are `TemporalDurability`'s `activity_config`. By default it has a 60-second timeout and
 unlimited retries. Set `start_to_close_timeout` longer than your longest call. Set
-`retry_policy=RetryPolicy(maximum_attempts=1)` so a call is never run twice. After a few steps, the screenshots also
-pass Temporal's 2 MB payload limit, so configure [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
+`retry_policy=RetryPolicy(maximum_attempts=1)` so a call is never run twice. That also stops retries of model requests
+and other tools, so give model requests theirs back with
+`model_activity_config=ActivityConfig(retry_policy=RetryPolicy())`, and a toolset its own with
+`toolset_activity_config`. After a few steps, the screenshots also pass Temporal's 2 MB payload limit, so configure
+[external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
 
 Use `TemporalDurability` or `PrefectDurability`. The deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't
 run `ComputerUse`.

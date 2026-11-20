@@ -460,7 +460,9 @@ Gotchas:
 - Under durable execution, everything one `computer` call does on the screen is one durable step, so replay and
   recovery don't repeat a finished call. A call cut off before its step was recorded is retried under the engine's
   settings for capability steps. On Temporal, set `activity_config` with a longer `start_to_close_timeout` and
-  `RetryPolicy(maximum_attempts=1)`. When the engine stops retrying, the model is told to take a screenshot first.
+  `RetryPolicy(maximum_attempts=1)`, and keep model retries with
+  `model_activity_config=ActivityConfig(retry_policy=RetryPolicy())`, since the base config reaches model requests too.
+  When the engine stops retrying, the model is told to take a screenshot first.
 - Under Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure external storage.
 
 ## See also
