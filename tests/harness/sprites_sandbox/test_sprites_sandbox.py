@@ -123,6 +123,7 @@ class TestSpritesSandbox:
         ('kwargs', 'message'),
         [
             ({'working_dir': 'relative'}, "working_dir must be an absolute POSIX path or None, got 'relative'."),
+            ({'desktop': (0, 0)}, '`desktop` must be a `(width, height)` of at least 1 pixel each, got (0, 0).'),
             (
                 {'defer_loading': True},
                 '`SpritesSandbox` does not support `defer_loading=True`: '

@@ -57,7 +57,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, desktop_display
+from pydantic_ai_harness._x11 import DESKTOP_PACKAGES, DISPLAY, desktop_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 # Checked without importing: importing Modal reads `~/.modal.toml`, so the import itself is
@@ -215,11 +215,6 @@ def _check_image(image: str | modal.Image | None) -> None:
         modal_sdk = importlib.import_module('modal')
         if not isinstance(image, modal_sdk.Image):
             raise TypeError('image must be a registry tag or modal.Image')
-
-
-_DESKTOP_PACKAGES = ('xvfb', 'xdotool', 'scrot', 'x11-utils', 'fluxbox', 'tint2', 'xterm')
-"""Added to the default image with `desktop`, so the desktop starts without installing anything. `x11-utils` has
-`xwininfo`."""
 
 
 # Subclassing the structural protocols makes a signature drift fail the type check on this class.
@@ -526,7 +521,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 if self._image is None:
                     # Built on create, not at import: Modal caches it per workspace after the first build.
                     built = modal.Image.debian_slim(python_version='3.12').apt_install(
-                        'git', 'ripgrep', *(_DESKTOP_PACKAGES if self._desktop_size else ())
+                        'git', 'ripgrep', *(DESKTOP_PACKAGES if self._desktop_size else ())
                     )
                 elif isinstance(self._image, str):
                     built = modal.Image.from_registry(self._image)  # pyright: ignore[reportUnknownMemberType]
