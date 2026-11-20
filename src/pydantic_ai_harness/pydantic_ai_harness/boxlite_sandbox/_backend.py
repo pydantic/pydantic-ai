@@ -324,7 +324,7 @@ async def _remove(boxes: _Runtime, name: str) -> None:
         await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
 
 
-class _StaleHandle(Exception):
+class _StaleHandleError(Exception):
     """The box's handle was stopped before a command started on it."""
 
 
@@ -388,7 +388,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the box (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation creates and boots a new box, or boots the one `sandbox`
@@ -524,7 +524,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     result = await self._exec(
                         box, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT
                     )
-                except _StaleHandle as error:
+                except _StaleHandleError as error:
                     raise WorkspaceUnavailableError(f'The BoxLite box {name!r} was stopped while starting.') from error
                 _check_working_dir_created(result, self._working_dir, name)
             self._box = box
@@ -561,14 +561,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             return await self._exec(
                 await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
             )
-        except _StaleHandle:
+        except _StaleHandleError:
             # `stop()` invalidates every handle to a box for good, but a new one boots it again. The
             # command never started, so it starts on the new handle.
             self._box = None
             box = await self.get_sandbox()
             try:
                 return await self._exec(box, argv, env=env, working_dir=self._working_dir, timeout=timeout)
-            except _StaleHandle as error:
+            except _StaleHandleError as error:
                 raise WorkspaceUnavailableError(f'The BoxLite box {_key(box)!r} was stopped while starting.') from error
 
     async def _exec(
@@ -624,7 +624,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             )
         except boxlite.BoxliteError as error:
             if isinstance(error, boxlite.StoppedError):
-                raise _StaleHandle from error
+                raise _StaleHandleError from error
             if 'spawn_failed' in str(error):
                 raise WorkspaceError(
                     f'Could not start the command in BoxLite box {_key(box)}: {error}. '

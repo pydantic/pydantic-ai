@@ -162,6 +162,7 @@ print(result)\
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -180,6 +181,7 @@ print(result)\
                     provider_details={'thought_signature': IsStr()},
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -191,6 +193,7 @@ print(result)\
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -215,6 +218,7 @@ print(result)\
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
         ]
     )

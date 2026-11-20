@@ -20,6 +20,7 @@ from pydantic_ai_harness.memory._store import (
     encode_metadata,
     is_direct_child,
     lexical_search,
+    prefix_end,
     validate_store_path,
     validate_store_prefix,
 )
@@ -41,7 +42,7 @@ def _check_operation(
     return _replayed(mutation)
 
 
-class InMemoryStore:
+class InMemoryMemoryStore:
     """Process-lifetime versioned memory store, with write metadata."""
 
     def __init__(self, files: Mapping[str, str] | None = None) -> None:
@@ -70,7 +71,7 @@ class InMemoryStore:
         return self._generation
 
     def _keep_receipt(self, operation: MemoryOperation, mutation: MemoryMutation) -> None:
-        """Record a receipt, keeping only the most recent ones, as `FileStore` does."""
+        """Record a receipt, keeping only the most recent ones, as `FileMemoryStore` does."""
         self._receipts[operation.id] = (operation.fingerprint, mutation)
         if len(self._receipts) > MAX_RECEIPTS:
             del self._receipts[next(iter(self._receipts))]
@@ -191,6 +192,29 @@ class InMemoryStore:
                     break
             return paths
 
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        validate_store_prefix(prefix)
+        if limit <= 0:
+            raise ValueError('limit must be positive')
+        async with self._lock:
+            return self._child_paths(prefix, limit)
+
+    def _child_paths(self, prefix: str, limit: int) -> list[str]:
+        index = bisect.bisect_left(self._paths, prefix)
+        selected: list[str] = []
+        while index < len(self._paths) and len(selected) < limit:
+            path = self._paths[index]
+            if not path.startswith(prefix):
+                break
+            if is_direct_child(prefix, path):
+                selected.append(path)
+                index += 1
+            else:
+                # Jump past the whole nested scope instead of walking each of its paths.
+                nested_scope = path[: path.index('/', len(prefix)) + 1]
+                index = bisect.bisect_left(self._paths, prefix_end(nested_scope))
+        return selected
+
     async def search(
         self,
         prefix: str,
@@ -205,19 +229,7 @@ class InMemoryStore:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
         async with self._lock:
-            index = bisect.bisect_left(self._paths, prefix)
-            selected: list[str] = []
-            while index < len(self._paths) and len(selected) <= max_files:
-                path = self._paths[index]
-                if not path.startswith(prefix):
-                    break
-                if is_direct_child(prefix, path):
-                    selected.append(path)
-                    index += 1
-                else:
-                    # Jump past the whole nested scope instead of walking each of its paths.
-                    nested_scope = path[: path.index('/', len(prefix)) + 1]
-                    index = bisect.bisect_left(self._paths, nested_scope + '\U0010ffff')
+            selected = self._child_paths(prefix, max_files + 1)
             scanned_paths = selected[:max_files]
             content_truncated = any(len(self._files[path]) > max_file_chars for path in scanned_paths)
             files = [(path, self._files[path][:max_file_chars]) for path in scanned_paths]

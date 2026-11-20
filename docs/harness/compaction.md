@@ -15,7 +15,25 @@ On OpenAI and Anthropic, core also ships [provider-native compaction](../capabil
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Compaction runs in before_model_request, between the message history and the model; here TieredCompaction's two zero-LLM tiers bring the history under target_tokens, so the summarizing tier never runs.](../img/harness/compaction.svg)
+```mermaid
+flowchart TB
+    accTitle: Compaction: keep the history inside the context window
+    accDescr: When the message history is over target_tokens, TieredCompaction runs in before_model_request, starting with DeduplicateFileReads, which makes no model call. If the history is still over, ClearToolResults runs, also with no model call, and if still over, SummarizingCompaction makes one model call. The history goes to the model once it fits, or after SummarizingCompaction.
+    history["message history<br/>over target_tokens"]
+    subgraph tiers["TieredCompaction()"]
+        dedupe["DeduplicateFileReads<br/>no model call"]:::capability
+        clear["ClearToolResults<br/>no model call"]:::capability
+        summary["SummarizingCompaction<br/>one model call"]:::capability
+    end
+    model(["model"])
+    history -->|"before_model_request"| dedupe
+    dedupe -->|"still over"| clear
+    clear -->|"still over"| summary
+    dedupe -->|"fits"| model
+    clear -->|"fits"| model
+    summary --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -34,6 +52,7 @@ A long run accumulates tool outputs, file reads, and reasoning until the history
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | The sensible default: pay for a summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and truncation must keep the run alive |
 | `CompactOnRequest` | depends on strategy | Gives the model a tool to request compaction before its next request | The model knows when a phase of work ends better than a size trigger |
+| `PruneToolResults` | zero-LLM | Gives the model a tool to replace a result it just received with its own summary | A tool can return far more than the model needs, and only the model can tell after reading it |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | The agent should wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
@@ -42,6 +61,8 @@ Compaction updates the persisted run history and replaces the current request vi
 ## Triggers
 
 Size-based strategies trigger on `max_messages`, `max_tokens` (estimated as in [What counts toward the fraction](#what-counts-toward-the-fraction)), or `max_fraction`. Exceptions: `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless), `TieredCompaction` triggers and stops on one `target_tokens` / `target_fraction` budget, and `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), since its failure is one oversized part, not a large total.
+
+Without a `tokenizer`, history that provider usage doesn't cover is measured with a text estimate: ~4 characters per token for English-like prose; one token per non-ASCII character, except ~1.5 characters per token for accented Latin and Cyrillic and three tokens per character outside the Basic Multilingual Plane (most emoji, CJK Extension B); ~1.25 characters per token for base64-like runs (24+ characters mixing digits and both cases); and about 1.25 tokens per `{}[],:"` character and half a token per digit beyond the share prose and code carry, which is what makes compact JSON dense. Dense content is deliberately estimated high, since an undercount can send a request over the context window. Measured against OpenAI's cl100k_base tokenizer, that holds for Latin, Cyrillic, Greek, Arabic, CJK, base64 and JSON; cl100k_base spends more on Hebrew and Thai (up to ~1.15 tokens per character), Indic scripts (1.3 to 1.5), Georgian, Armenian and Myanmar (~2) and Ethiopic (~2.3). The same estimate measures `keep_tokens`, `max_part_tokens`, `ToolOutputLimits(over_tokens=True)` bands and the `compaction.tokens_*` span attributes.
 
 ### `max_fraction`: one setting for every model
 
@@ -110,13 +131,13 @@ agent = Agent(
 
 Token counts anchor on the provider-reported usage of the latest model response, which covers everything billed for that request, including instructions, tool definitions, and `FilePart` payloads. When billed usage sums several model requests, the anchor is the input tokens of the one that measures the context, plus the output: the first request of a [Google long decode](../models/google.md#long-decode) (its billed input re-counts earlier requests' output), or the last sampling pass of an [Anthropic response that reports its passes](../models/anthropic.md#server-side-tool-loops) (its billed input re-counts each pass's context).
 
-Messages after the anchor, or a history with no anchor, are estimated with `tokenizer` or a ~4-characters-per-token heuristic. The estimate cannot see `FilePart` payloads and counts a file in a tool return as its `See file <identifier>.` reference. Instruction replacement and withdrawal records count their full rendered system text; superseded updates before a new instruction baseline are excluded. Instructions changed since the anchor replace the old set in the estimate rather than adding to it, since a request sends one. Tool schemas newly revealed for the pending request are estimated conservatively, since the anchor does not cover them.
+Messages after the anchor, or a history with no anchor, are estimated with `tokenizer` or the [text estimate](#triggers). The estimate cannot see `FilePart` payloads and counts a file in a tool return as its `See file <identifier>.` reference. Instruction replacement and withdrawal records count their full rendered system text; superseded updates before a new instruction baseline are excluded. Instructions changed since the anchor replace the old set in the estimate rather than adding to it, since a request sends one. Tool schemas newly revealed for the pending request are estimated conservatively, since the anchor does not cover them.
 
 **If you already set an absolute `max_tokens`, re-check it.** Besides user and system prompts, tool returns, response text, and tool calls, the estimator now counts `ThinkingPart` / `CompactionPart` content, retry content, `NativeToolCallPart` / `NativeToolReturnPart`, and the latest `ModelRequest.instructions`, so a history measures higher and an unchanged `max_tokens` compacts earlier. On a thinking-heavy, tool-calling history it can be several times the old count, depending on how much of it is thinking blocks, retries, and instructions. What each strategy clears is unchanged.
 
 ### What counts toward `keep_tokens`
 
-The retained tail is measured per message with `estimate_message_tokens`, in provider-counted tokens. A response counts at least its reported `output_tokens`, which includes thinking some providers return as an empty, signature-only part. Messages between two responses with usage share the difference of their `input_tokens`, exactly what the provider counted for them. A multi-request response enters that difference with the input tokens of the request that measures its context, as above; Anthropic's last pass also read the response's earlier passes, which the difference credits to the preceding messages, so the tail measures high. `tokenizer` or the heuristic applies before the first such response, after the last, where the history did not grow between two (as across an earlier compaction), and with no provider usage. Instructions are not part of the tail.
+The retained tail is measured per message with `estimate_message_tokens`, in provider-counted tokens. A response counts at least its reported `output_tokens`, which includes thinking some providers return as an empty, signature-only part. Messages between two responses with usage share the difference of their `input_tokens`, exactly what the provider counted for them. A multi-request response enters that difference with the input tokens of the request that measures its context, as above; Anthropic's last pass also read the response's earlier passes, which the difference credits to the preceding messages, so the tail measures high. `tokenizer` or the [text estimate](#triggers) applies before the first such response, after the last, where the history did not grow between two (as across an earlier compaction), and with no provider usage. Instructions are not part of the tail.
 
 **If you set `keep_tokens`, re-check it.** Before, it was measured with the heuristic alone, which can see a third or less of a thinking-heavy history's real tokens, so a budget kept several times more history than it named. It now keeps the named amount, so fewer messages.
 
@@ -127,7 +148,7 @@ The retained tail is measured per message with `estimate_message_tokens`, in pro
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     '{{ anthropic:medium }}',
@@ -138,12 +159,12 @@ agent = Agent(
 )
 
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
 
-Each reading carries `used_tokens`, `window_tokens`, `fraction`, and `resolved` (`False` when the window is the fallback, so the percentage is a guess). `used_tokens` follows [the accounting above](#what-counts-toward-the-fraction). Register the monitor *after* a compaction capability to see the history after same-cycle compaction (it subtracts the rewrite's heuristic reclaim and keeps the anchor's fixed provider overhead), or before it to see what triggered compaction. `on_usage` still works but is deprecated; move its callback body to a `ContextUsageEvent` subscription.
+Each reading carries `used_tokens`, `window_tokens`, `fraction`, and `resolved` (`False` when the window is the fallback, so the percentage is a guess). `used_tokens` follows [the accounting above](#what-counts-toward-the-fraction). Register the monitor *after* a compaction capability to see the history after same-cycle compaction (it subtracts the rewrite's heuristic reclaim and keeps the anchor's fixed provider overhead), or before it to see what triggered compaction. `on_usage` still works but is deprecated; move its callback body to a `ContextUsageMeasuredEvent` subscription.
 
 ## Compacting outside a run: `compact_now`
 
@@ -192,8 +213,8 @@ agent = Agent(
         TieredCompaction(
             tiers=[
                 DeduplicateFileReads(file_key=my_file_key),
-                ClearToolResults(max_tokens=1, keep_pairs=3),
-                SummarizingCompaction(max_messages=1, keep_messages=20),  # model inherits the run's
+                ClearToolResults(keep_pairs=3),
+                SummarizingCompaction(keep_messages=20),  # model inherits the run's
             ],
             target_tokens=120_000,
         )
@@ -201,7 +222,11 @@ agent = Agent(
 )
 ```
 
-`TieredCompaction` calls each tier's `compact` directly, so a tier's own `max_*` trigger is ignored; set it to anything valid, such as `ClearToolResults(max_tokens=1)`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the `CompactionStrategy` protocol) can be a tier.
+`TieredCompaction` calls each tier's `compact` directly, re-measuring after each and stopping once under `target_tokens`, so a tier needs no `max_*` trigger of its own. Registered directly on an agent without a trigger, `ClearToolResults`, `SlidingWindowCompaction` and `SummarizingCompaction` raise `UserError`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the `CompactionStrategy` protocol) can be a tier.
+
+Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail (which holds the whole current turn), the first user message under `preserve_first_user_message`, and pinned parts. That sets a floor on how far the chain can shrink the history, and a `target_tokens` below it can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets `compaction.target_unreached` on its [span](#tracing) when the history changes; if no tier changes it, no span is emitted, but the warning still reports the estimate and target. Pass `preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
+
+On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions and moves on to the next. By default these are `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries; unlike `FallbackCompaction`'s `fallback_on`, this includes `UnexpectedModelBehavior`, because the next tier can still shrink the history without that model. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
 
 ## `FallbackCompaction`: recover when a strategy fails
 
@@ -215,13 +240,13 @@ from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, Sum
 fallback = FallbackCompaction(
     max_fraction=0.85,
     fallback_chain=[
-        SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+        SummarizingCompaction(keep_tokens=20_000),
+        SlidingWindowCompaction(keep_tokens=20_000),
     ],
 )
 ```
 
-Its optional `max_tokens` or `max_fraction` trigger runs the chain when estimated context tokens exceed it; with neither, its request hook does nothing. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies. The hook preserves pinned parts, persists the result, and emits a `compact_messages` span when history changes. Direct `compact()` and `compact_now()` calls ignore the threshold, so it also works inside other composing strategies and for manual compaction. The chain calls each child's `compact()` directly, bypassing the child's trigger.
+Its optional `max_tokens` or `max_fraction` trigger runs the chain when estimated context tokens exceed it; with neither, its request hook does nothing. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies. The hook preserves pinned parts, persists the result, and emits a `compact_messages` span when history changes. Direct `compact()` and `compact_now()` calls ignore the threshold, so it also works inside other composing strategies and for manual compaction. The chain calls each child's `compact()` directly, bypassing the child's trigger, so a child needs none.
 
 ### Background compaction (experimental)
 
@@ -234,8 +259,8 @@ compaction = FallbackCompaction(
     max_fraction=0.85,
     background_start=0.85,
     fallback_chain=[
-        SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+        SummarizingCompaction(keep_tokens=20_000),
+        SlidingWindowCompaction(keep_tokens=20_000),
     ],
 )
 ```
@@ -262,10 +287,10 @@ agent = Agent(
     '{{ openai:small }}',
     capabilities=[
         # Automatic size-based compaction stays as is.
-        TieredCompaction(tiers=[SummarizingCompaction(max_messages=1)], target_fraction=0.8),
+        TieredCompaction(tiers=[SummarizingCompaction()], target_fraction=0.8),
         CompactOnRequest(
-            # The strategy's own trigger is required but bypassed: `compact` is called directly.
-            SummarizingCompaction(max_messages=1, keep_messages=6),
+            # `compact` is called directly, so the strategy needs no trigger of its own.
+            SummarizingCompaction(keep_messages=6),
             min_tokens=30_000,  # refuse requests that would save little
             max_per_run=2,
         ),
@@ -284,6 +309,24 @@ The tool return tells the model when a request is refused:
 `CompactOnRequest` runs after the agent's automatic compaction capabilities, wherever you list it. If one already compacted for this request, the model's request is dropped rather than compacting twice, and does not count against `max_per_run`.
 
 Under durable execution, the guards run in a capability hook, not the tool function, because the tool may run in an activity that sees neither the history nor the run's state. The strategy runs as the `compact` durable operation of `CompactOnRequest`, so a replay reuses the recorded history instead of calling the summarizer again. Under Temporal that operation is an activity whose run context omits `tracer` and `capabilities`, so strategies that read them fail there: `RelevanceCompaction`, and `receipts=True` on `SummarizingCompaction` or `SlidingWindowCompaction`. For the same reason, receipts recorded inside the activity, or skipped on a DBOS replay, add no `compaction.receipt` span events.
+
+## `PruneToolResults`: let the model drop a result it just read
+
+A tool's output size is not known until it returns: a search can match build artifacts, a test run can print thousands of lines around one traceback. `ClearToolResults` keeps the newest `keep_pairs` results, which is where such a result sits. Whether it is useless is a judgement the model can make once it has read it. `PruneToolResults` gives it a `prune_tool_result(tool_call_id, summary)` tool to replace that result with `[tool result pruned]` followed by its summary:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import ClearToolResults, PruneToolResults
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[ClearToolResults(max_fraction=0.7), PruneToolResults()],
+)
+```
+
+The replacement happens as soon as the call is accepted, in a hook after the tool runs, so it holds even when the run then ends or pauses for an approval. It persists in the run's message history as a cleared result does, and the tool call stays paired with it. Only results the model's latest response answered can be pruned, so the edit lands at the end of the history and the cached prefix before it is kept. The tool return tells the model when a call is refused: for an ID that is not one of those results, a typed result that `ClearToolResults` would also leave intact, or a summary that is not shorter than the result.
+
+Compaction on the next request works on the pruned history. Its `max_tokens` and `max_fraction` triggers, and `ReportContextUsage`, anchor on the [usage of the latest response](#triggers), which still counts the pruned result, so a prune lowers those estimates from the following response on. A prune emits the standard `compact_messages` [span](#tracing) with `compaction.strategy` set to `PruneToolResults` and `compaction.model_requested` set. The original result is not kept in the history; with instrumentation that includes content, the tool's execution span still records it.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 
@@ -318,7 +361,7 @@ from pydantic_ai_harness import ClampOversizedMessages, ClearToolResults, Tiered
 TieredCompaction(
     tiers=[
         ClampOversizedMessages(max_part_tokens=50_000),
-        ClearToolResults(max_tokens=1, keep_pairs=3),
+        ClearToolResults(keep_pairs=3),
     ],
     target_tokens=120_000,
 )
@@ -419,7 +462,7 @@ An empty or whitespace-only summary is retried within the summary run's output r
 
 `model_settings` merges over the summary model's defaults without mutating the model or the dictionary. `summarization_capabilities` attaches capabilities to the summary agent; the outer agent's capabilities do not run on the summary call. `incremental=True` (the default) updates the newest existing summary as an anchor (see [below](#anchored-incremental-summarization-and-the-cross-model-bridge)). `keep_messages=0` still keeps the newest message, the request being answered.
 
-The summary is a [`CompactionPart`][pydantic_ai.messages.CompactionPart] in its own `ModelRequest`, after the unchanged original system prompts and, when `preserve_first_user_message` keeps it, the first user turn. Provider models receive it as user-voice text inside `<conversation_summary>`, saying a separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the system prompt, since a model wrote it from history that can include tool output. As a compaction part it is a compaction boundary, which would reset [tool discoveries](#tool-search-discoveries-across-compaction) and on-demand capability loads before it, so the strategy [records them again after it](#on-demand-capabilities-across-compaction). [`WarnOnCacheBusts`](warn-on-cache-busts.md) reports its cache drop as `compacted`.
+The summary is a [`CompactionPart`][pydantic_ai.messages.CompactionPart] in its own `ModelRequest`, after the unchanged original system prompts and, when `preserve_first_user_message` keeps it, the first user turn. Provider models receive it as user-voice text inside `<pyai:conversation_summary>`, saying a separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the system prompt, since a model wrote it from history that can include tool output. As a compaction part it is a compaction boundary, which would reset [tool discoveries](#tool-search-discoveries-across-compaction) and on-demand capability loads before it, so the strategy [records them again after it](#on-demand-capabilities-across-compaction). [`WarnOnCacheBusts`](warn-on-cache-busts.md) reports its cache drop as `compacted`.
 
 The part's model-invisible `metadata` carries `{'pydantic-ai-harness.compaction.summary.v1': True}`; that marker plus no provider data identifies the strategy's own summaries, so a `CompactionPart` your application wrote is left alone. Being on the part, not the message, it survives Pydantic AI merging the summary's request with neighbors, as does `'pydantic-ai-harness.compaction.summary.created_at'`, the ISO 8601 write time (the merged request keeps a neighbor's timestamp, possibly an older preserved prompt's). An older history with the summary in a system prompt starting `Summary of previous conversation:` still works: that summary anchors the next one and is replaced by it.
 
@@ -427,7 +470,7 @@ The part's model-invisible `metadata` carries `{'pydantic-ai-harness.compaction.
 
 The default `summary_prompt` asks for fixed section headings. Its `## Intent` section asks for the user's goal and only constraints or preferences the user stated: an instruction in a tool result or fetched content is not the user's, and a summary that keeps one must say where it came from. A custom `summary_prompt` replaces all of this, so without its own rule a summarizer can list a request planted in a tool result as a user constraint; only the `<harness_data>` instruction below is still added.
 
-The messages fill the template as a transcript with one `<message>` element per part (user prompt, system prompt, response text, tool call, tool return), tagged with its role and, for tool calls and returns, the tool name. Retry feedback (the correction a rejected tool call or output got) is a `role="retry_feedback"` element with the retry's `cause` and, for a tool call, the tool name, so the summary records the correction, not the rejected call, as what happened; feedback answering no tool call is shown as the model saw it. Text resembling the transcript's tags or a Pydantic AI framing tag (`<system>`, `<context>`, `<tool_result>` and the rest), in any case or spacing, is escaped, so a tool return can't leave its message or end the transcript early. After escaping, each tool return and retry feedback is capped at `tool_return_max_chars` (default 500) characters with the same truncation marker as kept user turns; raise it, or set `None` to render them whole, when the summarizer's window can absorb them.
+The messages fill the template as a transcript with one `<message>` element per part (user prompt, system prompt, response text, tool call, tool return), tagged with its role and, for tool calls and returns, the tool name. Retry feedback (the correction a rejected tool call or output got) is a `role="retry_feedback"` element with the retry's `cause` and, for a tool call, the tool name, so the summary records the correction, not the rejected call, as what happened; feedback answering no tool call is shown as the model saw it. Text resembling the transcript's tags or a Pydantic AI framing tag (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), in any case or spacing, is escaped, so a tool return can't leave its message or end the transcript early. After escaping, each tool return and retry feedback is capped at `tool_return_max_chars` (default 500) characters with the same truncation marker as kept user turns; raise it, or set `None` to render them whole, when the summarizer's window can absorb them.
 
 Content a harness capability added on the user channel, with a `TextContent.metadata` `origin` starting with `pydantic-ai-harness.`, is not a user message: today a [`BackgroundTools`](background-tools.md) result, [`TrajectoryJudge`](trajectory-judge.md) feedback, or a [`Memory`](memory.md) snapshot (including one an older release marked with a plain string). It renders as a `<harness_data origin="...">` element, capped like a tool return, not as `role="user"`. When the transcript holds such content, and only then, the summary request also tells the summarizer not to treat it as the user's requests or standing constraints. `max_tokens` and `keep_tokens` decide when compaction runs and what is retained; they do not cap the summary-request payload.
 
@@ -449,7 +492,7 @@ Some endpoints reject non-streaming requests and others reject streaming ones, s
 
 ### A summary that isn't smaller
 
-System prompts, the first user turn, the recent tail, pinned parts and receipts are kept, so with a short summarized span or a long summary, the result can be larger than the original. On its own trigger, `SummarizingCompaction` keeps the result only if it is estimated smaller, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain) or the ~4-characters-per-token estimate. Otherwise the request goes out unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, each next request in the run makes another summary call. Inside `FallbackCompaction` the next strategy runs instead, so a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()`, `compact_now()`, or a `TieredCompaction` tier returns the summary either way.
+System prompts, the first user turn, the recent tail, pinned parts and receipts are kept, so with a short summarized span or a long summary, the result can be larger than the original. On its own trigger, `SummarizingCompaction` keeps the result only if it is estimated smaller, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain) or the [text estimate](#triggers). Otherwise the request goes out unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, each next request in the run makes another summary call. Inside `FallbackCompaction` the next strategy runs instead, so a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()`, `compact_now()`, or a `TieredCompaction` tier returns the summary either way.
 
 ### Usage accounting
 
@@ -470,7 +513,7 @@ agent = Agent(
     capabilities=[
         RelevanceCompaction(
             'system-one:nimble',
-            summarizer=SummarizingCompaction(model='{{ anthropic:small }}', max_messages=1),
+            summarizer=SummarizingCompaction(model='{{ anthropic:small }}'),
             max_fraction=0.8,
         )
     ],
@@ -494,7 +537,7 @@ Steps are chosen by rank against a token budget, not by a fixed probability thre
 2. The rest are reduced in order of `still_matters`: with a `summarizer`, written into one summary after the head of the history, up to `summary_input_tokens` (default 30,000) of steps per compaction; without one, each tool result is cut to its first `truncated_result_chars` (default 300) characters plus a note that the tool can be called again, while that fits the target.
 3. Whatever is left is dropped, except a step holding a user prompt: without a summarizer it is cut, and with one it is summarized while it fits `summary_input_tokens` and kept verbatim otherwise.
 
-The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are ignored, so any trigger such as `max_messages=1` works. With its `incremental=True` (the default) the earlier summary is updated; with `incremental=False` it is re-summarized with the steps. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
+The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are ignored, so it needs no trigger. With its `incremental=True` (the default) the earlier summary is updated; with `incremental=False` it is re-summarized with the steps. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
 
 Up to `judge_concurrency` (default 8) judge requests run at once. Judgements are remembered on the instance by task and step content, so a later compaction with the same task judges only new steps. A compaction's judge requests count as one request against a `UsageLimits` request limit, checked before any is sent; their tokens are added to run usage and checked against token and cost limits on return. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so a long history's first compaction can take minutes.
 
@@ -507,7 +550,7 @@ compaction = FallbackCompaction(
     max_fraction=0.8,
     fallback_chain=[
         RelevanceCompaction('system-one:nimble', max_fraction=0.8),
-        SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+        SlidingWindowCompaction(keep_tokens=20_000),
     ],
 )
 ```
@@ -520,7 +563,7 @@ The two-question split and concurrent per-step requests come from [fast-jev-comp
 
 ## `WarnNearLimits`: warn instead of rewrite
 
-`WarnNearLimits` never edits history. As the run nears a configured limit, it adds an URGENT, then CRITICAL, warning to each request so the model wraps up. Each warning is a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts): the model sees it only with its own request, and it stays in the message history, so earlier requests are sent unchanged and the prompt cache and earlier reasoning stay valid. Warnings older versions sent as user prompts are left out of requests when a saved history still holds them; they are recognized by part metadata, not text, so a user prompt quoting a warning is never removed.
+`WarnNearLimits` never edits history. As the run nears a configured limit, it adds an URGENT, then CRITICAL, warning to each request so the model wraps up. Each warning is a `LimitWarningPart`, a request-scoped [capability part](../capabilities/custom.md#capability-parts) in the application's voice, which the model sees as a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts): it sees it only with its own request, and it stays in the message history, so earlier requests are sent unchanged and the prompt cache and earlier reasoning stay valid. Warnings older versions sent as user prompts are left out of requests when a saved history still holds them; they are recognized by part metadata, not text, so a user prompt quoting a warning is never removed.
 
 ```python
 from pydantic_ai import Agent
@@ -533,6 +576,8 @@ agent = Agent(
 ```
 
 Warnings start at `warning_threshold` (default `0.7` of the limit) and turn CRITICAL for iterations once the remaining request count drops to `critical_remaining_iterations` (default `3`). It warns on whichever of `max_iterations`, `max_context_tokens` (or `max_context_fraction`), and `max_total_tokens` are set; narrow that with `warn_on`.
+
+To tell the model on every request how much of the run's `UsageLimits` and spend budgets is left, from the first request rather than past a threshold, use [Report Remaining Budget](report-remaining-budget.md).
 
 ## Cache tradeoff
 
@@ -552,11 +597,15 @@ The span name is always `compact_messages`, with the strategy as an attribute, t
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
 | `compaction.tokens_after` | int | Estimated token count after compaction |
-| `compaction.model_requested` | bool | `true` when the model asked through `CompactOnRequest`; absent otherwise |
+| `compaction.model_requested` | bool | `true` when the model asked through `CompactOnRequest` or `PruneToolResults`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background result |
-| `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded for not being smaller; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.skipped` | str | `tier_failed` when a `TieredCompaction` tier raised and was skipped, or `not_smaller` when an automatic summary was discarded for not being smaller; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
+| `error.type` | str | With `compaction.skipped='tier_failed'`: the exception's fully qualified class name |
+| `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
+| `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
+| `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
 
-Only `gen_ai.conversation.compacted` comes from the OpenTelemetry GenAI semantic convention; the rest are harness-specific. Token counts use the strategy's `tokenizer`, else the ~4-chars-per-token heuristic. Raw message content is not recorded.
+Only `gen_ai.conversation.compacted` comes from the OpenTelemetry GenAI semantic convention; the rest are harness-specific. Token counts use the strategy's `tokenizer`, else the [text estimate](#triggers). Raw message content is not recorded.
 
 `SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`, so under `Agent.instrument_all()` (or `logfire.instrument_pydantic_ai()`) filter on `agent_name = summarizing_compaction` to track summarization usage and cost separately.
 
@@ -598,9 +647,12 @@ from pydantic_ai_harness.compaction import pin
 
 # In a ModelRequest placed in the run's message history (by a capability or the user):
 pinned = pin('Durable task state the model must never lose across compaction.')
+
+# Content a tool or the model wrote, framed so the model doesn't read it as the user's words:
+scratchpad = pin('Port 8421 is taken; use 8422.', source='model')
 ```
 
-A pinned part is never summarized away or dropped; a strategy that would discard it re-injects it verbatim near the top of the surviving history. `is_pinned` checks for the marker, which lives in model-invisible `TextContent.metadata`, so the content stays ordinary user context that compaction can tell apart from user turns.
+A pinned part is never summarized away or dropped; a strategy that would discard it re-injects it verbatim near the top of the surviving history. `is_pinned` checks for the marker, which lives in model-invisible `TextContent.metadata` so compaction can tell pins apart from user turns. A pin with the default `source='user'` reaches the model as ordinary user context. Pass `source='tool'` or `source='model'` for content the user didn't write: it reaches the model on the user channel as `<pinned source="tool">` or `<pinned source="model">` data, with any framing tags inside it escaped.
 
 `Planning` does not need pinning: when compaction removes or clears the plan tools' results showing the latest plan, the next request records the plan from its store. Pinning is for durable task state and scratchpads that live *in* the history.
 
@@ -628,7 +680,7 @@ from pydantic_ai_harness import SummarizingCompaction
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
 ```
 
-In message-count mode, kept turns share the `keep_messages` tail budget, so at most that many kept user and tail messages survive together, except that one tail slot is reserved for the request being answered when kept turns would otherwise take it; retained copies don't grow each cycle. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which don't shrink the retained tail. With `keep_tokens=0`, kept user copies must fit a zero-token budget, and the newest tail message still survives.
+In message-count mode, kept turns share the `keep_messages` tail budget, so at most that many kept user and tail messages survive together, except that one tail slot is reserved for the request being answered when kept turns would otherwise take it; retained copies don't grow each cycle. The tail messages the kept turns leave no room for are summarized with the rest of the prefix, and the kept turns are the newest user turns of everything summarized. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which don't shrink the retained tail. With `keep_tokens=0`, kept user copies must fit a zero-token budget, and the newest tail message still survives.
 
 Each kept turn is cut to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker, per part and shared across a multi-part prompt's text items; images, audio, and cache points pass through. A kept copy is recognized by a marker on its text items, never by request metadata, which isn't trusted as provenance, so a turn marked only there is summarized and bounded like any other. Copies kept by releases before 2.60 carry only that request-level marker, as does a copy whose text items had non-dict metadata, so the first compaction after upgrading summarizes them once more and keeps them again.
 
@@ -671,6 +723,8 @@ The recommended default is `TieredCompaction`; the other strategies below work s
 
 ::: pydantic_ai_harness.compaction.CompactOnRequest
 
+::: pydantic_ai_harness.compaction.PruneToolResults
+
 ::: pydantic_ai_harness.compaction.WarnNearLimits
 
 ::: pydantic_ai_harness.compaction.ReportContextUsage
@@ -678,6 +732,8 @@ The recommended default is `TieredCompaction`; the other strategies below work s
 ::: pydantic_ai_harness.compaction.ContextUsage
 
 ::: pydantic_ai_harness.compaction.pin
+
+::: pydantic_ai_harness.compaction.PinSource
 
 ::: pydantic_ai_harness.compaction.is_pinned
 

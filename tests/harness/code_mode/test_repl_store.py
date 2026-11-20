@@ -28,12 +28,10 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeReplStore, CodeModeToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.code_mode.repl_store import MemoryReplStore
 
 from .._recording_durability import RecordingDurability
-
-READINESS_WAIT_TIMEOUT = 10
-"""Seconds to wait for a background tool to reach a step; generous so loaded xdist workers do not flake."""
 
 
 def add(a: int, b: int) -> int:
