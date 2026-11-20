@@ -444,9 +444,8 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (
 # is not supported for this model"). Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass) is a
 # separate transport and keeps the tool. https://github.com/pydantic/pydantic-ai/issues/11513
 _CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
-# Recorded tests show the computer use tool driving a screen on the Claude API and both Bedrock APIs
-# (`tests/harness/computer_use/test_computer_use_live.py`). There are no such recordings for Vertex AI, Foundry or
-# Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass), so those clients get the function tool.
+# The computer use tool has recorded runs only on the Claude API and both Bedrock APIs
+# (`tests/harness/computer_use/test_computer_use_live.py`), so these clients get the function tool.
 _COMPUTER_UNSUPPORTED_CLIENTS = (AsyncAnthropicVertex, AsyncAnthropicFoundry, AsyncAnthropicAWS)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
@@ -1095,8 +1094,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
 
         `ComputerTool` is left out of `supported_native_tools` on the Vertex AI, Foundry and Claude Platform on AWS
-        clients, because no recorded test shows the computer use tool working there. A user who has checked it on one
-        of these clients can add it to their own `supported_native_tools`.
+        clients, where it is unverified. A user who has checked it there can add it to `supported_native_tools`.
 
         `anthropic_calls_cited_web_tools_directly` is on for `AsyncAnthropic` clients and off for every client in
         `_CITED_WEB_TOOLS_DIRECT_UNVERIFIED_CLIENTS`, Claude Platform on AWS included, unless the provider's profile
@@ -2942,10 +2940,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ):
                     tool_choice = {'type': 'tool', 'name': forced_name}
                 else:
-                    # Breaks caching, but Anthropic doesn't support limiting tools via API arg. Some tools can't be
-                    # forced by name: the computer toolset, which has no name, and any tool when forcing isn't
-                    # supported (extended thinking, or a model that rejects forcing). Such a tool is forced by
-                    # offering it alone. The filter keeps the model to that tool, which `auto` alone wouldn't.
+                    # Breaks caching, but Anthropic doesn't support limiting tools via API arg. A single required
+                    # tool lands here when forcing isn't supported (extended thinking, or a model that rejects it
+                    # outright) or when it is the computer toolset, which has no name to force: the filter is what
+                    # keeps the model to that tool, since `auto` alone wouldn't.
                     tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                     tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not supports else {'type': 'any'}
             case _:
@@ -2991,8 +2989,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
         # the flag afterwards so an advertised entry never graduates into the cache-keyed segment.
         native_computer = self._native_computer(model_request_parameters)
-        # Anthropic's computer use tool is sent in place of the `computer` tool. `NativeComputer.call_part` turns its
-        # calls back into `computer` calls. It goes last, so the tools' cache breakpoint below is set on it.
+        # Anthropic's computer use tool replaces the `computer` tool and goes last, so the cache breakpoint below is
+        # set on it.
         tools: list[BetaToolUnionParam] = [
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
@@ -3029,8 +3027,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         With `continues_thread`, `messages` are the new messages of a thread continue request, which follow the
         thread's history, so their first request doesn't open the conversation and its system prompts aren't
-        hoisted into the top-level `system`. The computer calls in `thread_history`, the messages the thread already
-        holds, are read so that a result in `messages` can answer each of Claude's original calls.
+        hoisted into the top-level `system`. The computer calls in `thread_history` are read so that a result in
+        `messages` can answer each of Claude's original calls.
         """
         messages = self._trim_before_compaction(messages)
         declared_tools = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
@@ -3078,9 +3076,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # wire regardless, rather than silently dropping a block whenever the two sets diverge.
             # Read after the `tool_choice` restriction, which leaves tools out of the request: a reveal naming
             # one of those would be just as unknown as one naming a tool that's gone.
-            # The computer use tool sent in place of the `computer` tool can't be named here. The API refuses a
-            # `tool_addition` that names a toolset entry, and a deferred `ComputerUse` that was loaded leaves one in
-            # the history.
+            # The API refuses a `tool_addition` that names a toolset entry, which a loaded deferred `ComputerUse`
+            # leaves in the history, so the computer use tool is left out.
             declared_tool_names=set(declared_tools) - ({sent_computer.name} if sent_computer else set()),
             tool_defs_by_name={tool.name: tool for tool in model_request_parameters.function_tools},
             sent_computer=sent_computer,
@@ -3480,7 +3477,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
 
     def _map_held_tool_calls(self, thread_history: Sequence[ModelMessage], map_context: _MapMessagesContext) -> None:
-        """Map the tool calls a thread holds, so a result in the new messages can answer each original computer call."""
+        """Read the thread's tool calls, so a result in the new messages can answer each original computer call."""
         for message in thread_history:
             if isinstance(message, ModelResponse):
                 for part in message.parts:
@@ -3496,7 +3493,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         sent_computer = map_context.sent_computer
         replay = _computer.computer_replay(part, self.system, sent_computer) if sent_computer else None
         if sent_computer and replay is not None:
-            # Sent back as Claude's original calls. Each toolset call needs its own result.
             # The first call goes back under the part's ID as adjusted for this request, as its result does.
             part_id = _guard_tool_call_id(t=part)
             first, *rest = replay['computer_blocks']
@@ -4185,8 +4181,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> _computer.NativeComputer | None:
         """The Anthropic computer use tool, if this request sends it.
 
-        It isn't sent when `tool_choice` leaves out the `computer` tool. A call named `computer` is then a function
-        tool call.
+        It isn't sent when `tool_choice` leaves out the `computer` tool.
         """
         native_computer = self._native_computer(model_request_parameters)
         if native_computer is None:
@@ -4199,9 +4194,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelRequestParameters:
         """Drop the other native tools when the request requires a tool call and offers only the computer use tool.
 
-        Otherwise Claude could meet the requirement with another native tool, such as web search, and never use the
-        computer. They are dropped while the request is prepared, so every later step (history replay, token
-        counting) sees the tools actually sent.
+        Otherwise Claude could meet the requirement with another native tool, such as web search. They are dropped
+        while the request is prepared, so history replay and token counting see the tools actually sent.
         """
         native_computer = self._native_computer(model_request_parameters)
         if native_computer is None:
@@ -4217,17 +4211,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """Return one result per toolset call, as the toolset requires.
 
-        The calls that ran get `OK`, except the last of them, which gets the whole result unchanged. The failed call
-        gets `Failed.`, and the calls after it get Anthropic's not-executed text. When the first call failed, it gets
-        `Failed.` and the result's text as an error, without the result's images. When no call ran and none failed, the
-        first call gets the whole result. Some results don't say which calls ran: a failed, denied or changed result,
-        or one rebuilt by a UI. Then the last call gets the whole result, and the others say it is on the last call.
+        The calls that ran get `OK`, except the last of them, which gets the whole result. The failed call gets
+        `Failed.`, and the calls after it get Anthropic's not-executed text. When a result doesn't say which calls ran
+        (a failed, denied or changed result, or one rebuilt by a UI), the last call gets the whole result and the others
+        say it is on the last call.
         """
         blocks = replay['computer_blocks']
         if part.outcome != 'success':
-            # A denial or an interruption isn't a tool error. Only a failed or retried call is (`ERROR_OUTCOMES`).
-            # Use the fixed refusal only for the marker's own refusal. A call that a hook let run past it gets its
-            # real retry text.
+            # Only the marker's own refusal gets the fixed text. A call that a hook let run past it gets its real
+            # retry text.
             split = (
                 part.retry is not None
                 and part.retry.cause == 'validation_error'
@@ -4238,9 +4230,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             whole: list[beta_tool_result_block_param.Content] = [BetaTextBlockParam(text=text, type='text')]
             is_error = part.outcome in ERROR_OUTCOMES
         elif not isinstance(part, ComputerReturnPart) or (metadata := part.result) is None or metadata.get('changed'):
-            # The result doesn't come from running these calls, such as a guardrail's text or a call changed before it
-            # ran. Which calls ran isn't known. So every call except the last says where the result is, instead of
-            # `OK`, and the last call gets the result.
+            # Not a result of running these calls, such as a guardrail's text, so which calls ran isn't known.
             whole = [await self._map_tool_result_item(item, map_context) for item in _result_items(part)]
             is_error = False
         else:
@@ -4260,8 +4250,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """The results of the calls, when the outcome says how many of their actions ran."""
         blocks, failure = replay['computer_blocks'], metadata.get('error') is not None
-        # The running total of actions up to and including each call. One call can become several actions, as `key`
-        # can.
+        # One call can become several actions, as `key` can.
         ends = itertools.accumulate(replay['computer_action_counts'])
         ran = sum(end <= metadata['performed'] for end in ends)
         whole = [await self._map_tool_result_item(item, map_context) for item in content]
@@ -4272,9 +4261,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif index == ran - 1:
                 results.append(_computer_result(block, False, *whole))
             elif index == ran and failure:
-                # Anthropic asks for an error result on the failed call, and an error result can hold only text. The
-                # error itself is only in the content, which a hook may have redacted. When the first call failed, the
-                # content is its own, so the content's text goes with `Failed.`, and its images are dropped.
+                # Anthropic asks for an error result on the failed call, which can hold only text. The error is only
+                # in the content, which a hook may have redacted, so the content's text goes with `Failed.` only when
+                # the content is this call's own (the first call failed).
                 text = [item for item in whole if item['type'] == 'text' and ran == 0]
                 failed = BetaTextBlockParam(text=_computer.COMPUTER_FAILED, type='text')
                 results.append(_computer_result(block, True, failed, *text))
@@ -4530,7 +4519,7 @@ class _MapMessagesContext:
     system_prompt_parts: list[str] = field(default_factory=list[str])
     anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
     rendered_tool_additions: set[str] = field(default_factory=set[str])
-    # The `provider_details` of calls sent back as toolset calls, by call ID, because each toolset call needs a result.
+    # The `provider_details` of calls sent back as toolset calls, by call ID, since each toolset call needs a result.
     computer_calls: dict[str, _computer.ComputerReplay] = field(default_factory=dict[str, _computer.ComputerReplay])
     # The IDs of those calls that were refused because another tool call came between them.
     split_computer_calls: set[str] = field(default_factory=set[str])
@@ -4557,10 +4546,7 @@ class _MapModelRequestContext:
 
 
 def _forced_tool_name(name: str, native_computer: _computer.NativeComputer | None) -> str | None:
-    """The name `tool_choice` uses to force a tool, or `None` for the computer toolset, which has no such name.
-
-    An earlier computer use tool is always named `computer`.
-    """
+    """The name `tool_choice` uses to force a tool, or `None` for the computer toolset, which has no such name."""
     if native_computer is None or name != native_computer.name:
         return name
     return None if native_computer.is_toolset else 'computer'
@@ -4576,10 +4562,7 @@ def _computer_tool_params(
 
 
 def _result_items(part: ToolReturnPart) -> list[str | MultiModalContent]:
-    """A result's content items.
-
-    A `computer` result's items are validated, so content stored as a JSON string keeps its images.
-    """
+    """A result's content items. A `computer` result's are validated, so content stored as JSON keeps its images."""
     typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
     return list(typed) if typed is not None else part.content_items(mode='str', wrap_if_error=False)
 
