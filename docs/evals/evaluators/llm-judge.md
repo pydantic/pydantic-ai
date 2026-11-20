@@ -157,7 +157,7 @@ from pydantic_evals.evaluators import LLMJudge
 LLMJudge(
     rubric='...',
     model_settings=ModelSettings(
-        temperature=0.0,  # Deterministic evaluation
+        temperature=0.0,  # More consistency
         max_tokens=100,  # Shorter responses
     ),
 )
