@@ -676,7 +676,8 @@ whole current turn, the first user message under `preserve_first_user_message`, 
 the latest response when it names a workspace (its `workspace_ref`) and only requests follow it, as
 the next run finds its workspace there (kept whatever its size). Those set a lower bound on how far
 the chain can shrink the history, and a `target_tokens` below it can't be reached. A
-`SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier
+`SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway
+makes no model call and leaves the history unchanged. When the last tier
 leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt
 on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets
 `compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the
