@@ -913,6 +913,8 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
 
     The newest message is always kept, since in a run it is the request being answered, so a
     *keep* of 0 keeps one. Returns 0 if trimming is unnecessary (no more messages than *keep*).
+    The tail also reaches back to the latest response when it names a workspace, as the next run
+    finds its workspace there.
     """
     keep = max(keep, 1)
     if len(messages) <= keep:
@@ -976,7 +978,8 @@ def find_token_cutoff(
     A history with provider-reported usage is measured with `estimate_message_tokens`, so the
     suffix holds *target_tokens* as the provider counts them; one without falls back to the text
     estimate. Attached instructions do not count toward this message-content floor. A zero
-    target retains the legacy behavior below.
+    target retains the legacy behavior below. Either way the suffix also reaches back to the latest
+    response when it names a workspace, as the next run finds its workspace there.
     """
     if _has_reported_usage(messages):
         counts = estimate_message_tokens(messages, tokenizer)
