@@ -2579,7 +2579,7 @@ class TestTelemetry:
             raise asyncio.CancelledError
 
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(agent.run('go'), timeout=5)
+            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
 
         attributes = _span(exporter, 'background_tools execute cancelled').attributes or {}
         assert attributes['background_tools.outcome'] == 'interrupted'
@@ -2640,7 +2640,7 @@ class TestTelemetry:
             return 'unreachable'  # pragma: no cover
 
         with pytest.raises(RuntimeError, match='private detail'):
-            await asyncio.wait_for(agent.run('go'), timeout=5)
+            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
 
         broken_span = _summary(_span(exporter, 'background_tools execute broken'))
         assert (broken_span['attributes']['background_tools.outcome'], broken_span['status']) == ('error', 'ERROR')
@@ -2670,7 +2670,7 @@ class TestTelemetry:
             raise FatalBackgroundError
 
         with pytest.raises(FatalBackgroundError):
-            await asyncio.wait_for(agent.run('go'), timeout=5)
+            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
 
         span = _span(exporter, 'background_tools execute fatal')
         assert (span.attributes or {})['background_tools.outcome'] == 'error'

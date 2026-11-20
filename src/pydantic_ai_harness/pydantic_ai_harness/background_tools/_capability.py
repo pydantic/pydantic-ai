@@ -204,7 +204,7 @@ async def _execute_traced(
             outcome = _outcome_of_error(error)
             span.set_attribute('background_tools.outcome', outcome)
             if outcome == 'retried' and (cause := _retry_cause(error)) is not None:
-                # Core's attribute, as its `execute_tool` span records a foreground retry.
+                # Core's `RetryInfo.cause` values, which a foreground call records as `pydantic_ai.tool.retry.cause`.
                 span.set_attribute('background_tools.retry_cause', cause)
             if outcome == 'error' and not isinstance(error, Exception):
                 # `open_span` marks only an `Exception` as an error. The type alone, as the message can quote content.
@@ -476,7 +476,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # Raised by an execute hook such as `before_tool_execute`. Core counts it outside
                     # `wrap_tool_execute`, so `_settle` does.
                     outcome = failure(exc, retry=exc)
-                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as exc:
+                except _FAILED_ERRORS as exc:
                     outcome = failure(exc)
                 except anyio.get_cancelled_exc_class() as exc:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
