@@ -347,12 +347,10 @@ class TestSubAgentsTaskControl:
         # The task settled after its tool call returned the receipt, so its outcome is a decision, not on that span.
         [tool_span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
         assert 'sub_agents.outcome' not in (tool_span.attributes or {})
+        # A durable unit doesn't return the model that served the task.
+        served = {} if durable else {'sub_agents.model': 'function:function:respond:stream'}
         assert [attributes for name, attributes in decisions(exporter) if name == 'sub_agents task settled'] == [
-            {
-                'sub_agents.agent_name': 'researcher',
-                'sub_agents.outcome': 'ok',
-                'sub_agents.model': 'function:function:respond:stream',
-            }
+            {'sub_agents.agent_name': 'researcher', 'sub_agents.outcome': 'ok', **served}
         ]
 
     async def test_a_listener_failing_on_auto_backgrounding_aborts_the_run(self) -> None:

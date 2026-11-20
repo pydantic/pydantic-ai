@@ -1118,7 +1118,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         task_id, agent_name = record.id, record.agent_name
         async with reporting_settlement(owner, record):
             ended = await self._delegate_recorded(ctx, agent_name, record.prompt, key, managed=True)
-            if ended is None:
+            if ended is not None:
+                # The durable unit has no task record, so this settled task's outcome is recorded here, without the
+                # model, which the unit doesn't return.
+                _record_delegation_ended(
+                    link.telemetry, agent_name=agent_name, record=record, outcome=ended.outcome, model=None
+                )
+            else:
                 ended = await self._run_delegation(
                     ctx,
                     agent_name,
