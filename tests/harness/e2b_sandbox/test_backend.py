@@ -456,7 +456,6 @@ class TestRun:
                 handle.close()
 
     async def test_a_display_call_after_a_start_that_installs_setsid_uses_it(self, fake_e2b: FakeE2B) -> None:
-        # The display start installs `setsid`, after its own launch found it missing.
         installed = False
 
         def responder(command: str, timeout: float | None) -> tuple[str, str, int]:

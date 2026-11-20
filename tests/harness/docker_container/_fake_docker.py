@@ -230,7 +230,7 @@ _FAKE_ID = """#!/bin/sh
 [ "$1" = -u ] || exec /usr/bin/id "$@"
 cat "$(dirname "$0")/uid"
 """
-"""Stands in for `id -u`, reporting the user in `uid`, so a test picks whether the start script runs as root."""
+"""Stands in for `id -u`, reporting the user in `uid`."""
 
 _FAKE_SUDO = """#!/bin/sh
 bin=$(dirname "$0")
@@ -239,8 +239,7 @@ bin=$(dirname "$0")
 export FAKE_SUDO=1
 exec "$@"
 """
-"""Stands in for `sudo -n`: runs the command if `sudo-allowed` exists, so a host's real one never runs, and marks it as
-run through sudo for the fake `apt-get`."""
+"""Stands in for `sudo -n`: runs the command if `sudo-allowed` exists, marked for the fake `apt-get`."""
 
 _FAKE_APT_GET = """#!/bin/sh
 bin=$(dirname "$0")
@@ -270,10 +269,8 @@ if [ "$1" = install ] && [ -e "$bin/x-starts-during-install" ]; then
 fi
 exit 0
 """
-"""Stands in for `apt-get`: logs each call, prefixed `sudo` when run through the fake `sudo`, and has `install` put back
-the programs in the packages it names that `uninstall` took away, or fail if `apt-get-fails` exists or the package
-lists lack one of them. `update` fails if `apt-get-update-fails` exists. With `x-starts-during-install`, an install also
-brings up the image's own X server, `Xvnc`, as PID 25."""
+"""Stands in for `apt-get`: logs each call, prefixed `sudo` under the fake `sudo`, and `install` puts back what
+`uninstall` took away. The `FakeDocker` methods below set the failures it plays."""
 
 
 class FakeDocker:
@@ -361,14 +358,12 @@ class FakeDocker:
             (self.bin_dir / program).rename(self.bin_dir / 'uninstalled' / program)
 
     def run_as(self, uid: int, *, sudo: bool = False) -> None:
-        """Run commands as `uid`, with passwordless `sudo` if `sudo` is true."""
         (self.bin_dir / 'uid').write_text(f'{uid}\n')
         if sudo:
             (self.bin_dir / 'sudo-allowed').touch()
 
     def hide_host_programs(self, *keep: str) -> None:
-        """Let container commands find only the fakes and the host's `keep`, so an `uninstall`ed program is missing
-        even where the host has it."""
+        """Let container commands find only the fakes and `keep`, so an `uninstall`ed program is missing on any host."""
         host = self.bin_dir / 'host'
         host.mkdir()
         for program in ('sh', *keep):
@@ -378,14 +373,14 @@ class FakeDocker:
         (self.bin_dir / 'container-path').write_text(f'{self.bin_dir}{os.pathsep}{host}')
 
     def start_x_during_install(self) -> None:
-        """Have the next install bring up the image's own X server, as one the image starts at boot may."""
+        """Have the next install bring up the image's own X server, `Xvnc`, as PID 25."""
         (self.bin_dir / 'x-starts-during-install').touch()
 
     def fail_installs(self) -> None:
         (self.bin_dir / 'apt-get-fails').touch()
 
     def fail_updates(self) -> None:
-        """Have `apt-get update` fail, as it does when the package mirror can't be reached."""
+        """Have `apt-get update` fail."""
         (self.bin_dir / 'apt-get-update-fails').touch()
 
     def set_image_env(self, name: str, value: str) -> None:
@@ -394,7 +389,7 @@ class FakeDocker:
             file.write(f'export {name}={shlex.quote(value)}\n')
 
     def lack_packages(self, *packages: str) -> None:
-        """Have the package lists lack `packages`, as a distribution without them does."""
+        """Have the package lists lack `packages`."""
         (self.bin_dir / 'apt-get-lacks').write_text(''.join(f'{package}\n' for package in packages))
 
     @property

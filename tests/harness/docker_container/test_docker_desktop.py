@@ -61,10 +61,8 @@ async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: Fa
 
 
 def test_the_desktop_image_installs_every_package_the_desktop_needs() -> None:
-    """A Dockerfile can't import `DESKTOP_PACKAGES`, so this keeps its package list in step. It may add more, such as
-    Firefox."""
+    """A Dockerfile can't import `DESKTOP_PACKAGES`, so this keeps its package list in step."""
     installs = re.findall(r'--no-install-recommends(.*?)&&', DESKTOP_DOCKERFILE, re.DOTALL)
-    # With a second install, this test would need to read them all.
     assert len(installs) == 1, f'expected one `apt-get install --no-install-recommends`, found {len(installs)}'
     assert set(DESKTOP_PACKAGES) <= set(installs[0].replace('\\', ' ').split())
 
@@ -286,7 +284,6 @@ _HOST_TOOLS = (
     'tr',
     'true',
 )
-"""The host programs the start script and the fakes use, for `hide_host_programs`."""
 
 
 def _hide_host_programs(docker: FakeDocker) -> None:
@@ -444,7 +441,6 @@ async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
     assert docker.xvfb_starts == starts + 1
     assert docker.apt_get_calls == install_tint2
 
-    # With another one missing, it tries again.
     docker.uninstall('xterm')
     docker.remove_display()
     await screen(backend).display_size()
@@ -533,7 +529,6 @@ async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, con
 
 
 async def test_without_root_a_missing_desktop_is_skipped(docker: FakeDocker, container_dir: Path) -> None:
-    # An image with the display programs but no window manager, panel or terminal, and no way to install them.
     docker.uninstall('fluxbox', 'tint2', 'xterm')
     _hide_host_programs(docker)
 
@@ -554,17 +549,14 @@ async def test_the_desktop_settings_are_written_for_the_user_unless_present(
 
     await screen(backend).display_size()
 
-    # New windows fill the screen, the panel aside.
     assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
     assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
-    # The terminal uses a large, clear font, however it's opened.
     assert (home / '.Xdefaults').read_text() == 'XTerm*faceName: Monospace\nXTerm*faceSize: 14\n'
 
 
 async def test_the_panel_settings_go_where_tint2_reads_them(
     docker: FakeDocker, container_dir: Path, tmp_path: Path
 ) -> None:
-    # tint2 reads its settings under `XDG_CONFIG_HOME` when the image sets it.
     config = tmp_path / 'config'
     docker.set_image_env('XDG_CONFIG_HOME', str(config))
 
@@ -572,7 +564,6 @@ async def test_the_panel_settings_go_where_tint2_reads_them(
 
     settings = (config / 'tint2' / 'tint2rc').read_text().splitlines()
     assert 'panel_position = bottom left horizontal' in settings
-    # The terminal opens from a button labelled with words, which models find sooner than an icon.
     assert {'button_text = Terminal', 'button_lclick_command = xterm'} <= set(settings)
 
 

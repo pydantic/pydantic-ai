@@ -52,7 +52,7 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
-    # XFCE is the template's desktop, so fluxbox is neither installed nor started on top of it.
+    # XFCE is the template's desktop.
     assert 'fluxbox' not in start
 
 
