@@ -157,7 +157,7 @@ Messages, tool arguments, results, files, and provider details can contain secre
 
 Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it finds a Logfire credential or OTLP exporter configuration, including in the environment, leaves prompts, results, and files out unless `include_content` is on, and traces every agent in the process while loaded.
 
-CLAI 2's background session naming is also on by default: it sends excerpts of saved conversations to the current model's provider, or `sessions.naming_model`'s, and opening `/resume` queues sessions from every workspace, so a conversation held with a local model can reach a hosted one. `sessions.naming false` turns it off.
+CLAI 2's background session naming is also on by default: it sends excerpts of a conversation to the current model's provider after a turn already sent it there, and opening `/resume` queues only saved sessions held with the current model. Choosing `sessions.naming_model` sends excerpts of any untitled session, from every workspace, to that model's provider, even one held with a local model. `sessions.naming false` turns naming off.
 
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 

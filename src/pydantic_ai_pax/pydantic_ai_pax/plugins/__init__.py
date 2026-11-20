@@ -125,6 +125,7 @@ class SessionCatalog(Protocol):
         Archived ones are left out unless `archived` is `True`, which lists only them, or `None`, which lists both.
         As when `/resume` opens, the newest untitled ones are queued for background naming, which
         calls the naming model when `sessions.naming` is on, so poll it no more often than a person would look.
+        Without `sessions.naming_model`, only those held with the current model are queued.
         """
         ...
 

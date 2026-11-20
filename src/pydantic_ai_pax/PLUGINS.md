@@ -3034,7 +3034,8 @@ prompt the keyboard does:
   recently created instead of the most recently active, as the web sidebar does. As in `/resume`,
   a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted
   with it. Like opening `/resume`, `listing` queues the newest untitled sessions for background
-  naming, which calls the naming model when `sessions.naming` is on. Renaming the current
+  naming, which calls the naming model when `sessions.naming` is on (the default). Without
+  `sessions.naming_model`, only sessions held with the current model are queued. Renaming the current
   conversation fires `on_conversation_changed` at once, even while a turn runs, unlike background
   naming.
   `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved

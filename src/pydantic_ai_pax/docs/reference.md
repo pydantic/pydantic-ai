@@ -2730,7 +2730,8 @@ from them; a title one of them already has, in any letter case, is numbered, as
 in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
-the browser backfills up to ten eligible sessions. Queue length, request count,
+the browser backfills up to ten eligible sessions held with the current model,
+or any eligible session once `sessions.naming_model` is set. Queue length, request count,
 output size, and a 60-second deadline bound the work. Each naming request asks
 for no reasoning, or the least the model accepts, and at most 4,096 output
 tokens, so a reasoning model has room to answer. Exiting cancels and joins the
@@ -2745,8 +2746,10 @@ worker.
 Naming is on by default. Turn it off to make no naming requests, and sessions
 keep their fallback titles. It uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider, including those of sessions held with another model or
-in another workspace, and incurs additional usage. It has no tools and does not
+that model's provider and incurs additional usage. Without
+`sessions.naming_model`, a session held with another model, such as a local
+one, keeps its fallback title rather than reach another provider; with it, any
+session, from any workspace, may be sent to the model it names. It has no tools and does not
 inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
 results leave the existing name usable and do not interrupt foreground work.
 `/usage` and the browser preview show persisted naming token counts separately;

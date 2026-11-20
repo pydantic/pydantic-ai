@@ -165,6 +165,16 @@ class Sessions(Generic[DepsT, OutputT]):
             return None
         return await generate_name(model=model, prompt=prompt)
 
+    def _backfill(self, entries: list[ConversationSummary]) -> None:
+        """Queue untitled sessions whose excerpts may go to the naming model's provider.
+
+        Naming is on by default, so without a chosen `sessions.naming_model` only sessions held with the
+        current model are queued: a provider never receives a conversation it was not already sent.
+        """
+        if not self.context.settings.session_namer_model:
+            entries = [entry for entry in entries if entry.model == self.session.model]
+        self.namer.backfill(entries, client=self.naming)
+
     async def usage(self, *, console: Console) -> str:
         """Report auxiliary tokens separately from retained foreground-history cost."""
         report = usage_command(self.session.messages, console=console)
@@ -235,7 +245,7 @@ class Sessions(Generic[DepsT, OutputT]):
         `order_by='created_at'` pages by creation instead of activity, as the web sidebar lists them.
         """
         entries = await self.store.listing(query=query, limit=limit, archived=archived, order_by=order_by)
-        self.namer.backfill(entries, client=self.naming)
+        self._backfill(entries)
         return entries
 
     async def saved(self, conversation_id: str) -> SavedConversation:
@@ -315,7 +325,7 @@ class Sessions(Generic[DepsT, OutputT]):
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
-        self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
+        self._backfill([entry for entry in entries if entry.archived_at is None])
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 

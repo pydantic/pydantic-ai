@@ -107,6 +107,32 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     assert context.settings.session_namer_model is None
 
 
+async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(tmp_path: Path) -> None:
+    """Naming is on by default, so opening `/resume` must not send a session held with one model to another's provider.
+
+    Choosing `sessions.naming_model` is choosing where names are made, so then every untitled session is queued.
+    """
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('saved turn')])]
+    local = await store.save(summary=ConversationSummary(workspace='/a', model='ollama:llama'), messages=messages)
+    same = await store.save(summary=ConversationSummary(workspace='/b', model='openai:gpt-5'), messages=messages)
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    session.model = 'openai:gpt-5'
+    context = CommandContext(
+        settings=Settings(model=None), store=SettingsStore(tmp_path / 'config.db'), apply_setting=lambda key, s: None
+    )
+    service = Sessions(session=session, store=store, context=context)
+    await service.listing()
+    # The namer queues a conversation once, so a refused `submit` shows the listing queued it.
+    assert not service.namer.submit(same.id, client=service.naming)
+    assert service.namer.submit(local.id, client=service.naming)
+
+    chosen = Sessions(session=session, store=store, context=context, namer=SessionNamer(store=store))
+    context.set_setting(['sessions.naming_model', 'openai:gpt-5-mini'])
+    await chosen.listing()
+    assert not chosen.namer.submit(local.id, client=chosen.naming)
+
+
 async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     prior = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
