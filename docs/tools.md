@@ -387,6 +387,8 @@ _(This example is complete, it can be run "as is")_
 
 A model whose [profile](models/overview.md#models-and-providers) inlines `$defs`, for example with [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer], receives a copy of each referenced definition wherever it is referenced. Pydantic AI allows up to 250,000 JSON values in those copies per tool or output schema, counting each object, array, string, number, boolean and null once. Past that, it raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request, with a message such as `The JSON schema of tool 'search' is too large` that names the limit. To fix this, refer to large definitions from fewer places, leave the tool out of requests with [`prepare_tools`](tools-advanced.md#prepare-tools) or a [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset], or use a model that keeps `$ref`s.
 
+A `$ref` under `not`, `if`/`then`/`else` or a similar keyword is copied too. When writing those out would take the schema past the limit, no error is raised and none of them is written out: each such `$ref` is left as written, pointing at a definition the schema sent no longer contains.
+
 ### Docstrings {#docstrings}
 
 A docstring written under a parameter, a field, or an enum member is the natural place to say what it means,
