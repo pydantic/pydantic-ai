@@ -1974,15 +1974,7 @@ class _FailingAliveCheck(LocalWorkspaceBackend):
 async def _kill_group(group: int) -> None:
     """`SIGKILL` every process in `group`, as the OOM killer or a workspace restart would, and wait until none is left."""
     os.killpg(group, signal.SIGKILL)
-    with anyio.fail_after(10):
-        while True:
-            try:
-                os.killpg(group, 0)
-            except ProcessLookupError:
-                return
-            except PermissionError:  # pragma: no cover - macOS, while only unreaped zombies are left
-                pass
-            await anyio.sleep(0.01)  # pragma: lax no cover
+    await _wait_for_exit(-group)
 
 
 class TestLostJob:
@@ -2032,7 +2024,7 @@ class TestLostJob:
         job = await _job(ts, ctx, command_id)
         assert job.pgid is not None
         try:
-            with anyio.fail_after(10):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 command_pid = int(await anyio.to_thread.run_sync(pid_pipe.read_text, abandon_on_cancel=True))
             os.kill(job.pid, signal.SIGKILL)
             await _wait_for_exit(job.pid)
@@ -2085,7 +2077,7 @@ class TestLostJob:
             return await alive(job)
 
         monkeypatch.setattr(Job, 'alive', alive_once_finished)
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             assert await getattr(ts, tool)(ctx, command_id) == expected
 
     async def test_a_job_started_before_identities_were_recorded_is_still_checked_and_stopped(
@@ -2132,6 +2124,7 @@ class TestLostJob:
         await _kill_group(int(started.split('kill -- -')[1].split('`')[0]))
 
         # Without the check, a foreground call would wait out its whole timeout for a status no one will publish.
+        # real-wait: the call must return long before its own 270-second timeout.
         with anyio.fail_after(30):
             result = await call_shell({'command': 'exec sleep 300', 'mode': mode, 'timeout': MAX_FOREGROUND_WAIT})
         assert result.splitlines()[0] == (
@@ -2140,13 +2133,15 @@ class TestLostJob:
 
 
 async def _wait_for_exit(pid: int) -> None:
-    """Wait for `pid` to be reaped; a process init reaps may linger as a zombie for a moment."""
+    """Wait for `pid`, or process group `-pid`, to be reaped; init may leave a zombie for a moment."""
     with anyio.fail_after(10):
         while True:
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
                 return
+            except PermissionError:  # pragma: no cover - macOS refuses a group holding only unreaped zombies
+                pass
             await anyio.sleep(0.01)  # pragma: lax no cover
 
 
