@@ -122,7 +122,13 @@ from pydantic_ai.images import (
     ImageGenerationSettings,
     TestImageGenerationModel,
 )
-from pydantic_ai.messages import ModelRequestAttempt, UploadedFile
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionDeltaPart,
+    InstructionId,
+    ModelRequestAttempt,
+    UploadedFile,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -6540,6 +6546,111 @@ async def test_durability_load_capability_from_a_capability_hook(
     replay = await Replayer(workflows=[workflow_cls], plugins=[PydanticAIPlugin()]).replay_workflow(history)
 
     assert (output, replay.replay_failure) == ('Invoice paid.', None)
+
+
+# --- Replaying a run whose model loaded a deferred capability ---
+
+
+def _model_load_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Loads `code-load-billing`, calls `code_load_invoice` once it's visible, then answers with its result."""
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    if 'code_load_invoice' in returns:
+        return ModelResponse(parts=[TextPart(str(returns['code_load_invoice']))])
+    if 'code_load_invoice' in {tool.name for tool in info.function_tools}:
+        return ModelResponse(parts=[ToolCallPart('code_load_invoice', {}, tool_call_id='invoice')])
+    return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'code-load-billing'}, tool_call_id='load')])
+
+
+_model_load_agent = Agent(
+    FunctionModel(_model_load_model),
+    name='model_load_agent',
+    deps_type=type(None),
+    capabilities=[_code_load_billing(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_model_load_runs: list[list[ModelMessage]] = []
+"""The messages of each completed run, the original's and then the replay's, recorded in the workflow."""
+
+
+@workflow.defn
+class ModelLoadReplayWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _model_load_agent.run('Was my invoice paid?')
+        _model_load_runs.append(result.all_messages())
+        return result.output
+
+
+def _request_part_kinds(messages: list[ModelMessage]) -> list[list[str]]:
+    return [
+        [type(part).__name__ for part in message.parts] for message in messages if isinstance(message, ModelRequest)
+    ]
+
+
+def _instruction_deltas(messages: list[ModelMessage]) -> list[InstructionDeltaPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+
+
+async def test_durability_replays_a_model_load_and_its_statement_once(client: Client):
+    """Replaying a run whose model loaded a capability rebuilds the load and its instruction statement once each.
+
+    The statement is an `InstructionDeltaPart` the workflow writes into the run's messages, not a Temporal command, so
+    a replay that wrote it twice or recorded a new delta would still issue the recorded commands and pass. Only the
+    messages the replayed run rebuilds show it, and the unsandboxed runner lets the test read them.
+    """
+    _model_load_runs.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelLoadReplayWorkflow],
+        plugins=[AgentPlugin(_model_load_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            ModelLoadReplayWorkflow.run,
+            id=f'{ModelLoadReplayWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    replay = await Replayer(
+        workflows=[ModelLoadReplayWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    ).replay_workflow(history)
+
+    assert (output, replay.replay_failure) == ('Invoice paid.', None)
+    recorded, replayed = _model_load_runs
+    # The load's return and its statement share the request after the load, and nothing is stated again later.
+    assert (
+        _request_part_kinds(replayed)
+        == _request_part_kinds(recorded)
+        == snapshot(
+            [
+                ['UserPromptPart', 'InstructionBaselinePart'],
+                ['LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart', 'InstructionDeltaPart'],
+                ['ToolReturnPart'],
+            ]
+        )
+    )
+    assert (
+        _instruction_deltas(replayed)
+        == _instruction_deltas(recorded)
+        == [
+            InstructionDeltaPart(
+                id=InstructionId(CapabilityInstructionSource('code-load-billing')), content='Quote the invoice.'
+            )
+        ]
+    )
 
 
 # --- Passing image (BinaryImage) input through to a workflow ---

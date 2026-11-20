@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -74,6 +75,7 @@ try:
     from temporalio.client import Client, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.converter import DataConverter
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
@@ -85,6 +87,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
@@ -1075,6 +1078,41 @@ def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
     temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)  # pyright: ignore[reportDeprecated]
     wrapped = next(ts for ts in temporal.toolsets if isinstance(ts, TemporalMCPToolset))
     assert wrapped.wrapped is toolset
+
+
+async def test_mcp_instructions_activity_keeps_on_change_through_payload_conversion():
+    """An MCP server's instructions keep `on_change='append'` through the `get_instructions` activity's payloads.
+
+    The workflow decodes the activity's result as the type the activity declares, so a declared type or converter
+    that lost the policy would turn each change to the server's instructions into a rewrite of the cached prompt
+    prefix, and no run would fail. A workflow only shows that in the prompt it renders, so this encodes the
+    activity's real result and decodes it as the worker does.
+    """
+    server = FastMCP('instructions_payload', instructions='Be a helpful assistant.')
+    agent = Agent(
+        TestModel(),
+        name='mcp_instructions_payload_agent',
+        toolsets=[MCPToolset(server, id='docs', include_instructions=True)],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    get_instructions = next(
+        activity_fn
+        for activity_fn in durability.temporal_activities
+        if ActivityDefinition.must_from_callable(activity_fn).name  # pyright: ignore[reportUnknownMemberType]
+        == 'agent__mcp_instructions_payload_agent__mcp_server__docs__get_instructions'
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    params = GetToolsParams(serialized_run_context=TemporalRunContext.serialize_run_context(ctx))
+
+    result = await ActivityEnvironment().run(get_instructions, params, None)
+    converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
+    return_type = ActivityDefinition.must_from_callable(get_instructions).ret_type  # pyright: ignore[reportUnknownMemberType]
+    assert return_type is not None
+    [decoded] = await converter.decode(await converter.encode([result]), [return_type])
+
+    assert decoded == InstructionPart(content='Be a helpful assistant.', dynamic=False, on_change='append')
 
 
 async def _call_oversized_image_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
