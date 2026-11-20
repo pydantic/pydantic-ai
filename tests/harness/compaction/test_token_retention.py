@@ -647,7 +647,9 @@ class TestSummarizingCompactionTokenRetention:
     ],
     ids=['sliding tokens', 'sliding messages', 'summary tokens', 'summary messages'],
 )
-async def test_the_latest_workspace_response_is_kept(strategy: SlidingWindowCompaction[None]) -> None:
+async def test_the_latest_workspace_response_is_kept(
+    strategy: SlidingWindowCompaction[None] | SummarizingCompaction[None],
+) -> None:
     """The next run finds its workspace from the latest response, so a large request after it cannot push it out."""
     ref = WorkspaceRef(provider='sandbox', id='sb-1')
     history: list[ModelMessage] = [

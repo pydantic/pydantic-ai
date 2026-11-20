@@ -931,14 +931,10 @@ def _keeping_workspace(messages: list[ModelMessage], cutoff: int) -> int:
     The next run finds its workspace from that response's `workspace_ref`, so a tail of requests alone, such as
     a large user turn after it, would move the conversation out of its workspace.
     """
-    for index in range(len(messages) - 1, cutoff - 1, -1):
+    for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         if isinstance(message, ModelResponse):
-            return cutoff
-    for index in range(cutoff - 1, -1, -1):
-        message = messages[index]
-        if isinstance(message, ModelResponse):
-            return index if message.workspace_ref is not None else cutoff
+            return index if index < cutoff and message.workspace_ref is not None else cutoff
     return cutoff
 
 
@@ -1004,8 +1000,8 @@ def find_token_cutoff(
                 lo = mid + 1
             else:
                 hi = mid
-        return _keeping_workspace(messages, _include_tool_dependencies(messages, max(0, lo - 1)))
-    return _keeping_workspace(messages, _legacy_token_cutoff(messages, target_tokens, tail_tokens))
+        return _include_tool_dependencies(messages, _keeping_workspace(messages, max(0, lo - 1)))
+    return _legacy_token_cutoff(messages, target_tokens, tail_tokens)
 
 
 def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_tokens: Callable[[int], int]) -> int:
@@ -1028,7 +1024,7 @@ def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_
         candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
-    for index in range(candidate, -1, -1):
+    for index in range(_keeping_workspace(messages, candidate), -1, -1):
         if _is_safe_cutoff(messages, index):
             return index
     return 0  # pragma: no cover
