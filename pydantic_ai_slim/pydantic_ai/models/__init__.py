@@ -1959,7 +1959,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return
         retirement = f', with a retirement date of {deprecation.retirement_date}' if deprecation.retirement_date else ''
         replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
-        # Attributed to this line, so the default filters show it once per model and process.
+        # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
         warnings.warn(
             f'Model {self.model_id!r} is deprecated by its provider{retirement}.{replacement} '
             f'See {deprecation.source_url}',

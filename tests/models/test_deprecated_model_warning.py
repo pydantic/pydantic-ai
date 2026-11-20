@@ -23,6 +23,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 
+from .. import conftest as tests_conftest
 from ..conftest import ignore_deprecated_models_in_recordings, try_import
 
 with try_import() as imports_successful:
@@ -136,6 +137,20 @@ async def test_request_warns_once(allow_model_requests: None, model_factory: Cal
         f"Model '{model.model_id}' is deprecated by its provider, with a retirement date of 2026-11-30. "
         "It recommends 'current-model' instead. See https://example.com/deprecations"
     ]
+
+
+def test_each_request_warns(allow_model_requests: None):
+    """Each request warns, and Python's warning filters decide how often it's shown.
+
+    The default filters don't show it once per model: `run_sync` enters `warnings.catch_warnings()`, which resets the
+    record of warnings already shown.
+    """
+    agent = Agent(anthropic_direct())
+    with pytest.warns(DeprecatedModelWarning) as record:
+        for _ in range(2):
+            with pytest.raises(ModelAPIError):
+                agent.run_sync('hello')
+    assert len([w for w in record if w.category is DeprecatedModelWarning]) == 2
 
 
 def anthropic_on(client: AsyncAnthropicClient) -> Model:
@@ -261,12 +276,13 @@ def test_suppression_with_settings_keeps_the_warning():
             model.prepare_request(None, ModelRequestParameters())
 
 
-def test_recording_a_deprecated_model_fails():
+def test_recording_a_deprecated_model_fails(monkeypatch: pytest.MonkeyPatch):
     """The suite ignores the warning for the deprecated models its recordings use only while it replays them.
 
     Recording a test against one of them fails, so the test moves to a current model before it's re-recorded.
     """
-    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='mock-api-key'))
+    monkeypatch.setattr(tests_conftest, 'DEPRECATED_MODELS_IN_RECORDINGS', (GPT,))
+    model = OpenAIChatModel(GPT, provider=OpenAIProvider(api_key='mock-api-key'))
 
     with warnings.catch_warnings():
         warnings.simplefilter('error')
@@ -276,5 +292,5 @@ def test_recording_a_deprecated_model_fails():
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         ignore_deprecated_models_in_recordings('rewrite')
-        with pytest.raises(DeprecatedModelWarning, match="Model 'openai:gpt-5' is deprecated"):
+        with pytest.raises(DeprecatedModelWarning, match="Model 'openai:gpt-retiring' is deprecated"):
             model.prepare_request(None, ModelRequestParameters())
