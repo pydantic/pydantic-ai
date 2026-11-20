@@ -827,7 +827,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 working_directory=directory,
             )
         ended = await self._delegate_recorded(ctx, agent_name, task, key)
-        if ended is None:
+        if ended is not None:
+            # The durable unit's context may carry no tracer, so the outcome goes on this call's span from here,
+            # without the model, which the unit doesn't return.
+            _record_delegation_ended(
+                self._telemetry(ctx), agent_name=agent_name, record=None, outcome=ended.outcome, model=None
+            )
+        else:
             ended = await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
         return ended.result()
 
@@ -1835,7 +1841,6 @@ def _record_delegation_ended(
     `sub_agents task settled`. Any other delegation ends within its tool call, so its end goes on that call's
     `execute_tool` span.
     """
-    name_attributes, name_content = telemetry.agent_name(agent_name)
     attributes: dict[str, str] = {'sub_agents.outcome': outcome}
     if model is not None:
         attributes['sub_agents.model'] = model
@@ -1847,6 +1852,7 @@ def _record_delegation_ended(
             attributes=attributes,
         )
         return
+    name_attributes, name_content = telemetry.agent_name(agent_name)
     span = current_span(telemetry.ctx)
     # The SDK warns about, and drops, an attribute set on a span that has already ended.
     if not span.is_recording():
