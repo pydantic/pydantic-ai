@@ -1213,6 +1213,11 @@ class PlaywrightBrowserSession:
         self._operation_includes_content = False
         """Whether the run that opened `operation_span` includes content in traces, published with it."""
 
+    def begin_operation(self, span: Span, *, include_content: bool) -> None:
+        """Publish the running operation's span, with whether its run includes content in traces."""
+        self.operation_span = span
+        self._operation_includes_content = include_content
+
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
 
@@ -2158,6 +2163,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
             # The session can outlive a run, so the telemetry is the calling run's, read now.
             telemetry = current_run_telemetry()
+            include_content = telemetry is None or telemetry.include_content
             with self._operation_span(
                 telemetry,
                 action,
@@ -2165,8 +2171,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 # because a tool failure is a returned string, not an exception.
                 {'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
-                self._session.operation_span = span
-                self._session._operation_includes_content = telemetry is None or telemetry.include_content  # pyright: ignore[reportPrivateUsage]
+                self._session.begin_operation(span, include_content=include_content)
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -2189,7 +2194,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     # because `tabs` can have moved it, and the span should name the
                     # tab the operation left rather than the one it started on.
                     ended_on = self._session.page if self._session.page is not None else page
-                    if ended_on is not None and self._session._operation_includes_content:  # pyright: ignore[reportPrivateUsage]
+                    if ended_on is not None and include_content:
                         span.set_attribute('url.full', _without_credentials(ended_on.url))
                     self._session.operation_span = None
 
@@ -2210,8 +2215,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 return error
             telemetry = current_run_telemetry()
             with self._operation_span(telemetry, action, {'browser.action': action, 'browser.outcome': 'ok'}) as span:
-                self._session.operation_span = span
-                self._session._operation_includes_content = telemetry is None or telemetry.include_content  # pyright: ignore[reportPrivateUsage]
+                self._session.begin_operation(span, include_content=telemetry is None or telemetry.include_content)
                 try:
                     return self._error(message)
                 finally:
