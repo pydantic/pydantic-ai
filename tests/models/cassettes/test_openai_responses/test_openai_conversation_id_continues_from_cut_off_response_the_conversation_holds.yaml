@@ -1,0 +1,383 @@
+version: 1
+interactions:
+- request:
+    method: DELETE
+    uri: >-
+      https://api.openai.com/v1/conversations/conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "279"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d
+        object: conversation.deleted
+        deleted: true
+  recorded_at: 2026-11-20T01:13:39.148543+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.openai.com/v1/conversations/conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d/items?limit=100&order=desc
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "372"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        object: list
+        data:
+        - id: fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd
+          type: function_call
+          status: completed
+          arguments: "{}"
+          call_id: call_el4OOogk86jLrKpyKJgtcDdg
+          name: lookup
+        - id: msg_06e2cc440ae8224d006aff9eb94cf88196971e09faf4bed4c8
+          type: message
+          status: completed
+          content:
+          - type: input_text
+            text: Look up the value.
+          role: user
+        first_id: fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd
+        has_more: false
+        last_id: msg_06e2cc440ae8224d006aff9eb94cf88196971e09faf4bed4c8
+  recorded_at: 2026-11-20T01:13:33.853179+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/conversations
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content: {}
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "99"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d
+        object: conversation
+        created_at: 1795137207
+        metadata: {}
+  recorded_at: 2026-11-20T01:13:27.788187+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "418"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1
+        stream: true
+        conversation: conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d
+        input:
+        - role: user
+          content: Look up the value.
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        tool_choice: auto
+        tools:
+        - name: lookup
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "3027"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_06e2cc440ae8224d006aff9eb8ce748196915b4260aa929b01","object":"response","created_at":1795137209,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"conversation":{"id":"conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d"},"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":"Call the lookup tool, then reply with exactly what it returns.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_06e2cc440ae8224d006aff9eb8ce748196915b4260aa929b01","object":"response","created_at":1795137209,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"conversation":{"id":"conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d"},"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":"Call the lookup tool, then reply with exactly what it returns.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd","type":"function_call","status":"in_progress","arguments":"","call_id":"call_el4OOogk86jLrKpyKJgtcDdg","name":"lookup"},"output_index":0,"sequence_number":2}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{}","item_id":"fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd","obfuscation":"GXG3vtmzyGAiS6","output_index":0,"sequence_number":3}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{}","item_id":"fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd","output_index":0,"sequence_number":4}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd","type":"function_call","status":"completed","arguments":"{}","call_id":"call_el4OOogk86jLrKpyKJgtcDdg","name":"lookup"},"output_index":0,"sequence_number":5}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_06e2cc440ae8224d006aff9eb8ce748196915b4260aa929b01","object":"response","created_at":1795137209,"status":"completed","access_programs":null,"background":false,"completed_at":1795137211,"conversation":{"id":"conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d"},"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":"Call the lookup tool, then reply with exactly what it returns.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","moderation":null,"output":[{"id":"fc_06e2cc440ae8224d006aff9ebba9848196af326a2934a50efd","type":"function_call","status":"completed","arguments":"{}","call_id":"call_el4OOogk86jLrKpyKJgtcDdg","name":"lookup"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"context":null,"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":null,"name":"lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":46,"input_tokens_details":{"cache_write_tokens":0,"cache_write_tokens_details":{"ttl_12h_tokens":0,"ttl_30m_tokens":0},"cached_tokens":0},"output_tokens":10,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":56},"user":null,"metadata":{}},"sequence_number":6}
+
+  recorded_at: 2026-11-20T01:13:33.245215+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "565"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1
+        stream: false
+        conversation: conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d
+        input:
+        - type: function_call_output
+          call_id: call_el4OOogk86jLrKpyKJgtcDdg
+          output: The tool call was interrupted before a result was produced.
+        - role: user
+          content: "Reply exactly: done"
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        tool_choice: none
+        tools:
+        - name: lookup
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "3868"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_06e2cc440ae8224d006aff9ebeca148196b558b3dfc4f0214d
+        object: response
+        created_at: 1795137215
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795137217
+        conversation:
+          id: conv_6aff9eb7a444819685a1139a252e1ab006e2cc440ae8224d
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-2025-04-14
+        moderation: null
+        output:
+        - id: msg_06e2cc440ae8224d006aff9ec17fa88196a8679536e0831199
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: done
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: none
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: lookup
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 83
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 2
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 85
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-20T01:13:38.655231+00:00

@@ -2557,6 +2557,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         A response whose stream dropped or was cancelled before it finished may have completed anyway, or not,
         so its output items are looked up among the conversation's newest items. One with no item IDs to look
         up is taken as missing.
+
+        Only the newest page, of up to 100 items, is read. The caller stops at the first response the
+        conversation holds, so a held response is on that page unless something else added 100 or more items to
+        the conversation since.
         """
         if response.state != 'interrupted' or response.finish_reason is not None:
             return True
