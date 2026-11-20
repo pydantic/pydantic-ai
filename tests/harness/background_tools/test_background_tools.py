@@ -2560,7 +2560,8 @@ class TestTelemetry:
 
         @agent.tool_plain(metadata={'background': True})
         async def lookup() -> str:
-            return 'value'  # pragma: no cover - the hook rejects the call
+            # The hook rejects the call.
+            return 'value'  # pragma: no cover
 
         await agent.run('go')
 
