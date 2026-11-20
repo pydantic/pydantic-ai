@@ -450,6 +450,44 @@ async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
     assert marker.read_text() == ' tint2 xterm'
 
 
+async def test_a_working_desktop_install_removes_the_record_of_a_failed_one(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
+    marker.write_text(' xterm')
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert not marker.exists()
+
+
+async def test_a_failed_desktop_install_is_not_recorded_through_a_symlink(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path
+) -> None:
+    # A start as root would write through it, to whatever file it points to.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    target = tmp_path / 'target'
+    target.write_text('kept')
+    marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
+    marker.symlink_to(target)
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.lack_packages('tint2')
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert target.read_text() == 'kept'
+
+
 async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
     docker: FakeDocker, container_dir: Path
 ) -> None:
@@ -467,6 +505,8 @@ async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
     assert docker.panel_starts == 0
+    # The install failed only because the update did, so it isn't recorded, and the next start tries again.
+    assert not (docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed').exists()
     log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
     assert log.read_text().splitlines() == [
         'E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease',

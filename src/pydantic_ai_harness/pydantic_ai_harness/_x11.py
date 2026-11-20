@@ -359,8 +359,8 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
     fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it then installs the
     desktop's programs, `_DESKTOP_PROGRAMS`, in a separate `apt-get install`, so one the package lists lack never stops
     the display; when they can't be installed, or don't start, the display works without them. A failed install of
-    them is recorded in `_DESKTOP_INSTALL_FAILED`, and later starts skip it while the same ones are missing. It fails
-    once the X server exits, or after 10 seconds, printing the end of `log`.
+    them after a working `apt-get update` is recorded in `_DESKTOP_INSTALL_FAILED`, and later starts skip it while the
+    same ones are missing. It fails once the X server exits, or after 10 seconds, printing the end of `log`.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
     until the script exits, so the rest of the script runs under it too; anything started in the background must close
@@ -408,14 +408,17 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         'else install="$elevate env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends"; '
         # With only the desktop's programs missing, so with `desktop` and 8 open, the update writes to the desktop log:
         # starting Xvfb below empties `log`, and with it why a failed update left the desktop out.
-        'if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1; '
+        # `updated` is cleared when that update fails, so a failed install after it isn't recorded below.
+        'updated=1; if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1 || updated=; '
         # Otherwise the display's own programs first, failing the start when they can't be installed.
         f'elif ! {{ $elevate apt-get update -qq && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
         f'echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; fi; '
-        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A failure is recorded,
-        # unless a symlink is there, which a start as root would write through.
-        f'[ -z "$wanted" ] || $install $wanted >&8 2>&1 || [ -L {_DESKTOP_INSTALL_FAILED} ] || '
-        f'printf %s "$wanted" 2>/dev/null >{_DESKTOP_INSTALL_FAILED} || true; '
+        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A failure after a working
+        # update is recorded, unless a symlink is there, which a start as root would write through. A failed update,
+        # such as with the network down or apt's lock held, isn't, so the next start tries again.
+        f'if [ -n "$wanted" ]; then if $install $wanted >&8 2>&1; then rm -f {_DESKTOP_INSTALL_FAILED} 2>/dev/null; '
+        f'elif [ -n "$updated" ] && [ ! -L {_DESKTOP_INSTALL_FAILED} ]; then '
+        f'printf %s "$wanted" 2>/dev/null >{_DESKTOP_INSTALL_FAILED} || true; fi; fi; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
         'if ! x_runs; then '
