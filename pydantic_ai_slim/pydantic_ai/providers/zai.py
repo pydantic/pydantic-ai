@@ -8,7 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
-from pydantic_ai.profiles.zai import zai_model_profile
+from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -22,6 +22,18 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+
+
+_TOOL_STREAM_MODELS = frozenset({'glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.6'})
+"""Z.AI models that accept the `tool_stream` request parameter.
+
+These are exactly the ids Z.AI's [chat completion reference](https://docs.z.ai/api-reference/llm/chat-completion)
+lists for `tool_stream` on the text-model request. The vision request has no `tool_stream`, and unlisted
+variants such as `glm-4.7-flash` and `glm-5-turbo` get no flag.
+
+`tool_stream` is a Z.AI-native parameter — gateways serving GLM models (Cerebras, Crusoe, Bedrock) don't
+accept it, so the flag is set in `ZaiProvider.model_profile()`, not in the shared `zai_model_profile`.
+"""
 
 
 class ZaiProvider(_OpenAISDKProvider):
@@ -50,6 +62,7 @@ class ZaiProvider(_OpenAISDKProvider):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            ZaiModelProfile(zai_supports_tool_stream=True) if model_name.lower() in _TOOL_STREAM_MODELS else None,
             OpenAIModelProfile(
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',

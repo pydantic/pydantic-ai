@@ -19,6 +19,9 @@ class ZaiModelProfile(ModelProfile, total=False):
     disabling thinking on it), so its other unified levels are mapped.
     """
 
+    zai_supports_tool_stream: bool
+    """Whether the model supports Z.AI's `tool_stream` request parameter, which streams tool call arguments incrementally."""
+
 
 _REASONING_EFFORT_MODEL_PREFIXES = ('glm-5.3', 'glm-5.2')
 """Model name prefixes for GLM models that accept the per-request `reasoning_effort` parameter.
