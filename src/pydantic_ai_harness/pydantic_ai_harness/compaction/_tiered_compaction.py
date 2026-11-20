@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -23,6 +24,7 @@ from pydantic_ai_harness.compaction._receipts import (
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
+    compact_with_events,
     compact_with_span,
     context_for_request,
     estimate_context_tokens,
@@ -31,6 +33,7 @@ from pydantic_ai_harness.compaction._shared import (
     record_failed_compaction,
     record_span_attributes,
     resolve_token_trigger,
+    strategy_id,
     validate_token_trigger,
 )
 
@@ -78,6 +81,8 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         )
         ```
     """
+
+    strategy_id = 'tiered'
 
     tiers: Sequence[CompactionStrategy[AgentDepsT]]
     """Strategies to apply in order, cheap-to-expensive.  The last is typically a summarizer."""
@@ -236,10 +241,16 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         """*tier*'s result, or `None` when it raised *skip_on*, recorded and with its receipts discarded."""
         token = open_receipt_scope()
         try:
-            compacted = await tier.compact(messages, ctx)
+            compacted = await compact_with_events(
+                ctx,
+                strategy=strategy_id(tier),
+                messages=messages,
+                compact=partial(tier.compact, messages, ctx),
+                tokenizer=self.tokenizer,
+            )
             receipts = drain_receipts()
         except skip_on as error:
-            strategy = type(tier).__name__
+            strategy = strategy_id(tier)
             record_failed_compaction(
                 ctx, strategy=strategy, skipped='tier_failed', error=error, messages=messages, tokenizer=self.tokenizer
             )
@@ -287,7 +298,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='TieredCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self._escalate(
                 messages, request_ctx, target, request_context.model_request_parameters, self.skip_on

@@ -25,6 +25,7 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_token_count,
     get_compaction_reclaim,
     record_compaction_reclaim,
+    strategy_id,
 )
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction
@@ -199,7 +200,7 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
         request_ctx = context_for_request(ctx, request_context)
         compacted = await compact_with_span(
             request_ctx,
-            strategy=type(self.strategy).__name__,
+            strategy=strategy_id(self.strategy),
             messages=messages,
             compact=lambda: self._compact(request_ctx, messages, request.focus),
             tokenizer=self.tokenizer,

@@ -65,6 +65,8 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'prune_tool_results'
+
     placeholder: str = '[tool result pruned]'
     """Prefix of the content that replaces a pruned result; the model's summary follows it."""
 
@@ -116,7 +118,7 @@ class PruneToolResults(AbstractCapability[AgentDepsT]):
             return [*messages[:start], *step, *messages[end:]]
 
         ctx.messages[:] = await compact_with_span(
-            ctx, strategy='PruneToolResults', messages=messages, compact=prune, model_requested=True
+            ctx, strategy=self.strategy_id, messages=messages, compact=prune, model_requested=True
         )
         return result
 

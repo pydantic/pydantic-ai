@@ -103,7 +103,7 @@ class TestSummarizingCompaction:
         attributes = _compaction_attributes(span)
         assert attributes == snapshot(
             {
-                'compaction.strategy': 'SummarizingCompaction',
+                'compaction.strategy': 'summarizing',
                 'compaction.skipped': 'not_smaller',
                 'compaction.messages_before': 13,
                 'compaction.messages_after': IsInt(),
@@ -139,7 +139,7 @@ class TestFallbackCompaction:
         skipped, compacted = _compact_spans(capfire)
         assert _compaction_attributes(skipped) == snapshot(
             {
-                'compaction.strategy': 'SummarizingCompaction',
+                'compaction.strategy': 'summarizing',
                 'compaction.skipped': 'not_smaller',
                 'compaction.messages_before': 13,
                 'compaction.messages_after': 5,
@@ -150,7 +150,7 @@ class TestFallbackCompaction:
         assert _compaction_attributes(compacted) == snapshot(
             {
                 'gen_ai.conversation.compacted': True,
-                'compaction.strategy': 'FallbackCompaction',
+                'compaction.strategy': 'fallback',
                 'compaction.messages_before': 13,
                 'compaction.messages_after': 3,
                 'compaction.tokens_before': 62,
@@ -159,7 +159,7 @@ class TestFallbackCompaction:
         )
         # Only the strategy whose result was kept leaves a receipt.
         assert [event['attributes']['compaction.receipt.strategy'] for event in compacted['events']] == [
-            'SlidingWindowCompaction'
+            'sliding_window'
         ]
 
     async def test_a_summary_that_shrinks_the_history_is_kept(self, capfire: CaptureLogfire) -> None:
@@ -181,7 +181,7 @@ class TestFallbackCompaction:
         assert _compaction_attributes(span) == snapshot(
             {
                 'gen_ai.conversation.compacted': True,
-                'compaction.strategy': 'FallbackCompaction',
+                'compaction.strategy': 'fallback',
                 'compaction.messages_before': 13,
                 'compaction.messages_after': IsInt(),
                 'compaction.tokens_before': 62,
@@ -208,7 +208,7 @@ class TestFallbackCompaction:
         [span] = _compact_spans(capfire)
         assert _compaction_attributes(span) == snapshot(
             {
-                'compaction.strategy': 'SummarizingCompaction',
+                'compaction.strategy': 'summarizing',
                 'compaction.skipped': 'not_smaller',
                 'compaction.messages_before': 13,
                 'compaction.messages_after': 4,

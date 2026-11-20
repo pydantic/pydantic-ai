@@ -299,7 +299,8 @@ summarizing tier rather than stopping at the wrapper.
 
 A compaction that changes the history emits the same `compact_messages` span the in-run path emits,
 so an instrumented application sees one shape however compaction was triggered. Pass `tracer=` to
-record it; without one the span goes to a no-op tracer.
+record it; without one the span goes to a no-op tracer. The lifecycle events (see "Events") are not
+emitted: between runs there is no run event stream to dispatch them on.
 
 Pass `conversation_id=` with the id of the conversation being compacted. It is set on the throwaway
 context, so the summary run of `SummarizingCompaction` is recorded under that conversation (its
@@ -844,7 +845,7 @@ to keep span cardinality low. Attributes:
 | Attribute | Type | Meaning |
 |---|---|---|
 | `gen_ai.conversation.compacted` | bool | `true` when the history was compacted, absent on a skipped attempt; the OpenTelemetry GenAI convention's flag for a compacted context |
-| `compaction.strategy` | str | Strategy class name (e.g. `SlidingWindowCompaction`, `SummarizingCompaction`) |
+| `compaction.strategy` | str | Stable strategy identifier (e.g. `sliding_window`, `summarizing`) |
 | `compaction.messages_before` | int | Message count before compaction |
 | `compaction.messages_after` | int | Message count after compaction |
 | `compaction.tokens_before` | int | Estimated token count before compaction |
@@ -874,11 +875,83 @@ it is the same `summarizing_compaction` agent run.
 
 `RelevanceCompaction` adds a `select compaction steps` span inside `compact_messages`. It records the number of steps and how many were judged rather than remembered (`relevance_compaction.steps`, `relevance_compaction.steps_judged`), the steps and tokens of each tier (`relevance_compaction.keep.steps`, `relevance_compaction.keep.tokens`, and the same for `reduce` and `drop`), and one `relevance_compaction.step` event per step with its position, size, both answers, whether it was remembered, and its tier. No message content is recorded. The judge's own runs are not instrumented, because their prompts carry the conversation.
 
+## Events
+
+Every strategy attempt inside an agent run emits `CompactionStartEvent` (from the compaction event
+family Pydantic AI core defines and its provider-native compaction capabilities share) after its
+trigger fires and before it rewrites history. The event reports the strategy, message count, and
+estimated tokens. It uses immediate dispatch, so capability and application listeners can call
+`cancel()` before the strategy continues. Cancellation applies to this attempt only; a later
+trigger tries again. A cancelled fallback candidate is a deliberate skip and does not advance the
+fallback chain. Inside `TieredCompaction`, a cancelled tier is skipped and escalation continues with
+the next tier; cancel the outer `tiered` event to hold the whole escalation.
+
+`CompactionEndEvent` follows only when the strategy actually changes history. It reports the
+before/after message and token counts. The event is a live coordination signal; compaction receipts
+remain an in-history note for the model.
+
+If you write a custom strategy, declare a stable `strategy_id = '...'` class attribute. Events and
+the `compaction.strategy` span attribute carry this value. Without it, the Harness derives the
+identifier from the snake-cased class name with any trailing `Compaction` suffix removed, so
+renaming the class also changes the identifier. Always declare an explicit ID when consumers
+persist it or branch on it.
+
+`compact_now` emits neither event. It runs between agent runs, where there is no run event stream
+to dispatch on and so no listener that could cancel it. It still records the `compact_messages`
+span. Nor does the work `FallbackCompaction(background_start=...)` runs in the background, or
+`take_background_compaction` outside a run; swapping a background summary in during a run emits
+the chain's events.
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability, CompactionStartEvent, on_event
+from pydantic_ai.tools import RunContext
+
+
+@dataclass
+class HoldCompaction(AbstractCapability[Any]):
+    activity_in_progress: bool = False
+
+    @on_event(CompactionStartEvent)
+    async def hold(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
+        if self.activity_in_progress:
+            event.cancel('activity state has not been saved')
+```
+
+Application code registers the same listener on the agent with `@agent.on_event`, without a
+capability of its own:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import CompactionStartEvent
+from pydantic_ai.tools import RunContext
+
+from pydantic_ai_harness import SlidingWindowCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[SlidingWindowCompaction(max_messages=80, keep_messages=40)],
+)
+activity_in_progress = False
+
+
+@agent.on_event(CompactionStartEvent)
+async def hold(ctx: RunContext[None], event: CompactionStartEvent) -> None:
+    if activity_in_progress:
+        event.cancel('activity state has not been saved')
+```
+
+Because the decision is dispatched immediately, listeners must finish synchronously with the
+attempt rather than deferring an answer to background work.
+
 ## Compaction receipts
 
-Compaction is a memory wipe the model cannot veto and often cannot detect, which invites
-*resumption drift* -- the model confabulates continuity with history it no longer has. A
-receipt makes the wipe legible: after a boundary-crossing strategy rewrites history it can
+Compaction is a memory wipe the model cannot veto and often cannot detect. Capabilities and
+application hooks can veto an individual attempt with `CompactionStartEvent`; the model still
+cannot. Without a receipt, completed compaction invites *resumption drift* -- the model
+confabulates continuity with history it no longer has. A receipt makes the wipe legible: after a boundary-crossing strategy rewrites history it can
 append a short, deterministic note recording how much was compacted, warning that what
 survives is secondhand, and -- when a handle provider is attached -- an identifier for persisted
 run history.

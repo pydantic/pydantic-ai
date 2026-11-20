@@ -15,6 +15,8 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     CombinedCapability,
+    CompactionEndEvent,
+    CompactionStartEvent,
     Hooks,
     ProcessEventStream,
     WrapperCapability,
@@ -294,6 +296,37 @@ def test_mutable_decision_field_serializes():
     event = ThingStartEvent()
     event.cancel()
     assert pydantic.TypeAdapter[AgentStreamEvent](AgentStreamEvent).dump_python(event)['cancelled'] is True
+
+
+def test_builtin_compaction_event_family():
+    """The core compaction lifecycle events register under stable kinds shared by provider capabilities and Harness strategies."""
+    start = CompactionStartEvent(strategy='summarizing', messages_before=12, tokens_before=40_000)
+    assert start.kind == 'compaction.start'
+    assert type(start).event_dispatch == 'immediate'
+    start.cancel('a plan step is mid-flight')
+    assert start.cancelled
+    assert start.cancel_reason == 'a plan step is mid-flight'
+
+    end = CompactionEndEvent(strategy='summarizing', messages_before=12, messages_after=3, tokens_before=40_000)
+    assert end.kind == 'compaction.end'
+    assert type(end).event_dispatch == 'stream'
+
+    adapter = pydantic.TypeAdapter[CapabilityEvent](CapabilityEvent)
+    assert adapter.dump_python(end) == snapshot(
+        {
+            'kind': 'compaction.end',
+            'capability_id': None,
+            'tool_call_id': None,
+            'tool_name': None,
+            'event_kind': 'capability',
+            'strategy': 'summarizing',
+            'messages_before': 12,
+            'messages_after': 3,
+            'tokens_before': 40000,
+            'tokens_after': None,
+        }
+    )
+    assert adapter.validate_python(adapter.dump_python(start)) == start
 
 
 def _has_tool_return(messages: list[ModelMessage]) -> bool:

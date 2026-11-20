@@ -68,7 +68,11 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    NativeTool,
+    ProcessHistory,
+)
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,

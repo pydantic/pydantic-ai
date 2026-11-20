@@ -24,12 +24,14 @@ from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
     compact_if_smaller,
+    compact_with_events,
     compact_with_span,
     context_for_request,
     estimate_context_tokens,
     estimate_token_count,
     record_compaction_reclaim,
     resolve_token_trigger,
+    strategy_id,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction
@@ -58,6 +60,8 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     fails. Entries must derive from `Exception`, so cancellation and other `BaseException`
     subclasses are never caught.
     """
+
+    strategy_id = 'fallback'
 
     fallback_chain: Sequence[CompactionStrategy[AgentDepsT]]
     fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup)
@@ -159,11 +163,13 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
 
         return await compact_with_span(
             ctx,
-            strategy='FallbackCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=applied,
             tokenizer=self.tokenizer,
             background=outcome,
+            # Outside a run, like `compact_now`: there is no event stream to dispatch on.
+            emits=False,
         )
 
     async def discard_background_compaction(self, conversation_id: str | None) -> None:
@@ -199,15 +205,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         rejected = False
         for strategy in self.fallback_chain:
             try:
-                if not (smaller_only and isinstance(strategy, SummarizingCompaction)):
-                    return await strategy.compact(list(messages), ctx)
-                compacted = await compact_if_smaller(
-                    ctx,
-                    strategy='SummarizingCompaction',
-                    messages=messages,
-                    compact=partial(strategy.compact, list(messages), ctx),
-                    tokenizer=self.tokenizer,
-                )
+                compacted = await self._attempt(strategy, messages, ctx, smaller_only=smaller_only)
                 if compacted is not None:
                     return compacted
                 rejected = True
@@ -217,6 +215,44 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             return messages
         assert last_error is not None
         raise last_error
+
+    async def _attempt(
+        self,
+        strategy: CompactionStrategy[AgentDepsT],
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        *,
+        smaller_only: bool,
+    ) -> list[ModelMessage] | None:
+        """One strategy's attempt between its lifecycle events; `None` for a summary *smaller_only* rejects."""
+        attempt = list(messages)
+        if not (smaller_only and isinstance(strategy, SummarizingCompaction)):
+            return await compact_with_events(
+                ctx,
+                strategy=strategy_id(strategy),
+                messages=attempt,
+                compact=partial(strategy.compact, attempt, ctx),
+                tokenizer=self.tokenizer,
+            )
+        smaller: list[list[ModelMessage] | None] = []
+
+        async def compact_smaller() -> list[ModelMessage]:
+            # A rejected summary leaves the history as it was, so the end event isn't emitted for it.
+            result = await compact_if_smaller(
+                ctx,
+                strategy=strategy_id(strategy),
+                messages=messages,
+                compact=partial(strategy.compact, list(messages), ctx),
+                tokenizer=self.tokenizer,
+            )
+            smaller.append(result)
+            return attempt if result is None else result
+
+        compacted = await compact_with_events(
+            ctx, strategy=strategy_id(strategy), messages=attempt, compact=compact_smaller, tokenizer=self.tokenizer
+        )
+        # A cancelled attempt never ran, and keeps the history as a completed one would.
+        return compacted if not smaller or smaller[0] is not None else None
 
     async def before_model_request(
         self,
@@ -241,7 +277,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         )
         compacted = await compact_with_span(
             request_ctx,
-            strategy='FallbackCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self._compact_pinned(messages, request_ctx, held),
             tokenizer=self.tokenizer,
