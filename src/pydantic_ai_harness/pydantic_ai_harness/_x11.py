@@ -196,12 +196,11 @@ def _move(x: int | None, y: int | None) -> list[str]:
 
 
 _MAX_CHAIN_BYTES = 100_000
-"""The most bytes of `xdotool` arguments sent in one command. Longer input is split across several commands.
+"""The most bytes of `xdotool` arguments in one command; longer input is split across commands.
 
-E2B runs a command as a single `bash -l -c` argument, and Linux limits one argument to 131,072 bytes. In a live
-probe, a 130,630-byte line ran and a 130,664-byte line failed with "argument list too long". Typing 25,000
-characters in one command also failed. The gap between 100,000 and the limit leaves room for the text the backend
-wraps around each command."""
+E2B runs a command as one `bash -l -c` argument, and Linux limits one argument to 131,072 bytes: in a live probe, a
+130,630-byte line ran and a 130,664-byte line failed with "argument list too long". The margin leaves room for the
+text the backend wraps around each command."""
 
 
 def _chains(steps: list[list[str]], prefix: tuple[str, ...] = ()) -> list[list[str]]:
@@ -320,7 +319,6 @@ class X11Computer:
         keydown = ['keydown', *keysyms] if keysyms else []
         try:
             for index, chain in enumerate(chains):
-                # The held keys go down in the first command and come up in the last one.
                 first = keydown if index == 0 else []
                 last = keyup if index == len(chains) - 1 else []
                 await self._run(['sh', '-c', _INPUT, 'sh', 'xdotool', *first, *chain, *last], pauses=pauses)

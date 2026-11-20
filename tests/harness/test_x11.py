@@ -169,10 +169,7 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
 async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each command's `xdotool` arguments stay under the size limit.
-
-    E2B runs a command as a single argument, and Linux limits one argument to 131,072 bytes. The limit is lowered
-    here, so short input crosses it."""
+    """Each command's `xdotool` arguments stay under the size limit, lowered here so short input crosses it."""
     monkeypatch.setattr(_x11, '_MAX_CHAIN_BYTES', 200)
     desktop = ScriptedDesktop()
 
