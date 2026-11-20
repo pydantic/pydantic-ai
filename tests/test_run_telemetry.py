@@ -105,6 +105,36 @@ async def test_content_is_left_out_without_include_content():
     )
 
 
+async def test_a_parents_content_setting_does_not_turn_on_a_sub_agents_content():
+    """Agents on one tracer provider share tracers, so the parent's published telemetry matches the child's tracer."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    child = Agent(
+        TestModel(),
+        capabilities=[
+            TraceWhenPrepared(),
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=provider, include_content=False)),
+        ],
+    )
+    parent = Agent(
+        TestModel(call_tools=['ask_child']),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=provider, include_content=True))
+        ],
+    )
+
+    @parent.tool_plain
+    async def ask_child() -> str:
+        return (await child.run('go')).output
+
+    await parent.run('go')
+
+    assert example_spans(exporter) == snapshot(
+        [{'name': 'example prepare', 'example.kind': 'setup'}, {'name': 'example decided', 'example.kind': 'setup'}]
+    )
+
+
 @dataclass
 class MarkToolCall(AbstractCapability[object]):
     async def before_tool_execute(
