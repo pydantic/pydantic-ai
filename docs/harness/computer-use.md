@@ -19,24 +19,33 @@ screenshot of the result.
 pip/uv-add "pydantic-ai-harness[anthropic]"
 ```
 
-Use your model provider's extra instead of `anthropic`.
+Use your model provider's extra instead of `anthropic`. The example needs Docker. The first run builds a desktop
+image, which takes a few minutes.
 
 ## Usage
 
-```python {title="computer_use.py" test="skip" lint="skip"}
+```python {title="computer_use.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerContainer
 
-agent = Agent('{{ anthropic:medium }}', capabilities=[my_desktop_sandbox, ComputerUse()])  # (1)!
+agent = Agent('{{ anthropic:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 
 
 async def main():
-    result = await agent.run('Open the text editor and write a haiku about sandboxes.')
+    result = await agent.run('Open Firefox and find the current Python release on python.org.')
     print(result.output)
 ```
 
-1. Any capability whose workspace has a screen, such as `DockerContainer(desktop=True)`. To write your own, see
-   [Giving a workspace a screen](#giving-a-workspace-a-screen).
+The container keeps running after the run. To remove it, see [Clean up](docker-container.md#clean-up). If the run fails, remove it
+in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up).
+
+### Where the screen comes from
+
+| Capability | Screen |
+|---|---|
+| `DockerContainer(desktop=True)` | A container on your machine |
+
+To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
 On a [read-only](../workspace.md#read-only-access) workspace, the `computer` tool offers only the actions that change
 nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`. Some models use their provider's own

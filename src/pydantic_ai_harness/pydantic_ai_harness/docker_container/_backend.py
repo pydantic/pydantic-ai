@@ -23,17 +23,20 @@ as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 
 from __future__ import annotations as _annotations
 
+import hashlib
 import os
 import posixpath
 import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
+from importlib.resources import files
 from typing import Literal
 
 import anyio
 import anyio.to_thread
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
@@ -46,9 +49,12 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
+from pydantic_ai_harness._x11 import DISPLAY, DISPLAY_NUMBER, START_LOCK, wait_until_ready, x11_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
-__all__ = ('DockerContainerBackend', 'remove_container')
+__all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
 
 PROVIDER = 'docker'
 
@@ -234,7 +240,71 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
+DESKTOP_DOCKERFILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile').read_text()
+"""The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
+manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages and for emoji. Firefox
+starts without its first-run pages, and new windows fill the screen."""
+
+_DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
+
+
+_X_LOCK = f'/tmp/.X{DISPLAY_NUMBER}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY_NUMBER}'
+
+_PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
+
+_START_DESKTOP = (
+    # Whether a display runs is read from this container's own lock file, not from an X server answering. With
+    # `--network host`, an X server of the host or of another container, on the same display number, would answer
+    # through Linux's abstract socket, which every process on the same network shares.
+    # A stale lock, such as one `docker stop` leaves, names a process that is gone or is now another program.
+    # The lock of a running X server names that server, whichever kind it is, such as `Xvnc`.
+    f'{START_LOCK}case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
+    f'*) rm -f {_X_LOCK} {_X_SOCKET}; '
+    # Without `-noreset`, X resets when its last client program exits, such as an `xdotool` command while no window
+    # manager runs. The reset moves the pointer back to the middle and lets go of held buttons.
+    # `-nolisten local` turns off the abstract socket. With `--network host`, every user on the host could reach it.
+    # The socket file in /tmp/.X11-unix stays, for commands run in the container.
+    f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -nolisten local -noreset '
+    f'>/dev/null 2>{_PID_DIR}/xvfb.log 9>&- & '
+    + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', f'{_PID_DIR}/xvfb.log')
+    + ';; esac; '
+    'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
+    'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
+    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; '
+    # The tint2 panel shows only once a window manager answers, so it starts after the window manager.
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then setsid tint2 >{_PID_DIR}/panel.log 2>&1 9>&- & '
+    f'panel=$!; i=0; until {_PANEL_SHOWS} || [ $i -ge 100 ]; do if ! kill -0 $panel 2>/dev/null; then '
+    f"echo 'the panel did not start:' >&2; tail -n 5 {_PID_DIR}/panel.log >&2; exit 1; fi; "
+    'sleep 0.1; i=$((i+1)); done; fi'
+)
+"""Starts an X display of the size given as `$1`, then a window manager, then the panel.
+
+It skips the X display when this container's X lock names a running X server, and skips the panel when it already
+shows. A second start waits for the first to finish, then finds its X server.
+
+It fails if the X server exits, or doesn't answer within 10 seconds. A second `fluxbox` exits when one already runs, so
+starting it every time brings back one that died. The script then waits up to 10 seconds for the window manager to
+answer `xprop`, so the first click focuses and raises the window it lands on. It waits up to 10 more seconds for the
+panel window, so the first screenshot isn't black. It fails if the panel exits first, and goes on without the panel
+after 10 seconds.
+"""
+
+
+async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
+    """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
+    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
+        return
+    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this.
+    # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile; not tried with podman
+    # yet. The runner gives a command no stdin, so `sh` pipes it in.
+    build = 'printf %s "$1" | "$2" build --tag "$3" -'
+    result = await runner.run(['sh', '-c', build, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE])
+    if result.exit_code != 0:
+        raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
+
+
+class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -245,13 +315,18 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
     if it is gone. The backend never removes the container: call
     [`DockerContainer.destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy] with its ref.
 
+    With `desktop`, the container gets a display on first use. The image then needs Xvfb, `xdotool`, `xwininfo`
+    (Debian's `x11-utils`), `scrot` and `setsid`.
+
     Args:
-        image: The image for a new container. Pass it or `ref`, not both.
+        image: The image for a new container. Pass it or `ref`, not both. With `desktop=True`, leave both out to
+            use an image built from `DESKTOP_DOCKERFILE` on first use.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
-        env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
+        env: Environment variables for every command, on top of the image's. With a desktop, `DISPLAY` is set too.
+            The per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
@@ -259,6 +334,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
+        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+            `True` for 1280x800, or its `(width, height)`.
     """
 
     def __init__(
@@ -271,7 +348,10 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
+        desktop: bool | tuple[int, int] = False,
     ):
+        if desktop and image is None and ref is None:
+            image = _DESKTOP_IMAGE  # built just before its container is first created
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
         if ref is not None:
@@ -284,8 +364,21 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
+        self._desktop_size = desktop_size(desktop)
+        self._display = (
+            None
+            if self._desktop_size is None
+            else x11_display(
+                self._run_argv,
+                self._desktop_size,
+                _START_DESKTOP,
+                lambda: f'Docker workspace {self._name}',
+            )
+        )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
-        self._env = _checked_env(env or {})
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+        display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
+        self._env = _checked_env({**display_env, **(env or {})})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
         self._executable = resolve_executable(executable)
@@ -310,6 +403,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
                     await self._create()
                 else:
                     await self._start()
+                if self._display is not None:
+                    await self._check_network()
                 # Created here rather than by `docker run --workdir`, which Podman refuses for a missing directory.
                 if self._working_dir is None:
                     result = await self._exec(['sh', '-c', 'pwd -P'], env={}, timeout=None, workdir=None)
@@ -327,6 +422,30 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
                 self._resolved_working_dir = printed
             return self._resolved_working_dir
 
+    async def _check_network(self) -> None:
+        """Refuse a desktop on the host's network, however the container got onto it.
+
+        On the host's network, programs in the container could connect to an X server on the host through Linux's
+        abstract socket, and control the host's screen. A `container:<id>` network is that other container's network,
+        so it is checked in turn. Podman's `ns:<path>` joins whatever network the path names, such as the host's at
+        `ns:/proc/1/ns/net`, so it is refused too.
+        """
+        container = self._name
+        while True:
+            argv = [self._executable, 'inspect', '--type', 'container', '--format', '{{.HostConfig.NetworkMode}}']
+            result = await self._runner.run([*argv, '--', container])
+            if result.exit_code != 0:
+                raise WorkspaceUnavailableError(f'could not inspect container {container}: {result.stderr.strip()}')
+            mode = result.stdout.strip()
+            if mode == 'host' or mode.startswith('ns:'):
+                raise UserError(
+                    "a desktop can't use the host's network: programs in the container could connect to the host's X "
+                    'server, which draws its screen, and control that screen'
+                )
+            kind, _, container = mode.partition(':')
+            if kind != 'container':
+                return
+
     @property
     def _name(self) -> str:
         assert self._ref is not None
@@ -334,6 +453,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
 
     async def _create(self) -> None:
         assert self._image is not None
+        if self._image == _DESKTOP_IMAGE:
+            await _build_desktop_image(self._runner, self._executable)
         if self._ref is None:
             # Set before `docker run`: the daemon may create the container even if the client is cancelled,
             # and whoever holds the ref can then remove it.
@@ -400,7 +521,19 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
     ) -> CommandResult:
         check_timeout(timeout)
         argv = command_argv(command, shell)
-        merged_env = {**self._env, **_checked_env(env or {})}
+        checked_env = _checked_env(env or {})
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=checked_env, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` in the container without starting its display, as the display's own commands do.
+
+        The names in `env` are already checked. `run` checks the names a caller passes, and the display's own names
+        are valid.
+        """
+        merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:
         # pulling an image can take minutes.
         # Commands start where `working_dir()` says they do, even if a symlink on the way changes.
@@ -461,3 +594,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
         # exec stops it. Best effort: a daemon that stalls now has nothing to report.
         argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
+
+    @property
+    def display(self) -> Display | None:
+        """The container's display, when created with `desktop=True`."""
+        return self._display

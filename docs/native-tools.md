@@ -878,15 +878,15 @@ The native tool is sent only when the request has exactly one `computer` tool th
 
 ### Usage
 
-```py {title="computer_tool.py" test="skip" lint="skip"}
-from pydantic_ai_harness import ComputerUse
+This example runs the desktop in a Docker container:
+
+```py {title="computer_tool.py" test="skip"}
+from pydantic_ai_harness import ComputerUse, DockerContainer
 
 from pydantic_ai import Agent
 
-agent = Agent('{{ openai:medium }}', capabilities=[my_desktop_sandbox, ComputerUse()])  # (1)!
+agent = Agent('{{ openai:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 ```
-
-1. Any capability whose workspace has a screen. See [Computer Use](harness/computer-use.md).
 
 ## Advisor Tool
 
