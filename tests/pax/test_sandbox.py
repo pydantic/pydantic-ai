@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import anyio
 import pytest
@@ -841,7 +841,7 @@ async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProv
     text = output.getvalue()
     assert f'Runs in the Fake sandbox; command and output saved for the next prompt\n{folder}\nDone (' in text
     assert str(checkout.resolve()) not in text
-    assert '!! gives a command this terminal, so it runs only on this machine, not in the Fake sandbox.' in text
+    assert '!! needs this terminal, which the Fake sandbox does not have. Nothing ran.' in text
     cut = f'{"x" * 100_000}\n[Output truncated after 100000 characters]\n'
     assert saved_prompts(shell)[-2:] == [
         f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
@@ -851,21 +851,33 @@ async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProv
     ]
 
 
-@pytest.mark.parametrize('deleted', [False, True])
+@pytest.mark.parametrize('failure', ['stopped', 'deleted', 'unreachable'])
 async def test_a_shell_line_reports_a_sandbox_it_cannot_use(
-    checkout: Path, provider: FakeProvider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deleted: bool
+    checkout: Path,
+    provider: FakeProvider,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Literal['stopped', 'deleted', 'unreachable'],
 ) -> None:
-    """A sandbox that fails the command, or was deleted, is reported; the `!` line never falls back to this machine."""
+    """A sandbox that fails the command, was deleted, or cannot be reached is reported; the shell goes on.
+
+    The `!` line never falls back to this machine.
+    """
 
     async def stopped(self: FakeSandboxBackend, command: WorkspaceCommand, **kwargs: object) -> CommandResult:
         raise WorkspaceUnavailableError('The Fake sandbox stopped.')
+
+    def unreachable(self: object, ref: WorkspaceRef) -> object:
+        raise RuntimeError('The Fake API returned 502.')
 
     loaded = load(checkout)
     shell, output = sandboxed_shell(loaded, checkout, tmp_path)
     plugin = plugin_of(loaded)
     await plugin.command(['fake'])
-    if deleted:
+    if failure == 'deleted':
         await plugin.command(['delete'])
+    elif failure == 'unreachable':
+        monkeypatch.setattr(sandbox._ConversationSandbox, '_workspace', unreachable)  # pyright: ignore[reportPrivateUsage]
     else:
         monkeypatch.setattr(FakeSandboxBackend, 'run', stopped)
     saved = saved_prompts(shell)
@@ -874,8 +886,11 @@ async def test_a_shell_line_reports_a_sandbox_it_cannot_use(
     assert await shell.run() == 'exit'
 
     text = output.getvalue()
-    if deleted:
+    if failure == 'deleted':
         assert "This conversation's Fake sandbox was deleted. Run /new to start another." in text
+        assert saved_prompts(shell) == saved
+    elif failure == 'unreachable':
+        assert 'The Fake API returned 502.' in text
         assert saved_prompts(shell) == saved
     else:
         assert 'Shell error: The Fake sandbox stopped.' in text

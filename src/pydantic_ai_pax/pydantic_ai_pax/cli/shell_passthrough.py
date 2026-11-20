@@ -171,7 +171,7 @@ async def run_workspace_command(
     """
     if command.startswith('!'):
         console.print(
-            f'!! gives a command this terminal, so it runs only on this machine, not in {place.name}.',
+            f'!! needs this terminal, which {place.name} does not have. Nothing ran.',
             style=theme.color(theme.WARNING),
             markup=False,
         )

@@ -229,8 +229,9 @@ def shell_line_workspace(
     """The workspace a `!command` line runs in for a conversation over `messages`; `None` runs it on this machine.
 
     Pass the capabilities a run's workspace is chosen from, the agent's own and the run's. Like that choice,
-    a leaf loaded only on request (`defer_loading`) does not count, so a `!` line runs where the agent's
-    commands do.
+    a leaf loaded only on request (`defer_loading`) does not count, so a `!` line runs in the sandbox a
+    `ConversationWorkspace` gives the agent's commands. Another capability overriding `get_workspace` is
+    not asked, and its `!` lines run on this machine.
     """
     leaves: list[AbstractCapability[DepsT]] = []
     for plugin in plugins:
