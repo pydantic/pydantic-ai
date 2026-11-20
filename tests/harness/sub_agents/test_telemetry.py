@@ -21,6 +21,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents
+from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import Instrumented
 
 
@@ -107,6 +108,35 @@ class TestSubAgentsTelemetry:
             'sub_agents.outcome': outcome,
             'sub_agents.model': model,
         }
+
+    @pytest.mark.parametrize(
+        ('isolated', 'expected'),
+        [
+            # The unit runs in the delegating run's context, so its own run records the model on the same span.
+            pytest.param(
+                False,
+                {'sub_agents.agent_name': 'worker', 'sub_agents.outcome': 'ok', 'sub_agents.model': 'test:test'},
+                id='inline',
+            ),
+            # As on a worker: only the delegating side's record, without the model, reaches this span.
+            pytest.param(True, {'sub_agents.agent_name': 'worker', 'sub_agents.outcome': 'ok'}, id='isolated'),
+        ],
+    )
+    async def test_a_delegation_in_its_own_durable_unit_records_its_outcome(
+        self, isolated: bool, expected: dict[str, AttributeValue], instrumented: Instrumented
+    ):
+        # Created agents give plain delegation a durable unit of its own.
+        sub_agents = SubAgents[object](
+            agents=[SubAgent(Agent(TestModel(), name='worker'))],
+            dynamic_agents=DynamicAgents(factory=lambda spec: Agent(TestModel())),
+        )
+        durability = RecordingDurability(isolated=isolated)
+        instrumentation, exporter = instrumented(False)
+        await Agent(delegating(), name='durable', capabilities=[sub_agents, durability, instrumentation]).run('go')
+
+        assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
+        [span] = delegation_spans(exporter)
+        assert sub_agents_attributes(span) == expected
 
     async def test_the_model_is_the_one_that_served_the_run(self, instrumented: Instrumented):
         # Configured as the string `'test'`; the model that answered names itself `test:test`.
