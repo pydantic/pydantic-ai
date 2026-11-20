@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
 
@@ -226,7 +227,7 @@ async def test_concurrent_runs_sharing_a_workspace_trace_separately(tmp_path: Pa
             for _ in range(3):
                 await ctx.workspace.exists('notes.txt')
                 # Yield, so the two runs' calls interleave.
-                await anyio.sleep(0)
+                await anyio.lowlevel.checkpoint()
             return 'done'
 
         return agent
