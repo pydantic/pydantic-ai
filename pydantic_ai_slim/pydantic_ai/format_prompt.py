@@ -118,8 +118,9 @@ class _ToXml:
 
     def _to_xml(self, value: Any, path: str, tag: str | None = None) -> ElementTree.Element:
         if isinstance(value, BaseModel) and value.__pydantic_root_model__:
-            # A root model dumps to its root value, which can be a list or a scalar rather than a mapping. Format that
-            # value instead; the structure info still names a mapping root after the model's class, as for any model.
+            # A root model dumps to its root value, which can be a list or a scalar rather than a mapping. Format the
+            # dumped value, as when the root model is a field of another model; a mapping root is still named after
+            # the model's class.
             self._init_structure_info()
             value = _dump_model(value)
         element = self._create_element(self.item_tag if tag is None else tag, path)

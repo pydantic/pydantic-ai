@@ -600,7 +600,13 @@ def test_no_indent():
 
 
 def test_root_model():
-    """A `RootModel` is formatted as its root value, which can be a list or a scalar, not only a mapping."""
+    """A `RootModel` is formatted as its dumped root value, which can be a list or a scalar, not only a mapping."""
+
+    class Inner(BaseModel):
+        x: int
+
+    class Outer(BaseModel):
+        inners: RootModel[list[Inner]]
 
     class Tags(RootModel[dict[str, int]]):
         pass
@@ -611,7 +617,21 @@ def test_root_model():
   <item>2</item>
 </nums>\
 """)
-    assert format_as_xml(RootModel[int](3)) == snapshot('<item>3</item>')
+    assert format_as_xml(RootModel[list[int]]([1, 2])) == format_as_xml([1, 2])
+    assert format_as_xml(RootModel[int](3)) == format_as_xml(3) == snapshot('<item>3</item>')
+    # Models in the root are dumped with it, so they render the same as when the root model is a field of another model.
+    inners = RootModel[list[Inner]]([Inner(x=1)])
+    assert (
+        format_as_xml(inners, root_tag='inners')
+        == format_as_xml(Outer(inners=inners))
+        == snapshot("""\
+<inners>
+  <item>
+    <x>1</x>
+  </item>
+</inners>\
+""")
+    )
     # A mapping root inside a list is still named after the model's class, like any other model.
     assert format_as_xml([Tags({'a': 1})], root_tag='tags') == snapshot("""\
 <tags>
