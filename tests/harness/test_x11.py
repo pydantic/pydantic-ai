@@ -434,3 +434,18 @@ def test_every_page_that_lists_the_desktop_programs_names_them_all() -> None:
         for name, listed, wanted in [*programs, *packages]
         if any(p not in listed for p in wanted)
     ] == []
+
+
+async def test_a_desktop_display_starts_xvfb_and_puts_display_under_the_commands_env() -> None:
+    argvs: list[list[str]] = []
+
+    async def run(argv: list[str], /, *, env: Mapping[str, str], timeout: float) -> CommandResult:
+        argvs.append(argv)
+        return CommandResult(exit_code=0, stdout='', stderr='')
+
+    assert _x11.desktop_display(run, None, {'DISPLAY': ':9'}, str) == (None, {'DISPLAY': ':9'})
+    display, env = _x11.desktop_display(run, (8, 6), {'A': '1'}, str)
+    assert env == {'DISPLAY': _x11.DISPLAY, 'A': '1'}
+    assert display is not None
+    await display.start()
+    assert 'Xvfb' in argvs[0][2] and argvs[0][-1] == '8x6'

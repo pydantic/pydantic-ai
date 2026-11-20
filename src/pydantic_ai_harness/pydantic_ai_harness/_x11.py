@@ -454,6 +454,27 @@ def x11_display(
     return LazyDisplay(X11Computer(run), start)
 
 
+_START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
+
+
+def desktop_display(
+    run: RunCommand,
+    size: tuple[int, int] | None,
+    env: dict[str, str],
+    where: Callable[[], str],
+    *,
+    started: Callable[[], None] = lambda: None,
+) -> tuple[LazyDisplay | None, dict[str, str]]:
+    """A sandbox's desktop on Xvfb at `size`, and its commands' `env` with `DISPLAY` under it.
+
+    Commands see the desktop too, so a program the agent starts from the shell opens on it. Without a `size`, it's
+    `None` and `env` as it is. `started` is as for `x11_display`.
+    """
+    if size is None:
+        return None, env
+    return x11_display(run, size, _START_DESKTOP, where, started=started), {**_ENV, **env}
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and takes screenshots with `scrot`, by running a backend's commands.
 
