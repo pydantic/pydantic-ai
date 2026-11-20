@@ -1,10 +1,10 @@
 """Storage backends for spilled tool outputs.
 
-`WorkspaceStore` is the default: it writes each payload to a file inside the run's workspace
+`WorkspaceOverflowStore` is the default: it writes each payload to a file inside the run's workspace
 (`ctx.workspace`), or a workspace of its own, so with a remote sandbox the spilled files live in
 the sandbox, next to the files the agent's other tools see. `OverflowStore` is the narrow
 protocol for any other backend (a blob store, a durable engine's storage): persist a payload
-under a key, read it back by handle. `LocalFileStore` implements it on the host filesystem.
+under a key, read it back by handle. `LocalFileOverflowStore` implements it on the host filesystem.
 """
 
 from __future__ import annotations
@@ -17,11 +17,14 @@ import tempfile
 import threading
 import time
 import warnings
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import timedelta
+from io import BufferedReader
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import anyio.lowlevel
 import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
@@ -30,7 +33,7 @@ from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
 from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
 SPILL_DIR = 'tool-output'
-"""The directory under `.pydantic-ai-harness` in the working directory that `WorkspaceStore` writes to."""
+"""The directory under `.pydantic-ai-harness` in the working directory that `WorkspaceOverflowStore` writes to."""
 
 
 @runtime_checkable
@@ -65,7 +68,7 @@ def _safe_segment(segment: str) -> str:
     """Make one path segment filesystem-safe without collapsing distinct keys.
 
     Empty or dot-only segments are replaced so a handle can never escape the root via
-    `.`/`..`; the resolve-within-root check in `read` is the second line of defense.
+    `.`/`..`; the resolve-within-root check in `read` and `write` is the second line of defense.
     """
     cleaned = _UNSAFE_SEGMENT.sub('_', segment)
     if cleaned in ('', '.', '..'):
@@ -78,7 +81,7 @@ def _segments(key: str) -> list[str]:
 
 
 @dataclass
-class WorkspaceStore:
+class WorkspaceOverflowStore:
     """The default store: each spilled payload is a file inside the run's workspace.
 
     The handle is the file's absolute workspace path. Files live under
@@ -101,7 +104,7 @@ class WorkspaceStore:
     _workspace: Workspace | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._workspace = secondary_workspace(self.workspace, 'WorkspaceStore')
+        self._workspace = secondary_workspace(self.workspace, 'WorkspaceOverflowStore')
 
     def bind(self, workspace: Workspace) -> OverflowStore:
         """Bind a run workspace to the common store interface."""
@@ -137,7 +140,7 @@ class WorkspaceStore:
 
 @dataclass
 class _BoundWorkspaceStore:
-    store: WorkspaceStore
+    store: WorkspaceOverflowStore
     workspace: Workspace
 
     async def write(self, key: str, data: bytes) -> str:
@@ -161,6 +164,28 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     return real_path
 
 
+_CHUNK_SIZE = 1 << 16
+
+
+def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+    """Yield a stored payload in chunks.
+
+    A `LocalFileOverflowStore` is streamed from disk unless a subclass overrides `read`, such as to decode what it
+    wrote; any other store is read whole, then yielded in chunks of the same size.
+    """
+    if isinstance(store, LocalFileOverflowStore) and type(store).read is LocalFileOverflowStore.read:
+        return store._chunks(handle)  # pyright: ignore[reportPrivateUsage]
+    return _read_whole(store, handle)
+
+
+async def _read_whole(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+    data = await store.read(handle)
+    for start in range(0, len(data), _CHUNK_SIZE):
+        yield data[start : start + _CHUNK_SIZE]
+        # The caller splits each chunk without awaiting, so return to the event loop between chunks.
+        await anyio.lowlevel.checkpoint()
+
+
 def _default_root() -> Path:
     """Per-user root under the system temp dir, so users on one host never share it."""
     geteuid = getattr(os, 'geteuid', None)
@@ -169,24 +194,27 @@ def _default_root() -> Path:
 
 
 @dataclass
-class LocalFileStore:
+class LocalFileOverflowStore:
     """`OverflowStore` that writes each payload to a file on the host running the agent.
 
     Pass it as `store=` to keep spills on this machine, for instance for a run with no workspace;
-    with a workspace, the default `WorkspaceStore` keeps spills where the agent's other tools can
+    with a workspace, the default `WorkspaceOverflowStore` keeps spills where the agent's other tools can
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
-    `base_dir`. The root is stable on purpose -- a later agent or run by the same user can
-    read a spill a previous run produced, so the store is not isolated per instance.
+    `base_dir`, with a `run_step/` segment before the file name when a later response in the run
+    reuses a `tool_call_id` an earlier response in the run already spilled. The root is stable on purpose -- a
+    later agent or run by the same user can read a spill a previous run produced, so the store is
+    not isolated per instance.
 
     Security comes from three mechanisms: the default root is per user
     (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a
     symlink, and on POSIX it must be owned by the current user and is tightened to `0700` if
-    group or other bits are set; and `read` resolves the target (following symlinks) and
-    rejects anything that escapes the root via symlink, `..`, or an absolute path. Handle
-    segments are also sanitized by `_safe_segment`. On Windows there is no uid, so the
-    default root is `pyai_harness_overflow` and the ownership check is skipped.
+    group or other bits are set; and `read` and `write` resolve the target (following symlinks)
+    and reject anything that escapes the root via symlink, `..`, or an absolute path, before
+    `write` creates any directory. Handle segments are also sanitized by `_safe_segment`. On
+    Windows there is no uid, so the default root is `pyai_harness_overflow` and the ownership
+    check is skipped.
 
     Files are kept after the run by default (a later `read_tool_result` may need them).
     Set `cleanup_after` to opt into age-based pruning; see that field.
@@ -251,20 +279,35 @@ class LocalFileStore:
 
     def _write(self, key: str, data: bytes) -> None:
         self._ensure_root()
-        path = self._path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        target = self._confined_path(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
 
     async def read(self, handle: str) -> bytes:
         return await anyio.to_thread.run_sync(self._read, handle)
 
     def _read(self, handle: str) -> bytes:
+        with self._open(handle) as file:
+            return file.read()
+
+    async def _chunks(self, handle: str) -> AsyncGenerator[bytes]:
+        file = await anyio.to_thread.run_sync(self._open, handle)
+        try:
+            while chunk := await anyio.to_thread.run_sync(file.read, _CHUNK_SIZE):
+                yield chunk
+        finally:
+            file.close()
+
+    def _open(self, handle: str) -> BufferedReader:
         self._check_root()
+        return self._confined_path(handle).open('rb')
+
+    def _confined_path(self, handle: str) -> Path:
+        """Return the file for `handle` with symlinks resolved, refusing one outside the root."""
         target = self._path(handle).resolve()
-        root = self._root.resolve()
-        if not target.is_relative_to(root):
+        if not target.is_relative_to(self._root.resolve()):
             raise PermissionError(f'Handle {handle!r} resolves outside the store root.')
-        return target.read_bytes()
+        return target
 
     # --- opt-in TTL pruning (non-blocking, non-erroring) ---
 
@@ -280,7 +323,7 @@ class LocalFileStore:
         try:
             self._prune_sync()
         except Exception as exc:  # never let cleanup fail a run or block the hot path
-            warnings.warn(f'LocalFileStore cleanup failed: {exc}', stacklevel=2)
+            warnings.warn(f'LocalFileOverflowStore cleanup failed: {exc}', stacklevel=2)
 
     def _prune_sync(self) -> None:
         """Delete files older than `cleanup_after` (by `st_mtime`)."""

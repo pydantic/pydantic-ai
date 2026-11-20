@@ -97,6 +97,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
 from .simulation._loop import SimulatedLoop
@@ -2000,13 +2001,14 @@ def test_user_prompt_text_parts_are_joined() -> None:
 async def test_handshake_timeout_is_a_typed_error(model: OpenAILiveModel) -> None:
     """A session that never starts fails predictably instead of hanging."""
     with _patched_connect(_FakeWebSocket([])):
-        with pytest.raises(RealtimeError, match='timed out waiting'):
+        with pytest.raises(RealtimeError) as exc_info:
             async with model.connect(
                 messages=[],
                 model_settings=OpenAILiveModelSettings(handshake_timeout=0.05),
                 model_request_parameters=ModelRequestParameters(),
             ):
                 pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot("timed out waiting for a 'session.started' event")
 
 
 async def test_handshake_error_is_a_typed_error(model: OpenAILiveModel) -> None:
@@ -3292,9 +3294,6 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
 
 
 # --- idle audio -------------------------------------------------------------------------------------
-
-#: A generous bound on waiting for something the test has set in motion, so a loaded runner doesn't flake.
-READINESS_WAIT_TIMEOUT = 10
 
 
 class _AudioSink(OpenAILiveConnection):

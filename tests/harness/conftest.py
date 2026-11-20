@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,7 +12,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import pytest
 
 import pydantic_ai.models
-import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters
@@ -19,11 +19,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
-
-# `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
-# harness imports it lazily. A registration after any test has escaped framing text emits a
-# `UserWarning`, which fails the test that first imports `Planning`. Pytest imports this conftest
-# during collection, before any test runs, so the import above registers the tag first.
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -60,6 +55,16 @@ __all__ = (
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Capture the harness's INFO lifecycle lines, such as which sandbox it created, in a live tier's failure report.
+
+    Only the harness logger is raised: raising the root logger with `--log-level=INFO` would also capture SDK lines
+    such as httpx's request URLs, which a failure prints into public CI output.
+    """
+    if str(config.getoption('markexpr')).endswith('_live'):
+        logging.getLogger('pydantic_ai_harness').setLevel(logging.INFO)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

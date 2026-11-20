@@ -74,6 +74,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -178,6 +179,7 @@ LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
     'gemini-4-hydrogen',
+    'gemini-4-neon',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
@@ -216,8 +218,11 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
     GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
     GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.TOO_MANY_TOOL_CALLS.value: 'error',
     GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
     GoogleFinishReason.NO_IMAGE.value: 'error',
+    GoogleFinishReason.IMAGE_RECITATION.value: 'content_filter',
+    GoogleFinishReason.IMAGE_OTHER.value: None,
     'MODEL_ARMOR': 'content_filter',
 }
 
@@ -432,9 +437,16 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.HTTPStatusError):
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        error = _model_errors.transport_status_error(model_name, e.response)
-        error.retry_after = _model_errors.google_retry_after(error)
-        return error
+        body, status, message = _model_errors.google_transport_error_fields(e.response)
+        return _http_error(
+            model_name,
+            model_id_namespace,
+            status_code=e.response.status_code,
+            status=status,
+            message=message,
+            body=body,
+            headers=dict(e.response.headers),
+        )
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -471,26 +483,23 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    category = _model_errors.google_status_category(status, message, body)
-    error = ModelHTTPError.for_category(
-        category or _model_errors.http_status_category(status_code, message),
+    return _model_errors.google_status_error(
+        model_name,
         status_code=status_code,
-        model_name=model_name,
+        status=status,
+        message=message,
         body=body,
         headers=headers,
         suggested_model_id=suggested_model_id,
-        provider_error_code=status,
         in_stream=in_stream,
     )
-    error.retry_after = _model_errors.google_retry_after(error)
-    return error
 
 
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
     try:
         yield
-    except (errors.APIError, httpx2.TransportError) as e:
+    except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
         raise _map_api_error(e, model_name, model_id_namespace) from e
 
 
@@ -756,19 +765,21 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+        """Set `google_supports_batch_api` and the image media types by the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
         """
-        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        return _with_google_cloud_media_types(profile) if self._is_google_cloud else profile
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the default levels. A
-        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+        `google_thinking_levels` of `MINIMAL` and `HIGH`, and `gemini-4-neon` models to `LOW`, `MEDIUM`, `HIGH` and
+        `XHIGH`; on Vertex AI both keep the default levels. A `google_thinking_levels` set by the provider or the
+        `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
         marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
@@ -793,6 +804,21 @@ class GoogleModel(Model[Client]):
             and not self._is_google_cloud
         ):
             return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Verified live 2026-11-18 against the Gemini API: `gemini-4-neon` accepts `LOW`, `MEDIUM`, `HIGH` and
+        # `XHIGH`, and returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed and
+        # its thinking table doesn't list the model, so Vertex keeps the default levels.
+        # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-4-neon')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {
+                **profile,
+                'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH')),
+                'google_supports_minimal_thinking_level': False,
+            }
         # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
         # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
         # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
@@ -1772,7 +1798,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         parts = candidate.content.parts
         if not parts:
-            return  # pragma: no cover
+            return
 
         if not self._has_tool_invocations:
             self._has_tool_invocations = _has_native_tool_invocations(parts)
@@ -1916,7 +1942,7 @@ class GeminiStreamedResponse(StreamedResponse):
     def _map_inline_data(
         self, inline_data: Blob, thought: bool | None, provider_details: dict[str, Any] | None
     ) -> Iterator[ModelResponseStreamEvent]:
-        if thought:  # pragma: no cover
+        if thought:
             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
             # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
             # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
@@ -2328,16 +2354,24 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
     if part.tool_response:
         return _map_tool_response(part.tool_response, provider_name)
     if inline_data := part.inline_data:
-        data = inline_data.data
-        mime_type = inline_data.mime_type
-        assert data and mime_type, 'Inline data must have data and mime type'
-        content = BinaryContent(data=data, media_type=mime_type)
-        return FilePart(content=BinaryContent.narrow_type(content))
+        return _map_inline_data_part(inline_data, part.thought)
     if _is_signature_only_part(part):
         # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
         # show, and both backends reject them when replayed ("Invalid thought signature").
         return None
     raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
+
+
+def _map_inline_data_part(inline_data: Blob, thought: bool | None) -> FilePart | None:
+    """Map an inline file, or return `None` for an interim image the model produced while thinking."""
+    if thought:
+        # See the thought-image comment in `GeminiStreamedResponse._map_inline_data`.
+        return None
+    data = inline_data.data
+    mime_type = inline_data.mime_type
+    assert data and mime_type, 'Inline data must have data and mime type'
+    content = BinaryContent(data=data, media_type=mime_type)
+    return FilePart(content=BinaryContent.narrow_type(content))
 
 
 def _character_index(text: str, byte_index: int) -> int | None:

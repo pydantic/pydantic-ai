@@ -58,7 +58,7 @@ from urllib.parse import urlparse
 import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, wait_random_exponential
@@ -89,6 +89,7 @@ from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
@@ -824,6 +825,8 @@ def _part_text(part: MessagePart) -> str:
         return ''
     if isinstance(part, ModelSettingsDeltaPart):
         return f'model settings changed: {part.settings!r}'
+    if isinstance(part, CapabilityPart):
+        return f'{part.kind}: {part.model_content()!r}'
     if isinstance(part, CapabilityLoadDeltaPart):
         return f'loaded capabilities changed: loaded={part.loaded!r}'
     return str(part.content)

@@ -9,14 +9,14 @@ import warnings
 from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import cached_property
 from random import random
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never, cast, overload
 
 import anyio
-from httpx2 import URL as HTTPX2URL, Timeout as HTTPX2Timeout
+from httpx2 import URL as HTTPX2URL, HTTPStatusError, Timeout as HTTPX2Timeout
 from openai import (
     NOT_GIVEN,
     APIConnectionError,
@@ -141,7 +141,9 @@ from .. import (
     get_user_agent,
 )
 from .._decode_errors import check_json_response, map_decode_errors
+from .._history_digest import Hasher, continuation_digest, history_hasher
 from .._sdk_retries import with_max_retries
+from .._tool_call_ids import stored_tool_call_id
 from .._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ._caching import (
     CACHE_SETTINGS_KEYS,
@@ -168,11 +170,12 @@ from ._errors import (
     map_api_errors,
     map_connection_error,
     map_status_error,
+    map_transport_status_error,
     response_error,
     response_error_type,
     status_error,
 )
-from ._history_digest import Hasher, continuation_digest, history_hasher, with_history_digest
+from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
 from ._native_tools import (
@@ -203,7 +206,6 @@ from ._response_fields import (
     map_usage,
     response_refusal,
     response_status_to_state,
-    response_tool_call_id,
 )
 from ._responses_streaming import OpenAIResponsesStreamedResponse
 from ._settings import (
@@ -309,6 +311,7 @@ class _ResponsesCreateParams(TypedDict):
     top_logprobs: int | Omit
     store: bool | Omit | None
     user: str | Omit
+    safety_identifier: str | Omit
     include: list[responses.ResponseIncludable] | Omit
     prompt_cache_key: str | Omit
     prompt_cache_retention: Literal['in_memory', '24h'] | Omit
@@ -717,9 +720,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
 
+        `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
+
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
         """
+        if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
+            profile = merge_profile(profile, ModelProfile(deprecation=None))
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
@@ -858,6 +865,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise
         except APIConnectionError as e:  # pragma: lax no cover
             raise map_connection_error(e, self.model_name) from e
+        except HTTPStatusError as e:
+            # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead. As on
+            # `responses.create`, it isn't checked for an Azure content filter: it stays a `ModelHTTPError`, so
+            # fallback moves on to the next model, see https://github.com/pydantic/pydantic-ai/pull/11934.
+            raise map_transport_status_error(e, self.model_name, self._provider.model_id_namespace) from e
 
     async def request(
         self,
@@ -1126,7 +1138,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise response_error(
                 self.model_name, error.code, error.message, error_type=response_error_type(error), in_stream=False
             )
-        items = self._map_output_items(response, model_settings)
+        timestamp = _now_utc()
+        items = self._map_output_items(response, model_settings, timestamp)
         refusal_text = response_refusal(response)
 
         finish_reason: FinishReason | None = None
@@ -1165,7 +1178,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             usage=map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
-            timestamp=_now_utc(),
+            timestamp=timestamp,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             canonical_system=self._canonical_system_stamp,
@@ -1175,9 +1188,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
     def _map_output_items(  # noqa: C901
-        self, response: responses.Response, model_settings: OpenAIResponsesModelSettings
+        self, response: responses.Response, model_settings: OpenAIResponsesModelSettings, timestamp: datetime
     ) -> list[ModelResponsePart]:
-        """Map the output items of a non-streamed response to parts."""
+        """Map the output items of a non-streamed response, stamped with `timestamp`, to parts."""
         tool_search_output_call_ids = tool_search_call_ids_by_output(response)
         tool_search_outputs = {
             tool_search_output_call_ids[item.id]: item
@@ -1195,7 +1208,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case responses.ResponseOutputMessage():
                     items.extend(self._map_output_message(item, model_settings))
                 case responses.ResponseFunctionToolCall():
-                    items.append(self._map_function_tool_call(item, response.id))
+                    items.append(self._map_function_tool_call(item, response.id, timestamp))
                 case responses.ResponseCodeInterpreterToolCall():
                     items.extend(self._map_code_interpreter_call(item))
                 case responses.ResponseFunctionWebSearch():
@@ -1259,7 +1272,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 citations=citations,
             )
 
-    def _map_function_tool_call(self, item: responses.ResponseFunctionToolCall, response_id: str) -> ToolCallPart:
+    def _map_function_tool_call(
+        self, item: responses.ResponseFunctionToolCall, response_id: str, timestamp: datetime
+    ) -> ToolCallPart:
         # When the Responses API wraps a discovered deferred tool in a namespace
         # (tool-search flow), it requires the namespace to be round-tripped on
         # subsequent turns. Preserve it via `provider_details`.
@@ -1269,9 +1284,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return ToolCallPart(
             item.name,
             item.arguments,
-            tool_call_id=response_tool_call_id(
+            tool_call_id=stored_tool_call_id(
                 item.call_id,
-                response_id if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False) else None,
+                response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                provider_response_id=response_id,
+                timestamp=timestamp,
             ),
             id=item.id,
             provider_name=self.system,
@@ -1353,9 +1370,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             background = True
             initial_state = 'suspended'
 
-        tool_call_ids_are_response_scoped = self.profile.get(
-            'openai_responses_tool_call_ids_are_response_scoped', False
-        )
+        tool_call_ids_are_response_scoped = self.profile.get('tool_call_ids_are_response_scoped', False)
         is_websocket = False
         if self._websocket_stream is not None:
             from ._responses_websocket import ResponsesWebSocketStream
@@ -1481,7 +1496,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
-        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        previous_response_id, conversation_id, messages = await self._resolve_server_side_state(
+            model_settings, messages
+        )
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
 
@@ -1784,6 +1801,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_body=model_settings.get('extra_body'),
                 )
             except APIStatusError as e:
+                # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
@@ -1975,6 +1995,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
             store=store,
             user=model_settings.get('openai_user', OMIT),
+            safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
             include=include or OMIT,
             prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
             prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
@@ -2090,6 +2111,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # A retrieve is only issued to resume a persisted suspended job, so a 404 means that job is
                 # gone (past the provider's retention window). Surface a clear typed error instead of a
                 # generic HTTP error; other statuses fall through to `map_api_errors`.
+                # A 404 a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if e.status_code == 404:
                     raise SuspendedResponseExpired(
                         f'The suspended response {response_id!r} could not be resumed because its server-side '
@@ -2454,7 +2478,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return False
         return None
 
-    def _resolve_server_side_state(
+    async def _resolve_server_side_state(
         self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
     ) -> tuple[str | None, str | None, list[ModelMessage]]:
         previous_response_id_setting = model_settings.get('openai_previous_response_id')
@@ -2466,7 +2490,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
 
         if conversation_id_setting is not None:
-            conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
+            conversation_id, messages = await self._resolve_conversation_id(
+                conversation_id_setting, messages, model_settings
+            )
             return None, conversation_id, messages
 
         previous_response_id, messages = self._resolve_previous_response_id(
@@ -2477,47 +2503,84 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         return previous_response_id, None, messages
 
-    def _resolve_conversation_id(
-        self, setting: Literal['auto'] | str, messages: list[ModelMessage]
+    async def _resolve_conversation_id(
+        self,
+        setting: Literal['auto'] | str,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[str | None, list[ModelMessage]]:
         if setting == 'auto':
             # Agent runs stamp the active Pydantic AI conversation ID on the final request.
             # Direct model calls may still pass an empty message list.
             pydantic_ai_conversation_id = next((m.conversation_id for m in messages[-1:]), None)
-            return self._get_conversation_id_and_new_messages(
-                messages, pydantic_ai_conversation_id=pydantic_ai_conversation_id
+            return await self._get_conversation_id_and_new_messages(
+                messages, model_settings, pydantic_ai_conversation_id=pydantic_ai_conversation_id
             )
+        return await self._get_conversation_id_and_new_messages(
+            messages, model_settings, openai_conversation_id=setting
+        )
 
-        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, openai_conversation_id=setting)
-        if conversation_id is not None:
-            return conversation_id, trimmed
-        return setting, messages
-
-    def _get_conversation_id_and_new_messages(
+    async def _get_conversation_id_and_new_messages(
         self,
         messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
         *,
         openai_conversation_id: str | None = None,
         pydantic_ai_conversation_id: str | None = None,
     ) -> tuple[str | None, list[ModelMessage]]:
+        """The OpenAI conversation to send to, and the messages after the last response it holds.
+
+        Without such a response, every message is sent, to `openai_conversation_id` if one is given, or else to
+        the conversation of a response it doesn't hold.
+        """
+        conversation_id = openai_conversation_id
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
+            # A response from another Pydantic AI conversation doesn't continue this one.
+            if (
+                isinstance(m, ModelResponse)
+                and self.accepts_server_state(m)
+                and (pydantic_ai_conversation_id is None or m.conversation_id in (None, pydantic_ai_conversation_id))
+            ):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
-                if (
-                    pydantic_ai_conversation_id is not None
-                    and m.conversation_id is not None
-                    and m.conversation_id != pydantic_ai_conversation_id
-                ):
-                    trimmed_messages.append(m)
-                    continue
-                if isinstance(candidate, str) and (
-                    openai_conversation_id is None or candidate == openai_conversation_id
-                ):
-                    return candidate, list(reversed(trimmed_messages))
+                if isinstance(candidate, str) and conversation_id in (None, candidate):
+                    if await self._conversation_holds(candidate, m, model_settings):
+                        return candidate, list(reversed(trimmed_messages))
+                    # Send this response again, with what came before it, to the same conversation.
+                    conversation_id = candidate
             trimmed_messages.append(m)
 
-        return None, messages
+        return conversation_id, messages
+
+    async def _conversation_holds(
+        self, conversation_id: str, response: ModelResponse, model_settings: OpenAIResponsesModelSettings
+    ) -> bool:
+        """Whether the OpenAI conversation holds `response`.
+
+        OpenAI adds a response's input and output items to its conversation only once the response completes.
+        A response whose stream dropped or was cancelled before it finished may have completed anyway, or not,
+        so its output items are looked up among the conversation's newest items. One with no item IDs to look
+        up is taken as missing.
+
+        Only the newest page, of up to 100 items, is read. The caller stops at the first response the
+        conversation holds, so a held response is on that page unless something else added 100 or more items to
+        the conversation since.
+        """
+        if response.state != 'interrupted' or response.finish_reason is not None:
+            return True
+        item_ids = {
+            part.id
+            for part in response.parts
+            if not isinstance(part, NativeToolReturnPart | NativeToolSearchReturnPart) and part.id
+        }
+        if not item_ids:
+            return False
+        extra_headers, timeout = self._build_request_options(model_settings)
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            items = await with_max_retries(self.client, model_settings).conversations.items.list(
+                conversation_id, order='desc', limit=100, extra_headers=extra_headers, timeout=timeout
+            )
+        return not item_ids.isdisjoint(item.id for item in items.data)
 
     async def _map_messages(
         self,
@@ -2543,13 +2606,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
         # across a second compaction in probing, so each freshly built window plants it explicitly.
         messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
+        messages = self._restore_response_scoped_tool_call_ids(messages, previous_response_id=previous_response_id)
         profile = self.profile
-        response_scoped_tool_call_ids = profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
         context = _ResponsesMapMessagesContext(
             messages=messages,
             model_request_parameters=model_request_parameters,
-            response_scoped_tool_call_ids=response_scoped_tool_call_ids,
-            response_id=previous_response_id if response_scoped_tool_call_ids else None,
             send_item_ids=model_settings.get(
                 'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
             ),
@@ -2645,7 +2706,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     async def _map_tool_return_part(self, part: ToolReturnPart, context: _ResponsesMapMessagesContext) -> None:
         call_id = _guard_tool_call_id(t=part)
         call_id, _ = split_combined_tool_call_id(call_id)
-        call_id = provider_response_tool_call_id(call_id, context.response_id)
         if call_id in context.client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
             # Replay the local `search_tools` result as a
             # `tool_search_output` so the provider rehydrates the
@@ -2690,7 +2750,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response_context = _ResponsesMapModelResponseContext(
             message=message,
             same_endpoint=same_endpoint,
-            response_from_same_provider=message.provider_name == self.system and same_endpoint,
             response_start=len(context.openai_messages),
         )
         response_parts: Sequence[ModelResponsePart] = message.parts
@@ -2710,11 +2769,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 response_context.response_start,
                 responses.EasyInputMessageParam(role='user', content='\n\n'.join(response_context.carried_thinkings)),
             )
-        context.response_id = (
-            message.provider_response_id
-            if context.response_scoped_tool_call_ids and response_context.response_from_same_provider
-            else None
-        )
 
     def _map_response_part(
         self,
@@ -2726,11 +2780,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         from_same_provider = response_context.same_endpoint and (
             item.provider_name == self.system or (item.provider_name is None and message.provider_name == self.system)
         )
-        response_id_from_same_provider = response_context.same_endpoint and (
-            message.provider_name == self.system
-            or (message.provider_name is None and item.provider_name == self.system)
-        )
-        response_context.response_from_same_provider |= response_id_from_same_provider
         # Two distinct gates. For native tool items whose state lives server-side
         # (web search, code interpreter, image generation, MCP), the item ID *is*
         # the replay payload, so `should_send_item_id` decides whether those items
@@ -2747,7 +2796,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     item,
                     response_context,
                     context,
-                    response_id_from_same_provider=response_id_from_same_provider,
                     should_send_item_id=should_send_item_id,
                 )
             case NativeToolCallPart():
@@ -2835,17 +2883,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response_context: _ResponsesMapModelResponseContext,
         context: _ResponsesMapMessagesContext,
         *,
-        response_id_from_same_provider: bool,
         should_send_item_id: bool,
     ) -> None:
         call_id = _guard_tool_call_id(t=item)
         call_id, id = split_combined_tool_call_id(call_id)
-        call_id = provider_response_tool_call_id(
-            call_id,
-            response_context.message.provider_response_id
-            if context.response_scoped_tool_call_ids and response_id_from_same_provider
-            else None,
-        )
         id = id or item.id
 
         if context.client_tool_search_active and isinstance(item, ToolSearchCallPart):
@@ -3100,7 +3141,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             self._map_thinking_to_reasoning_item(item, item.id, signature, raw_content, response_context, context)
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and item.content:
                 context.openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=thinking_text))
             elif item.content:
                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.
@@ -3318,8 +3359,6 @@ class _ResponsesMapMessagesContext:
 
     messages: list[ModelMessage]
     model_request_parameters: ModelRequestParameters
-    response_scoped_tool_call_ids: bool
-    response_id: str | None
     send_item_ids: bool
     store_disabled: bool
     client_tool_search_active: bool
@@ -3339,7 +3378,6 @@ class _ResponsesMapModelResponseContext:
 
     message: ModelResponse
     same_endpoint: bool
-    response_from_same_provider: bool
     response_start: int
     message_item: responses.ResponseOutputMessageParam | None = None
     reasoning_item: responses.ResponseReasoningItemParam | None = None
@@ -3457,13 +3495,6 @@ def split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         return call_id, id
     else:
         return combined_id, None
-
-
-def provider_response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Restore a response-scoped provider tool-call ID from its normalized form."""
-    if response_id is None:
-        return tool_call_id
-    return tool_call_id.removeprefix(f'{response_id}:')
 
 
 def uploaded_file_to_response_content(

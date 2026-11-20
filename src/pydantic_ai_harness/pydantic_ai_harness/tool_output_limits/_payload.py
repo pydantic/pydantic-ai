@@ -33,14 +33,25 @@ class TruncationStrategy(str, Enum):  # noqa: UP042
     """Keep the first and last characters, eliding the middle."""
 
 
-# CSI sequences, OSC sequences, and simple escapes. Terminal tool output is full of color
-# codes that waste tokens and can confuse models.
-_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]()]')
+# CSI sequences, OSC sequences (BEL-terminated, on one line), and simple escapes. Terminal tool
+# output is full of color codes that waste tokens and can confuse models.
+_CSI_OR_SIMPLE = r'\x1b\[[0-9;]*[a-zA-Z]|\x1b[^[\]()]'
+_NON_OSC_RE = re.compile(_CSI_OR_SIMPLE)
+# An OSC match runs to its BEL, or else to the end of its line, so an unterminated one is scanned
+# once rather than once per `ESC ]` in it: no OSC inside that span can be terminated either.
+_ANSI_ESCAPE_RE = re.compile(rf'\x1b\][^\x07\n]*(?:\x07|\n?)|{_CSI_OR_SIMPLE}')
+
+
+def _strip_escape(match: re.Match[str]) -> str:
+    escape = match.group()
+    if escape.startswith('\x1b]') and not escape.endswith('\x07'):
+        return '\x1b]' + _NON_OSC_RE.sub('', escape[2:])
+    return ''
 
 
 def strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from `text`."""
-    return _ANSI_ESCAPE_RE.sub('', text)
+    """Remove ANSI escape sequences from `text`, in linear time."""
+    return _ANSI_ESCAPE_RE.sub(_strip_escape, text)
 
 
 def is_binary(value: object) -> bool:
@@ -159,6 +170,10 @@ def _sketch_sequence(items: Sequence[object]) -> str:
     return f'[{len(items)} items of {elem}]'
 
 
+RERUN_NOTE = '; rerun the original tool for the full output'
+"""How a marker on a lossy reduction, which keeps no handle, tells the model to recover the rest."""
+
+
 def _tail_line_start(text: str, count: int) -> int:
     """Find the last N LF/CRLF lines without splitting the entire payload."""
     end = len(text) - int(text.endswith('\n'))
@@ -182,11 +197,11 @@ def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy, *, ke
         return text
     tail_chars = total - _tail_line_start(text, keep_tail_lines) if keep_tail_lines else 0
     if tail_chars > max_chars:
-        return truncate_tail(text, max_chars)
+        return truncate_tail(text, max_chars, note=RERUN_NOTE)
     if tail_chars == max_chars:
         return text[-max_chars:]
     if strategy is TruncationStrategy.tail:
-        truncated = truncate_tail(text, max_chars)
+        truncated = truncate_tail(text, max_chars, note=RERUN_NOTE)
         if tail_chars and not truncated.endswith(text[total - tail_chars :]):
             return text[-max_chars:]
         return truncated
@@ -202,11 +217,11 @@ def _truncate_head_and_tail(text: str, max_chars: int, strategy: TruncationStrat
     for retained in range(max_chars, max(1, tail_chars) - 1, -1):
         head_chars = (retained - tail_chars) * head_share // 5
         if strategy is TruncationStrategy.head and not tail_chars:
-            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars]'
+            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars{RERUN_NOTE}]'
         else:
             marker = (
                 f'\n\n[truncated: {total - retained:,} chars omitted from the middle; '
-                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars]\n\n'
+                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars{RERUN_NOTE}]\n\n'
             )
         if retained + len(marker) <= max_chars:
             break
