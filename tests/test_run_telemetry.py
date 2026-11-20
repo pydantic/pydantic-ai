@@ -6,11 +6,19 @@ from dataclasses import dataclass
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.trace import INVALID_SPAN
+from opentelemetry.trace import INVALID_SPAN, NoOpTracer
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
+from pydantic_ai._telemetry import (
+    RunTelemetry,
+    current_run_telemetry,
+    current_span,
+    open_span,
+    record_decision,
+    run_telemetry_scope,
+    set_content_attribute,
+)
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
 from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import ToolCallPart
@@ -129,6 +137,15 @@ async def test_current_span_leaves_the_applications_span_alone_in_an_uninstrumen
         await agent_with_tool().run('go')
 
     assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [('app request', {})]
+
+
+def test_telemetry_built_from_an_uninstrumented_runs_tracer_is_not_published():
+    """A durable worker builds `RunTelemetry` from the run's tracer, which is a `NoOpTracer` when the run isn't instrumented."""
+    provider = TracerProvider()
+    with provider.get_tracer('app').start_as_current_span('app request'):
+        with run_telemetry_scope(RunTelemetry(NoOpTracer(), include_content=True)):
+            assert current_run_telemetry() is None
+            assert current_span(current_run_telemetry()) is INVALID_SPAN
 
 
 async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_span_alone():
