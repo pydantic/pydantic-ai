@@ -121,6 +121,19 @@ class DaytonaProvider:
         self._clients[backend] = client
         return backend
 
+    async def keep_alive(self, backend: SandboxBackend) -> None:
+        """Reset the idle timer, `auto_stop_interval` (15 minutes by default), which a running command does not reset.
+
+        The sandbox is looked up by id with the backend's client, as the backend's `get_sandbox` would start a
+        stopped one.
+        """
+        import daytona
+
+        assert backend.ref is not None  # Both `create` and `reopen` give backends that name their sandbox.
+        sandbox = await self._clients[backend].get(backend.ref.id)
+        if sandbox.state == daytona.SandboxState.STARTED:
+            await sandbox.refresh_activity()
+
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
             await client.close()

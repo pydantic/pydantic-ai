@@ -41,6 +41,7 @@ class RenderProvider:
     # Commands run as `root`; the harness backend makes this folder on a new sandbox.
     working_dir: str = '/root/workspace'
     token_in_sandbox: bool = True
+    keep_alive: None = None
     _clients: 'WeakKeyDictionary[SandboxBackend, RenderAsync]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'RenderAsync'], init=False, compare=False, repr=False
     )

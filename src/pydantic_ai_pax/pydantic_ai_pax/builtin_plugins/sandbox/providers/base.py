@@ -3,7 +3,7 @@
 import base64
 import os
 import posixpath
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -62,6 +62,16 @@ class SandboxProvider(Protocol):
     @property
     def token_in_sandbox(self) -> bool:
         """Whether the GitHub token is written into the sandbox, as it is where no proxy can sign requests."""
+        ...
+
+    @property
+    def keep_alive(self) -> Callable[[SandboxBackend], Awaitable[None]] | None:
+        """What keeps a running sandbox from stopping while this session holds it; `None` when nothing stops it.
+
+        A provider that stops an idle sandbox, or one whose lifetime has run out, while a long command still runs
+        in it, sets one. `/sandbox` calls it every few minutes while the sandbox's backend is open. It must leave a
+        stopped or paused sandbox as it is: starting one is the next operation's job.
+        """
         ...
 
     def missing(self) -> str | None:

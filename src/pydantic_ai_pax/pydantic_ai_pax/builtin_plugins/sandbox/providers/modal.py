@@ -27,6 +27,7 @@ class ModalProvider:
     title: str = 'Modal'
     working_dir: str = '/root/workspace'
     token_in_sandbox: bool = True
+    keep_alive: None = None
 
     def missing(self) -> str | None:
         if find_spec('modal') is None:

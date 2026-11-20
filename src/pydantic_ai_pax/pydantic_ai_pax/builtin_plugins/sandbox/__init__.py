@@ -8,10 +8,17 @@ The conversation's history records its sandbox: `/sandbox` saves an exchange who
 (`ModelResponse.workspace_ref`), as every later response does. Each run is handed that reference by Pydantic
 AI, so a forked, resumed, or background conversation opens its own sandbox, whichever one is on screen.
 A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the conversation may still use it.
+
+A provider that stops an idle sandbox, as Daytona does, or pauses it once its lifetime runs out, as E2B does, can
+stop it under a long command. While this session holds such a sandbox it keeps it alive (`keep_alive`), and a
+turn that finds one stopped anyway (`WorkspaceUnavailableError`) closes it, so the next turn reopens it, which
+starts it again.
 """
 
+import asyncio
+import logging
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
@@ -30,6 +37,7 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
+    WorkspaceUnavailableError,
     WrapperWorkspace,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
@@ -39,7 +47,7 @@ from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.config.api_keys import load_keys
 from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
-from pydantic_ai_pax.plugins import NoSettings, Plugin, PluginHost, SessionEnd
+from pydantic_ai_pax.plugins import NoSettings, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace
@@ -48,6 +56,11 @@ from pydantic_ai_pax.ui.rendering.status import StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 __all__ = ('SandboxPlugin',)
+
+_LOGGER = logging.getLogger(__name__)
+
+KEEP_ALIVE_EVERY = 300.0
+"""Seconds between `keep_alive` calls: well inside Daytona's 15 idle minutes and E2B's hour."""
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
@@ -70,6 +83,14 @@ class _Sandbox:
     """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
     backend: SandboxBackend | None = None
     deleted: bool = False
+    _keeping_alive: asyncio.Task[None] | None = field(default=None, repr=False)
+
+    def hold(self, backend: SandboxBackend) -> SandboxBackend:
+        """Hold `backend` as the sandbox's workspace, keeping the sandbox alive until `close`, if its provider can."""
+        self.backend = backend
+        if (keep_alive := self.provider.keep_alive) is not None:
+            self._keeping_alive = asyncio.create_task(_keep_alive(keep_alive, backend), name='clai2-sandbox-keep-alive')
+        return backend
 
     def open(self) -> SandboxBackend:
         """The workspace, attached on first use; `UserError` when it cannot be, so the run fails closed."""
@@ -80,11 +101,18 @@ class _Sandbox:
         if self.backend is None:
             if (missing := self.provider.missing()) is not None:
                 raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
-            self.backend = self.provider.reopen(self.ref)
+            return self.hold(self.provider.reopen(self.ref))
         return self.backend
 
     async def close(self) -> None:
         """Close what the provider opened for the workspace; the next `open` reopens it."""
+        if (keeping_alive := self._keeping_alive) is not None:
+            self._keeping_alive = None
+            keeping_alive.cancel()
+            try:
+                await keeping_alive
+            except asyncio.CancelledError:
+                pass
         if (backend := self.backend) is not None:
             self.backend = None
             await self.provider.close(backend)
@@ -306,7 +334,7 @@ class SandboxPlugin(Plugin):
                 finally:
                     await provider.close(backend)
             raise
-        self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, backend=backend)
+        self.sandbox(ref).hold(backend)
         return _started(provider, ref, checkout, github=github)
 
     async def _delete(self) -> str:
@@ -318,6 +346,18 @@ class SandboxPlugin(Plugin):
         sandbox.deleted = True
         return f'Deleted {sandbox.provider.title} sandbox {sandbox.ref.id}. Run /new to start another conversation.'
 
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        """Close the sandboxes this session holds when the turn found one stopped, so the next turn starts it again.
+
+        A backend keeps the handle it attached with, which fails every later operation, while one `reopen` makes
+        attaches afresh, starting a stopped sandbox. The error does not say which sandbox it was, and a `/fork`
+        ends its turn here too, so every open one is closed: the others reopen as they are. A deleted one is
+        closed already.
+        """
+        if isinstance(event.error, WorkspaceUnavailableError):
+            for sandbox in self._sandboxes.values():
+                await sandbox.close()
+
     async def on_session_end(self, event: SessionEnd) -> None:
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.
         for sandbox in list(self._sandboxes.values()):
@@ -327,6 +367,21 @@ class SandboxPlugin(Plugin):
 
 _SET_BY_CLAI = frozenset({'GH_TOKEN', *SANDBOX_ENV})
 """What `request_env` refuses: `GH_TOKEN` is CLAI's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
+
+
+async def _keep_alive(keep_alive: Callable[[SandboxBackend], Awaitable[None]], backend: SandboxBackend) -> None:
+    """Call `keep_alive` every `KEEP_ALIVE_EVERY` seconds until cancelled; a failure waits for the next call.
+
+    `_Sandbox.close` cancels it: on `/sandbox delete`, after a turn found the sandbox stopped, and at
+    `SessionEnd`, which also comes once CLAI closes a session left idle for an hour (`IDLE_AFTER`), so an
+    unattended sandbox is not kept alive for ever.
+    """
+    while True:
+        await anyio.sleep(KEEP_ALIVE_EVERY)
+        try:
+            await keep_alive(backend)
+        except Exception:
+            _LOGGER.debug('Could not keep the sandbox alive', exc_info=True)
 
 
 async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition | None:

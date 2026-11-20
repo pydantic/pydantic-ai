@@ -10,13 +10,14 @@ import importlib.machinery
 import io
 import itertools
 import json
+import logging
 import os
 import shlex
 import stat
 import subprocess
 import sys
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
@@ -81,6 +82,7 @@ from pydantic_ai_pax.plugins import (
     PluginHost,
     SessionEnd,
     Transcript,
+    TurnEnd,
     load_plugin,
 )
 from pydantic_ai_pax.runtime.imported_history import imported_kind
@@ -138,6 +140,7 @@ class FakeProvider:
     creating: anyio.Event | None = None
     """When set, `create` waits for it after starting, as a slow provider would."""
     delete_error: Exception | None = None
+    keep_alive: Callable[[SandboxBackend], Awaitable[None]] | None = None
 
     def missing(self) -> str | None:
         return self.requirement
@@ -741,6 +744,37 @@ class TestLifecycle:
         restarted = plugin_of(load(checkout, Transcript(messages=session.messages)))
         assert (current := restarted.current()) is not None and current.ref == WorkspaceRef(provider='fake', id='sbx-1')
 
+    async def test_a_turn_that_finds_the_sandbox_stopped_reopens_it(
+        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        model, returns = steps(('run_command', {'command': 'true'}), ('run_command', {'command': 'echo back'}), 'done')
+        loaded = load(checkout)
+        plugin = plugin_of(loaded)
+        session = on_screen(loaded, checkout, model=model, shell=True)
+        await plugin.command(['fake'])
+        held = plugin.current()
+        assert held is not None and held.backend is not None
+        stale = held.backend
+        # Any other failure leaves it open.
+        await loaded.dispatch(TurnEnd(text='go', outcome='failed', error=RuntimeError('the model is down')))
+        assert provider.closed == []
+
+        async def stopped(*args: object, **kwargs: object) -> CommandResult:
+            raise WorkspaceUnavailableError('The sandbox was stopped while idle.')
+
+        # The provider stopped it while idle: the backend's handle fails every operation from then on.
+        monkeypatch.setattr(stale, 'run', stopped)
+        with pytest.raises(WorkspaceUnavailableError) as failed:
+            await session.prompt('go')
+        # What the shell gives plugins for that turn.
+        await loaded.dispatch(TurnEnd(text='go', outcome='failed', error=failed.value))
+        assert provider.closed == [held.ref]
+        await session.prompt('again')
+        # A fresh backend for the same sandbox, which the provider starts again as it attaches.
+        assert provider.reopened == [held.ref]
+        assert held.backend is not stale
+        assert returns == ['[stdout]\nback\n']
+
     async def test_history_in_an_unknown_workspace_runs_here(self, checkout: Path, provider: FakeProvider) -> None:
         loaded = load(checkout, Transcript(messages=worked_in(WorkspaceRef(provider='retired', id='sb-1'))))
         assert plugin_of(loaded).current() is None
@@ -755,6 +789,40 @@ class TestLifecycle:
             UserError, match=r'^This conversation runs in a Fake sandbox\. Add your Fake key in /keys\.$'
         ):
             current.open()
+
+
+@pytest.mark.parametrize('stop', ['delete', 'end'])
+async def test_a_held_sandbox_is_kept_alive_until_closed(
+    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, stop: str
+) -> None:
+    monkeypatch.setattr(sandbox, 'KEEP_ALIVE_EVERY', 0)
+    kept: list[WorkspaceRef | None] = []
+    again = anyio.Event()
+
+    async def keep_alive(backend: SandboxBackend) -> None:
+        kept.append(backend.ref)
+        if len(kept) == 1:
+            raise OSError('the provider is down')
+        again.set()
+
+    provider.keep_alive = keep_alive
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    with caplog.at_level(logging.DEBUG, logger=sandbox.__name__):
+        await plugin.command(['fake'])
+        with anyio.fail_after(5):
+            await again.wait()
+    # A failed call is only logged, and the next one comes as usual.
+    assert 'Could not keep the sandbox alive' in caplog.text
+    assert set(kept) == {WorkspaceRef(provider='fake', id='sbx-1')}
+    if stop == 'delete':
+        await plugin.command(['delete'])
+    else:
+        await loaded.dispatch(SessionEnd(reason='exit'))
+    stopped = len(kept)
+    for _ in range(10):
+        await anyio.lowlevel.checkpoint()
+    assert len(kept) == stopped
 
 
 async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> None:
@@ -1013,10 +1081,13 @@ class TestRequestEnv:
 @pytest.fixture
 def fake_e2b(monkeypatch: pytest.MonkeyPatch) -> Iterator['FakeE2B']:
     """The harness's fake E2B SDK as `e2b`; each client it makes is named by its API key."""
+    from e2b import SandboxState
+
     from tests.harness.e2b_sandbox.fake_e2b import FakeE2B
 
     control = FakeE2B()
     module = control.module
+    module.SandboxState = SandboxState  # type: ignore[attr-defined]
     module.__spec__ = importlib.machinery.ModuleSpec('e2b', None)
     module.E2B = lambda api_key: control.client(api_key)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, 'e2b', module)
@@ -1076,6 +1147,37 @@ class TestE2B:
         assert fake_e2b.sandboxes[0].killed
         # `/keys` wins over the environment, for every call.
         assert set(fake_e2b.clients) == {'from-keys'}
+
+    async def test_keep_alive_extends_only_a_running_sandbox(
+        self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from e2b import SandboxState
+
+        from tests.harness.e2b_sandbox.fake_e2b import FakeAsyncSandboxFactory
+
+        state = SandboxState.RUNNING
+        timeouts: list[tuple[str, int]] = []
+
+        async def get_info(self: object, sandbox_id: str) -> SimpleNamespace:
+            return SimpleNamespace(state=state)
+
+        async def set_timeout(self: object, sandbox_id: str, timeout: int) -> None:
+            timeouts.append((sandbox_id, timeout))
+
+        monkeypatch.setattr(FakeAsyncSandboxFactory, 'get_info', get_info, raising=False)
+        monkeypatch.setattr(FakeAsyncSandboxFactory, 'set_timeout', set_timeout, raising=False)
+        monkeypatch.setenv('E2B_API_KEY', 'from-env')
+        e2b = E2BProvider()
+        ref, backend = await e2b.create(github=None)
+        await e2b.keep_alive(backend)
+        assert timeouts == [(ref.id, e2b_provider.LIFETIME)]
+        state = SandboxState.PAUSED
+        await e2b.keep_alive(e2b.reopen(ref))
+        # A paused sandbox stays paused until an operation resumes it.
+        assert timeouts == [(ref.id, e2b_provider.LIFETIME)]
+        assert fake_e2b.connect_calls == []
 
     async def test_a_sandbox_whose_setup_failed_is_deleted(
         self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch
@@ -1543,6 +1645,38 @@ class TestDaytona:
         ref, backend = await provider.create(github=None)
         assert account.secrets == {}
         assert fake.create_params[-1].secrets is None
+        await provider.close(backend)
+        await provider.delete(ref)
+
+    async def test_keep_alive_refreshes_only_a_started_sandbox(
+        self,
+        fake_daytona: 'tuple[FakeDaytona, FakeDaytonaSecrets]',
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from daytona import SandboxState
+
+        from tests.harness.daytona_sandbox.fake_daytona import FakeSandbox
+
+        fake, _ = fake_daytona
+        refreshed: list[str] = []
+
+        async def refresh_activity(self: 'FakeDaytonaSandbox') -> None:
+            refreshed.append(self.id)
+
+        monkeypatch.setattr(FakeSandbox, 'refresh_activity', refresh_activity, raising=False)
+        provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
+        ref, backend = await provider.create(github=None)
+        await provider.keep_alive(backend)
+        assert refreshed == [ref.id]
+        [made] = fake.sandboxes
+        made.state = SandboxState.STOPPED
+        reopened = provider.reopen(ref)
+        await provider.keep_alive(reopened)
+        # A stopped sandbox stays stopped until an operation starts it.
+        assert refreshed == [ref.id]
+        assert made.state == SandboxState.STOPPED
+        await provider.close(reopened)
         await provider.close(backend)
         await provider.delete(ref)
 

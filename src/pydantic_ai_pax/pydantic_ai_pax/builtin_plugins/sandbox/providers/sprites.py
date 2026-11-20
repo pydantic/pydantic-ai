@@ -40,6 +40,7 @@ class SpritesProvider:
     title: str = 'Sprites'
     working_dir: str = '/home/sprite/workspace'
     token_in_sandbox: bool = True
+    keep_alive: None = None
     _clients: 'WeakKeyDictionary[SandboxBackend, AsyncSpritesClient]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'AsyncSpritesClient'], init=False, compare=False, repr=False
     )

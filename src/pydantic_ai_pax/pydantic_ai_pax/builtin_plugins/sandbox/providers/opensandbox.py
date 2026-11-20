@@ -53,6 +53,7 @@ class OpenSandboxProvider:
     title: str = 'OpenSandbox'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = False
+    keep_alive: None = None
 
     def missing(self) -> str | None:
         if find_spec('opensandbox') is None:

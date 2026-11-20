@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 
 KEY_NAME = 'E2B_API_KEY'
 
+LIFETIME = 3_600
+"""Seconds until E2B pauses a sandbox, counted from when it was made, reopened, or last kept alive.
+
+The most E2B's Hobby plan allows, and the harness backend's default.
+"""
+
 
 @dataclass(frozen=True)
 class E2BProvider:
@@ -64,7 +70,9 @@ class E2BProvider:
             }
             env = {**env, 'GH_TOKEN': 'placeholder'}  # `gh` sends a header only with a token set; the proxy replaces it
         # E2B keeps `env` on the sandbox, so commands after a reopen get it too.
-        backend = E2BSandboxBackend(client=self._client(), working_dir=self.working_dir, env=env, network=network)
+        backend = E2BSandboxBackend(
+            client=self._client(), working_dir=self.working_dir, env=env, network=network, sandbox_timeout=LIFETIME
+        )
         try:
             sandbox = await backend.get_sandbox()
         except BaseException:
@@ -79,7 +87,21 @@ class E2BProvider:
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
-        return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir)
+        return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir, sandbox_timeout=LIFETIME)
+
+    async def keep_alive(self, backend: SandboxBackend) -> None:
+        """Push the pause back to `LIFETIME` from now, as E2B pauses a sandbox then even while a command runs.
+
+        E2B caps it at the plan's longest run from when the sandbox started or resumed: 24 hours on Pro, and on
+        Hobby the hour it already had, so there this changes nothing. Only for a running sandbox: E2B refuses
+        the timeout of a paused one and leaves it paused, but asking first keeps that from depending on E2B.
+        """
+        import e2b
+
+        assert backend.ref is not None  # Both `create` and `reopen` give backends that name their sandbox.
+        sandboxes = self._client().AsyncSandbox
+        if (await sandboxes.get_info(backend.ref.id)).state == e2b.SandboxState.RUNNING:
+            await sandboxes.set_timeout(backend.ref.id, LIFETIME)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # `e2b.E2B` holds no open connection between requests.

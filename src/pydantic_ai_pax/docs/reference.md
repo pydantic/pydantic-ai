@@ -3030,7 +3030,11 @@ context names, and reaches through `kubectl port-forward`. Its pod runs commands
 uploads, so the token travels base64-encoded inside a command to the pod.
 
 How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
-one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
+one; both keep their files, so delete them when you are done. While CLAI has one of these open, it tells the
+provider every 5 minutes that the sandbox is in use, so a long command is not stopped halfway (E2B still pauses
+a sandbox once it has run for its plan's limit: an hour on Hobby, 24 hours on Pro). That stops when
+the session ends, which CLAI does itself after an hour with nothing to do. If a turn finds the sandbox stopped
+or paused anyway, the turn fails, and the next one starts the same sandbox again. A `modal` or `render` sandbox ends after
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
 

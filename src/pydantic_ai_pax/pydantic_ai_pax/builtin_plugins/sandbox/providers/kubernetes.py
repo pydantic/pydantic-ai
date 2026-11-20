@@ -40,6 +40,7 @@ class KubernetesProvider:
     working_dir: str = '/workspace/checkout'
     """Below sandboxd's default root, which the docs' templates also make the home, so the token is not in the checkout."""
     token_in_sandbox: bool = True
+    keep_alive: None = None
 
     def missing(self) -> str | None:
         if find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None:
