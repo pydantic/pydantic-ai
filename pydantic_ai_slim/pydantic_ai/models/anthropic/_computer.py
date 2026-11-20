@@ -47,7 +47,7 @@ class ComputerBlock(TypedDict):
 class ComputerReplay(TypedDict):
     """What a `computer` call stores in `provider_details`, so Claude's original calls can be sent back unchanged."""
 
-    computer_blocks: list[ComputerBlock]
+    computer_blocks: Annotated[list[ComputerBlock], Field(min_length=1)]
     computer_tool: AnthropicComputerToolVersion
     computer_action_counts: list[Annotated[int, Field(ge=1)]]
     """How many `computer` actions each of Claude's calls became. Results are matched to calls by these counts."""
@@ -94,7 +94,7 @@ def computer_replay(part: ToolCallPart, provider_name: str, sent: NativeComputer
         return replay
     blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
     match part.args_as_dict():
-        case {'actions': [*actions]} if blocks and len(blocks) == len(counts) and sum(counts) == len(actions):
+        case {'actions': [*actions]} if len(blocks) == len(counts) and sum(counts) == len(actions):
             starts = [0, *accumulate(counts)][:-1]
             members = [actions[start : start + count] for start, count in zip(starts, counts)]
             if all(_made(block, member, replay['computer_tool']) for block, member in zip(blocks, members)):
