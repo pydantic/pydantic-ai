@@ -517,7 +517,8 @@ uv run --no-sync pytest -p no:cacheprovider tests/pax
 change updates the reference (and the README when it changes what the tour shows)
 and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
 images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
-the images in `docs/images/`. Plain
+the images in `docs/images/`. `docs/harness/clai2.md` is generated from the README by
+`scripts/sync_docs_page.py`, which pre-commit runs; edit the README, never the page. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 Agent-readable docs are indexed by `clai_docs._CLAI_DOCS`. Docs outside

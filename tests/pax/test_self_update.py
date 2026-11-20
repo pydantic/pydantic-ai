@@ -1,13 +1,12 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
 import argparse
-import base64
 import json
 import os
 import shlex
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
@@ -607,19 +606,25 @@ def test_after_exit_script(tmp_path: Path) -> None:
 
 
 def test_install_after_exit_starts_windows_powershell() -> None:
-    started: list[Sequence[str]] = []
-    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=started.append)
-    [argv] = started
-    assert argv[:5] == [
+    """The script goes in an environment variable, not on the command line, where antivirus flags `-EncodedCommand`."""
+    started: list[tuple[Sequence[str], Mapping[str, str]]] = []
+
+    def start(argv: Sequence[str], env: Mapping[str, str]) -> None:
+        started.append((argv, env))
+
+    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=start)
+    [(argv, env)] = started
+    assert argv == [
         r'D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe',
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
-        '-EncodedCommand',
+        '-Command',
+        '$s = $env:CLAI_UPDATE_SCRIPT; Remove-Item Env:CLAI_UPDATE_SCRIPT; & ([ScriptBlock]::Create($s))',
     ]
-    assert base64.b64decode(argv[5]).decode('utf-16-le') == 'Write-Host é'
-    install_after_exit('', environ={}, start=started.append)
-    assert started[1][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    assert env == {'SystemRoot': r'D:\Win', 'CLAI_UPDATE_SCRIPT': 'Write-Host é'}
+    install_after_exit('', environ={}, start=start)
+    assert started[1][0][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
 
 async def test_windows_hands_the_install_off_and_exits() -> None:
