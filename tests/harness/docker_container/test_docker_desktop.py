@@ -418,6 +418,38 @@ async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_worki
     assert docker.panel_starts == 0
 
 
+async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.uninstall('tint2')
+    _hide_host_programs(docker)
+    docker.run_as(0)
+    docker.lack_packages('tint2', 'xterm')
+
+    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    install_tint2 = ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.apt_get_calls == install_tint2
+    marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
+    assert marker.read_text() == ' tint2'
+
+    # A later start, with the same program missing, doesn't run `apt-get` again.
+    starts = docker.xvfb_starts
+    docker.remove_display()
+    await screen(backend).display_size()
+    assert docker.xvfb_starts == starts + 1
+    assert docker.apt_get_calls == install_tint2
+
+    # With another one missing, it tries again.
+    docker.uninstall('xterm')
+    docker.remove_display()
+    await screen(backend).display_size()
+    assert docker.apt_get_calls == [*install_tint2, 'update -qq', 'install -y -qq --no-install-recommends tint2 xterm']
+    assert marker.read_text() == ' tint2 xterm'
+
+
 async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
     docker: FakeDocker, container_dir: Path
 ) -> None:

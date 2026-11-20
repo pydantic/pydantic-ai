@@ -250,6 +250,10 @@ DESKTOP_PACKAGES = ('xvfb', *_PACKAGES.split(), *_DESKTOP_PROGRAMS.split())
 _DESKTOP_LOG = '/tmp/pydantic-ai-desktop.log'
 """Where the desktop's install and its programs write, so a desktop that didn't come up says why."""
 
+_DESKTOP_INSTALL_FAILED = '/tmp/pydantic-ai-desktop-install-failed'
+"""Names the desktop's programs an install failed to install, so later starts don't run `apt-get` again for the same
+ones. Deleting it makes the next start try again."""
+
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 
@@ -341,8 +345,9 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
     It first installs any of the programs it needs that's missing with `apt-get`, as root or through `sudo -n`, and
     fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it then installs the
     desktop's programs, `_DESKTOP_PROGRAMS`, in a separate `apt-get install`, so one the package lists lack never stops
-    the display; when they can't be installed, or don't start, the display works without them. It fails once the X
-    server exits, or after 10 seconds, printing the end of `log`.
+    the display; when they can't be installed, or don't start, the display works without them. A failed install of
+    them is recorded in `_DESKTOP_INSTALL_FAILED`, and later starts skip it while the same ones are missing. It fails
+    once the X server exits, or after 10 seconds, printing the end of `log`.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
     until the script exits, so the rest of the script runs under it too; anything started in the background must close
@@ -361,6 +366,8 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
+            # The same programs failed to install before, so this start doesn't try again.
+            f'[ "$wanted" != "$(cat {_DESKTOP_INSTALL_FAILED} 2>/dev/null)" ] || wanted=; '
             # The desktop writes to file descriptor 8 (9 is the lock). It points at `_DESKTOP_LOG` when that's missing
             # or a file that can be written, and at `/dev/null` otherwise, so the log never stops the display. Anything
             # else there isn't opened: a named pipe would wait for a reader, and a symlink would let a start as root
@@ -392,9 +399,10 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # Otherwise the display's own programs first, failing the start when they can't be installed.
         f'elif ! {{ $elevate apt-get update -qq && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
         f'echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; fi; '
-        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A later run, or a restart
-        # of the display after a failure, tries again.
-        f'[ -z "$wanted" ] || $install $wanted >&8 2>&1 || true; '
+        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A failure is recorded,
+        # unless a symlink is there, which a start as root would write through.
+        f'[ -z "$wanted" ] || $install $wanted >&8 2>&1 || [ -L {_DESKTOP_INSTALL_FAILED} ] || '
+        f'printf %s "$wanted" 2>/dev/null >{_DESKTOP_INSTALL_FAILED} || true; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
         'if ! x_runs; then '
