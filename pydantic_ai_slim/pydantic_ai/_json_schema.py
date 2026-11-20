@@ -423,8 +423,9 @@ class JsonSchemaTransformer(ABC):
         # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
         root_ref, root_key = self._root_ref_and_key(defs)
         defs[root_key] = handled
-        # Resolving the `$ref` percent-decodes it, and a `title` can hold a `%`.
-        return {'$defs': defs, '$ref': root_ref or '#/$defs/' + root_key.replace('%', '%25')}
+        # Resolving the `$ref` percent-decodes it, and a `title` can hold a `%`. Nothing validates `title`, so it may
+        # not be a string.
+        return {'$defs': defs, '$ref': root_ref or '#/$defs/' + str(root_key).replace('%', '%25')}
 
     def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
         """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.

@@ -967,6 +967,26 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
 
 
+@pytest.mark.parametrize('title,ref', [('10%Cash', '#/$defs/10%25Cash'), (5, '#/$defs/5')])
+def test_inline_defs_recursive_root_ref_from_title(title: object, ref: str):
+    """A recursive root with no `$ref` of its own goes under `$defs` by its `title`, which the root `$ref` escapes.
+
+    Resolving the `$ref` percent-decodes it, so a `%` in the title is written as `%25`. Nothing validates `title`,
+    so a value that isn't a string is written as its `str()`, as before.
+    Unit test: the walker writes the `$ref` before any request is built.
+    """
+    schema = {
+        'type': 'object',
+        'title': title,
+        'properties': {'child': {'$ref': '#/$defs/Node'}},
+        '$defs': {'Node': {'type': 'object', 'properties': {'child': {'$ref': '#/$defs/Node'}}}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert (result['$ref'], set(result['$defs'])) == (ref, {'Node', title})
+
+
 @pytest.mark.parametrize(
     'json_schema, location',
     [
