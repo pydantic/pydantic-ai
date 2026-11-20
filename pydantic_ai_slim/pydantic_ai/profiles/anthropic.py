@@ -742,25 +742,10 @@ def anthropic_computer_use_profile(model_name: str, profile: ModelProfile | None
     if computer_tool_version is None:
         return AnthropicModelProfile()
     supported_native_tools = (profile or {}).get('supported_native_tools', _ANTHROPIC_BASE_BUILTINS)
-    computer = AnthropicModelProfile(
+    return AnthropicModelProfile(
         supported_native_tools=supported_native_tools | {ComputerTool},
         anthropic_computer_tool_version=computer_tool_version,
     )
-    # The earlier tools scale a larger screenshot down, and Claude then gives coordinates in the smaller image's
-    # pixels. Both limits matter: 1568x882 has an allowed longer side but too many pixels. Opus 4.7 takes the larger
-    # size on `computer_20251124`. The toolset refuses an image over 2576 pixels on a side or over 4784 image tokens
-    # (one per 28x28 pixels). In live probes, Haiku 5.5 and Opus 4.8 pointed about 5% short of the target on
-    # 2560x1600, and exactly on it on 2576x1456 (4784 tokens) and 2549x1457.
-    if model_name.startswith('claude-opus-4-7'):
-        computer['computer_use_screenshot_max_side'] = 2576
-        computer['computer_use_screenshot_max_pixels'] = 3_600_000
-    elif computer_tool_version == 'computer_toolset_20260801':
-        computer['computer_use_screenshot_max_side'] = 2576
-        computer['computer_use_screenshot_max_pixels'] = 2576 * 1456
-    else:
-        computer['computer_use_screenshot_max_side'] = 1568
-        computer['computer_use_screenshot_max_pixels'] = 1_150_000
-    return computer
 
 
 def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:

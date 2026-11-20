@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
+import subprocess
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import anyio
@@ -40,6 +44,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+from pydantic_ai_harness.daytona_sandbox._desktop import ALLOW_CHROMIUM, CHROMIUM_SETTINGS_DIR
 
 from ..display_fakes import look_click_then_finish, screen
 from .fake_daytona import FakeDaytona, FakeSandbox
@@ -417,6 +422,45 @@ async def test_replies_the_desktop_cannot_use_are_workspace_errors(fake_daytona:
     sandbox.computer_use.position = SimpleNamespace(x=None, y=None)
     with pytest.raises(WorkspaceError, match='no pointer position'):
         await screen(backend).cursor_position()
+
+
+async def test_the_desktop_start_lets_chromium_start(fake_daytona: FakeDaytona) -> None:
+    await _started(fake_daytona)
+
+    (sandbox,) = fake_daytona.sandboxes
+    assert ALLOW_CHROMIUM in sandbox.exec_commands
+
+
+@pytest.mark.parametrize(
+    ('uid', 'namespaces_work', 'flag_added'),
+    [
+        pytest.param(1001, False, True, id='user-without-namespaces'),
+        pytest.param(0, True, True, id='root'),
+        pytest.param(1001, True, False, id='sandbox-works'),
+    ],
+)
+def test_chromium_gets_no_sandbox_only_where_its_sandbox_cannot_work(
+    tmp_path: Path, uid: int, namespaces_work: bool, flag_added: bool
+) -> None:
+    settings = tmp_path / 'chromium.d'
+    settings.mkdir()
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for name, script in [
+        ('id', f'echo {uid}'),
+        ('unshare', 'exit 0' if namespaces_work else 'exit 1'),
+        ('sudo', '[ "$1" = -n ] && shift; exec "$@"'),
+    ]:
+        (bin_dir / name).write_text(f'#!/bin/sh\n{script}\n')
+        (bin_dir / name).chmod(0o755)
+    env = {'PATH': f'{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin'}
+
+    # Daytona runs it with zsh.
+    shell = shutil.which('zsh') or '/bin/sh'
+    subprocess.run([shell, '-c', ALLOW_CHROMIUM.replace(CHROMIUM_SETTINGS_DIR, str(settings))], env=env, check=True)
+
+    added = [path.read_text() for path in settings.iterdir()]
+    assert added == (['CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"\n'] if flag_added else [])
 
 
 async def test_after_aclose_the_desktop_is_started_again_before_any_input(fake_daytona: FakeDaytona) -> None:

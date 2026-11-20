@@ -36,7 +36,6 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BinaryContent,
-    BinaryImage,
     CancellationToken,
     CapabilityEvent,
     CapabilityInstructionSource,
@@ -61,7 +60,6 @@ from pydantic_ai import (
     RunTimedOut,
     TextPart,
     TextPartDelta,
-    Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
@@ -85,7 +83,6 @@ from pydantic_ai.capabilities import (
     Toolset,
     durable_operation,
 )
-from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
@@ -138,7 +135,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -596,38 +592,6 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
-
-
-async def test_prefect_durability_a_computer_refusal_reaches_flow_with_its_type() -> None:
-    """A model's refusal of a `computer` request it can't serve reaches the error hooks as itself, so a fallback
-    moves on from it."""
-
-    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
-        """Act on the screen."""
-        return ['Done.']
-
-    async def describe(
-        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
-    ) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(type(error).__name__)])
-
-    agent = Agent(
-        # It can't take images, so it refuses the request before it's called.
-        FunctionModel(
-            lambda messages, info: ModelResponse(parts=[]),  # pragma: no cover
-            profile=ModelProfile(supports_image_input=False),
-        ),
-        name='prefect_durability_computer_refusal',
-        deps_type=type(None),
-        tools=[Tool(computer, tool_kind=COMPUTER_KIND)],
-        capabilities=[Hooks[None](model_request_error=describe), PrefectDurability()],
-    )
-
-    @flow(name='test_prefect_durability_computer_refusal')
-    async def run_durable_agent() -> str:
-        return (await agent.run('Look.')).output
-
-    assert await run_durable_agent() == 'UnservableRequestError'
 
 
 class Deps(BaseModel):

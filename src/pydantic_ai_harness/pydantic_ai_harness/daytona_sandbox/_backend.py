@@ -64,7 +64,12 @@ except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
 from pydantic_ai_harness._display import LazyDisplay, desktop_size
-from pydantic_ai_harness.daytona_sandbox._desktop import DISPLAY, REQUEST_TIMEOUT as _REQUEST_TIMEOUT, DaytonaDesktop
+from pydantic_ai_harness.daytona_sandbox._desktop import (
+    ALLOW_CHROMIUM,
+    DISPLAY,
+    REQUEST_TIMEOUT as _REQUEST_TIMEOUT,
+    DaytonaDesktop,
+)
 
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
@@ -924,6 +929,7 @@ class DaytonaSandboxBackend(
                 f'The desktop of the Daytona sandbox {sandbox.id!r} stopped answering. Stop and start the sandbox '
                 f'to bring it back. ({error})'
             ) from error
+        await sandbox.process.exec(ALLOW_CHROMIUM, timeout=_REQUEST_TIMEOUT)
 
 
 def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
