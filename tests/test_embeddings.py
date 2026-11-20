@@ -901,6 +901,30 @@ class TestBedrock:
             )
         )
 
+    async def test_titan_v2_dimensions_passthrough(self, bedrock_provider: BedrockProvider):
+        """Test that `dimensions` is sent to Bedrock unchanged, even when AWS doesn't accept it.
+
+        Titan v2 accepts 256/512/1024 dimensions; the library does not validate them, so a
+        `dimensions=384` request reaches Bedrock as-is.
+        """
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(dimensions=384))
+        captured_bodies: list[dict[str, Any]] = []
+
+        def fake_invoke(**kwargs: Any) -> dict[str, Any]:
+            captured_bodies.append(json.loads(kwargs['body']))
+            return {
+                'body': io.BytesIO(json.dumps({'embedding': [0.1, 0.2, 0.3]}).encode()),
+                'ResponseMetadata': {'HTTPHeaders': {'x-amzn-bedrock-input-token-count': '4'}},
+            }
+
+        with patch.object(model.client, 'invoke_model', new=fake_invoke):
+            result = await embedder.embed_query('Test passthrough')
+
+        assert captured_bodies == [{'inputText': 'Test passthrough', 'dimensions': 384, 'normalize': True}]
+        assert result.embeddings == [[0.1, 0.2, 0.3]]
+        assert result.usage.input_tokens == 4
+
     async def test_titan_v2_with_normalize_false(self, bedrock_provider: BedrockProvider):
         """Test Titan V2 with normalize=False (override default)."""
 
