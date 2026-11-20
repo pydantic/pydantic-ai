@@ -26,11 +26,8 @@ from ..conftest import try_import
 with try_import() as anthropic_available:
     from anthropic.types.beta import BetaToolChoiceParam
 
-    from pydantic_ai.models.anthropic import (
-        AnthropicModel,
-        AnthropicModelSettings,
-        _support_tool_forcing as anthropic_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic._thinking_type import request_allows_tool_forcing
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -536,9 +533,7 @@ def test_support_tool_forcing_implicit_falls_back(provider_name: str):
     """With extended thinking but no explicit forcing `tool_choice`, forcing falls back without raising."""
     if provider_name == 'anthropic':
         settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-        result = anthropic_support_tool_forcing(
-            'test-model', AnthropicModelProfile(), settings, ModelRequestParameters()
-        )
+        result = request_allows_tool_forcing('test-model', AnthropicModelProfile(), settings, ModelRequestParameters())
     else:  # bedrock
         profile = BedrockModelProfile(
             bedrock_supports_tool_choice=True,
@@ -678,7 +673,7 @@ def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking:
     explicit `{'type': 'disabled'}` the wire payload really does disable thinking, so forcing stays
     available even though `Model.prepare_request` moved a unified `thinking` into `params.thinking`.
     """
-    result = anthropic_support_tool_forcing(
+    result = request_allows_tool_forcing(
         'test-model', AnthropicModelProfile(), settings, ModelRequestParameters(thinking=params_thinking)
     )
     assert result is expected
@@ -698,7 +693,7 @@ def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinkin
     `forced_tool_choice_disables_thinking`, so this pins the extended-thinking rule on its own."""
     settings: AnthropicModelSettings = {'thinking': 'high'}
     profile = AnthropicModelProfile(anthropic_supports_adaptive_thinking=supports_adaptive_thinking)
-    result = anthropic_support_tool_forcing('test-model', profile, settings, ModelRequestParameters())
+    result = request_allows_tool_forcing('test-model', profile, settings, ModelRequestParameters())
     assert result is expected
 
 
@@ -718,7 +713,7 @@ def test_support_tool_forcing_suggests_adaptive_thinking_when_the_model_supports
             "`anthropic_thinking={'type': 'adaptive'}` supports forcing."
         ),
     ):
-        anthropic_support_tool_forcing(
+        request_allows_tool_forcing(
             'test-model',
             AnthropicModelProfile(anthropic_supports_adaptive_thinking=True),
             settings,
@@ -734,7 +729,7 @@ def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking()
         'tool_choice': 'required',
     }
     with pytest.raises(UserError, match='This model does not support forcing tool use'):
-        anthropic_support_tool_forcing(
+        request_allows_tool_forcing(
             'test-model', AnthropicModelProfile(supports_forced_tool_choice=False), settings, ModelRequestParameters()
         )
 
@@ -753,7 +748,7 @@ def test_haiku_5_5_supports_forced_tool_choice_with_adaptive_or_disabled_thinkin
     assert model_profile is not None
     profile = AnthropicModelProfile(**model_profile)
     assert (
-        anthropic_support_tool_forcing(
+        request_allows_tool_forcing(
             'claude-haiku-5-5', profile, settings, ModelRequestParameters(function_tools=[make_tool('my_tool')])
         )
         is True
@@ -775,7 +770,7 @@ def test_support_tool_forcing_reads_params_thinking(provider_name: str):
     params = ModelRequestParameters(thinking=True)
     if provider_name == 'anthropic':
         # Empty settings simulates post-strip state
-        result = anthropic_support_tool_forcing('test-model', AnthropicModelProfile(), {}, params)
+        result = request_allows_tool_forcing('test-model', AnthropicModelProfile(), {}, params)
     else:
         profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
         result = bedrock_support_tool_forcing('test-model', profile, {}, params)
@@ -1106,7 +1101,9 @@ async def test_anthropic_single_tool_forcing_under_unified_thinking(
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
 NO_FORCING_ANTHROPIC_MODELS = [
     'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-mythos-5-1',
+    'claude-mythos-5-2',
 ]
 
 

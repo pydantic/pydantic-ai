@@ -155,7 +155,7 @@ GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
 
 
-GuardrailDirection: TypeAlias = Literal['input', 'output', 'tool args', 'tool result']
+GuardrailDirection: TypeAlias = Literal['input', 'output', 'stream', 'tool args', 'tool result']
 """The edge of the run where a guardrail made its decision."""
 
 

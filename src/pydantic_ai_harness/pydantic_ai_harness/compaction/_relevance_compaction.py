@@ -23,7 +23,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
@@ -180,7 +180,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             capabilities=[
                 RelevanceCompaction(
                     'system-one:nimble',
-                    summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5', max_messages=1),
+                    summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5'),
                     max_fraction=0.8,
                 )
             ],
@@ -255,7 +255,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     """Insert a deterministic note after the head of the history saying how much was summarized or dropped."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional token counter; defaults to the characters-per-token heuristic."""
+    """Optional token counter; defaults to the built-in text estimate."""
 
     id: str | None = 'relevance_compaction'
     """Stable identity for durable operations; two on one agent merge into one."""
@@ -579,14 +579,15 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             nonlocal error
             try:
                 async with gate:
-                    result = await self._judge_agent.run(
-                        _judge_prompt(task, context, steps[index]),
-                        conversation_id=ctx.conversation_id,
-                        usage=usage,
-                        # The run's own limits are checked around the whole set; without this, the shared
-                        # usage would hit `Agent.run`'s default 50-request limit on a long history.
-                        usage_limits=UsageLimits(request_limit=None),
-                    )
+                    with second_model_prompt():
+                        result = await self._judge_agent.run(
+                            _judge_prompt(task, context, steps[index]),
+                            conversation_id=ctx.conversation_id,
+                            usage=usage,
+                            # The run's own limits are checked around the whole set; without this, the shared
+                            # usage would hit `Agent.run`'s default 50-request limit on a long history.
+                            usage_limits=UsageLimits(request_limit=None),
+                        )
             except Exception as exc:
                 # Stop the other requests and raise this error itself, not an exception group around it.
                 error = error or exc

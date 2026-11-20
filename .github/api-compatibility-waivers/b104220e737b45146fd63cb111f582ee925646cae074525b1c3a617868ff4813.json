@@ -1,5 +1,0 @@
-{
-  "against": "v2.66.0",
-  "reason": "`LatestAnthropicModelNames` lists curated ids instead of the SDK `ModelParam` union (`Literal[...] | str`); `AnthropicModelName` keeps the `str` arm.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12817"
-}

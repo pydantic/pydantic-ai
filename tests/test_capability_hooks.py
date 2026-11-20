@@ -71,9 +71,10 @@ from pydantic_ai.result import FinalResult
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -91,7 +92,6 @@ from .continuation_utils import ScriptedContinuationModel, StreamSegment, script
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-READINESS_WAIT_TIMEOUT = 10
 
 pytestmark = []
 
@@ -2991,6 +2991,7 @@ class TestAfterToolValidateOnDeferral:
                     ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
                 ],
                 metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'args_validator'}},
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         )
         assert cap.seen == snapshot([{'x': 0}])
@@ -3052,9 +3053,9 @@ class TestAfterToolValidateOnDeferral:
     async def test_deferral_carries_the_hooks_args(self):
         """A deferred call carries `after_tool_validate`'s output — what a non-deferred call would use.
 
-        `ValidatedToolCall.validated_args` has no public observable on the deferral path (the request
-        holds the model's original `ToolCallPart`, and resuming re-validates from it), so the
-        contract is pinned directly on the tool manager.
+        Pinned on the tool manager for a deferral the `args_validator` raises. A run makes it observable as
+        `DeferredToolRequests.validated_args`, which `tests/test_deferred_validated_args.py` covers for calls
+        deferred by their tool's kind and by their toolset.
         """
         toolset = FunctionToolset[None]()
 
@@ -3130,6 +3131,9 @@ class DeferringHookCap(AbstractCapability[Any]):
         return result
 
 
+_X_INT_SCHEMA: dict[str, Any] = {'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']}
+
+
 class TestToolHookDeferrals:
     """A tool call may only be deferred once its arguments are known to be valid.
 
@@ -3173,6 +3177,91 @@ class TestToolHookDeferrals:
         assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
         assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
         assert executed == []
+
+    @pytest.mark.parametrize(
+        ('kind', 'exc_type'),
+        [('unapproved', ApprovalRequired), ('unapproved', CallDeferred), ('external', CallDeferred)],
+    )
+    @pytest.mark.parametrize('where', ['after_tool_validate', 'wrap_tool_validate_after'])
+    async def test_validate_hook_deferral_overrides_tool_kind(
+        self, where: str, kind: str, exc_type: type[ApprovalRequired] | type[CallDeferred]
+    ):
+        """A tool deferred by its kind is routed by the deferral validation raised, which keeps its metadata."""
+        toolset: AbstractToolset[Any]
+        if kind == 'external':
+            toolset = ExternalToolset([ToolDefinition(name='my_tool', parameters_json_schema=_X_INT_SCHEMA)])
+        else:
+            toolset = FunctionToolset()
+
+            @toolset.tool_plain(requires_approval=True)
+            def my_tool(x: int) -> int:  # pragma: no cover
+                return x
+
+        agent = Agent(
+            TestModel(),
+            toolsets=[toolset],
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where, exc_type=exc_type)],
+        )
+
+        requests = (await agent.run('call the tool')).output
+        assert isinstance(requests, DeferredToolRequests)
+        deferred, other = (
+            (requests.approvals, requests.calls)
+            if exc_type is ApprovalRequired
+            else (requests.calls, requests.approvals)
+        )
+        assert [call.tool_name for call in deferred] == ['my_tool']
+        assert other == []
+        assert requests.metadata == {deferred[0].tool_call_id: {'from': where}}
+
+    @pytest.mark.parametrize('where', ['after_tool_validate', 'wrap_tool_validate_after'])
+    async def test_validate_hook_cannot_require_approval_for_external_tool(self, where: str):
+        """An external tool's call is executed outside the run, so it can't be approved: requesting it is a usage error.
+
+        Filing the call with the run's other external calls would hand it to their executor unapproved.
+        """
+        agent = Agent(
+            TestModel(),
+            toolsets=[ExternalToolset([ToolDefinition(name='external_tool', parameters_json_schema=_X_INT_SCHEMA)])],
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferringHookCap(where=where)],
+        )
+
+        with pytest.raises(UserError) as exc_info:
+            await agent.run('call the tool')
+        assert str(exc_info.value) == snapshot(
+            "`ApprovalRequired` was raised while validating a call to external tool 'external_tool', but an external tool call is executed outside the agent run, so the run cannot approve it. Raise `CallDeferred` instead to pass `metadata` to the code that executes the call, and approve it there."
+        )
+
+    async def test_handle_call_cannot_require_approval_for_external_tool(self):
+        """`ToolManager.handle_call`, which dispatches calls from inside a tool, refuses the approval the same way."""
+
+        @dataclass
+        class ExternalApprovalCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                if tool_def.kind == 'external':
+                    raise ApprovalRequired()
+                return args
+
+        def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('outer_tool', {}, tool_call_id='outer')])
+
+        agent = Agent(
+            FunctionModel(llm),
+            toolsets=[ExternalToolset([ToolDefinition(name='external_tool', parameters_json_schema=_X_INT_SCHEMA)])],
+            capabilities=[ExternalApprovalCap()],
+        )
+
+        @agent.tool
+        async def outer_tool(ctx: RunContext[Any]) -> Any:
+            assert ctx.tool_manager is not None
+            return await ctx.tool_manager.handle_call(ToolCallPart('external_tool', {'x': 1}, tool_call_id='inner'))
+
+        with pytest.raises(UserError, match="external tool 'external_tool'"):
+            await agent.run('call the tool')
 
     @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
     @pytest.mark.parametrize('where', ['before_tool_validate', 'wrap_tool_validate_before'])
@@ -3250,6 +3339,7 @@ class TestToolHookDeferrals:
             DeferredToolRequests(
                 calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
                 metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'after_tool_validate'}},
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         )
 
@@ -3696,7 +3786,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
-                    usage=RequestUsage(input_tokens=76, output_tokens=4),
+                    usage=RequestUsage(input_tokens=78, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
@@ -4098,7 +4188,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
-                    usage=RequestUsage(input_tokens=73, output_tokens=4),
+                    usage=RequestUsage(input_tokens=75, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
@@ -4191,7 +4281,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],
-                    usage=RequestUsage(input_tokens=75, output_tokens=2),
+                    usage=RequestUsage(input_tokens=77, output_tokens=2),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),

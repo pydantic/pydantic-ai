@@ -3,12 +3,13 @@
 from __future__ import annotations as _annotations
 
 import base64
+import ntpath
 import posixpath
 import shlex
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from typing import cast
+from typing import Protocol, cast
 
 import anyio
 from opentelemetry.trace import INVALID_SPAN, Span
@@ -25,17 +26,43 @@ from .protocol import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsPlatform,
     SupportsRealpath,
+    SupportsRunInDirectory,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceOutputLimitError,
+    WorkspacePlatform,
     WorkspaceRef,
     validate_timeout,
 )
 from .unavailable import UnavailableWorkspace
 
-__all__ = ('Workspace', 'WrapperWorkspace')
+__all__ = ('Workspace', 'WorkspacePaths', 'WrapperWorkspace')
+
+
+class WorkspacePaths(Protocol):
+    """The path functions for a workspace's paths: `posixpath`, or `ntpath` on a `'windows'` workspace."""
+
+    @property
+    def sep(self) -> str: ...
+
+    def isabs(self, s: str, /) -> bool: ...
+
+    def join(self, a: str, /, *paths: str) -> str: ...
+
+    def normpath(self, path: str, /) -> str: ...
+
+    def normcase(self, s: str, /) -> str: ...
+
+    def relpath(self, path: str, start: str | None = None, /) -> str: ...
+
+    def dirname(self, p: str, /) -> str: ...
+
+    def basename(self, p: str, /) -> str: ...
+
+    def splitdrive(self, p: str, /) -> tuple[str, str]: ...
 
 
 _SHELL_READ_CHUNK_BYTES = 64 * 1024
@@ -435,8 +462,9 @@ class Workspace(WorkspaceBackend):
                 others: dict[str, Authority] = {
                     other: other_level for other, other_level in written.items() if other != key
                 }
-                in_workspace = any(is_within(key, zone) for zone in (root, *others))
-                cap = layer_authority(key, (level, others)) if in_workspace else key_level
+                sep = self.paths.sep
+                in_workspace = any(is_within(key, zone, sep=sep) for zone in (root, *others))
+                cap = layer_authority(key, (level, others), sep=sep) if in_workspace else key_level
                 resolved.append((real_key, lowest_authority((key_level, cap))))
         return merge_path_authority(resolved)
 
@@ -464,21 +492,25 @@ class Workspace(WorkspaceBackend):
             layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
         zones = [root, *(key for _, path_authority in layers for key in path_authority)]
 
+        paths = self.paths
         written = await self.resolve(path)
         target = await self.realpath(written)
-        if not any(is_within(target, zone) for zone in zones):
+        if not any(is_within(target, zone, sep=paths.sep) for zone in zones):
             return 'none'
         locations = [target]
         if target != written:
             # A symlink is on the way: walk the path to find each link, and count where it is, not only where it
             # leads. A link outside the workspace, such as a system directory above it, isn't the workspace's.
-            parent = '/'
-            for part in written.split('/')[1:]:
-                location = posixpath.join(parent, part)
+            drive, rest = paths.splitdrive(written)
+            parent = drive + paths.sep
+            for part in rest.split(paths.sep)[1:]:
+                location = paths.join(parent, part)
                 parent = await self.realpath(location)
-                if parent != location and any(is_within(location, zone) for zone in zones):
+                if parent != location and any(is_within(location, zone, sep=paths.sep) for zone in zones):
                     locations.append(location)
-        return lowest_authority(layer_authority(location, layer) for location in locations for layer in layers)
+        return lowest_authority(
+            layer_authority(location, layer, sep=paths.sep) for location in locations for layer in layers
+        )
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
@@ -505,6 +537,19 @@ class Workspace(WorkspaceBackend):
     def ref(self) -> WorkspaceRef | None:
         """The environment's [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], `None` until it exists."""
         return self._backend.ref
+
+    @property
+    def platform(self) -> WorkspacePlatform:
+        """The backend's [shell and path syntax][pydantic_ai.workspaces.WorkspacePlatform]; `'posix'` unless it says otherwise."""
+        backend = self._backend
+        if isinstance(backend, Workspace):
+            return backend.platform
+        return backend.workspace_platform if isinstance(backend, SupportsPlatform) else 'posix'
+
+    @property
+    def paths(self) -> WorkspacePaths:
+        """The path functions for this workspace's paths: `ntpath` on a `'windows'` workspace, else `posixpath`."""
+        return ntpath if self.platform == 'windows' else posixpath
 
     @property
     def _filesystem(self) -> SupportsFilesystem:
@@ -544,10 +589,12 @@ class Workspace(WorkspaceBackend):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
-        """Run a command in the working directory and wait for it.
+        """Run a command and wait for it.
 
-        To start elsewhere, prefix a shell command with `cd <shlex-quoted dir> && `.
+        It starts in `cwd`, resolved like file paths, or the working directory by default. A missing `cwd`
+        raises `FileNotFoundError`, and a file `NotADirectoryError`.
         There is no default `timeout`. Raises `UserError` if the backend can't run commands.
         """
         validate_timeout(timeout)
@@ -559,9 +606,54 @@ class Workspace(WorkspaceBackend):
             raise UserError('This workspace does not support command execution.')
         with self._operation('run') as span:
             set_command(span, command)
-            result = await backend.run(command, shell=shell, env=env, timeout=timeout)
+            result = await self._run_from(backend, command, shell=shell, env=env, timeout=timeout, cwd=cwd)
             span.set_attribute('process.exit.code', result.exit_code)
             return result
+
+    async def _run_from(
+        self,
+        backend: SupportsCommands,
+        command: WorkspaceCommand,
+        *,
+        shell: bool,
+        env: Mapping[str, str] | None,
+        timeout: float | None,
+        cwd: str | None,
+    ) -> CommandResult:
+        """Run `command` on `backend`, starting in `cwd` when one is given."""
+        if cwd is None:
+            return await backend.run(command, shell=shell, env=env, timeout=timeout)
+        if isinstance(backend, Workspace):
+            # Passed on, so wrappers (durable execution, sandboxes) see it.
+            return await backend.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
+        if isinstance(backend, SupportsRunInDirectory):
+            directory = await self._start_dir(cwd, command, shell=shell)
+            return await backend.run_in_directory(command, cwd=directory, shell=shell, env=env, timeout=timeout)
+        if self.platform == 'windows':
+            raise UserError(
+                "A `'windows'` workspace backend must implement `SupportsRunInDirectory` to run a command in a "
+                'directory: there is no `sh` to change directory with.'
+            )
+        return await backend.run(
+            await self._command_in(cwd, command, shell=shell), shell=shell, env=env, timeout=timeout
+        )
+
+    async def _start_dir(self, cwd: str, command: WorkspaceCommand, *, shell: bool) -> str:
+        """`cwd` resolved, once it is known to be a directory."""
+        if isinstance(command, str) != shell:
+            # Checked before the directory, so a mismatch is a `TypeError`, as without `cwd`.
+            raise TypeError('a string command requires `shell=True`, and an argv sequence `shell=False`')
+        cwd = await self.resolve(cwd)
+        if not (await self.stat(cwd)).is_dir:
+            raise NotADirectoryError(cwd)
+        return cwd
+
+    async def _command_in(self, cwd: str, command: WorkspaceCommand, *, shell: bool) -> WorkspaceCommand:
+        """`command` changed to start in `cwd`, through the shell, so it works on any backend."""
+        cwd = await self._start_dir(cwd, command, shell=shell)
+        if isinstance(command, str):
+            return f'cd -- {shlex.quote(cwd)} || exit\n{command}'
+        return ['/bin/sh', '-c', 'cd -- "$1" || exit; shift; exec "$@"', 'sh', cwd, *command]
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""
@@ -576,11 +668,20 @@ class Workspace(WorkspaceBackend):
         Symlinks are not followed and `..` can escape `base`, so this confines nothing; use
         [`realpath`][pydantic_ai.workspaces.Workspace.realpath] to learn where a path actually leads.
         """
-        if base is not None and not posixpath.isabs(base):
+        paths = self.paths
+        if base is not None and not self._is_absolute(base):
             raise ValueError(f'base must be an absolute path, got {base!r}')
-        if posixpath.isabs(path):
-            return posixpath.normpath(path)
-        return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
+        if self._is_absolute(path):
+            return paths.normpath(path)
+        return paths.normpath(paths.join(base or await self.working_dir(), path))
+
+    def _is_absolute(self, path: str) -> bool:
+        r"""Whether `path` names a location without the working directory: on Windows, with its drive.
+
+        `\x` is relative to the working directory's drive there, which `ntpath.join` keeps.
+        """
+        paths = self.paths
+        return paths.isabs(path) and (self.platform == 'posix' or paths.splitdrive(path)[0] != '')
 
     async def read_bytes(self, path: str) -> bytes:
         """Read a file's contents as bytes."""
@@ -633,16 +734,17 @@ class Workspace(WorkspaceBackend):
         `realpath(await ws.resolve(path))` names the file they open.
         """
         with self._operation('realpath') as span:
-            if not posixpath.isabs(path):
+            paths = self.paths
+            if not self._is_absolute(path):
                 # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
-                path = posixpath.join(await self.working_dir(), path)
+                path = paths.join(await self.working_dir(), path)
             set_content_attribute(current_run_telemetry(), span, 'file.path', path)
             backend = self._backend
             if isinstance(backend, SupportsRealpath):
                 return await backend.realpath(path)
             if isinstance(backend, SupportsCommands):
                 return await _ShellFilesystem(backend).realpath(path)
-            return posixpath.normpath(path)
+            return paths.normpath(path)
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""

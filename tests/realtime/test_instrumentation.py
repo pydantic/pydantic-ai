@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -42,16 +43,21 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    OperatorSource,
+    OperatorText,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -436,6 +442,42 @@ def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentatio
 
 
 # --- tool spans: owned by the `Instrumentation` capability via `Agent.realtime_session` ----------
+
+
+@dataclass(kw_only=True)
+class _SeededNudgePart(InstructionCapabilityPart, namespace='test_realtime_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _SeededPagePart(DataCapabilityPart, namespace='test_realtime_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_seeded_capability_parts_honor_include_content(include_content: bool) -> None:
+    """Capability parts in seeded history reach the session span's `pydantic_ai.all_messages` only with content on."""
+    settings, exporter = _settings(include_content=include_content)
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Check the page.'),
+                _SeededNudgePart(content=OperatorText('SENTINEL-capability-instruction'), source=OperatorSource()),
+                _SeededPagePart(content='SENTINEL-capability-data', source=ToolResultSource(tool_name='fetch')),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Done.')]),
+    ]
+    agent: Agent[None, str] = Agent()
+    agent.instrument = settings
+    async with agent.realtime(_Model(_Connection([ResponseDone()])), message_history=history).session() as session:
+        _ = [e async for e in session]
+
+    [session_span] = [s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent']
+    exported = json.dumps(dict(session_span.attributes or {}), default=str)
+    assert 'pydantic_ai.all_messages' in exported
+    for sentinel in ('SENTINEL-capability-instruction', 'SENTINEL-capability-data'):
+        assert (sentinel in exported) is include_content
 
 
 async def test_nested_agent_run_nests_under_session_span() -> None:
