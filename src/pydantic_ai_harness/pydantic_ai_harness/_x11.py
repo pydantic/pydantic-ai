@@ -244,6 +244,9 @@ _DESKTOP_PROGRAMS = 'fluxbox tint2 xterm'
 """The desktop's window manager, panel and terminal, each in the Debian and Ubuntu package of the same name. `xprop`,
 which tells when the window manager is up, is in `x11-utils`."""
 
+DESKTOP_PACKAGES = ('xvfb', *_PACKAGES.split(), *_DESKTOP_PROGRAMS.split())
+"""Every Debian and Ubuntu package the desktop needs, for a sandbox that builds them into its image."""
+
 _DESKTOP_LOG = '/tmp/pydantic-ai-desktop.log'
 """Where the desktop's install and its programs write, so a desktop that didn't come up says why."""
 
