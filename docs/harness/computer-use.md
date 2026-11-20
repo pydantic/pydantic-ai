@@ -102,8 +102,7 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 Some providers flag an action for a person to confirm, and give their reason in the call's
 [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation]. `ComputerUse` raises `ApprovalRequired` for
 such a call without a hook, with the reason in the request's `metadata` as `{'reason': ...}`. Once you approve it, its
-result has `confirmed` set, so the provider is told a person approved it, even if the call then fails before any action
-runs.
+result has `confirmed` set, so the provider is told a person approved it.
 
 ## Screen size
 
