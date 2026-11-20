@@ -462,16 +462,24 @@ def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fiel
         store.load()
 
 
-@pytest.mark.parametrize('saved', ['false', 'true'])
-def test_session_naming_is_on_by_default_and_keeps_saved_choices(tmp_path: Path, saved: str) -> None:
-    """Sessions are named unless a user turned naming off; a choice saved while it was opt-in still holds."""
+def test_session_naming_keeps_saved_choices(tmp_path: Path) -> None:
+    """A user who turned naming on while it was opt-in keeps it on."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'true')")
+    assert SettingsStore(path).load().session_namer is True
+
+
+def test_session_naming_is_on_by_default_unless_turned_off(tmp_path: Path) -> None:
+    """Naming is on again by default (#13748 had made it opt-in); a saved `false` still turns it off."""
     assert Settings().session_namer is True
     path = tmp_path / 'config.db'
     store = SettingsStore(path)
     assert store.load().session_namer is True
     with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute("INSERT INTO settings VALUES ('sessions.naming', ?)", (saved,))
-    assert SettingsStore(path).load().session_namer is (saved == 'true')
+        connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'false')")
+    assert SettingsStore(path).load().session_namer is False
     store.reset('sessions.naming')
     assert SettingsStore(path).load().session_namer is True
 

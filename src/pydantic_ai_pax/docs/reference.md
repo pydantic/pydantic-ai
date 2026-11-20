@@ -2745,7 +2745,8 @@ worker.
 Naming is on by default. Turn it off to make no naming requests, and sessions
 keep their fallback titles. It uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider and incurs additional usage. It has no tools and does not
+that model's provider, including those of sessions held with another model or
+in another workspace, and incurs additional usage. It has no tools and does not
 inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
 results leave the existing name usable and do not interrupt foreground work.
 `/usage` and the browser preview show persisted naming token counts separately;

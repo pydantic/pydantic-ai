@@ -157,6 +157,8 @@ Messages, tool arguments, results, files, and provider details can contain secre
 
 Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it finds a Logfire credential or OTLP exporter configuration, including in the environment, leaves prompts, results, and files out unless `include_content` is on, and traces every agent in the process while loaded.
 
+CLAI 2's background session naming is also on by default: it sends excerpts of saved conversations to the current model's provider, or `sessions.naming_model`'s, and opening `/resume` queues sessions from every workspace, so a conversation held with a local model can reach a hosted one. `sessions.naming false` turns it off.
+
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 
 Configuration also carries secrets. Request settings such as extra headers and bodies, native-tool credentials, and identifiers derived from a URL can hold credentials, because a URL can carry one in its user info, path or query. Keep them out of traces, frontend events, and durable activity names. A credential must reach only the service it was issued for. A provider's `base_url` is part of that service: the provider sends its credentials there, OAuth subscription tokens included, and the Codex and ChatGPT providers inject theirs only over HTTPS and only to the `base_url` origin (host and port).
