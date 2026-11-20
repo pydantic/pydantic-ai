@@ -38,14 +38,12 @@ async def test_a_reasoning_model_has_room_to_think_before_naming() -> None:
     async def reasoning_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         cap = (info.model_settings or {}).get('max_tokens')
         caps.append(cap)
-        if cap is None or cap < 2000:
-            # The whole budget went on reasoning, as GLM-5.3 did with 250 tokens.
-            return ModelResponse(parts=[ThinkingPart('Considering the conversation...')], finish_reason='length')
+        # It reasons for about 2000 tokens; a smaller cap leaves no answer, as GLM-5.3 had with 250.
+        answered = cap is not None and cap >= 2000
+        title = [ToolCallPart(info.output_tools[0].name, {'title': 'Greet the user'})] if answered else []
         return ModelResponse(
-            parts=[
-                ThinkingPart('Considering the conversation...'),
-                ToolCallPart(info.output_tools[0].name, {'title': 'Greet the user'}),
-            ]
+            parts=[ThinkingPart('Considering the conversation...'), *title],
+            finish_reason='stop' if answered else 'length',
         )
 
     result = await generate_name(model=FunctionModel(reasoning_model), prompt='Current conversation tail:\nuser: hi')
