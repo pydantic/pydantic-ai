@@ -77,13 +77,6 @@ def _anthropic(name: str, client: httpx.AsyncClient) -> Model:
     return AnthropicModel(name, provider=AnthropicProvider(api_key='test', http_client=client))
 
 
-def _google(name: str, client: httpx.AsyncClient) -> Model:
-    from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
-
-    return GoogleModel(name, provider=GoogleProvider(api_key='test', http_client=client))
-
-
 def _openrouter(name: str, client: httpx.AsyncClient) -> Model:
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -106,11 +99,6 @@ def _anthropic_effort(body: dict[str, JsonValue]) -> JsonValue:
     return config.get('effort') if isinstance(config, dict) else None
 
 
-def _google_thinking(body: dict[str, JsonValue]) -> JsonValue:
-    config = body.get('generationConfig')
-    return config.get('thinkingConfig') if isinstance(config, dict) else None
-
-
 @pytest.mark.parametrize(
     ('build', 'name', 'read', 'least'),
     [
@@ -118,8 +106,6 @@ def _google_thinking(body: dict[str, JsonValue]) -> JsonValue:
         pytest.param(_openai_responses, 'gpt-5', _effort, 'minimal', id='openai-responses-minimal'),
         pytest.param(_openai_chat, 'o3-mini', _chat_effort, 'low', id='openai-chat'),
         pytest.param(_anthropic, 'claude-fable-5-1', _anthropic_effort, 'low', id='anthropic-always-thinks'),
-        pytest.param(_google, 'gemini-2.5-flash', _google_thinking, {'thinking_budget': 0}, id='google-budget'),
-        pytest.param(_google, 'gemini-3-pro-preview', _google_thinking, {'thinking_level': 'LOW'}, id='google-level'),
         pytest.param(_openrouter, 'openai/gpt-5', _effort, 'low', id='openrouter'),
     ],
 )
@@ -130,6 +116,8 @@ async def test_naming_asks_for_the_least_reasoning_each_provider_offers(
     least: JsonValue,
 ) -> None:
     """A title needs no reasoning, so naming spends neither tokens nor time on it, whatever model names it.
+
+    These are the providers whose SDKs Pax installs; core's own tests cover how the others translate `thinking`.
 
     Not a VCR test: what matters is the outgoing request, which a recorded cassette keeps matching after it changes.
     """
