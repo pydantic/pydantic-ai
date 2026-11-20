@@ -481,31 +481,92 @@ class TestCommands:
     async def test_a_stopped_sandbox_that_cannot_be_checked_keeps_the_setup_error(
         self, fake_daytona: FakeDaytona
     ) -> None:
-        # The lookup is inconclusive, so the setup failure decides, and a transient one stays retryable.
+        # The lookup is inconclusive, so the setup failure decides.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.state = daytona.SandboxState.STOPPED
         sandbox.refresh_error = DaytonaConnectionError('control plane down')
-        with pytest.raises(DaytonaError, match=r'^sandbox stopped$'):
+        with pytest.raises(WorkspaceError, match=r'Failed to create session: .* Is the Sandbox started') as exc_info:
             await backend.run(['true'])
+        assert type(exc_info.value) is WorkspaceError
         assert sandbox.start_calls == []
 
     @pytest.mark.parametrize(
-        'state', [daytona.SandboxState.STOPPING, daytona.SandboxState.STOPPED, daytona.SandboxState.PAUSED]
+        ('state', 'operation'),
+        [
+            (daytona.SandboxState.STOPPING, 'run'),
+            (daytona.SandboxState.STOPPED, 'run'),
+            (daytona.SandboxState.STOPPED, 'read_bytes'),
+            (daytona.SandboxState.STOPPED, 'write_bytes'),
+            (daytona.SandboxState.PAUSED, 'run'),
+        ],
     )
     async def test_a_sandbox_stopped_under_a_held_backend_is_started_by_its_next_operation(
-        self, fake_daytona: FakeDaytona, state: daytona.SandboxState
+        self, fake_daytona: FakeDaytona, state: daytona.SandboxState, operation: str
     ) -> None:
         # Daytona stops an idle container and pauses an idle VM. An application such as CLAI keeps one
-        # backend for a whole session, so that backend must start the sandbox again itself.
+        # backend for a whole session, so the operation that finds the sandbox stopped starts it and runs again.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
+        sandbox.files['/data'] = b'kept'
         sandbox.state = state
-        with pytest.raises(WorkspaceUnavailableError, match='was stopped while idle; the next operation starts it'):
+        if operation == 'run':
+            assert (await backend.run(['true'])).exit_code == 0
+            # Only the finished session is deleted: the stopped sandbox had none to delete.
+            assert sandbox.process_delete_calls == 1
+        elif operation == 'read_bytes':
+            assert await backend.read_bytes('/data') == b'kept'
+        else:
+            await backend.write_bytes('/data', b'new')
+            assert sandbox.files['/data'] == b'new'
+        assert len(sandbox.start_calls) == 1
+
+    @pytest.mark.parametrize(
+        ('error', 'expected'),
+        [
+            # Daytona refuses to start a sandbox that is still stopping.
+            (DaytonaConflictError('state change in progress', status_code=409), 'was stopped while idle'),
+            (DaytonaAuthenticationError('expired', status_code=401), 'rejected the credentials'),
+        ],
+    )
+    async def test_a_stopped_sandbox_that_cannot_be_started_now(
+        self, fake_daytona: FakeDaytona, error: Exception, expected: str
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.state = daytona.SandboxState.STOPPED
+        sandbox.start_error = error
+        with pytest.raises(WorkspaceUnavailableError, match=expected):
             await backend.run(['true'])
-        assert sandbox.start_calls == []
+        sandbox.start_error = None
         assert (await backend.run(['true'])).exit_code == 0
-        assert sandbox.start_calls
+
+    # Daytona may have accepted a command whose execute request failed, so neither stop is retried.
+    @pytest.mark.parametrize('stopped_during', ['execute', 'wait'])
+    async def test_a_command_interrupted_by_a_stop_is_not_run_again(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, stopped_during: str
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_hangs = True
+        if stopped_during == 'execute':
+
+            async def stop_then_fail(*args: Any, **kwargs: Any) -> Any:
+                sandbox.state = daytona.SandboxState.STOPPED
+                sandbox.check_running('execute command')
+
+            monkeypatch.setattr(sandbox.process, 'execute_session_command', stop_then_fail)
+        run = asyncio.create_task(backend.run(['sleep', '60']))
+        if stopped_during == 'wait':
+            await sandbox.process_status_polled.wait()
+            sandbox.state = daytona.SandboxState.STOPPED
+        with pytest.raises(WorkspaceUnavailableError, match='interrupted and may have partly run') as exc_info:
+            await run
+        assert 'idle' not in str(exc_info.value)
+        assert len(sandbox.process_sessions) == 1
+        assert sandbox.start_calls == []
+        # The stop ended the session, so no delete is attempted.
+        assert sandbox.process_delete_calls == 0
 
     async def test_session_setup_timeout_is_transient(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
