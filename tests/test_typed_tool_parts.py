@@ -479,6 +479,14 @@ def test_the_parameterized_base_must_match_the_kind() -> None:
         class WrongMetadataReturnPart(ToolReturnPart[LookupResult, ImageResult], kind=metadata_kind):  # pyright: ignore[reportUnusedClass,reportGeneralTypeIssues,reportArgumentType]
             pass
 
+    with pytest.raises(
+        UserError,
+        match=r"NoMetadataReturnPart does not give the metadata type LookupMetadata that its kind 'test\.with-metadata' declares, so its `typed_metadata` would be typed `Any`\. Write `ToolReturnPart\[LookupResult, LookupMetadata\]`",
+    ):
+
+        class NoMetadataReturnPart(ToolReturnPart[LookupResult], kind=metadata_kind):  # pyright: ignore[reportUnusedClass]
+            pass
+
     class AnyCallPart(ToolCallPart[Any], kind=ToolKind('test', 'any-shape')):
         pass
 

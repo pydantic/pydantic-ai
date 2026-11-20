@@ -469,6 +469,8 @@ and rejected requests, including [context window overflows](#context-window-over
 accept a request, credentials or model name the first one rejected, and a model with a larger context window may
 accept an input that overflowed another model's. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
+A model that can't serve the request with a `computer` tool, because it can't see images or the latest screenshot
+is larger than it can see, is always skipped, whatever `fallback_on` says.
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,

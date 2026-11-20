@@ -44,6 +44,7 @@ from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
+from ._computer_use import COMPUTER_KIND_ID, COORDINATE_GRID, SCREENSHOT_MAX_PIXELS, SCREENSHOT_MAX_SIDE
 from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 
 __all__ = (
@@ -484,22 +485,8 @@ class ComputerResult(TypedDict):
     actions as the ones that ran."""
 
 
-_COORDINATE_GRID = 'coordinate_grid'
-"""The `provider_details` key where the agent records the size of the grid a call's positions are on."""
-
-_SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
-"""The `provider_details` key where the agent records the longest screenshot side the call's model can see."""
-
-_SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
-"""The `provider_details` key where the agent records the most screenshot pixels the call's model can see."""
-
-
-_LABEL_KEYS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
-"""The `provider_details` keys the agent adds to a `computer` call. The provider never sent or saw them."""
-
-
 def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
-    """The value the agent recorded on `part` under `key`, or `None` unless it is an `int` of at least `minimum`."""
+    """The value the model recorded on `part` under `key`, or `None` unless it is an `int` of at least `minimum`."""
     value = (part.provider_details or {}).get(key)
     return value if type(value) is int and value >= minimum else None
 
@@ -511,6 +498,8 @@ COMPUTER_KIND = ToolKind(
 
 When a request includes a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], the provider's own computer tool is
 sent to the model in place of the tool of this kind. The tool of this kind still runs the calls."""
+# `_computer_use` matches tools by this id without importing this module.
+assert COMPUTER_KIND.id == COMPUTER_KIND_ID
 
 
 class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
@@ -526,32 +515,31 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def coordinate_grid(self) -> int | None:
         """The size of the grid the call's positions are on, such as `1000` for positions from 0 to 999.
 
-        `None` means the positions are pixels. The agent copies the value from the `computer_use_coordinate_grid`
-        setting in the profile of the model that made the call, and stores it in the call's `provider_details`. A
+        `None` means the positions are pixels. The model that made the call copies the value from the
+        `computer_use_coordinate_grid` setting in its profile, and stores it in the call's `provider_details`. A
         history that lost `provider_details`, such as one a UI rebuilt, gives `None`.
         """
-        return _label(self, _COORDINATE_GRID, minimum=2)
+        return _label(self, COORDINATE_GRID, minimum=2)
 
     @property
     def screenshot_max_side(self) -> int | None:
         """The longest screenshot side, in pixels, that the model that made the call can see. `None` means no limit.
 
-        The agent copies the value from the `computer_use_screenshot_max_side` setting in the model's profile. A
-        computer use capability reads it to refuse a screen the model can't see before the call does anything. For a
-        call made through a `FallbackModel`, it is the smallest limit of its models. A history a UI rebuilt gives
-        `None`.
+        The model copies the value from the `computer_use_screenshot_max_side` setting in its profile. A computer use
+        capability reads it to refuse a screen the model can't see before the call does anything. A history a UI
+        rebuilt gives `None`.
         """
-        return _label(self, _SCREENSHOT_MAX_SIDE)
+        return _label(self, SCREENSHOT_MAX_SIDE)
 
     @property
     def screenshot_max_pixels(self) -> int | None:
         """The most pixels (width times height) in a screenshot that the model that made the call can see.
 
-        `None` means no limit. The agent copies the value from the `computer_use_screenshot_max_pixels` setting in the
-        model's profile, the same way as
+        `None` means no limit. The model copies the value from the `computer_use_screenshot_max_pixels` setting in its
+        profile, the same way as
         [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
         """
-        return _label(self, _SCREENSHOT_MAX_PIXELS)
+        return _label(self, SCREENSHOT_MAX_PIXELS)
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
