@@ -1247,6 +1247,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
             cls.batch_decode = restoring_batch_decode
 
+    def _refuse_unservable_computer_request(
+        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Refuse a request with a `computer` tool that this model can't serve, before anything is sent.
+
+        A model that hands its requests to other models, like `FallbackModel`, leaves it to them.
+        """
+        if not self._answers_requests_itself:
+            return
+        try:
+            profile = self.profile
+        except NotImplementedError:
+            # A third-party router with no profile of its own, as for `_computer_call_labels`.
+            return
+        refuse_unservable_computer_request(messages, model_request_parameters, profile, self.model_name)
+
     @property
     def _computer_call_labels(self) -> dict[str, int]:
         """The grid and screenshot limits this model labels its `computer` calls with, from its profile."""
@@ -1260,34 +1276,39 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return {}
 
     @classmethod
-    def _label_computer_calls_at_the_model_boundary(cls) -> None:
-        """Have each method of `cls` that returns a model's output label its `computer` calls with the model's limits.
+    def _apply_computer_use_profile_at_the_model_boundary(cls) -> None:
+        """Have each method of `cls` that sends a request refuse one with a `computer` tool the model can't serve.
+
+        And have each method that returns the model's output label its `computer` calls with the model's limits.
 
         Done here, for every model class, so each call records the grid and screenshot limits of the model that made
-        it, which the `computer` tool scales its positions and screenshots by. Under a `FallbackModel`, that's the
-        model that answered.
+        it, which the `computer` tool scales its positions and screenshots by. Under a `FallbackModel` or the
+        `ModelFallback` capability, that's the model that answered, and a model that refuses is a failed attempt the
+        fallback moves on from.
         """
         request = cls.__dict__.get('request')
         if inspect.iscoroutinefunction(request):
 
             @wraps(request)
-            async def labelling_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+            async def computer_use_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                messages, params = _messages_and_parameters(args, kwargs)
+                self._refuse_unservable_computer_request(messages, params)
                 response = await request(self, *args, **kwargs)
                 if labels := self._computer_call_labels:
-                    params = kwargs['model_request_parameters'] if len(args) < 3 else args[2]
                     label_computer_calls(response.parts, computer_tool_names(params), labels)
                 return response
 
-            cls.request = labelling_request
+            cls.request = computer_use_request
 
         request_stream = cls.__dict__.get('request_stream')
         if inspect.isfunction(request_stream):
 
             @wraps(request_stream)
             @asynccontextmanager
-            async def labelling_request_stream(
+            async def computer_use_request_stream(
                 self: Model, *args: Any, **kwargs: Any
             ) -> AsyncGenerator[StreamedResponse, None]:
+                self._refuse_unservable_computer_request(*_messages_and_parameters(args, kwargs))
                 async with request_stream(self, *args, **kwargs) as stream:
                     # A model that hands over another model's stream, like `FallbackModel`, has no labels of its own
                     # and leaves that model's in place.
@@ -1295,7 +1316,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                         stream._parts_manager.computer_call_labels = labels
                     yield stream
 
-            cls.request_stream = labelling_request_stream
+            cls.request_stream = computer_use_request_stream
+
+        batch_encode = cls.__dict__.get('batch_encode')
+        if inspect.iscoroutinefunction(batch_encode):
+
+            @wraps(batch_encode)
+            async def computer_use_batch_encode(self: Model, request: BatchRequest) -> EncodedBatchRequest:
+                # Before the request is encoded, so nothing is submitted for a model that can't serve it.
+                self._refuse_unservable_computer_request(request.messages, request.model_request_parameters)
+                return await batch_encode(self, request)
+
+            cls.batch_encode = computer_use_batch_encode
 
         batch_decode = cls.__dict__.get('batch_decode')
         if inspect.isfunction(batch_decode):
@@ -1360,7 +1392,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
         cls._restore_special_tokens_at_the_model_boundary()
-        cls._label_computer_calls_at_the_model_boundary()
+        cls._apply_computer_use_profile_at_the_model_boundary()
         cls._budget_downloads_at_the_model_boundary()
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
@@ -2149,13 +2181,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 the profile alone can't answer. Omitting it falls back to the adapter's effective mode,
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
-
-        Raises:
-            UserError: The request has a `computer` tool, and this model can't see images or can't see the latest
-                screenshot at its size, as its profile's `computer_use_screenshot_max_side` and
-                `computer_use_screenshot_max_pixels` say.
         """
-        refuse_unservable_computer_request(messages, model_request_parameters, self.profile, self.model_name)
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
@@ -3015,6 +3041,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         )
         parts = [announcement, *first_request.parts]
         return [*messages[:first_request_idx], replace(first_request, parts=parts), *messages[first_request_idx + 1 :]]
+
+
+def _messages_and_parameters(
+    args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[ModelMessage], ModelRequestParameters]:
+    """The messages and parameters of a call to `request` or `request_stream`, however they were passed."""
+    messages = args[0] if args else kwargs['messages']
+    params = args[2] if len(args) > 2 else kwargs['model_request_parameters']
+    return messages, params
 
 
 def _with_framing_announcement(

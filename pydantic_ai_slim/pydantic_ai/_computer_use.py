@@ -2,14 +2,14 @@
 
 A model that points on a grid is told so in the `computer` tool's description. Its `computer` calls are labelled with
 its grid and screenshot limits, so the tool can scale positions to pixels. A request it can't serve, because it can't
-see images or the latest screenshot is larger than it can see, is refused. Each model does this for itself, so under a
-`FallbackModel` the model that answers decides.
+see images or the latest screenshot is larger than it can see, is refused before it's sent. Each model does this for
+itself, so under a fallback the model that answers decides, and a model that refuses is passed over.
 """
 
 from __future__ import annotations as _annotations
 
 import math
-from collections.abc import Container, Iterable, Mapping
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -38,7 +38,8 @@ _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 class UnservableRequestError(UserError):
     """A request with a `computer` tool that the model about to answer it can't serve.
 
-    `FallbackModel` moves on to its next model when one raises this, since another model may be able to serve it.
+    `FallbackModel` and the `ModelFallback` capability move on to their next model when one raises this, whatever
+    their `fallback_on` says, since another model may be able to serve it.
     """
 
 
@@ -138,7 +139,7 @@ def fit_screenshot(size: tuple[int, int], *, max_side: int | None, max_pixels: i
 
 
 def refuse_unservable_computer_request(
-    messages: list[_messages.ModelMessage],
+    messages: Sequence[_messages.ModelMessage],
     params: ModelRequestParameters | None,
     profile: ModelProfile,
     model_name: str,
@@ -147,6 +148,9 @@ def refuse_unservable_computer_request(
 
     Every `computer` call returns a screenshot, so a model that can't see images can't use the tool. A model shown a
     screenshot larger than it can see would see it scaled down and give positions on the smaller image.
+
+    `messages` are the ones about to be sent. A model that takes images but not PNGs gets a note in place of each
+    screenshot, so there is no size to check and it isn't refused for one.
     """
     if params is None or not computer_tool_names(params):
         return
