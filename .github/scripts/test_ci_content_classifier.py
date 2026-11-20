@@ -45,12 +45,17 @@ BenchmarkJob = TypedDict('BenchmarkJob', {'needs': str, 'if': str})
 ConditionalJob = TypedDict('ConditionalJob', {'if': str})
 
 
+class DependentJob(TypedDict, total=False):
+    needs: str | list[str]
+
+
 WORKFLOW_ADAPTER: TypeAdapter[Workflow] = TypeAdapter(Workflow)
 CLASSIFIER_JOB_ADAPTER: TypeAdapter[ClassifierJob] = TypeAdapter(ClassifierJob)
 CHECK_JOB_ADAPTER: TypeAdapter[CheckJob] = TypeAdapter(CheckJob)
 JOB_STEPS_ADAPTER: TypeAdapter[JobSteps] = TypeAdapter(JobSteps)
 BENCHMARK_JOB_ADAPTER: TypeAdapter[BenchmarkJob] = TypeAdapter(BenchmarkJob)
 CONDITIONAL_JOB_ADAPTER: TypeAdapter[ConditionalJob] = TypeAdapter(ConditionalJob)
+DEPENDENT_JOB_ADAPTER: TypeAdapter[DependentJob] = TypeAdapter(DependentJob)
 
 
 def _workflow(path: Path = WORKFLOW) -> Workflow:
@@ -144,7 +149,7 @@ fi
         ([('.github/workflows/AGENTS.md', '')], {'content_only': 'false', 'docs_changed': 'false'}),
         ([('.github/ISSUE_TEMPLATE/bug.md', '')], {'content_only': 'false', 'docs_changed': 'false'}),
         ([('.github/ISSUE_TEMPLATE/bug.yaml', '')], {'content_only': 'false', 'docs_changed': 'false'}),
-        ([('src/pydantic_clai2/AGENTS.md', '')], {'content_only': 'true', 'docs_changed': 'false'}),
+        ([('src/pydantic_ai_pax/AGENTS.md', '')], {'content_only': 'true', 'docs_changed': 'false'}),
         (
             [('docs/agents.md', ''), ('.agents/skills/review/SKILL.md', '')],
             {'content_only': 'true', 'docs_changed': 'true'},
@@ -259,15 +264,15 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
 @pytest.mark.parametrize(
     ('changed_files', 'clai2_changed'),
     [
-        ([('src/pydantic_clai2/pydantic_clai2/ui/prompt/image_input.py', '')], 'true'),
-        ([('tests/clai2/test_image_input.py', '')], 'true'),
+        ([('src/pydantic_ai_pax/pydantic_ai_pax/ui/prompt/image_input.py', '')], 'true'),
+        ([('tests/pax/test_image_input.py', '')], 'true'),
         ([('.github/workflows/ci.yml', '')], 'true'),
         ([('.github/workflows/clai2-web.yml', '')], 'false'),
         ([('.github/scripts/test_ci_content_classifier.py', '')], 'false'),
         ([('.github/scripts/test_agentic_workflow_guard.py', '')], 'false'),
         ([('src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py', '')], 'false'),
         ([('docs/agent.md', '')], 'false'),
-        ([('src/code.py', 'src/pydantic_clai2/pydantic_clai2/code.py')], 'true'),
+        ([('src/code.py', 'src/pydantic_ai_pax/pydantic_ai_pax/code.py')], 'true'),
     ],
 )
 def test_clai2_clipboard_runs_only_for_clai2_changes(
@@ -281,8 +286,8 @@ def test_clai2_clipboard_runs_only_for_clai2_changes(
 @pytest.mark.parametrize(
     ('changed_files', 'expected'),
     [
-        ([('src/pydantic_clai2/web-ui/src/App.tsx', '')], 'true'),
-        ([('tests/clai2/browser/test_web_browser.py', '')], 'true'),
+        ([('src/pydantic_ai_pax/web-ui/src/App.tsx', '')], 'true'),
+        ([('tests/pax/browser/test_web_browser.py', '')], 'true'),
         ([('.github/workflows/ci.yml', '')], 'true'),
         ([('.github/workflows/clai2-web.yml', '')], 'true'),
         ([('.github/actions/build-clai2-web-ui/action.yml', '')], 'true'),
@@ -309,15 +314,15 @@ HARNESS_SOURCE = 'src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py'
     [
         ([(HARNESS_SOURCE, '')], 'true'),
         ([('tests/harness/media/test_media.py', '')], 'true'),
-        ([(HARNESS_SOURCE, ''), ('tests/clai2/test_image_input.py', '')], 'true'),
+        ([(HARNESS_SOURCE, ''), ('tests/pax/test_image_input.py', '')], 'true'),
         ([(HARNESS_SOURCE, ''), ('docs/harness/media.md', '')], 'true'),
         ([(HARNESS_SOURCE, ''), ('src/pydantic_ai_harness/README.md', '')], 'true'),
         ([(HARNESS_SOURCE, ''), ('docs/agent.md', ''), ('AGENTS.md', '')], 'true'),
-        ([('src/pydantic_clai2/pydantic_clai2/code.py', ''), ('README.md', '')], 'true'),
+        ([('src/pydantic_ai_pax/pydantic_ai_pax/code.py', ''), ('README.md', '')], 'true'),
         ([('src/pydantic_ai_harness/pydantic_ai_harness/new.py', HARNESS_SOURCE)], 'true'),
         # The narrower tiers win.
         ([('docs/harness/media.md', '')], 'false'),
-        ([('src/pydantic_clai2/pydantic_clai2/code.py', '')], 'false'),
+        ([('src/pydantic_ai_pax/pydantic_ai_pax/code.py', '')], 'false'),
         # Anything outside the two packages and content reaches the rest of the workspace.
         ([(HARNESS_SOURCE, ''), ('pydantic_ai_slim/pydantic_ai/agent/__init__.py', '')], 'false'),
         ([(HARNESS_SOURCE, ''), ('uv.lock', '')], 'false'),
@@ -432,15 +437,15 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('pyproject.toml', 'true'),
         ('pydantic_ai_slim/pyproject.toml', 'true'),
         ('src/pydantic_ai_harness/pyproject.toml', 'true'),
-        ('src/pydantic_clai2/pyproject.toml', 'true'),
+        ('src/pydantic_ai_pax/pyproject.toml', 'true'),
         ('clai/pyproject.toml', 'true'),
         ('uv.lock', 'true'),
         ('uv.toml', 'true'),
         ('.python-version', 'true'),
         ('requirements-dev.txt', 'true'),
         ('src/pydantic_ai_harness/requirements.in', 'true'),
-        ('src/pydantic_clai2/web-ui/package-lock.json', 'false'),
-        ('src/pydantic_clai2/web-ui/package.json', 'false'),
+        ('src/pydantic_ai_pax/web-ui/package-lock.json', 'false'),
+        ('src/pydantic_ai_pax/web-ui/package.json', 'false'),
         ('src/pydantic_ai_harness/uv.lock', 'true'),
         ('src/pydantic_ai_harness/setup.cfg', 'true'),
         ('tests/harness/pytest.ini', 'true'),
@@ -473,8 +478,8 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('src/pydantic_ai_harness/pydantic_ai_harness/file_system/_capability.py', 'false'),
         ('tests/harness/repo_context/fixtures/AGENTS.md', 'false'),
         ('tests/harness/conftest.py', 'false'),
-        ('src/pydantic_clai2/pydantic_clai2/app.py', 'false'),
-        ('tests/clai2/test_app.py', 'false'),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/app.py', 'false'),
+        ('tests/pax/test_app.py', 'false'),
         ('clai/clai/__init__.py', 'false'),
         ('tests/clai/test_cli.py', 'false'),
     ],
@@ -491,13 +496,13 @@ def test_benchmark_classifier_uses_benchmark_inputs(tmp_path: Path, filename: st
         ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/old.py')], 'true'),
         ([('pydantic_ai_slim/pydantic_ai/new.py', 'docs/old.md')], 'true'),
         ([('src/pydantic_ai_harness/new.py', 'pydantic_evals/pydantic_evals/old.py')], 'true'),
-        ([('pydantic_graph/pydantic_graph/new.py', 'src/pydantic_clai2/old.py')], 'true'),
+        ([('pydantic_graph/pydantic_graph/new.py', 'src/pydantic_ai_pax/old.py')], 'true'),
         ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/models/function.py')], 'true'),
         ([('docs/new.md', 'pydantic_ai_slim/pydantic_ai/providers/openai.py')], 'false'),
         ([('tests/new.py', 'tests/test_tools.py')], 'false'),
         ([('tests/new|name.py', 'tests/conftest.py')], 'true'),
         ([('docs/new.md', 'docs/old.md')], 'false'),
-        ([('src/pydantic_clai2/new.py', 'src/pydantic_ai_harness/old.py')], 'false'),
+        ([('src/pydantic_ai_pax/new.py', 'src/pydantic_ai_harness/old.py')], 'false'),
         ([('docs/guide.md', ''), ('tests/conftest.py', '')], 'true'),
     ],
 )
@@ -711,6 +716,15 @@ def test_aggregate_requires_the_selected_lightweight_job():
     ):
         assert job not in harness_skips
     assert harness_skips <= set(check['needs'])
+
+
+def test_latest_versions_canary_runs_on_tags_without_gating_any_job():
+    jobs = _workflow()['jobs']
+    canary = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['latest-versions-canary'])
+    assert canary['if'] == "startsWith(github.ref, 'refs/tags/')"
+    for name, job in jobs.items():
+        needs = DEPENDENT_JOB_ADAPTER.validate_python(job).get('needs', [])
+        assert 'latest-versions-canary' not in ([needs] if isinstance(needs, str) else needs), name
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():

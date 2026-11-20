@@ -7,7 +7,7 @@ Every `async def` test runs via the anyio pytest plugin automatically (`anyio_mo
 `uv run pytest <test-path> --anyio-backend=trio --record-mode=none` to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
 run affected concurrency tests once per backend. Keep broad Trio runs manual or periodic; do not add a
 second backend to every ordinary CI matrix. The selector does not imply that every test or integration
-already supports Trio. `tests/harness` and `tests/clai2` pin `anyio_backend` to asyncio in their `conftest.py`;
+already supports Trio. `tests/harness` and `tests/pax` pin `anyio_backend` to asyncio in their `conftest.py`;
 don't re-override it per file.
 
 VCR + public-API tests are the default. We test through the public API the way a user would (`Agent(...)`, `agent.run(...)`) against real provider responses recorded as cassettes — provider APIs are the ultimate judge of whether the code is correct when run as intended, and that user-facing correctness is what we care about, not behavior in isolated units.
@@ -18,7 +18,7 @@ Recording cassettes needs provider API keys and isn't trivial, so contributors r
 
 Recorded cassettes also double as a suite-wide prompt-cache prefix regression net. The cache-prefix invariant checks that consecutive requests extend the same serialized provider-cache prefix; tests that deliberately move it through compaction, dynamic tool disclosure, or history rewriting must use `@pytest.mark.moves_cache_prefix(reason=...)` on the test.
 
-`tests/test_history_append_only.py` (core) and `tests/harness/test_history_append_only.py` (Harness) check the same invariant without cassettes, over every capability the packages ship. A new capability is picked up automatically; if it can't be built with its defaults, give it a `FIXTURES` entry (or an `EXEMPT` entry saying why it can't run offline), and, in the Harness file, a `SCENARIOS` entry if it keeps state the conversation should change. A prefix move that is a bug goes in `KNOWN`, linked to the issue or PR that fixes it; a move that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move.
+`tests/test_history_append_only.py` (core) and `tests/harness/test_history_append_only.py` (Harness) check the same invariant without cassettes, over every capability the packages ship. A new capability is picked up automatically; give it a `CASES` entry in `tests/capability_cases.py` (core) or `tests/harness/capability_cases.py` (Harness) (a `build` if it can't be built with its defaults, or `Unbuildable(reason)` if it can't run offline), and, in `tests/harness/test_history_append_only.py`, a `SCENARIOS` entry if it keeps state the conversation should change. A prefix move that is a bug goes in `KNOWN`, linked to the issue or PR that fixes it; a move that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move.
 
 Tests without a cassette get the same check from `fail_function_model_prefix_violations` in `tests/conftest.py`: every request a `FunctionModel` or `TestModel` receives is rendered offline as the body `AnthropicModel` would send, and compared with the previous request of its run, or, for a run's first request, with the latest shorter request that starts with the same message. A test whose conversation moves the prefix on purpose (it changes the tools or instructions between steps, compacts or rewrites history, drops a request-scoped prompt, rewinds a fallback continuation) uses `@pytest.mark.moves_cache_prefix(reason=...)`, preferably with one of the shared reasons in `tests/function_model_prefix.py`. A move the framework shouldn't make is a bug, the counterpart of a `KNOWN` entry above: fix it rather than mark the test, or, when the fix belongs in its own PR, mark it with a reason that links the issue tracking the fix.
 
@@ -177,12 +177,12 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_clai2`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_ai_pax`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
 - List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
-- `pydantic_clai2` keeps its own state in small local files and SQLite databases through synchronous functions. List a module that is only such a store in `BLOCKBUSTER_LOCAL_STORES`, and other such synchronous functions in `BLOCKBUSTER_LOCAL_FILES`, with a reason. Every file and database call beneath a listed function is exempt, including in code it calls, so never list an async function. In `BLOCKBUSTER_LOCAL_FILES`, also never list a function an async function calls on the event loop: offload that call instead. The deliberate exceptions, which async code still calls on the loop, are the store modules, `pydantic_clai2`'s shell construction and plugin loading, since making them async is a separate redesign, and the status row's read of `spinners.json` on each repaint.
+- `pydantic_ai_pax` keeps its own state in small local files and SQLite databases through synchronous functions. List a module that is only such a store in `BLOCKBUSTER_LOCAL_STORES`, and other such synchronous functions in `BLOCKBUSTER_LOCAL_FILES`, with a reason. Every file and database call beneath a listed function is exempt, including in code it calls, so never list an async function. In `BLOCKBUSTER_LOCAL_FILES`, also never list a function an async function calls on the event loop: offload that call instead. The deliberate exceptions, which async code still calls on the loop, are the store modules, `pydantic_ai_pax`'s shell construction and plugin loading, since making them async is a separate redesign, and the status row's read of `spinners.json` on each repaint.
 - A test that calls a synchronous API production code runs in a thread should do the same, with `anyio.to_thread.run_sync`, rather than add an exemption.
 - List a third-party function in `BLOCKBUSTER_LIBRARY_SETUP` only when it does one-time setup I/O whose exact blocking calls change between dependency versions, such as loading credentials. Give a reason; everything else stays call by call in `BLOCKBUSTER_EXEMPTIONS`.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
@@ -304,6 +304,12 @@ The suite runs on every push across a matrix of Python versions and install shap
 - When `PYTEST_TEST_BUDGET_SECONDS` is set (one CI leg sets it; it is off locally), a test whose setup and call together take longer fails unless it is marked `@pytest.mark.slow(reason='...')`. Setup of `module`, `class`, `package` and `session`-scoped fixtures is not counted, so sharing an expensive fixture is never penalized. Reach for the marker only when the duration is inherent to what the test proves; otherwise make the test cheaper with the patterns above
 
 When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget. `tests/cost_guards.py` imports the dependencies in its `SHARED_DEPENDENCIES` before collection, so no module is charged for being the first to import one. When a module is over the budget only because it is the first to import a dependency that other test modules also import at module level, add that dependency there rather than moving the import, which only moves the charge to the next module.
+
+`scripts/check_test_waits.py` runs in pre-commit and CI. It fails a change that adds one of these to a file under `tests/`:
+
+- A module-level `READINESS_WAIT_TIMEOUT`. Import the shared one from `tests/_timeouts.py`
+- A port read from a socket bound to port 0 and used after that socket closes. Take one from `reserve_loopback_port()` in `tests/_ports.py`, or hand the bound socket to the server
+- A wait on the real clock whose delay or timeout is a number written in the test module, or a loop that sleeps. When the real wait is what the test proves, mark the line with `# real-wait: <reason>`, at its end or on the line above
 
 ## Garbage from earlier tests
 
