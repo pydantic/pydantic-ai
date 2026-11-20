@@ -404,7 +404,7 @@ async def test_a_failed_creation_span_names_the_vm(fake_smol: FakeSmol, working_
     )
 
     @agent.tool
-    async def look(ctx: RunContext[Any]) -> str:
+    async def look(ctx: RunContext[object]) -> str:
         with pytest.raises(smol.SmolError, match='image pull failed'):
             await ctx.workspace.exists('notes.txt')
         assert ctx.workspace.ref is None

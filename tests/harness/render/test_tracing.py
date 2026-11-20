@@ -6,7 +6,6 @@ import asyncio
 import contextvars
 import inspect
 from pathlib import Path
-from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -20,7 +19,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.render import RenderWorkflows
 
-from .conftest import RecordingTaskContext, json_round_trip
+from .conftest import P, R, RecordingTaskContext, json_round_trip
 
 
 @pytest.mark.parametrize('instrumentation', ['disabled', 'agent', 'global', 'model'])
@@ -116,12 +115,14 @@ async def test_wire_tracer_flag_uses_only_worker_configuration(instrumented: boo
 class WorkerTaskContext(RecordingTaskContext):
     """Run each child task in a fresh context, as a worker process does, so nothing leaks in from the workflow."""
 
-    async def run(self, task: TaskDefinition[Any, Any], *args: Any, **kwargs: Any) -> Any:
+    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
         self.task_names.append(task.name)
 
-        async def run_task() -> Any:
+        async def run_task() -> R:
             result = task.func(self, *json_round_trip(args), **json_round_trip(kwargs))
-            return await result if inspect.isawaitable(result) else result
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
         return json_round_trip(await asyncio.create_task(run_task(), context=contextvars.Context()))
 
@@ -155,3 +156,31 @@ async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path) ->
         for span in exporter.get_finished_spans()
         if span.name.startswith('workspace ')
     ] == [('workspace working_dir', 'local'), ('workspace exists', 'local')]
+
+
+@pytest.mark.parametrize('worker_content', [False, True])
+async def test_workspace_content_needs_the_workers_content_setting_too(tmp_path: Path, worker_content: bool) -> None:
+    """A serialized context asking for content can't turn it on for a worker configured without it."""
+    from .conftest import TaskBoundary, rewrite_tool_context, run_agent_in_task
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = TestModel(call_tools=['look'])
+    runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
+    agent = Agent(model, name='content-agent', deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), runtime])
+    agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=worker_content)
+
+    @agent.tool
+    async def look(ctx: RunContext[None]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    def rewrite(fields: dict[str, object]) -> None:
+        fields['trace_include_content'] = True
+
+    try:
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_request=rewrite_tool_context(rewrite)))
+        [exists] = [span for span in exporter.get_finished_spans() if span.name == 'workspace exists']
+        assert ('file.path' in (exists.attributes or {})) is worker_content
+    finally:
+        provider.shutdown()

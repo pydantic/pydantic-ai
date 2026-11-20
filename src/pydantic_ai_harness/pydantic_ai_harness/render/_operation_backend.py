@@ -18,6 +18,7 @@ from pydantic_ai.durable_exec import (
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
 )
+from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai_harness._typeguards import is_object_dict
@@ -225,7 +226,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 # Workspace calls trace like the task's tools, with its rebuilt run context's tracer.
                 with (
                     self._runtime.activate(context),
-                    run_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),
+                    run_telemetry_scope(ctx.tracer, include_content=self._include_content(ctx.trace_include_content)),
                 ):
                     value = await operation.handler(params)
             except RenderProtocolError as exc:
@@ -284,6 +285,12 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                     'Put tools needing different settings in separate named toolsets, '
                     'or return False to run a function tool inline.'
                 )
+
+    def _include_content(self, run_includes_content: bool) -> bool:
+        """Whether workspace spans capture content: only if both the run and this worker's instrumentation do."""
+        agent = self._runtime.agent
+        settings = agent_instrumentation_settings(agent) if agent is not None else None
+        return run_includes_content and settings is not None and settings.include_content
 
     def _static_function_toolset(self, toolset_id: str) -> FunctionToolset[RuntimeDepsT] | None:
         """The bound agent's construction-time function toolset with this ID, if there is one."""

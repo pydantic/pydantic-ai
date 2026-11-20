@@ -15,7 +15,6 @@ import socket
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import anyio
 import pytest
@@ -719,7 +718,7 @@ async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
     )
 
     @agent.tool
-    async def greet(ctx: RunContext[Any]) -> str:
+    async def greet(ctx: RunContext[object]) -> str:
         result = await ctx.workspace.run(['printf', '%s', 'hi'], env={'TOKEN': 'SENTINEL-env'})
         await ctx.workspace.write_text('notes.txt', 'hello')
         return result.stdout
