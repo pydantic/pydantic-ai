@@ -136,8 +136,16 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
-def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
-    """Run the CLI and exit."""
+_DEPRECATION = (
+    '`clai` (and its `pai` alias) is deprecated in favour of `pax` and will be removed in Pydantic AI v3. '
+    'Install it with `uv tool install pydantic-ai-pax`; '
+    'https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.'
+)
+
+
+def cli_exit(prog_name: str = 'clai'):
+    """Run the CLI and exit, after pointing at `pax` on stderr."""
+    print(_DEPRECATION, file=sys.stderr)
     sys.exit(cli(prog_name=prog_name))
 
 

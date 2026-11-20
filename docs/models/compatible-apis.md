@@ -4,7 +4,7 @@ description: "Use OpenAI-compatible inference platforms and gateways such as Fir
 
 # Other compatible APIs
 
-Many inference platforms, gateways, and self-hosted servers implement the OpenAI Chat Completions API. Pydantic AI has a provider for each service on this page, so using one works like using OpenAI: set the service's API key environment variable and pass `<provider>:<model>` to [`Agent`][pydantic_ai.Agent]:
+Many inference platforms, gateways, and self-hosted servers implement the OpenAI Chat Completions API. Pydantic AI has a provider for most services on this page, so using one works like using OpenAI: set the service's API key environment variable and pass `<provider>:<model>` to [`Agent`][pydantic_ai.Agent]:
 
 ```python
 from pydantic_ai import Agent
@@ -15,7 +15,7 @@ agent = Agent('fireworks:accounts/fireworks/models/qwq-32b')
 
 The provider sets the endpoint and authentication, and selects a [model profile](#model-profile) that accounts for the service's model names and API behavior. Services with their own guide, such as [DeepSeek](deepseek.md), [OpenRouter](openrouter.md), and [Ollama](ollama.md), are listed in the [provider directory](overview.md#provider-directory).
 
-To connect to an endpoint Pydantic AI has no provider for, see [Other endpoints](#other-endpoints).
+To connect to an endpoint Pydantic AI has no provider for, such as [OCI Generative AI](#oci-generative-ai), see [Other endpoints](#other-endpoints).
 
 ## Install
 
@@ -478,6 +478,33 @@ The name is recorded as the [`provider_name`][pydantic_ai.messages.ModelResponse
 Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways and Hugging Face repo ids use, gets the profile of the model family that vendor or organization makes, whatever its case, so `Qwen/Qwen3.8-27B` and `qwen/qwen3.8-27b` get the same profile and `openai/gpt-oss-120b` gets the gpt-oss one. Any other name gets the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile). A family profile can also leave out a feature the shared profile has: MiniMax documents no `response_format` on its [OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api), so [`NativeOutput`](../output.md#native-output) raises a `UserError` for the MiniMax models the family profile describes, under `minimax/` and `MiniMaxAI/` names, here and on [LiteLLM](#litellm). Use [tool output](../output.md#tool-output) or [prompted output](../output.md#prompted-output) instead.
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
+
+### Oracle Cloud Infrastructure (OCI) Generative AI {#oci-generative-ai}
+
+[OCI Generative AI](https://docs.oracle.com/en-us/iaas/Content/generative-ai/home.htm) serves an [OpenAI-compatible API](https://docs.oracle.com/en-us/iaas/Content/generative-ai/openai-compatible-api.htm) at `https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1`. Create a [Generative AI API key](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) in the region of the model you want to use, and pass it as `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+provider = OpenAICompatibleProvider(
+    'oci',
+    base_url='https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/openai/v1',
+    api_key='your-oci-genai-api-key',
+    profile=lambda model_name: OpenAICompatibleProvider.model_profile(model_name.replace('.', '/', 1)),
+)
+model = OpenAIChatModel('openai.gpt-oss-120b', provider=provider)
+agent = Agent(model)
+...
+```
+
+OCI [names models](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) `<vendor>.<model>`, such as `openai.gpt-oss-120b` or `meta.llama-3.3-70b-instruct`, so without the `profile` function every OCI model gets the profile OpenAI-compatible APIs share. The function gives each model the family profile of its `vendor/model` spelling, as [Gateways that serve several model families](#custom-openai-compatible-provider) explains.
+
+The [API key documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) lists the model families and regions an API key can use. Meta Llama models support only the Chat Completions API, so use [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] for them; xAI Grok and OpenAI gpt-oss models also support the Responses API, which [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] uses.
+
+!!! note "Allow API keys in an IAM policy"
+    An API key works only once an IAM policy lets API keys use Generative AI. To authorize every key in a compartment, create the policy before the key. To limit the policy to one key, create the key first and use its OCID. See [Adding Key Permissions](https://docs.oracle.com/en-us/iaas/Content/generative-ai/add-api-permission.htm) for the policy statements.
 
 ## Non-standard finish reasons
 
