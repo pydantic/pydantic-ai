@@ -16,7 +16,7 @@ from typing import Protocol, TypeVar
 
 from pydantic import TypeAdapter
 
-from ..computer_use import _LABEL_KEYS, COMPUTER_KIND  # pyright: ignore[reportPrivateUsage]
+from .._computer_use import COMPUTER_KIND_ID, LABEL_KEYS
 from ..messages import (
     BaseToolReturnPart,
     ModelMessage,
@@ -82,16 +82,16 @@ def continuation_digest(history: Hasher, parts: Sequence[ModelResponsePart]) -> 
 
 
 def call_as_sent(part: ToolCallPart) -> ToolCallPart:
-    """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
+    """`part` as the server holds it: a base call, without what's added to it after it arrives.
 
-    The digest is taken in `request()`. The graph then promotes the call to its typed subclass and, on a `computer`
-    call, adds its model's grid and screenshot limits to `provider_details`. None of that is sent to the provider.
-    Leaving it in would change the digest, so a later response would never match.
+    A call is promoted to its typed subclass and, on a `computer` call, the model adds its grid and screenshot limits
+    to `provider_details`, before or after the digest is taken. None of that is sent to the provider. Leaving it in
+    would change the digest, so a later response would never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
     details = part.provider_details
-    if part.tool_kind == COMPUTER_KIND.id and details:
-        details = {key: value for key, value in details.items() if key not in _LABEL_KEYS} or None
+    if part.tool_kind == COMPUTER_KIND_ID and details:
+        details = {key: value for key, value in details.items() if key not in LABEL_KEYS} or None
     return ToolCallPart(
         tool_name=part.tool_name,
         args=args,
