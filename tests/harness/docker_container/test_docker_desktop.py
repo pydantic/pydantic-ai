@@ -63,8 +63,10 @@ async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: Fa
 def test_the_desktop_image_installs_every_package_the_desktop_needs() -> None:
     """A Dockerfile can't import `DESKTOP_PACKAGES`, so this keeps its package list in step. It may add more, such as
     Firefox."""
-    (packages,) = re.findall(r'--no-install-recommends(.*?)&&', DESKTOP_DOCKERFILE, re.DOTALL)
-    assert set(DESKTOP_PACKAGES) <= set(packages.replace('\\', ' ').split())
+    installs = re.findall(r'--no-install-recommends(.*?)&&', DESKTOP_DOCKERFILE, re.DOTALL)
+    # With a second install, this test would need to read them all.
+    assert len(installs) == 1, f'expected one `apt-get install --no-install-recommends`, found {len(installs)}'
+    assert set(DESKTOP_PACKAGES) <= set(installs[0].replace('\\', ' ').split())
 
 
 async def test_a_custom_image_is_not_built(docker: FakeDocker, container_dir: Path) -> None:
