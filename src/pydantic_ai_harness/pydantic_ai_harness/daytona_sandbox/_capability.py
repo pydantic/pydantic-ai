@@ -70,8 +70,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     starts a stopped or paused sandbox again."""
 
     allow_internet_access: bool = True
-    """Whether a newly created sandbox may reach the internet. When `False`, Daytona's Tier 3 and 4
-    block everything; lower tiers keep package registries, GitHub, and AI APIs reachable."""
+    """Whether a newly created sandbox may reach the internet. `False` blocks all outbound traffic on every
+    Daytona tier, including package registries, GitHub and AI APIs."""
 
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own.
