@@ -14,7 +14,12 @@ from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    resolve_json_pointer,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
@@ -965,6 +970,36 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert set(result['$defs']) == {'Node', 'Node_root'}
     # The definition the root points at is intact, not overwritten by the root.
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+@pytest.mark.parametrize(
+    'title, expected_ref',
+    [
+        ('Plain', '#/$defs/Plain'),
+        ('In/Out', '#/$defs/In~1Out'),
+        ('a~1b', '#/$defs/a~01b'),
+        ('a~0b', '#/$defs/a~00b'),
+    ],
+)
+def test_inline_defs_recursive_ref_escapes_pointer_tokens_in_root_ref(title: str, expected_ref: str):
+    """The root `$ref` a recursive schema writes escapes `/` and `~` in the schema title per RFC 6901."""
+    schema = {
+        'title': title,
+        'type': 'object',
+        'properties': {'home': {'$ref': '#/$defs/Address'}, 'node': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Address': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            'Node': {
+                'type': 'object',
+                'properties': {'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}}},
+            },
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+    assert result['$ref'] == expected_ref
+    assert resolve_json_pointer(result, result['$ref']) is not None
+    assert result['$defs'][title]['properties']['home']['type'] == 'object'
 
 
 @pytest.mark.parametrize(

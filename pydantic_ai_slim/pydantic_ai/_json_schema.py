@@ -182,6 +182,11 @@ def _json_pointer_path(ref: str) -> str:
     return '.'.join(token.replace('~1', '/').replace('~0', '~') for token in ref.split('/')[1:])
 
 
+def escape_json_pointer_token(token: str) -> str:
+    """Encode an RFC 6901 JSON pointer reference token (~ as ~0, then / as ~1)."""
+    return token.replace('~', '~0').replace('/', '~1')
+
+
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
 
@@ -413,7 +418,7 @@ class JsonSchemaTransformer(ABC):
         # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
         root_ref, root_key = self._root_ref_and_key(defs)
         defs[root_key] = handled
-        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{escape_json_pointer_token(root_key)}'}
 
     def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
         """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.
