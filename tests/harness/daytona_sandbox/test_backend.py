@@ -541,15 +541,25 @@ class TestCommands:
         sandbox.start_error = None
         assert (await backend.run(['true'])).exit_code == 0
 
-    # Daytona may have accepted a command whose execute request failed, so neither stop is retried.
-    @pytest.mark.parametrize('stopped_during', ['execute', 'wait'])
+    # Daytona may have accepted a command whose execute request failed, and a command whose output is
+    # being read has already exited, so none of these stops is retried.
+    @pytest.mark.parametrize('stopped_during', ['execute', 'wait', 'output'])
     async def test_a_command_interrupted_by_a_stop_is_not_run_again(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, stopped_during: str
     ) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_hangs = True
-        if stopped_during == 'execute':
+        sandbox.process_hangs = stopped_during != 'output'
+        if stopped_during == 'output':
+            exec_command = sandbox.process.exec
+
+            async def stop_before_output_read(command: str, *args: Any, **kwargs: Any) -> Any:
+                if command.startswith('for f in '):
+                    sandbox.state = daytona.SandboxState.STOPPED
+                return await exec_command(command, *args, **kwargs)
+
+            monkeypatch.setattr(sandbox.process, 'exec', stop_before_output_read)
+        elif stopped_during == 'execute':
 
             async def stop_then_fail(*args: Any, **kwargs: Any) -> Any:
                 sandbox.state = daytona.SandboxState.STOPPED
