@@ -567,6 +567,61 @@ async def test_the_panel_settings_go_where_tint2_reads_them(
     assert {'button_text = Terminal', 'button_lclick_command = xterm'} <= set(settings)
 
 
+async def _panel_settings(docker: FakeDocker, container_dir: Path, tmp_path: Path) -> list[str]:
+    """Start the desktop on an image with only the fakes and the programs a test added, and read the panel's settings."""
+    config = tmp_path / 'config'
+    docker.set_image_env('XDG_CONFIG_HOME', str(config))
+    _hide_host_programs(docker)
+    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    return (config / 'tint2' / 'tint2rc').read_text().splitlines()
+
+
+async def test_the_panel_has_a_labelled_button_for_the_first_browser_the_image_has(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path
+) -> None:
+    docker.install('chromium')
+    docker.install('firefox-esr')
+
+    settings = await _panel_settings(docker, container_dir, tmp_path)
+
+    assert 'panel_items = PPT' in settings
+    assert [line for line in settings if line.startswith(('button_text', 'button_lclick_command'))] == [
+        'button_text = Terminal',
+        'button_lclick_command = xterm',
+        'button_text = Firefox',
+        'button_lclick_command = firefox-esr',
+    ]
+
+
+async def test_without_a_browser_the_panel_has_only_the_terminal_button(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path
+) -> None:
+    settings = await _panel_settings(docker, container_dir, tmp_path)
+
+    assert 'panel_items = PT' in settings
+    assert [line for line in settings if line.startswith('button_text')] == ['button_text = Terminal']
+
+
+@pytest.mark.parametrize(
+    ('uid', 'namespaces_work', 'command'),
+    [
+        (0, True, 'chromium --no-sandbox'),
+        (1000, False, 'chromium --no-sandbox'),
+        (1000, True, 'chromium'),
+    ],
+)
+async def test_chromium_gets_no_sandbox_only_as_root_or_without_user_namespaces(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path, uid: int, namespaces_work: bool, command: str
+) -> None:
+    docker.install('chromium')
+    docker.install('unshare', exit_code=0 if namespaces_work else 1)
+    docker.run_as(uid)
+
+    settings = await _panel_settings(docker, container_dir, tmp_path)
+
+    assert {'button_text = Chromium', f'button_lclick_command = {command}'} <= set(settings)
+
+
 async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     docker.uninstall('xdotool')

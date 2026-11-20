@@ -69,10 +69,24 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## What the display needs
 
-The agent sees a desktop: a panel along the bottom with a button labelled Terminal, and windows that fill the screen
-above it. The terminal uses a large monospace font so screenshots are easy to read, unless the image has its own
-`~/.Xdefaults` or loads X settings with `xrdb`. There's no web browser unless the image has one or the agent installs
-one with [`Coder`](../coder/).
+The agent sees a desktop: a panel along the bottom with a button labelled Terminal, a button for the image's browser
+if it has one, and windows that fill the screen above it. The terminal uses a large monospace font so screenshots are
+easy to read, unless the image has its own `~/.Xdefaults` or loads X settings with `xrdb`.
+
+The panel shows whatever browser the image has. When the desktop first starts, it looks for `firefox-esr`, `firefox`,
+`chromium`, `chromium-browser` and `google-chrome`, in that order, and adds a button for the first one it finds,
+labelled Firefox, Chromium or Chrome. With none of them, there's no browser button. Chromium and Chrome refuse to start
+as root, or where the user can't make a user namespace, so there they get `--no-sandbox`. That turns off the browser's
+own sandbox, which keeps a web page that breaks into the browser away from the rest of the sandbox.
+
+What each default image has:
+
+- Docker's `DESKTOP_DOCKERFILE`: Firefox.
+- E2B and Daytona: their own XFCE desktop, with Firefox and Chrome on E2B and Chromium on Daytona.
+- boxd: agent-browser's Chrome.
+- Modal, Sprites, Render, BoxLite, smolvm, and OpenSandbox with `debian:bookworm-slim`: no browser.
+
+To add one to your own image, install it in its Dockerfile: `RUN apt-get update && apt-get install -y firefox-esr`.
 
 These programs inside the sandbox make the desktop:
 
@@ -82,7 +96,7 @@ These programs inside the sandbox make the desktop:
 - `scrot` takes screenshots.
 - `setsid` keeps the screen running after the command that started it ends.
 - `fluxbox` gives windows title bars and focuses the one the agent clicks.
-- `tint2` draws the panel, and `xterm` is the terminal its button opens.
+- `tint2` draws the panel, and `xterm` is the terminal its Terminal button opens.
 
 The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. That
 takes 20 to 60 seconds; add them to your image to skip it.

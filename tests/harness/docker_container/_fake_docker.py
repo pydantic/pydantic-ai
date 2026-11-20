@@ -357,6 +357,11 @@ class FakeDocker:
         for program in programs:
             (self.bin_dir / program).rename(self.bin_dir / 'uninstalled' / program)
 
+    def install(self, program: str, *, exit_code: int = 0) -> None:
+        """Put `program` on `PATH`, doing nothing but exiting with `exit_code`."""
+        (self.bin_dir / program).write_text(f'#!/bin/sh\nexit {exit_code}\n')
+        (self.bin_dir / program).chmod(0o755)
+
     def run_as(self, uid: int, *, sudo: bool = False) -> None:
         (self.bin_dir / 'uid').write_text(f'{uid}\n')
         if sudo:

@@ -265,6 +265,34 @@ def _write_unless_present(path: str, *lines: str) -> str:
     return f'[ -e "{path}" ] || printf \'%s\\n\' {shlex.join(lines)} >"{path}"; '
 
 
+_BROWSERS = (
+    ('firefox-esr', 'Firefox'),
+    ('firefox', 'Firefox'),
+    ('chromium', 'Chromium'),
+    ('chromium-browser', 'Chromium'),
+    ('google-chrome', 'Chrome'),
+)
+"""The browsers the panel looks for, first found first, each as its command and the label of its panel button."""
+
+_FIND_BROWSER = (
+    'browser=; for b in '
+    + ' '.join(f'{command}:{label}' for command, label in _BROWSERS)
+    + '; do command -v "${b%%:*}" >/dev/null 2>&1 && { browser=${b%%:*}; browser_label=${b#*:}; break; }; done; '
+    # Chromium and Chrome refuse to start as root without `--no-sandbox`, and print "No usable sandbox!" where an
+    # unprivileged user can't make a user namespace, as on Daytona and under Docker's default seccomp profile.
+    'browser_flag=; case $browser in chrom* | google-chrome) '
+    '{ [ "$(id -u)" = 0 ] || ! unshare -Ur true; } >/dev/null 2>&1 && browser_flag=" --no-sandbox";; esac; '
+)
+"""Sets `browser` to the first of `_BROWSERS` the image has, or to nothing, with its label and any flag it needs."""
+
+_BUTTON_STYLE = (
+    'button_font = Sans 12',
+    'button_font_color = #ffffff 100',
+    'button_padding = 8 4 6',
+    'button_background_id = 2',
+)
+
+
 _DESKTOP_CONFIG = (
     f'mkdir -p "{_FLUXBOX_DIR}" "{_TINT2_DIR}"; '
     + _write_unless_present(f'{_FLUXBOX_DIR}/init', 'session.screen0.toolbar.visible: false')
@@ -277,43 +305,43 @@ _DESKTOP_CONFIG = (
     # Models misread xterm's default bitmap font, such as `g` as `9`. xterm reads this file however it is opened,
     # unless `xrdb` loaded settings.
     + _write_unless_present('$HOME/.Xdefaults', 'XTerm*faceName: Monospace', 'XTerm*faceSize: 14')
-    # Models found a button labelled Terminal in fewer steps than an icon alone. It comes first so its place doesn't
-    # depend on whether the image has Firefox.
-    + _write_unless_present(
-        f'{_TINT2_DIR}/tint2rc',
-        # Backgrounds 1 (the panel) and 2 (the Terminal button), numbered in the order they're written.
-        'rounded = 0',
-        'border_width = 0',
-        'background_color = #2b2b2b 100',
-        'border_color = #2b2b2b 0',
-        'rounded = 0',
-        'border_width = 1',
-        'background_color = #444444 100',
-        'border_color = #888888 100',
-        'panel_items = PLT',
-        'panel_position = bottom left horizontal',
-        'panel_size = 100% 40',
-        'panel_padding = 4 4 6',
-        'panel_background_id = 1',
-        'panel_layer = top',
-        'strut_policy = follow_size',
-        'launcher_icon_size = 32',
-        'launcher_padding = 2 4 8',
-        'launcher_item_app = /usr/share/applications/firefox-esr.desktop',
-        'button = new',
-        'button_icon = mini.xterm',
-        'button_text = Terminal',
-        'button_font = Sans 12',
-        'button_font_color = #ffffff 100',
-        'button_padding = 8 4 6',
-        'button_background_id = 2',
-        'button_lclick_command = xterm',
-        'taskbar_padding = 2 2 4',
-        'task_text = 1',
-        'task_icon = 1',
-        'task_font_color = #ffffff 100',
-        'task_maximum_size = 220 34',
+    # Models found a button labelled Terminal in fewer steps than an icon alone, so the browser gets one too. Terminal
+    # comes first so its place doesn't depend on whether the image has a browser.
+    + _FIND_BROWSER
+    + f'[ -e "{_TINT2_DIR}/tint2rc" ] || {{ printf \'%s\\n\' '
+    + shlex.join(
+        (
+            # Backgrounds 1 (the panel) and 2 (the buttons), numbered in the order they're written.
+            'rounded = 0',
+            'border_width = 0',
+            'background_color = #2b2b2b 100',
+            'border_color = #2b2b2b 0',
+            'rounded = 0',
+            'border_width = 1',
+            'background_color = #444444 100',
+            'border_color = #888888 100',
+            'panel_position = bottom left horizontal',
+            'panel_size = 100% 40',
+            'panel_padding = 4 4 6',
+            'panel_background_id = 1',
+            'panel_layer = top',
+            'strut_policy = follow_size',
+            'button = new',
+            'button_icon = mini.xterm',
+            'button_text = Terminal',
+            *_BUTTON_STYLE,
+            'button_lclick_command = xterm',
+            'taskbar_padding = 2 2 4',
+            'task_text = 1',
+            'task_icon = 1',
+            'task_font_color = #ffffff 100',
+            'task_maximum_size = 220 34',
+        )
     )
+    # Each `P` in `panel_items` is the next button.
+    + ' "panel_items = P${browser:+P}T"; [ -z "$browser" ] || printf \'%s\\n\' "button = new" '
+    + f'"button_icon = $browser" "button_text = $browser_label" {shlex.join(_BUTTON_STYLE)} '
+    + f'"button_lclick_command = $browser$browser_flag"; }} >"{_TINT2_DIR}/tint2rc"; '
 )
 """Writes the fluxbox, tint2 and xterm settings, keeping any file already there."""
 
@@ -341,7 +369,8 @@ display working without it. Their output goes to file descriptor 8, which `start
 def start_x_server(log: str, *, desktop: bool = True) -> str:
     """A shell fragment that starts Xvfb on `DISPLAY` unless an X server runs, and with `desktop` a desktop on it.
 
-    `$1` is the screen size, such as `1280x800`. The desktop is a window manager and a panel with a Terminal button.
+    `$1` is the screen size, such as `1280x800`. The desktop is a window manager and a panel with a Terminal button and,
+    when the image has one, a browser button.
     Whether an X server runs is read from the display's X lock. Pass `desktop=False` when the environment starts its
     own desktop, such as E2B's XFCE.
 
