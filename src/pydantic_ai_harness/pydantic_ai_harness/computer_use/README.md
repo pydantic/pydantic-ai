@@ -42,9 +42,8 @@ async def main():
    [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace, the `computer` tool offers only the actions that change
-nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`. Some models use their provider's own
-computer tool instead, and its list of actions can't be narrowed. On a read-only workspace, a call from that tool that
-clicks or types is refused, and none of its actions run.
+nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`. A provider's own computer tool can't be
+narrowed, so on a read-only workspace a call from it that clicks or types is refused, and none of its actions run.
 
 ## What the model is told
 
@@ -58,11 +57,8 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## Models
 
-The model must accept images.
-
-Every model gets `computer` as a regular function tool.
-
-Gemini 3 gives positions on a grid from 0 to 999 instead of in pixels. `ComputerUse` converts them to pixels.
+The model must accept images. Every model gets `computer` as a regular function tool. Gemini 3 gives positions on a
+grid from 0 to 999 instead of in pixels, and `ComputerUse` converts them to pixels.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -111,10 +107,9 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 
 Some models accept screenshots only up to a set size. Their profile sets it with
 `computer_use_screenshot_max_side` and
-`computer_use_screenshot_max_pixels`. `ComputerUse` sends every screenshot at the screen's full size and doesn't
-shrink it. A model is refused the request that would send it a screenshot larger than it accepts, with a `UserError`
-that names the largest size that fits. Under a fallback, the next model answers instead. A 1280x800 screen fits every
-model.
+`computer_use_screenshot_max_pixels`. `ComputerUse` sends every screenshot at the screen's full size. A model is
+refused the request that would send it a screenshot larger than it accepts, with a `UserError` that names the largest
+size that fits. Under a fallback, the next model answers instead. A 1280x800 screen fits every model.
 
 ## When something goes wrong
 
@@ -124,7 +119,7 @@ model.
   try again. Each such retry counts against the tool's retry limit.
 - If the workspace is gone, for example because its sandbox was deleted, the run ends with [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
 - Several agents can share one screen, such as sub-agents running in parallel. If they run in the same `asyncio` event loop, they take turns one whole call at a time, so their clicks never mix. Agents in separate event loops or separate processes don't wait for each other.
-- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`. Each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends. So a drag must finish within one run, including any calls that wait for approval. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call instead, so a drag must happen within one call. If the release after a failed call fails too, that call's result says the button may still be pressed.
+- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button may still be pressed.
 
 ## Watching a run
 
@@ -145,11 +140,10 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
 
 ## Limitations
 
-- Screenshots are the main cost, because every request sends them all again. Prompt caching makes the repeats
-  cheaper.
-- Every request carries every earlier screenshot, so a long run reaches the provider's limits. For example, Claude
-  refuses a request with more than 100 images on its models with a 200k-token context. `ComputerUse` doesn't drop old
-  screenshots, and [`ClearToolResults`](../compaction/) doesn't clear `computer` results.
+- Every request sends every earlier screenshot again. They are the main cost, which prompt caching lowers, and a
+  long run reaches the provider's limits: Claude, for example, refuses a request with more than 100 images on its
+  models with a 200k-token context. `ComputerUse` doesn't drop old screenshots, and
+  [`ClearToolResults`](../compaction/) doesn't clear `computer` results.
 - Each `computer` call takes one model request, so a long task can reach the default [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50.
   To allow more, pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
 - If the screen restarts, the model isn't told. Its next screenshot shows the new screen.
@@ -158,11 +152,11 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
 - [`Advisor(forward_history=True)`](../advisor/) sends every screenshot to the advisor model. Anthropic refuses an
   advisor request with more than 600 images.
 - With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) or a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), each model
-  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't serve the request,
-  because it can't take images or the latest screenshot is larger than it can see, is always skipped, whatever
-  `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's `UserError`;
-  when another model's failure was one `fallback_on` moves on from, with a `FallbackExceptionGroup`. Any other
-  failure is raised by itself. The `computer` call before that request has already run its actions on the screen.
+  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't take images, or
+  can't see the latest screenshot, is always skipped, whatever `fallback_on` says. If every model is skipped, the run
+  ends with the last model's `UserError`; if another model failed in a way `fallback_on` moves on from, with a
+  `FallbackExceptionGroup`. Any other failure is raised by itself. The previous `computer` call has already acted on
+  the screen by then.
 
 ## Durable execution
 

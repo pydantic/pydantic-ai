@@ -410,8 +410,7 @@ Gotchas:
 
 One `computer` tool. The model calls it with a list of mouse and keyboard actions. The actions run on the screen of
 `ctx.workspace`, and the tool returns a screenshot. It needs a workspace whose backend implements `SupportsDisplay`, and
-a model that accepts images. A model without image input ends the run with `UserError` before its request. A
-workspace without a screen also ends the run with `UserError`.
+a model that accepts images. Without either, the run ends with `UserError`.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -449,13 +448,11 @@ Gotchas:
   isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
 - Gemini 3 models give positions on a 0-999 grid (profile `computer_use_coordinate_grid`), which `ComputerUse`
-  converts to pixels. Under `ModelFallback` or a `FallbackModel`, each model that answers is told its own coordinates. A model that can't
-  serve the request, because it can't take images or the latest screenshot is larger than it can see, is always skipped,
-  whatever `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's
-  `UserError`; when another model's failure was one `fallback_on` moves on from, with a
-  `FallbackExceptionGroup`. Any other failure is raised by itself.
-  The previous `computer` call's actions have already run by then. A
-  custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
+  converts to pixels. Under `ModelFallback` or a `FallbackModel`, each model that answers is told its own coordinates,
+  and a model that can't take images or can't see the latest screenshot is always skipped, whatever `fallback_on`
+  says. If every model is skipped, the run ends with the last model's `UserError`; if another model failed in a way
+  `fallback_on` moves on from, with a `FallbackExceptionGroup`. The previous `computer` call has already acted by
+  then. A custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
   `ComputerCallPart`, not from the run's model.
 - Screenshots are sent at the screen's full size. If the screen is larger than the model accepts (profile
   `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`), the model is refused the request that
