@@ -210,10 +210,10 @@ class TestRunCodeFailureTelemetry:
             ),
             pytest.param(
                 ('x = 0\nwhile True:\n    x += 1',),
-                CodeMode[object](resource_limits={'max_duration_secs': 0.01}),
+                CodeMode[object](resource_limits={'max_duration_seconds': 0.01}),
                 # The first snippet ran, so the reset loses `x` even though no earlier snippet ran.
-                [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_secs')],
-                id='max_duration_secs-in-the-first-snippet',
+                [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_seconds')],
+                id='max_duration_seconds-in-the-first-snippet',
             ),
             pytest.param(
                 ('await add(a=1, b=2)',),
@@ -252,12 +252,12 @@ class TestRunCodeFailureTelemetry:
             ),
             pytest.param(
                 CrashedError(timed_out=True),
-                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_secs'),
+                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_seconds'),
                 id='worker-timed-out',
             ),
             pytest.param(
                 DisconnectError(cause='turn_timeout'),
-                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_secs'),
+                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_seconds'),
                 id='turn-timeout',
             ),
             pytest.param(
@@ -281,9 +281,8 @@ class TestRunCodeFailureTelemetry:
         instrumented: Instrumented,
     ):
         """The second snippet fails, so the reset discards the state the first one left."""
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', DisconnectError)
-        monkeypatch.setattr('pydantic_ai_harness._monty_exec.MontyDisconnectError', DisconnectError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', DisconnectError)
 
         async def fail(self: object, feed_start: object) -> object:
             raise error
@@ -302,7 +301,7 @@ class TestRunCodeFailureTelemetry:
         instrumented: Instrumented,
     ):
         """No earlier snippet ran, but the crashed snippet had started, so what it defined is lost."""
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
 
         async def crash(self: object, feed_start: object) -> object:
             raise CrashedError(timed_out=False)
@@ -388,8 +387,8 @@ class TestRunCodeFailureTelemetry:
             'y = 2\ny',
             ready=lambda: True,
             sync_code='undefined_name',
-            capability=CodeMode[None](eager=True, resource_limits={'max_duration_secs': 0.2}),
-        ) == [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_secs')]
+            capability=CodeMode[None](eager=True, resource_limits={'max_duration_seconds': 0.2}),
+        ) == [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_seconds')]
 
     async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
         exporter = InMemorySpanExporter()

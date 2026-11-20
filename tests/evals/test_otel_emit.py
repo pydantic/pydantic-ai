@@ -414,10 +414,13 @@ def test_baggage_cannot_set_logfire_scorer_attrs(capfire: CaptureLogfire):
     finally:
         _otel_context.detach(token)
 
-    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    record = capfire.log_exporter.get_finished_logs()[0].log_record
+    attrs = dict(record.attributes or {})
     assert 'logfire.scorer.score_type' not in attrs
     assert 'logfire.scorer.id' not in attrs
     assert attrs['logfire.scorer.run_id'] == _RUN_ID
+    # Log processors that copy a record's context baggage onto it (logfire>=6 does by default) find none.
+    assert _baggage.get_all(record.context) == {}
 
 
 def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
@@ -435,5 +438,6 @@ def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
     finally:
         _otel_context.detach(token)
 
-    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert 'tenant' not in attrs
+    record = capfire.log_exporter.get_finished_logs()[0].log_record
+    assert 'tenant' not in dict(record.attributes or {})
+    assert _baggage.get_all(record.context) == {}

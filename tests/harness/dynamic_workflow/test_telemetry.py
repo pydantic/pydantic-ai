@@ -104,7 +104,7 @@ class TestDynamicWorkflowTelemetry:
             pytest.param(CrashedError(timed_out=False), {'dynamic_workflow.error_kind': 'crashed'}, id='crashed'),
             pytest.param(
                 CrashedError(timed_out=True),
-                {'dynamic_workflow.error_kind': 'resource_limit', 'dynamic_workflow.limit': 'max_duration_secs'},
+                {'dynamic_workflow.error_kind': 'resource_limit', 'dynamic_workflow.limit': 'max_duration_seconds'},
                 id='worker-timed-out',
             ),
             pytest.param(PanicException('sandbox aborted'), {'dynamic_workflow.error_kind': 'panic'}, id='panic'),
@@ -118,6 +118,7 @@ class TestDynamicWorkflowTelemetry:
         instrumented: Instrumented,
     ):
         monkeypatch.setattr('pydantic_ai_harness.dynamic_workflow._toolset.MontyCrashedError', CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
 
         async def fail(self: object, feed_start: object) -> object:
             raise error

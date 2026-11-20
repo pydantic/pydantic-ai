@@ -51,13 +51,13 @@ _IMAGE_MIMES = ('image/png', 'image/jpeg', 'image/gif', 'image/webp')
 MAX_OUTPUT_CHARS = 10 * 1024 * 1024
 """Printed and displayed text kept per cell; the rest is dropped and counted."""
 
-_LIVENESS_POLL_SECS = 1.0
+_LIVENESS_POLL_SECONDS = 1.0
 """How often a running cell checks that the kernel process is still alive."""
 
-_INTERRUPT_GRACE_SECS = 5.0
+_INTERRUPT_GRACE_SECONDS = 5.0
 """How long an interrupted cell gets to stop before the kernel is shut down."""
 
-_SHUTDOWN_WAIT_SECS = 5.0
+_SHUTDOWN_WAIT_SECONDS = 5.0
 """How long `shutdown()` waits for a running cell, before interrupting it and again before killing its kernel."""
 
 _ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
@@ -206,11 +206,11 @@ class _CellDeadline:
 
     def start_grace(self) -> None:
         self.interrupted = True
-        self.at = time.monotonic() + _INTERRUPT_GRACE_SECS
+        self.at = time.monotonic() + _INTERRUPT_GRACE_SECONDS
 
     def poll_ms(self) -> int:
         """How long to wait for a message: the liveness poll interval, cut short by the deadline."""
-        wait = _LIVENESS_POLL_SECS
+        wait = _LIVENESS_POLL_SECONDS
         if self.at is not None:
             wait = max(min(wait, self.at - time.monotonic()), 0)
         return int(wait * 1000)
@@ -330,12 +330,12 @@ class IPythonKernel:
         so this returns within about 10 seconds.
         """
         with anyio.CancelScope(shield=True):
-            with anyio.move_on_after(_SHUTDOWN_WAIT_SECS):
+            with anyio.move_on_after(_SHUTDOWN_WAIT_SECONDS):
                 async with self._lock:
                     await self._stop()
                     return
             await self._interrupt()
-            with anyio.move_on_after(_SHUTDOWN_WAIT_SECS):
+            with anyio.move_on_after(_SHUTDOWN_WAIT_SECONDS):
                 async with self._lock:
                     await self._stop()
                     return
@@ -531,7 +531,7 @@ class IPythonKernel:
         manager, client = self._manager, self._client
         assert manager is not None and client is not None, 'only called while the kernel is running'
         await manager.interrupt_kernel()
-        with anyio.move_on_after(_INTERRUPT_GRACE_SECS):
+        with anyio.move_on_after(_INTERRUPT_GRACE_SECONDS):
             while True:
                 message = await client.get_iopub_msg()
                 content = message['content']

@@ -32,10 +32,12 @@ runs:
         set -euo pipefail
         tools="$RUNNER_TEMP/douwebot-tools"
         mkdir -p "$tools/bin"
-        if ! command -v rg >/dev/null; then
-          sudo apt-get update && sudo apt-get install -y ripgrep
-        fi
-        cp "$(command -v rg)" "$tools/bin/rg"
+        # OpenCode 2.2.5 downloads this ripgrep build, with this sha256, when `rg` is not on PATH.
+        rg_release=ripgrep-15.1.0-x86_64-unknown-linux-musl
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/$rg_release.tar.gz" \
+          "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$rg_release.tar.gz"
+        echo "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599  $RUNNER_TEMP/$rg_release.tar.gz" | sha256sum --check --strict
+        tar -xzf "$RUNNER_TEMP/$rg_release.tar.gz" -C "$tools/bin" --strip-components=1 "$rg_release/rg"
         npm install --prefix "$tools/opencode" @opencode/cli@2.2.5
         python3 -m pip install --quiet --target "$tools/python" 'pydantic==2.13.4'
 

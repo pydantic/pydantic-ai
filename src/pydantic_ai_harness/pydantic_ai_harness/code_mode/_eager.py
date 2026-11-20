@@ -294,7 +294,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
         stopped, _ = await asyncio.wait({pump}, timeout=CANCEL_TIMEOUT_SECONDS)
         return bool(stopped)
 
-    async def close(self) -> bool:
+    async def aclose(self) -> bool:
         """Cancel all background work owned by this run; report whether every pump stopped."""
         self.calls.clear()
         self.call_ids_by_part_index.clear()
@@ -322,7 +322,7 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
-            if not await self.execution.close() and self._repl is not None:
+            if not await self.execution.aclose() and self._repl is not None:
                 # A pump that ignored cancellation may still be feeding, so there is no idle REPL to save.
                 self._repl.skip_save()
         finally:

@@ -34,6 +34,7 @@ with try_import() as imports_successful:
         BEDROCK_GEO_PREFIXES,
         BedrockJsonSchemaTransformer,
         BedrockProvider,
+        _BedrockMiniMaxJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         remove_bedrock_geo_prefix,
     )
 
@@ -306,7 +307,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     minimax_profile = provider.model_profile('minimax.minimax-m2')
     assert isinstance(minimax_profile, dict)
-    assert minimax_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert minimax_profile.get('json_schema_transformer', None) is _BedrockMiniMaxJsonSchemaTransformer
     assert minimax_profile.get('supports_json_schema_output', False) is True
     assert minimax_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert minimax_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
@@ -329,6 +330,10 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert zai_profile.get('supports_thinking', False) is True
     assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
+
+    # The `us.` inference-profile prefix is stripped before the upstream Z.AI profile is looked up.
+    provider.model_profile('us.zai.glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
 
     # Moonshot AI's Kimi models are registered under both the `moonshot.` and `moonshotai.` prefixes.
     for kimi_model in ('moonshot.kimi-k2-thinking', 'moonshotai.kimi-k2.5'):

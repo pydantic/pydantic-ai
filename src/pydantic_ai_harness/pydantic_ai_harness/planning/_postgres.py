@@ -95,13 +95,18 @@ class PostgresPlanStore:
 
         `CREATE TABLE IF NOT EXISTS` is not race-free in Postgres -- concurrent
         callers can collide on `pg_type`'s unique index -- so the statement runs
-        under an advisory lock keyed on the table name.
+        under an advisory lock keyed on the table name. Skipped when the table
+        exists, so a role without `CREATE` on the schema can use it.
         """
         if self._ready:
             return
         async with self._schema_lock:
             if self._ready:
                 return
+            async with self._pool.acquire() as connection:
+                if await connection.fetchval('SELECT to_regclass($1) IS NOT NULL', self._table):
+                    self._ready = True
+                    return
             async with self._pool.acquire() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._table)
                 await connection.execute(
