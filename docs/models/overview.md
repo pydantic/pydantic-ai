@@ -44,6 +44,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
 | [OpenAI Decisions API](openai.md#decisions-api) | [Decision model](decision.md) | `openai-decisions:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
+| [Oracle Cloud Infrastructure (OCI) Generative AI](compatible-apis.md#oci-generative-ai) | Cloud platform | explicit [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] |
 | [Otari](compatible-apis.md#otari) | Gateway | `otari:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
