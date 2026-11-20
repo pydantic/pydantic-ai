@@ -34,7 +34,7 @@ const token =
 const RELOADED = 'clai-reloaded-for'
 const RELOADED_FROM = 'clai-reloaded-from'
 
-/** The version of the Pax whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
+/** The version of Pax whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
 export const reloadedFor = sessionStorage.getItem(RELOADED)
 /** The version the page ran before that reload, which an older bundle reloading leaves unset. */
 export const reloadedFrom = sessionStorage.getItem(RELOADED_FROM)
@@ -279,7 +279,7 @@ export function preconnect(): void {
 
 Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
 its messages arrive.
-A Pax restarted since this page loaded has a new token: after a few failed attempts this checks, and
+Restarting Pax gives it a new token: after a few failed attempts this checks, and
 reports `expired` instead of retrying forever. One that `/update` restarted as another version serves its own bundle,
 which the page loads instead of talking to it with this one.
  */
@@ -326,7 +326,7 @@ export function connect(
     send(sessions)
     onState('open')
   }
-  // The version of the Pax this bundle came from, as its first snapshot says.
+  // The version of Pax this bundle came from, as its first snapshot says.
   let version: string | null = null
   const received = (event: MessageEvent<string>) => {
     const message = JSON.parse(event.data) as ServerMessage

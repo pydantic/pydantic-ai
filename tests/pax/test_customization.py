@@ -83,11 +83,9 @@ async def test_default_agent_lists_docs_without_reading_them(monkeypatch: pytest
     params = model.last_model_request_parameters
     assert params is not None
     assert [tool.name for tool in params.declared_function_tools] == ['load_capability']
-    assert {tool.name for tool in params.function_tools if tool.defer_loading} == DOC_TOOLS | {
-        'read_clai_docs',
-        'search_clai_docs',
-    }
+    assert {tool.name for tool in params.function_tools if tool.defer_loading} == DOC_TOOLS
     instructions = '\n'.join(part.content for part in params.instruction_parts or ())
+    assert 'clai_customization' not in instructions
     assert CATALOG_LINE in instructions
     assert '# Customizing Pax' not in instructions
     assert 'search_pax_docs' not in instructions
