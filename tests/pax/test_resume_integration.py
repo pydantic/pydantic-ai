@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from uuid import UUID, uuid5
 
 import anyio
 import pytest
@@ -141,6 +142,15 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
     context.set_setting(['sessions.naming_model', 'openai:gpt-5-mini'])
     await chosen.listing()
     assert not chosen.namer.submit(local.id, client=chosen.naming)
+
+    # On CLAI's default model neither side records a model, but sessions from another agent still wait.
+    context.set_setting(['sessions.naming_model', 'null'])
+    session.model = None
+    native = ConversationSummary(workspace='/a')
+    imported = ConversationSummary(id=str(uuid5(UUID(int=0), 'claude:session')), workspace='/a', tags=('claude',))
+    forked = ConversationSummary(workspace='/a', tags=('claude', 'tests'))
+    assert [service.naming_may_see(s) for s in (native, imported, forked)] == [True, False, False]
+    session.model = 'openai:gpt-5'
 
     # Turned on while naming was opt-in: that saved choice already covered every session, and still does.
     settings = SettingsStore(tmp_path / 'opted-in.db')

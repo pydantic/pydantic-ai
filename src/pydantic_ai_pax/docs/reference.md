@@ -2748,8 +2748,8 @@ keep their fallback titles. It uses the current model unless
 that model's provider and incurs additional usage. While naming is on only by
 default, it names only sessions held with the current model, and lists only
 their titles: a session held with another model, such as a local one or another
-model of the same provider, keeps its fallback title, and neither its text nor
-its title is sent. Switching models therefore leaves older sessions unnamed.
+model of the same provider, or imported from another agent, keeps its fallback
+title, and neither its text nor its title is sent. Switching models therefore leaves older sessions unnamed.
 Saving `sessions.naming true`, or choosing `sessions.naming_model`, names every
 untitled or stale session, from any workspace, sending it and its siblings'
 titles to the naming model. It has no tools and does not

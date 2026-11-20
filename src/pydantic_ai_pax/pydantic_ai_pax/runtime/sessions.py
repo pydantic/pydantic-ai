@@ -175,8 +175,13 @@ class Sessions(Generic[DepsT, OutputT]):
         `sessions.naming_model` opts into naming every session, as it did while naming was opt-in.
         """
         settings = self.context.settings
-        chosen = 'session_namer' in settings.model_fields_set or settings.session_namer_model is not None
-        return chosen or summary.model == self.session.model
+        if 'session_namer' in settings.model_fields_set or settings.session_namer_model is not None:
+            return True
+        if summary.model != self.session.model:
+            return False
+        # No recorded model means CLAI's default, unless the session came from another agent: an import, or a
+        # fork of one, which leads its tags with the source and whose model is unknown.
+        return summary.model is not None or not (summary.tags and import_source(summary.tags[0]))
 
     async def usage(self, *, console: Console) -> str:
         """Report auxiliary tokens separately from retained foreground-history cost."""
