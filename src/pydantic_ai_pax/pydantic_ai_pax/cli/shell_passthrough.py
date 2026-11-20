@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 HELP = (
     '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); save command and output for the next prompt.'
     ' In a /sandbox conversation it runs in the sandbox.'
-    ' A full-screen program such as `!vim` gets the terminal, and only its exit status is saved\n'
+    ' On this machine, a full-screen program such as `!vim` gets the terminal, and only its exit status is saved\n'
     '!!COMMAND: Give COMMAND the terminal from the start, for prompts and REPLs; save only its exit status.'
     ' Only on this machine, not in a sandbox'
 )
@@ -171,8 +171,7 @@ async def run_workspace_command(
     """
     if command.startswith('!'):
         console.print(
-            f'!! gives a command this terminal, so it cannot run in {place.name}. '
-            f'Use !{command[1:].strip()} to run it there without the terminal.',
+            f'!! gives a command this terminal, so it runs only on this machine, not in {place.name}.',
             style=theme.color(theme.WARNING),
             markup=False,
         )

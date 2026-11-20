@@ -405,5 +405,7 @@ def _started(
         )
         if checkout.clone_url is None and checkout.head is not None:
             lines.append('origin is not on GitHub, so pushing it needs credentials the sandbox does not have.')
-    lines.append('Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.')
+    lines.append(
+        'Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.'
+    )
     return '\n'.join(lines)

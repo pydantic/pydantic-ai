@@ -27,7 +27,6 @@ from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
@@ -1420,9 +1419,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     async def _shell_line(self, command: str) -> str | None:
         """Run a `!` line where the conversation's runs work, its sandbox or this machine; return what to save."""
         try:
-            place = shell_line_workspace(self.run_plugins(), self.session.messages)
-        except UserError as exc:  # The sandbox cannot be opened: deleted, or its provider is not installed.
-            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            # The capabilities a run's workspace is chosen from: the agent's own, then the next run's.
+            configured = [*(agent_capabilities(self.session.agent) or ()), *self.run_plugins()]
+            place = shell_line_workspace(configured, self.session.messages)
+        except Exception as exc:  # noqa: BLE001 -- a sandbox that cannot be opened, as when deleted, must not end the shell.
+            self.console.print(error_message(exc), style=theme.color(theme.ERROR), markup=False)
             return None
         if place is not None:
             return await run_workspace_command(command, place=place, console=self.console, interrupts=self.interrupts)

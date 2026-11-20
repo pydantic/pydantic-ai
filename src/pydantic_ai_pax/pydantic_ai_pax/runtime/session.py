@@ -228,15 +228,16 @@ def shell_line_workspace(
 ) -> ShellLineWorkspace | None:
     """The workspace a `!command` line runs in for a conversation over `messages`; `None` runs it on this machine.
 
-    It asks the same `ConversationWorkspace` capabilities that supply the conversation's runs their workspace,
-    so a `!` line and the agent's own commands run in the same place.
+    Pass the capabilities a run's workspace is chosen from, the agent's own and the run's. Like that choice,
+    a leaf loaded only on request (`defer_loading`) does not count, so a `!` line runs where the agent's
+    commands do.
     """
     leaves: list[AbstractCapability[DepsT]] = []
     for plugin in plugins:
         if isinstance(plugin, AbstractCapability):
             cast('AbstractCapability[DepsT]', plugin).apply(leaves.append)
     for leaf in leaves:
-        if isinstance(leaf, ConversationWorkspace) and leaf.supplies(messages):
+        if isinstance(leaf, ConversationWorkspace) and not leaf.defer_loading and leaf.supplies(messages):
             return leaf.shell_line_workspace(messages)
     return None
 

@@ -841,10 +841,7 @@ async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProv
     text = output.getvalue()
     assert f'Runs in the Fake sandbox; command and output saved for the next prompt\n{folder}\nDone (' in text
     assert str(checkout.resolve()) not in text
-    assert (
-        '!! gives a command this terminal, so it cannot run in the Fake sandbox. '
-        'Use !vim to run it there without the terminal.'
-    ) in text
+    assert '!! gives a command this terminal, so it runs only on this machine, not in the Fake sandbox.' in text
     cut = f'{"x" * 100_000}\n[Output truncated after 100000 characters]\n'
     assert saved_prompts(shell)[-2:] == [
         f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'

@@ -1557,7 +1557,7 @@ It runs with the sandbox's shell in the sandbox's copy of the checkout, with the
 with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
 input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
 never runs on this machine instead. `!!` needs this terminal, so in a sandbox CLAI refuses it and saves
-nothing; use `!` there. The command, output, and status are saved for the next prompt as on this machine.
+nothing. The command, output, and status are saved for the next prompt as on this machine.
 
 A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
 run in order with other queued input. `/help` lists the syntax.
