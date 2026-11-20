@@ -58,6 +58,7 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
+    ToolKind,
     ToolPartKind,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -84,7 +85,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     ToolSearchToolset,
-    keywords_search_fn,
+    keywords_search,
     parse_discovered_tools,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -7888,17 +7889,17 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     )
 
 
-def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
+def test_keywords_search_returns_empty_for_no_tokens() -> None:
     """The shared keyword algorithm returns `[]` when the queries tokenize to nothing
     (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
     in the toolset) translate that into the empty-discoveries `_empty_return` shape.
     """
 
     ctx = _build_run_context(None)
-    assert keywords_search_fn(ctx, ['   '], []) == []
+    assert keywords_search(ctx, ['   '], []) == []
     # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
     # `[a-z0-9]+` only.
-    assert keywords_search_fn(ctx, ['!!!'], []) == []
+    assert keywords_search(ctx, ['!!!'], []) == []
 
 
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:
@@ -9021,5 +9022,160 @@ async def test_anthropic_replays_search_whose_matches_are_no_longer_declared(all
                 ],
                 'is_error': False,
             }
+        ]
+    )
+
+
+class _SelectorOutput(BaseModel):
+    answer: str
+
+
+_SELECTOR_LOOKUP_KIND = ToolKind('test_tool_search_selector', 'lookup')
+
+
+def _selector_toolset() -> FunctionToolset:
+    toolset = FunctionToolset()
+
+    # The model in these tests never calls these tools; only which ones it's shown matters.
+    @toolset.tool_plain
+    def crm_lookup() -> str:  # pragma: no cover
+        return 'lookup'
+
+    @toolset.tool_plain(metadata={'searchable': True})
+    def crm_update() -> str:  # pragma: no cover
+        return 'update'
+
+    @toolset.tool_plain
+    def get_time() -> str:  # pragma: no cover
+        return 'now'
+
+    @toolset.tool_plain(tool_kind=_SELECTOR_LOOKUP_KIND)
+    def inventory_lookup() -> str:  # pragma: no cover
+        return 'inventory'
+
+    return toolset
+
+
+async def _first_request_tools(capability: ToolSearch[Any]) -> tuple[list[str], list[str]]:
+    """Run an agent with `capability` and return the function and output tools of its first request."""
+    seen: list[tuple[list[str], list[str]]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append((sorted(t.name for t in info.function_tools), sorted(t.name for t in info.output_tools)))
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'answer': 'done'}, tool_call_id='out')]
+        )
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        output_type=_SelectorOutput,
+        toolsets=[_selector_toolset()],
+        capabilities=[capability],
+    )
+    result = await agent.run('hi')
+    assert result.output == _SelectorOutput(answer='done')
+    return seen[0]
+
+
+def _select_crm(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    return tool_def.name.startswith('crm_')
+
+
+async def _select_crm_async(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    return tool_def.name.startswith('crm_')
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_all_defers_every_regular_tool():
+    function_tools, output_tools = await _first_request_tools(ToolSearch(tools='all'))
+    assert function_tools == snapshot(['search_tools'])
+    assert output_tools == snapshot(['final_result'])
+
+
+@pytest.mark.parametrize(
+    'selector',
+    [
+        pytest.param(['crm_lookup', 'crm_update'], id='names'),
+        pytest.param(_select_crm, id='callable'),
+        pytest.param(_select_crm_async, id='async-callable'),
+    ],
+)
+@pytest.mark.anyio
+async def test_tool_search_tools_selector_defers_selected_tools(selector: Any):
+    function_tools, output_tools = await _first_request_tools(ToolSearch(tools=selector))
+    assert function_tools == snapshot(['get_time', 'inventory_lookup', 'search_tools'])
+    assert output_tools == snapshot(['final_result'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_metadata_selector():
+    function_tools, _ = await _first_request_tools(ToolSearch(tools={'searchable': True}))
+    assert function_tools == snapshot(['crm_lookup', 'get_time', 'inventory_lookup', 'search_tools'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_selects_tools_with_a_custom_tool_kind():
+    """A user tool with its own `tool_kind` is selectable; only the framework's kinds are excluded."""
+    function_tools, _ = await _first_request_tools(ToolSearch(tools=['inventory_lookup']))
+    assert function_tools == snapshot(['crm_lookup', 'crm_update', 'get_time', 'search_tools'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_none_defers_nothing():
+    function_tools, output_tools = await _first_request_tools(ToolSearch())
+    assert function_tools == snapshot(['crm_lookup', 'crm_update', 'get_time', 'inventory_lookup'])
+    assert output_tools == snapshot(['final_result'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_selected_tool_is_discovered_and_called():
+    """Selected tools join the corpus alongside per-tool and toolset deferral, and `load_capability` stays visible."""
+    user_toolset = FunctionToolset()
+
+    @user_toolset.tool_plain
+    def weather_report() -> str:
+        return 'sunny'
+
+    @user_toolset.tool_plain
+    def archive_export() -> str:  # pragma: no cover
+        return 'archive'
+
+    capability_toolset = FunctionToolset()
+
+    @capability_toolset.tool_plain
+    def capability_tool() -> str:  # pragma: no cover
+        return 'capability'
+
+    capability = Capability(
+        id='example', description='Example capability.', defer_loading=True, toolsets=[capability_toolset]
+    )
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(t.name for t in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['weather']}, tool_call_id='s')]
+            )
+        if len(seen) == 2:
+            return ModelResponse(parts=[ToolCallPart(tool_name='weather_report', args={}, tool_call_id='c')])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'answer': 'done'}, tool_call_id='o')]
+        )
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        output_type=_SelectorOutput,
+        toolsets=[user_toolset.defer_loading(['archive_export'])],
+        capabilities=[ToolSearch(tools='all'), capability],
+    )
+    result = await agent.run('find and use the selected tool')
+
+    assert result.output == _SelectorOutput(answer='done')
+    assert seen == snapshot(
+        [
+            ['load_capability', 'search_tools'],
+            ['load_capability', 'search_tools', 'weather_report'],
+            ['load_capability', 'search_tools', 'weather_report'],
         ]
     )

@@ -78,14 +78,14 @@ safe-outputs:
       - '**/agent_docs/**/*.md'
       - .agents/**/*.md
       - .claude/**/*.md
-      - src/pydantic_clai2/FILE_MAP.md
+      - src/pydantic_ai_pax/FILE_MAP.md
     excluded-files:
       - .github/**
       - .ce-audit/**
       - src/pydantic_ai_harness/gh-aw/**
       - pydantic_ai_slim/pydantic_ai/**
       - src/pydantic_ai_harness/pydantic_ai_harness/**
-      - src/pydantic_clai2/pydantic_clai2/**
+      - src/pydantic_ai_pax/pydantic_ai_pax/**
 timeout-minutes: 30
 env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '30'

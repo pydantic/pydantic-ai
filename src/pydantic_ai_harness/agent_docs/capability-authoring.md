@@ -312,8 +312,8 @@ agent = Agent(
 The model then sees `hr_bamboohr_list_employees` and
 `crm_bamboohr_list_employees`, and each routes to its own account.
 
-Record the choice in `tests/harness/test_capability_combine.py`;
-`test_every_capability_declares_a_combine_policy` fails until you do. Write the
+Record the choice as the `combine` of the capability's entry in `tests/harness/capability_cases.py`;
+`test_every_capability_has_a_case` fails until you do. Write the
 reason from what the capability actually does, not from what would be
 convenient: a reason like "one per rooted directory" is wrong if the toolset's
 fixed tool names make two unreachable.

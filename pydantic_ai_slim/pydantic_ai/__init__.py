@@ -8,10 +8,12 @@ from .agent import (
     AgentRetries,
     AgentRunEvents,
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
     UserPromptNode,
+    capture_run_conversation,
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
@@ -36,6 +38,7 @@ from .exceptions import (
     ConcurrencyLimitExceeded,
     CostCalculationFailedWarning,
     CostNotFoundWarning,
+    DeprecatedModelWarning,
     FallbackExceptionGroup,
     IncompleteToolCall,
     MessageHistoryMutatedWarning,
@@ -228,6 +231,7 @@ from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
     JsonSchemaTransformer,
+    ModelDeprecation,
     ModelProfile,
     ModelProfileSpec,
 )
@@ -264,7 +268,7 @@ from .toolsets import (
 )
 from .usage import RequestUsage, RunUsage, UsageLimits
 
-__all__ = (
+__all__: tuple[str, ...] = (
     '__version__',
     'BANNER_ENABLED',
     # agent
@@ -278,6 +282,8 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'InstrumentationSettings',
     # embeddings
     'Embedder',
@@ -330,6 +336,7 @@ __all__ = (
     'RunCancelled',
     'RunTimedOut',
     'MessageHistoryMutatedWarning',
+    'DeprecatedModelWarning',
     'PydanticAIDeprecationWarning',
     'RetryModelRequest',
     'SkipModelRequest',
@@ -458,6 +465,7 @@ __all__ = (
     'VideoMediaType',
     'VideoUrl',
     # profiles
+    'ModelDeprecation',
     'ModelProfile',
     'ModelProfileSpec',
     'DEFAULT_PROFILE',
