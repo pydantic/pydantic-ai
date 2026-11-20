@@ -90,6 +90,11 @@ class NamingClient:
 
     generate: Callable[[str], Awaitable[NamingResult | None]]
     enabled: Callable[[], bool] = lambda: True
+    may_see: Callable[[ConversationSummary], bool] = lambda summary: True
+    """Whether the naming model may see a saved session: the one it names, or one whose title the prompt lists.
+
+    Asked when the worker reaches a session, just before the request, so it judges the model naming it then.
+    """
 
 
 async def _announce(listener: Callable[[str, str], Awaitable[None]], conversation_id: str, title: str) -> None:
@@ -130,7 +135,7 @@ class SessionNamer:
     def backfill(self, entries: list[ConversationSummary], *, client: NamingClient) -> None:
         """Queue only a bounded newest-first batch when a browser opens."""
         for entry in entries[:10]:
-            if self.needed(entry):
+            if self.needed(entry) and client.may_see(entry):
                 self.submit(entry.id, client=client)
 
     @staticmethod
@@ -193,7 +198,11 @@ class SessionNamer:
             # started from one template would all keep the same prefix. Their distinguishing detail, such as
             # an issue number, may lie past it and have left the tail, so the namer sees the start instead.
             context = f'Conversation start:\n{text[:400]}\n' if len(text) > len(digest) else ''
-        others = await self._sibling_titles(saved.summary)
+        siblings = await self._siblings(saved.summary)
+        if not client.may_see(saved.summary):
+            return None
+        # Every sibling's title is taken, but the prompt lists only those the naming model may see.
+        others = [sibling.title for sibling in siblings if client.may_see(sibling)]
         if others:
             listed = ''.join(f'- {other}\n' for other in others[:10])
             context += f'Titles of other sessions in this workspace, which this title must differ from:\n{listed}'
@@ -205,7 +214,8 @@ class SessionNamer:
             # A generated title is how the user finds the session again; later turns only refresh its detail.
             title = saved.summary.title
         else:
-            title = _distinct(' '.join(result.name.title.split()[:8]), taken={other.casefold() for other in others})
+            taken = {sibling.title.casefold() for sibling in siblings}
+            title = _distinct(' '.join(result.name.title.split()[:8]), taken=taken)
         named = await self.store.name(
             source=saved.summary,
             title=title,
@@ -215,15 +225,15 @@ class SessionNamer:
         )
         return title if named else None
 
-    async def _sibling_titles(self, summary: ConversationSummary) -> list[str]:
-        """The other unarchived sessions' titles in `summary`'s workspace, newest first."""
-        titles: list[str] = []
+    async def _siblings(self, summary: ConversationSummary) -> list[ConversationSummary]:
+        """The other unarchived sessions in `summary`'s workspace, newest first."""
+        siblings: list[ConversationSummary] = []
         # Every page: the newest sessions may all be in other workspaces. Summaries are read without transcripts.
         offset = 0
         while page := await self.store.listing(limit=200, offset=offset, archived=False):
-            titles += [s.title for s in page if s.workspace == summary.workspace and s.id != summary.id]
+            siblings += [s for s in page if s.workspace == summary.workspace and s.id != summary.id]
             offset += len(page)
-        return titles
+        return siblings
 
 
 def _distinct(title: str, *, taken: set[str]) -> str:

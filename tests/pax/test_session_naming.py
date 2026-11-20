@@ -519,6 +519,35 @@ async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond
     assert '- web ui stress test round three (2)\n' in prompts[3]
 
 
+async def test_naming_shows_only_sessions_the_naming_model_may_see(tmp_path: Path) -> None:
+    """A session, or a sibling's title, the client rules out never reaches the prompt; its title is still taken."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('fix renderer')])]
+    hidden = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Fix renderer', model='ollama:llama'), messages=messages
+    )
+    shown = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Write docs', model='openai:gpt-5'), messages=messages
+    )
+    named = await store.save(summary=ConversationSummary(workspace='/a', model='openai:gpt-5'), messages=messages)
+    prompts: list[str] = []
+
+    async def generate(prompt: str) -> NamingResult:
+        prompts.append(prompt)
+        return NamingResult(name=SessionName(title='Fix renderer'))
+
+    namer = SessionNamer(store=store)
+    client = NamingClient(generate=generate, may_see=lambda summary: summary.model == 'openai:gpt-5')
+    assert not await namer.name(conversation_id=hidden.id, client=client)
+    assert prompts == []
+    assert await namer.name(conversation_id=named.id, client=client)
+    assert f'- {shown.title}\n' in prompts[0] and 'Fix renderer' not in prompts[0]
+    assert (await store.get(conversation_id=named.id)).summary.title == 'Fix renderer (2)'
+    # `backfill` leaves out what the client rules out, so it never fills the bounded queue.
+    namer.backfill([hidden], client=client)
+    assert namer.submit(hidden.id, client=client)
+
+
 async def test_titles_stay_distinct_behind_many_newer_sessions_elsewhere(tmp_path: Path) -> None:
     """A workspace's siblings are found however many newer sessions other workspaces have."""
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')

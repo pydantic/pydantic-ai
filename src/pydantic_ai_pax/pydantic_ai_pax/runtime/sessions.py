@@ -77,7 +77,9 @@ class Sessions(Generic[DepsT, OutputT]):
         """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
-        self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
+        self.naming = NamingClient(
+            generate=self.generate, enabled=lambda: self.context.settings.session_namer, may_see=self.naming_may_see
+        )
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
         self.join()
@@ -165,15 +167,13 @@ class Sessions(Generic[DepsT, OutputT]):
             return None
         return await generate_name(model=model, prompt=prompt)
 
-    def _backfill(self, entries: list[ConversationSummary]) -> None:
-        """Queue untitled sessions whose excerpts may go to the naming model's provider.
+    def naming_may_see(self, summary: ConversationSummary) -> bool:
+        """Whether a naming request may carry `summary`'s excerpts or title.
 
-        Naming is on by default, so without a chosen `sessions.naming_model` only sessions held with the
-        current model are queued: a provider never receives a conversation it was not already sent.
+        Naming is on by default, so without a chosen `sessions.naming_model` it uses only sessions held with the
+        current model: a provider is never sent another conversation's text it was not already sent.
         """
-        if not self.context.settings.session_namer_model:
-            entries = [entry for entry in entries if entry.model == self.session.model]
-        self.namer.backfill(entries, client=self.naming)
+        return bool(self.context.settings.session_namer_model) or summary.model == self.session.model
 
     async def usage(self, *, console: Console) -> str:
         """Report auxiliary tokens separately from retained foreground-history cost."""
@@ -245,7 +245,7 @@ class Sessions(Generic[DepsT, OutputT]):
         `order_by='created_at'` pages by creation instead of activity, as the web sidebar lists them.
         """
         entries = await self.store.listing(query=query, limit=limit, archived=archived, order_by=order_by)
-        self._backfill(entries)
+        self.namer.backfill(entries, client=self.naming)
         return entries
 
     async def saved(self, conversation_id: str) -> SavedConversation:
@@ -325,7 +325,7 @@ class Sessions(Generic[DepsT, OutputT]):
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
         """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
-        self._backfill([entry for entry in entries if entry.archived_at is None])
+        self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 

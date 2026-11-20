@@ -126,6 +126,10 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
     # The namer queues a conversation once, so a refused `submit` shows the listing queued it.
     assert not service.namer.submit(same.id, client=service.naming)
     assert service.namer.submit(local.id, client=service.naming)
+    # Judged again when the worker reaches it, so switching `/model` after queueing sends nothing.
+    session.model = 'anthropic:claude-sonnet-4-5'
+    assert not await service.namer.name(conversation_id=same.id, client=service.naming)
+    session.model = 'openai:gpt-5'
 
     chosen = Sessions(session=session, store=store, context=context, namer=SessionNamer(store=store))
     context.set_setting(['sessions.naming_model', 'openai:gpt-5-mini'])
