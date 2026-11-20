@@ -983,8 +983,8 @@ each Claude model the computer use tool it was trained on, as a [`ComputerTool`]
 | Claude Haiku 4.5 | `computer_20250124` |
 
 These get a regular function tool named `computer` instead: Claude models not in the table, every model on Google
-Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any model with `ComputerUse(native=False)`. Each model's
-largest screenshot size is listed under [Screen size](../harness/computer-use.md#screen-size).
+Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any model with `ComputerUse(native=False)`. The screen size
+that suits Claude is under [Screen size](../harness/computer-use.md#screen-size).
 
 To send Anthropic's tool to a model or client that isn't listed, after checking that it works there, add
 `ComputerTool` to the profile's

@@ -283,8 +283,6 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'default_framing_announcement': 'always',
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
@@ -340,8 +338,6 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supports_task_budgets': True,
-            'computer_use_screenshot_max_side': 2576,
-            'computer_use_screenshot_max_pixels': 3600000,
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -386,8 +382,6 @@ def test_anthropic_claude_haiku_4_5():
                     WebSearchTool,
                 }
             ),
-            'computer_use_screenshot_max_side': 1568,
-            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -890,7 +884,6 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -985,14 +978,6 @@ def test_google_gemini_3_pro_image_strict_tool_definition():
 
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
-def test_google_gemini_3_pro_image_has_no_computer_use_grid():
-    # The computer-use grid is set for Gemini 3 models that aren't image models.
-    profile = GoogleProvider.model_profile('gemini-3-pro-image')
-    assert profile is not None
-    assert 'computer_use_coordinate_grid' not in profile
-
-
-@pytest.mark.skipif(not google_imports(), reason='google not installed')
 def test_google_gemini_3_7_flash_thinking_levels():
     # The level set must survive the provider `model_profile()` path, not just `google_model_profile()`.
     profile = GoogleProvider.model_profile('gemini-3.7-flash')
@@ -1019,7 +1004,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -1999,7 +1983,6 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2061,7 +2044,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2308,7 +2290,6 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -3955,7 +3936,6 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
-            'computer_use_coordinate_grid': 1000,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',

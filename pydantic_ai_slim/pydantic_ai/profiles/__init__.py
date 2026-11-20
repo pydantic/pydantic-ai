@@ -178,35 +178,6 @@ class ModelProfile(TypedDict, total=False):
     for how the file-input flags are used.
     """
 
-    computer_use_coordinate_grid: int
-    """The size of the grid the model uses for screen positions instead of pixels. Default: unset, which means pixels.
-
-    The model's maker sets this convention. With `1000`, the `computer` tool's description tells the model that
-    positions run from 0 to 999. The model records the grid on each of its calls as
-    [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid], so the tool can
-    scale the positions to pixels. Gemini 3 profiles set it.
-    """
-
-    computer_use_screenshot_max_side: int
-    """The longest screenshot side, in pixels, that the model can see. Default: unset, which means no limit.
-
-    The model's maker sets this limit. The model records it on each of its `computer` calls as
-    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], so a
-    capability that drives the screen can refuse a larger screen. The model refuses a request whose latest screenshot
-    is larger with a [`UserError`][pydantic_ai.exceptions.UserError]. Set it, together with
-    `computer_use_screenshot_max_pixels`, for a model whose computer tool shrinks a larger screenshot. That model
-    answers with positions in the smaller image's pixels.
-    """
-
-    computer_use_screenshot_max_pixels: int
-    """The most pixels (width times height) in a screenshot that the model can see. Default: unset, which means no
-    limit.
-
-    The model's maker sets this limit. The model records it on its calls as
-    [`ComputerCallPart.screenshot_max_pixels`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_pixels], like
-    `computer_use_screenshot_max_side`.
-    """
-
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 

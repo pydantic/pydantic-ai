@@ -410,8 +410,8 @@ Gotchas:
 
 One `computer` tool. The model calls it with a list of mouse and keyboard actions. The actions run on the screen of
 `ctx.workspace`, and the tool returns a screenshot. It needs a workspace whose backend implements `SupportsDisplay`, and
-a model that accepts images. A model without image input ends the run with `UserError` before its request. A
-workspace without a screen also ends the run with `UserError`.
+a model that accepts images. Without a display, the run ends with `UserError`; a model that can't read images gets a
+note in place of each screenshot.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -447,22 +447,13 @@ Gotchas:
   `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false, and an action in the validated `args['actions']`
   isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
-- Gemini 3 models give positions on a 0-999 grid (profile `computer_use_coordinate_grid`), which `ComputerUse`
-  converts to pixels. Under `ModelFallback` or a `FallbackModel`, each model that answers is told its own coordinates. A model that can't
-  serve the request, because it can't take images or the latest screenshot is larger than it can see, is always skipped,
-  whatever `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's
-  `UserError`; when another model's failure was one `fallback_on` moves on from, with a
-  `FallbackExceptionGroup`. Any other failure is raised by itself.
-  The previous `computer` call's actions have already run by then. A
-  custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
-  `ComputerCallPart`, not from the run's model.
-- Screenshots are sent at the screen's full size. If the screen is larger than the model accepts (profile
-  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`), the run stops before the call acts,
-  with an error that names the largest size that fits. 1280x800 fits every model.
+- Screenshots are sent at the screen's full size. A 1280x800 screen suits every model.
 - Under durable execution, everything one `computer` call does on the screen is one durable step, so replay and
   recovery don't repeat a finished call. A call cut off before its step was recorded is retried under the engine's
   settings for capability steps. On Temporal, set `activity_config` with a longer `start_to_close_timeout` and
-  `RetryPolicy(maximum_attempts=1)`. When the engine stops retrying, the model is told to take a screenshot first.
+  `RetryPolicy(maximum_attempts=1)`, and keep model retries with
+  `model_activity_config=ActivityConfig(retry_policy=RetryPolicy())`, since the base config reaches model requests too.
+  When the engine stops retrying, the model is told to take a screenshot first.
 - Under Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure external storage.
 
 ## See also
