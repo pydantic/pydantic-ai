@@ -190,7 +190,8 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
 """Lifecycle state of a model response.
 
 - `'complete'`: the response has been fully received from the model.
-- `'incomplete'`: the response is still being streamed and may receive more parts.
+- `'incomplete'`: the response is still being streamed and may receive more parts, or its stream
+  ended before the provider's terminal event.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
