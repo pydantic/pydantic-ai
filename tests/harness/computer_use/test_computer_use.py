@@ -515,8 +515,7 @@ The `computer` tool shows and controls this computer's screen.
         agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
-        # The first is captured before the click; the last action's is the screenshot the call ends with, once two in a
-        # row match.
+        # The first is captured before the click; the last is the call's closing screenshot, once two in a row match.
         assert tool_return.content_items() == ['Ran 3 actions. Screenshot attached (1280x800).', SCREENSHOT, SCREENSHOT]
         assert taken == [0, 1, 1]
 
@@ -574,9 +573,8 @@ The `computer` tool shows and controls this computer's screen.
         # The call's work on the screen is its own durable step with its own retry policy, so no engine wraps the
         # whole tool.
         assert tool.durable is False
-        # A model with a native computer tool sends it in this tool's place, declaring the latest screenshot's size,
-        # which its positions are scaled from, even after the display changed size. With `native=False`, every model
-        # gets the function tool.
+        # A native computer tool is sized to the latest screenshot, which positions are scaled from, even after the
+        # display changed size.
         assert natives == ([ComputerTool(display_size=(1920, 1080), optional=True)] if native else [])
 
     async def test_a_request_after_a_screenshot_does_not_read_the_display(self) -> None:
@@ -644,8 +642,7 @@ The `computer` tool shows and controls this computer's screen.
 
     @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
     async def test_a_durable_run_without_a_display_fails_at_its_first_display_read(self, native: bool) -> None:
-        # Durable workflow code can't reach the backend, so the read inside its durable step reports the error: either
-        # the native tool's size read before the request, or the call's own read.
+        # Durable workflow code can't reach the backend, so a display read inside a durable step reports the error.
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
             name='computer',

@@ -122,9 +122,9 @@ async def _offer_what_the_workspace_allows(ctx: RunContext[Any], tool_def: ToolD
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
 """One lock per event loop and screen, keyed by the display object and by the workspace ref.
 
-Agents that share a screen, such as parallel sub-agents, take turns one whole call at a time, so one agent's clicks
-never land between another's. A lock can't wake a task waiting on another event loop, so calls on separate loops don't
-take turns. A lock is dropped once no call holds it or waits for it."""
+Agents that share a screen, such as parallel sub-agents, take turns one whole call at a time. A lock can't wake a task
+on another event loop, so calls on separate loops don't take turns. A lock is dropped once nothing holds or waits for
+it."""
 
 _RELEASE_TIMEOUT = 5
 """Seconds to wait, at most, for the screen and for each button release, when a call or a run's end releases buttons."""
@@ -256,7 +256,6 @@ def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolA
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
-    """The positions an action names."""
     match action:
         case Click(x=x, y=y) | Scroll(x=x, y=y) | MouseMove(x=x, y=y) if x is not None and y is not None:
             return (Point(x=x, y=y),)
@@ -383,8 +382,7 @@ async def _perform(
 ) -> tuple[int, str | None, _Steps]:
     """Run the actions in order until one fails. Return how many ran, why the next one failed, and the steps they took.
 
-    `held` starts as the buttons pressed before the call, and ends as the ones that may still be pressed. After an
-    action, the screen settles before a zoom or a screenshot.
+    `held` starts as the buttons pressed before the call, and ends as the ones that may still be pressed.
     """
     steps = _Steps(display, mapping, settle_seconds)
     for index, action in enumerate(actions):
@@ -407,7 +405,6 @@ async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseBu
         if pressing and isinstance(e, UnsupportedActionError):
             held.remove(pressing)  # the display refused the press, so nothing is pressed
         return str(e) or type(e).__name__
-    # A click releases its button, and a drag the left one.
     released = action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
     if released in held:
         held.remove(released)
@@ -569,7 +566,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     `ComputerUse` runs that tool's calls. `False` sends the `computer` function tool to every model instead. OpenAI's
     own computer tool can't zoom, triple-click, hold a key, press or release a mouse button, or read the pointer
-    position. With `False`, GPT can do all of these.
+    position; the function tool can.
     """
 
     id: str | None = 'computer_use'
@@ -617,13 +614,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(_READ_ONLY)
         run = _run_buttons(ctx)
         keeps_held = run is not None
-        # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons. This
-        # throwaway record is never read.
+        # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons, and
+        # this record is never read.
         run = run or _RunButtons(run_id=ctx.run_id)
         made = _the_call(ctx)
         call = made[1] if made else None
         plan = _Plan(
-            # The grid the model that made the call points on, as that model recorded it.
             grid=call.coordinate_grid if call else None,
             # The model pointed on the latest screenshot before its call.
             seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
@@ -703,8 +699,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 message = f'{e.message.rstrip(".")}. {released}' if released else e.message
                 return _NotRun(message, 'retry' if isinstance(e, ModelRetry) else 'tool', held=stuck)
             except BaseException:
-                # The call was cancelled, such as by the tool's timeout, or the workspace was lost. Release the buttons
-                # before the next call.
+                # Cancelled, such as by the tool's timeout, or the workspace was lost.
                 await _release(display, held)
                 raise
 
@@ -758,7 +753,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return settings
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        # For a model that uses a grid, the agent adds to the tool's description how to give grid positions.
+        # A grid model is told about its grid in the tool's description, by the model itself.
         return [_INSTRUCTIONS, _shell_instructions]
 
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
@@ -801,7 +796,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         try:
             return await handler()
         finally:
-            # Give the context back as the caller had it, so nothing after this run sees its record.
             _RUN_BUTTONS.reset(token)
             await self._release_held(ctx, run.might_be_held())
 
