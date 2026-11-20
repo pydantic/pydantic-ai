@@ -4,8 +4,14 @@ These facts about boxd's desktop were checked on 2026-11-13 against boxd 0.3.2 o
 the live display tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before changing how actions map to calls.
 
 - Every machine has a desktop on X display `:100`. The console's Desktop view shows the same desktop. The first
-  computer call starts it at 1280x800, in about 3 seconds on a new machine. It has no window manager, so a window
-  opens at the top left without a title bar.
+  computer call starts it at 1280x800, in about 3 seconds on a new machine.
+- Checked 2026-11-20: the desktop is xpra in seamless mode, and xpra holds the window manager's role, so a second
+  window manager such as fluxbox exits at start. A panel (tint2) and xterm do run, started with boxd's own
+  `boxd-desktop-launch`. Windows get no title bars, and a window opens where it asks to be, or at the top left. A
+  tint2 panel asked for the bottom edge showed at the top. A new window stays unviewable, so it can't be given the
+  keyboard, until the next computer call, which shows it; any call does, even `cursor_position`. Clicking a window
+  gives it the keyboard. xpra sets the `RESOURCE_MANAGER` X property, so xterm ignores `~/.Xdefaults` and draws a
+  small bitmap font unless told a font.
 - `set_screen_size` fixes the screen size until the desktop restarts. Someone watching in the console then sees the
   screen scaled, and doesn't resize it. Every call returns the screen size and the pointer position.
 - Screenshots are PNGs at the screen size. A `region` screenshot shows that region at full resolution.
@@ -21,6 +27,7 @@ the live display tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before 
 
 from __future__ import annotations as _annotations
 
+import shlex
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
@@ -51,6 +58,83 @@ if TYPE_CHECKING:
 
 DISPLAY = ':100'
 """The X display number of the desktop on every boxd machine."""
+
+_INSTALL = (
+    'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends tint2 xterm'
+)
+
+INSTALL_PANEL = f'{_INSTALL} || {{ apt-get update && {_INSTALL}; }}'
+"""Installs the panel and the terminal it opens, as root. boxd's image has xterm, and its package lists find tint2
+without an update. The lock timeout makes a second install wait for one already running."""
+
+PANEL_LOG = '/tmp/pydantic-ai-desktop.log'
+"""Where the panel's install and the panel itself write, so a panel that didn't come up says why."""
+
+# Not `--onlyvisible`: the panel's window stays unviewable until the next computer call.
+_PANEL_SHOWS = f'DISPLAY={DISPLAY} xdotool search --class tint2 >/dev/null 2>&1'
+
+_PANEL_DIR = '$HOME/.config/pydantic-ai-desktop'
+
+_PANEL_HEIGHT = 40
+
+# Opens xterm below the panel and as large as the rest of the screen, and gives it the keyboard. Nothing else on the
+# desktop places, sizes or focuses a new window. The font is named because xterm ignores `~/.Xdefaults` here. The
+# window can be focused only once it is viewable, at the next computer call, so focusing is retried for 30 seconds.
+_TERMINAL = f"""#!/bin/sh
+xterm -fa Monospace -fs 12 & pid=$!
+w=$(xdotool search --sync --pid $pid | head -1)
+eval "$(xdotool getdisplaygeometry --shell)"
+xdotool windowmove "$w" 0 {_PANEL_HEIGHT} windowsize "$w" "$WIDTH" $((HEIGHT - {_PANEL_HEIGHT}))
+i=0; until xdotool windowfocus "$w" 2>/dev/null || [ $i -ge 300 ]; do sleep 0.1; i=$((i+1)); done
+wait $pid
+"""
+
+# A panel along the top with a button labelled Terminal, and a button per open window. A labelled button, not
+# tint2's icon-only launcher: in live runs GPT-5.5 didn't try the bare icon until it had tried several key shortcuts.
+_TINT2RC = (
+    # Backgrounds 1 (the panel) and 2 (the button), numbered in the order they're written.
+    'rounded = 0',
+    'border_width = 0',
+    'background_color = #2b2b2b 100',
+    'border_color = #2b2b2b 0',
+    'rounded = 0',
+    'border_width = 1',
+    'background_color = #444444 100',
+    'border_color = #888888 100',
+    'panel_items = PT',
+    'panel_position = top left horizontal',
+    f'panel_size = 100% {_PANEL_HEIGHT}',
+    'panel_padding = 4 4 6',
+    'panel_background_id = 1',
+    'button = new',
+    'button_icon = mini.xterm',
+    'button_text = Terminal',
+    'button_font = Sans 12',
+    'button_font_color = #ffffff 100',
+    'button_padding = 8 4 6',
+    'button_background_id = 2',
+    f'button_lclick_command = {_PANEL_DIR}/terminal',
+    'taskbar_padding = 2 2 4',
+    'task_text = 1',
+    'task_icon = 1',
+    'task_font_color = #ffffff 100',
+    'task_maximum_size = 220 34',
+)
+
+START_PANEL = (
+    f'exec >>{PANEL_LOG} 2>&1; '
+    f'command -v tint2 >/dev/null && command -v xterm >/dev/null || sudo -n sh -c {shlex.quote(INSTALL_PANEL)}; '
+    f'mkdir -p "{_PANEL_DIR}" && printf %s {shlex.quote(_TERMINAL)} >"{_PANEL_DIR}/terminal" && '
+    f'chmod +x "{_PANEL_DIR}/terminal" && printf "%s\\n" {shlex.join(_TINT2RC)} >"{_PANEL_DIR}/tint2rc" || exit; '
+    f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then '
+    f'boxd-desktop-launch "tint2 -c {_PANEL_DIR}/tint2rc >>{PANEL_LOG} 2>&1"; i=0; '
+    f'until {_PANEL_SHOWS} || [ $i -ge 50 ]; do sleep 0.2; i=$((i+1)); done; fi; '
+    f'{_PANEL_SHOWS}'
+)
+"""Installs the panel and xterm unless both are there, writes the panel's settings, and starts the panel with boxd's
+`boxd-desktop-launch` unless it runs, waiting up to 10 seconds for its window, which took under a second live. Exits
+0 once the window is there. A machine created with `desktop` also installs both from its spec at boot, and whichever
+install comes second waits for the first to let go of apt's lock."""
 
 _RELEASE_TIMEOUT = 10
 """Seconds to spend letting go of the mouse button after a drag fails or is cancelled."""

@@ -95,7 +95,7 @@ try:
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[boxd]` to use BoxdSandbox.') from _import_error
 
-from pydantic_ai_harness.boxd_sandbox._desktop import DISPLAY, BoxdDesktop
+from pydantic_ai_harness.boxd_sandbox._desktop import DISPLAY, INSTALL_PANEL, PANEL_LOG, START_PANEL, BoxdDesktop
 
 _T = TypeVar('_T')
 
@@ -116,6 +116,8 @@ _LIFECYCLE_TIMEOUT = 120.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.25
+# Installing the panel on an attached machine, or waiting for its spec to, takes up to about a minute.
+_PANEL_TIMEOUT = 360.0
 # The local backend's cap and preview: output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
@@ -524,6 +526,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         computer, machine_id = self._attached_computer()
         # Fixing the size makes boxd's console scale the screen instead of resizing it. Anyone in the org can open it.
         await computer.set_screen_size(machine_id, *size)
+        assert self._client is not None
+        # Without the panel the screen still works, but shows the agent nothing to open.
+        result = await self._client.machines.exec(machine_id, START_PANEL, timeout=_PANEL_TIMEOUT)
+        if result.exit_code != 0:
+            logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, PANEL_LOG)
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
@@ -600,9 +607,14 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
         spec = None
-        if self._secrets:
+        if self._secrets or self._display is not None:
             # boxd refuses `isolated` and `vcpu` next to a spec, so the spec carries them.
-            spec = boxd.spec.spec().isolated().with_(boxd.spec.secrets(*self._secrets))
+            spec = boxd.spec.spec().isolated()
+            if self._secrets:
+                spec = spec.with_(boxd.spec.secrets(*self._secrets))
+            if self._display is not None:
+                # boxd runs it as root once the machine boots, while the agent's first steps run.
+                spec = spec.packages(INSTALL_PANEL)
             if self._vcpu is not None:
                 spec = spec.size(f'{self._vcpu}x{4 * self._vcpu}')
         machine = await _launch(

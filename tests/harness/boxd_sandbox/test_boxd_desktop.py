@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import anyio
@@ -27,6 +28,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
+from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 
 from ..display_fakes import look_click_then_finish, screen
@@ -215,6 +217,38 @@ async def test_the_desktop_is_held_at_its_size_when_it_starts(host: FakeBoxd) ->
     await screen(backend).display_size()
 
     assert host.desktop.calls == ['set_screen_size 1440x900']
+
+
+async def test_a_new_desktop_machine_installs_the_panel_from_its_spec(host: FakeBoxd) -> None:
+    await BoxdSandboxBackend(desktop=True, vcpu=2).run(['true'])
+
+    machine = host.only
+    assert machine.create_kwargs['isolated'] is False
+    assert machine.create_kwargs['spec'] == {'version': 1, 'isolated': True, 'size': '2x8', 'packages': [INSTALL_PANEL]}
+
+
+async def test_the_panel_starts_on_each_connection_after_the_screen_is_held(host: FakeBoxd) -> None:
+    backend = await _started(host)
+    assert host.exec_commands.count(START_PANEL) == 1
+
+    await backend.aclose()
+    await screen(backend).screenshot()
+
+    assert host.exec_commands.count(START_PANEL) == 2
+
+
+async def test_a_panel_that_does_not_start_leaves_the_screen_working(
+    host: FakeBoxd, caplog: pytest.LogCaptureFixture
+) -> None:
+    host.panel_exit_code = 1
+    backend = BoxdSandboxBackend(desktop=True)
+
+    with caplog.at_level(logging.WARNING):
+        assert await screen(backend).screenshot() == host.desktop.png
+
+    assert caplog.messages == [
+        'The panel did not start on boxd machine machine-1; see /tmp/pydantic-ai-desktop.log there'
+    ]
 
 
 async def test_looks_come_from_the_desktop(host: FakeBoxd) -> None:

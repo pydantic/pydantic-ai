@@ -53,6 +53,8 @@ from boxd.resources.computer import AsyncComputer
 from boxd.resources.fs import AsyncFs
 from boxd.resources.machines import AsyncMachines
 
+from pydantic_ai_harness.boxd_sandbox._desktop import START_PANEL
+
 from ..display_fakes import FAKE_SCREENSHOT
 
 # Output a command writes after it exits is read for this long, then dropped.
@@ -604,6 +606,9 @@ class FakeMachines:
         owner.exec_commands.append(command)
         if command == 'true' and owner.probe_errors:
             raise owner.probe_errors.pop(0)
+        if command == START_PANEL:
+            # Not run on the host: it installs packages and writes the panel's settings under `$HOME`.
+            return ExecResult(stdout='', stderr='', exit_code=owner.panel_exit_code)
         process = await asyncio.create_subprocess_exec(
             '/bin/sh',
             '-c',
@@ -658,6 +663,7 @@ class FakeBoxd:
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
         self.desktop = FakeDesktop()
+        self.panel_exit_code = 0
         # The `Fs*` calls made, in order; with `agent_outdated`, each is refused as a machine's old agent refuses it.
         self.fs_calls: list[str] = []
         self.agent_outdated = False
