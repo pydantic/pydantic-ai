@@ -1,7 +1,4 @@
-"""`X11Computer` controls the screen of a Linux environment by running commands in it.
-
-The environment runs an X server, the program that draws the screen.
-"""
+"""`X11Computer` controls the X server screen of a Linux environment by running commands in it."""
 
 from __future__ import annotations as _annotations
 
@@ -35,17 +32,16 @@ DISPLAY = ':1'
 DISPLAY_NUMBER = DISPLAY[1:]
 
 START_LOCK = f'exec 9>/tmp/.pydantic-ai-display-{DISPLAY_NUMBER}.lock; ! command -v flock >/dev/null || flock 9; '
-"""The first line of a start script. It waits for any other start of this display to finish, so two scripts don't
-both start a display. A program the script starts in the background must close the lock with `9>&-`. Otherwise the
-program holds the lock for as long as it runs."""
+"""The first line of a start script: it waits for any other start of this display, so two don't both start one. A
+program the script starts in the background must close the lock with `9>&-`, or it holds the lock while it runs."""
 
 
 def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
     """Shell code that waits until the command `ready` succeeds for a program just started in the background.
 
-    It fails when process `pid` exits, or after 10 seconds. It then says `what` didn't start and prints the end of
-    `log`. `ready` must succeed only for the new process. If it reads a log, empty that log before starting the
-    program. Otherwise the check can read the previous run's log before the program's output replaces it.
+    It fails when process `pid` exits, or after 10 seconds, saying `what` didn't start and printing the end of `log`.
+    `ready` must succeed only for the new process: if it reads a log, empty the log before starting the program, or it
+    can read the previous run's output.
     """
     return (
         f'i=0; until {ready}; do '
@@ -119,8 +115,8 @@ _KEYSYMS = {
     '[': 'bracketleft',
     ']': 'bracketright',
 }
-"""Key names that X spells differently. X calls a key's name its keysym. The other names, such as `ctrl`, and ASCII
-letters and digits are already keysyms."""
+"""Key names whose X keysym is spelled differently. Other names, such as `ctrl`, and ASCII letters and digits are
+already keysyms."""
 
 _COMMAND_TIMEOUT = 150
 """Seconds one display command may take, plus the pauses it asks for, such as the seconds of a `hold_keys`."""
@@ -138,24 +134,22 @@ _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks; `xdotool`'s default is 100."""
 
 _SCROLL_TICK_SECONDS = int(_SCROLL_TICK_DELAY_MS) / 1000
-"""Time per wheel click, as measured: 20 ms each."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
 _DISPLAY_SIZE = ['xwininfo', '-root']
-"""Prints the size of the root window, X's name for the whole screen. It spans every monitor, as a screenshot does.
-`xdotool getdisplaygeometry` gives only the first monitor's size, so a click on a second monitor would be scaled onto
-the first."""
+"""Prints the size of the root window, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry`
+gives only the first monitor's size, so a click on a second monitor would be scaled onto the first."""
 
 _CAPTURE = (
     'f=/tmp/pydantic-ai-capture-$$.png; scrot --overwrite "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; '
     'exit $status'
 )
-"""Takes a screenshot into a file of its own and prints it as base64. scrot picks the PNG format from the `.png`
-name. Arguments go to scrot, such as `-a x,y,width,height` for a region. A cancelled capture can leave its file
-behind, and a later capture can get the same process id and so the same file name. `--overwrite` replaces that file.
-Without it, scrot saves under another name and the old file would be printed."""
+"""Takes a screenshot into its own file and prints it as base64. scrot picks PNG from the `.png` name, and gets the
+arguments, such as `-a x,y,width,height` for a region. A cancelled capture can leave its file behind for a later one
+with the same process id: `--overwrite` replaces it, where scrot would save under another name and the old file would
+be printed."""
 
 _INPUT_PID = f'/tmp/.pydantic-ai-input-{DISPLAY_NUMBER}'
 """Holds the process id of the input command running on the display; `ComputerUse` runs one at a time."""
@@ -267,8 +261,7 @@ class X11Computer:
     ) -> None:
         """Run an `xdotool` command chain with the keys in `hold` held down. If it fails or is cancelled, let go of all.
 
-        `release` is an `xdotool` chain that lets go of what the chain presses. The command may take `pauses` seconds
-        on top of the usual time limit.
+        `release` is an `xdotool` chain that lets go of what the chain presses.
         """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
@@ -302,13 +295,11 @@ class X11Computer:
         return failures
 
     async def _capture(self, *args: str) -> bytes:
-        """Run `_CAPTURE` with `args` and read the PNG it prints as base64."""
         return png_from_base64((await self._run(['sh', '-c', _CAPTURE, 'sh', *args])).stdout, 'The screenshot command')
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(_DISPLAY_SIZE)).stdout
-        # `[ \t]*` matches within one line. `\s*` would make the search time grow with the square of the output's
-        # length.
+        # `[ \t]*` stays within one line, where `\s*` would make the search quadratic in the output's length.
         width, height = (
             re.search(rf'^[ \t]*{name}: (\d{{1,5}})$', output, re.MULTILINE) for name in ('Width', 'Height')
         )
@@ -379,7 +370,6 @@ class X11Computer:
                 )
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
-                # A cancel can land between pressing and releasing, so let go of the keys then too.
                 # xdotool pauses after each key of the chord, not once per repeat.
                 await self._xdotool(
                     ['key', '--repeat', _repeat(repeat), '--', '+'.join(keysyms)],
