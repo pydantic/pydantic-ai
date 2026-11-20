@@ -223,6 +223,34 @@ git config --global credential.https://github.com.helper '!f() { echo username=x
 - boxd turns the real value back into the placeholder in responses, but may miss an encoded copy. List only hosts that never send request headers back.
 - An attached machine keeps the secrets it was created with. Calling `secrets.set` again swaps the value right away, and the placeholder stays the same.
 
+## Give the agent a desktop
+
+Pass `desktop=True` to give the agent the machine's desktop. Add [`ComputerUse`](computer-use.md) so the agent can see the screen and use its mouse and keyboard:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
+from pydantic_ai_harness.coder import Coder
+
+agent = Agent('{{ anthropic:large }}', capabilities=[BoxdSandbox(desktop=True), Coder(), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Start xterm, run `uname -a` in it, and tell me what it printed.')
+    print(result.output)
+```
+
+Machines on boxd's current default image come with a desktop. The agent controls it through boxd's computer API. A fork or snapshot of an older image has no desktop, so use a fresh machine. The desktop starts on the agent's first action and takes a few seconds.
+
+The agent sees a panel along the top of the screen with a Terminal button, and a button for each open window. Terminal opens `xterm` below the panel, filling the rest of the screen, so an agent with `ComputerUse` alone, and no shell tool, can still run commands. `tint2` draws the panel. A new machine installs it, and `xterm`, as boxd boots it; on an attached machine, the first desktop action installs whichever is missing with `apt-get`, which needs passwordless `sudo` there. Either way the first desktop action waits for the install, which took under 30 seconds when tested. Shell commands don't wait for it. If a `tint2` panel already runs, no second one is added. If the panel doesn't start, the screen still works without it, a warning is logged, and `/tmp/pydantic-ai-desktop.log` in the machine says why.
+
+boxd's desktop already acts as the window manager and draws no title bars, so a second one can't run. An app the agent starts from the shell opens where it asks to, or at the top left, and new windows open on top of older ones. Commands get `DISPLAY` set, so the programs they start open on the desktop. To open a browser, run `agent-browser open <url>`.
+
+The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. The agent can type any text, including accented letters and emoji.
+
+Anyone in your boxd organization can watch the desktop live in the boxd console's Desktop view, and may be able to click and type on it. Everything the agent sees on the screen is visible to them. To keep a record of a run, save each screenshot as it arrives, as shown in [Watching a run](computer-use.md#watching-a-run).
+
 ## Clean up
 
 Pydantic AI never stops or deletes the machine. boxd suspends, and later hibernates, a machine that has had no network activity for as long as your organization's defaults say (set `auto_suspend_timeout=` in seconds to change suspending for new machines, or `0` to turn it off). `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines an idle-destroy or delete-after timer; `boxd machine get` shows a machine's timers. Delete it with the ref you stored:
@@ -266,7 +294,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 
 ## Security model
 
-Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the agent runs holds no boxd credentials and can't reach your other boxd machines. It can reach the internet, and like every boxd machine it has a public HTTPS address that serves the port its code listens on.
+Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the agent runs holds no boxd credentials and can't reach your other boxd machines. It can reach the internet, and like every boxd machine it has a public HTTPS address that serves the port its code listens on. With `desktop=True`, anyone in your boxd organization can also watch the agent's screen in the boxd console, and may be able to click and type on it. See [Give the agent a desktop](#give-the-agent-a-desktop).
 
 `BoxdSandbox` refuses to attach to or fork a machine that isn't isolated or is on a named boxd network, and `destroy` refuses one that isn't isolated. A machine from a snapshot keeps the networks of the machine the snapshot was saved from, so save snapshots from a machine on no network. A ref can still name any isolated machine your credentials can see, so keep refs server-side.
 
@@ -284,6 +312,7 @@ Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the 
 | `authority` | The [authority](../workspace.md#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `secrets` | Names of existing boxd secrets a new machine gets, applied as `boxd.spec.secrets(*secrets)` in its spec. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
+| `desktop` | Give the agent the machine's desktop for [`ComputerUse`](computer-use.md): `True` for 1280x800, or a `(width, height)`. Default: `False`. |
 
 boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 

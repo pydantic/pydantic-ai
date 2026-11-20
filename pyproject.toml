@@ -205,6 +205,10 @@ pydantic-ai-harness = false
 logfire = false
 logfire-api = false
 logfire-sdk = false
+# boxd 0.3.2 is the `boxd` floor: `BoxdSandbox(desktop=True)` drives the desktop with its `machines.computer`.
+# TODO(adtyavrdhn): Remove after 2026-11-20 01:15 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+boxd = "2026-11-13T01:15:00Z"
 # k8s-agent-sandbox 1.0.11 is the `kubernetes` extra's floor: the release the backend is verified against.
 # TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.

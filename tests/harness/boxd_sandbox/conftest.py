@@ -13,7 +13,9 @@ import pytest
 
 _HAS_BOXD = importlib.util.find_spec('boxd') is not None
 collect_ignore = (
-    [] if _HAS_BOXD else ['test_backend.py', 'test_boxd_live.py', 'test_boxd_sandbox.py', 'test_conformance.py']
+    []
+    if _HAS_BOXD
+    else ['test_backend.py', 'test_boxd_desktop.py', 'test_boxd_live.py', 'test_boxd_sandbox.py', 'test_conformance.py']
 )
 
 # Live machines are deleted by the tests that create them; CI stops a live job after 15 minutes, before a

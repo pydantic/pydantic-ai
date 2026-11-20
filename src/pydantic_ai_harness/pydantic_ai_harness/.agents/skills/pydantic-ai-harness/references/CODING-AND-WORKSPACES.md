@@ -18,7 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
-| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display; `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display; `E2BSandbox(desktop=True)`, `DaytonaSandbox(desktop=True)` or `BoxdSandbox(desktop=True)` in the cloud |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -402,6 +402,11 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   isolated one and returns its ref: pass it as `workspace=` to try another approach from the same state,
   then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated or is on a
   named boxd network.
+- `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`. `desktop=(w, h)`
+  sets another size. It needs a machine on boxd's current default image, not a fork or snapshot of an older one. The
+  desktop has no window manager or launcher. To open a browser, run `agent-browser open <url>`. The agent can type
+  any text, emoji included. Anyone in the boxd organization can watch the desktop in the console's Desktop view, and
+  may be able to click and type on it.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
