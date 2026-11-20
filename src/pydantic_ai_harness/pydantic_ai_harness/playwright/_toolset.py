@@ -1213,10 +1213,15 @@ class PlaywrightBrowserSession:
         self._operation_includes_content = False
         """Whether the run that opened `operation_span` includes content in traces, published with it."""
 
-    def begin_operation(self, span: Span, *, include_content: bool) -> None:
+    def _begin_operation(self, span: Span, *, include_content: bool) -> None:
         """Publish the running operation's span, with whether its run includes content in traces."""
         self.operation_span = span
         self._operation_includes_content = include_content
+
+    def _end_operation(self) -> None:
+        """Clear what `_begin_operation` published, once the operation ends."""
+        self.operation_span = None
+        self._operation_includes_content = False
 
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
@@ -2171,7 +2176,9 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 # because a tool failure is a returned string, not an exception.
                 {'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
-                self._session.begin_operation(span, include_content=include_content)
+                self._session._begin_operation(  # pyright: ignore[reportPrivateUsage]
+                    span, include_content=include_content
+                )
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -2196,7 +2203,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     ended_on = self._session.page if self._session.page is not None else page
                     if ended_on is not None and include_content:
                         span.set_attribute('url.full', _without_credentials(ended_on.url))
-                    self._session.operation_span = None
+                    self._session._end_operation()  # pyright: ignore[reportPrivateUsage]
 
     async def _refuse(self, action: str, timeout_ms: int | None, message: str) -> str:
         """Return a bounded refusal without acquiring a page.
@@ -2215,11 +2222,13 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 return error
             telemetry = current_run_telemetry()
             with self._operation_span(telemetry, action, {'browser.action': action, 'browser.outcome': 'ok'}) as span:
-                self._session.begin_operation(span, include_content=telemetry is None or telemetry.include_content)
+                self._session._begin_operation(  # pyright: ignore[reportPrivateUsage]
+                    span, include_content=telemetry is None or telemetry.include_content
+                )
                 try:
                     return self._error(message)
                 finally:
-                    self._session.operation_span = None
+                    self._session._end_operation()  # pyright: ignore[reportPrivateUsage]
 
     def _operation_span(
         self, telemetry: RunTelemetry | None, action: str, attributes: dict[str, str | int]

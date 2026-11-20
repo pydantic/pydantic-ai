@@ -94,6 +94,28 @@ async def test_content_is_left_out_without_include_content():
 
 
 @dataclass
+class FailWhenPrepared(AbstractCapability[object]):
+    """Raises out of an `open_span` span, with a message that quotes content."""
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        with open_span(ctx, 'example prepare'):
+            raise ValueError('secret-argument-value')
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_an_escaping_errors_message_is_recorded_only_with_content(include_content: bool):
+    instrumentation, exporter = instrumented(include_content=include_content)
+    with pytest.raises(ValueError):
+        await Agent(TestModel(), capabilities=[FailWhenPrepared(), instrumentation]).run('go')
+
+    (span,) = [span for span in exporter.get_finished_spans() if span.name == 'example prepare']
+    (event,) = span.events
+    assert (event.attributes or {})['exception.type'] == 'ValueError'
+    recorded = f'{span.status.description} {event.attributes}'
+    assert ('secret-argument-value' in recorded) is include_content
+
+
+@dataclass
 class MarkToolCall(AbstractCapability[object]):
     async def before_tool_execute(
         self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
