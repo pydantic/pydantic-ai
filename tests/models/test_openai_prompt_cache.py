@@ -2540,8 +2540,9 @@ async def test_openai_responses_stable_instructions_as_input_e2e(
     assert second_body['input'][: len(first_body['input'])] == first_body['input']
     if stable_instructions_as_input:
         assert first_body['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
-        # Everything the first request sent but its top-level instruction is read back.
-        assert second.usage.cache_read_tokens >= first.usage.input_tokens - 64
+        # The second request reads back everything the first wrote: its whole input, ahead of the top-level field.
+        assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
+        assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
     else:
         assert second.usage.cache_read_tokens == 0
 
