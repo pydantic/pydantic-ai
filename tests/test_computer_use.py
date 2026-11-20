@@ -6,7 +6,7 @@ built before or after the provider request. `FunctionModel` reaches all of them,
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 
@@ -247,17 +247,35 @@ def _computer_calls(messages: list[ModelMessage]) -> list[ComputerCallPart]:
     ]
 
 
-@pytest.mark.parametrize('streamed', [False, True])
-async def test_a_grid_model_is_told_its_grid_and_its_calls_record_it(streamed: bool) -> None:
-    descriptions: list[str | None] = []
-    respond, stream = _click_then_stop(descriptions)
-    agent = _grid_agent(FunctionModel(respond, stream_function=stream, profile=GRID_PROFILE))
+async def _run(agent: Agent[None, str], *, streamed: bool) -> list[ModelMessage]:
     if streamed:
         async with agent.run_stream('Click.') as result:
             await result.get_output()
-        messages = result.all_messages()
-    else:
-        messages = (await agent.run('Click.')).all_messages()
+        return result.all_messages()
+    return (await agent.run('Click.')).all_messages()
+
+
+def _direct(model: Model) -> Model:
+    return model
+
+
+# A model that hands over another model's response, like `FallbackModel` or `WrapperModel`, keeps that model's labels.
+WRAPS = [
+    pytest.param(_direct, id='direct'),
+    pytest.param(FallbackModel, id='fallback'),
+    pytest.param(WrapperModel, id='wrapper'),
+]
+
+
+@pytest.mark.parametrize('wrap', WRAPS)
+@pytest.mark.parametrize('streamed', [False, True])
+async def test_a_grid_model_is_told_its_grid_and_its_calls_record_it(
+    streamed: bool, wrap: Callable[[Model], Model]
+) -> None:
+    descriptions: list[str | None] = []
+    respond, stream = _click_then_stop(descriptions)
+    agent = _grid_agent(wrap(FunctionModel(respond, stream_function=stream, profile=GRID_PROFILE)))
+    messages = await _run(agent, streamed=streamed)
     assert descriptions == [f'Act on the screen. {GRID_SENTENCE}'] * 2
     [call] = _computer_calls(messages)
     assert call.coordinate_grid == 1000
@@ -298,10 +316,14 @@ async def test_a_model_not_known_to_point_on_a_grid_is_left_alone() -> None:
     assert call.provider_details is None
 
 
+@pytest.mark.parametrize('wrapped', [pytest.param(False, id='fallback'), pytest.param(True, id='wrapped-fallback')])
+@pytest.mark.parametrize('streamed', [False, True])
 @pytest.mark.parametrize(
     'grids', [pytest.param((1000, None), id='grid-down'), pytest.param((None, 1000), id='pixels-down')]
 )
-async def test_a_fallback_call_has_the_grid_of_the_model_that_made_it(grids: tuple[int | None, int | None]) -> None:
+async def test_a_fallback_call_has_the_grid_of_the_model_that_made_it(
+    grids: tuple[int | None, int | None], streamed: bool, wrapped: bool
+) -> None:
     # Each model is told its own grid and labels its own calls, so a call made after a fallback points on the grid of
     # the model that made it.
     down_saw: list[str | None] = []
@@ -311,28 +333,29 @@ async def test_a_fallback_call_has_the_grid_of_the_model_that_made_it(grids: tup
         down_saw.append(info.function_tools[0].description)
         raise ModelAPIError('down', 'Unavailable.')
 
-    respond, _ = _click_then_stop(up_saw)
+    async def down_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        down(messages, info)
+        yield 'unreachable'  # pragma: no cover
+
+    respond, stream = _click_then_stop(up_saw)
     down_grid, up_grid = grids
-    model = FallbackModel(
-        FunctionModel(down, profile=ModelProfile(computer_use_coordinate_grid=down_grid) if down_grid else None),
-        FunctionModel(respond, profile=ModelProfile(computer_use_coordinate_grid=up_grid) if up_grid else None),
+    model: Model = FallbackModel(
+        FunctionModel(
+            down,
+            stream_function=down_stream,
+            profile=ModelProfile(computer_use_coordinate_grid=down_grid) if down_grid else None,
+        ),
+        FunctionModel(
+            respond,
+            stream_function=stream,
+            profile=ModelProfile(computer_use_coordinate_grid=up_grid) if up_grid else None,
+        ),
     )
-    messages = (await _grid_agent(model).run('Click.')).all_messages()
+    messages = await _run(_grid_agent(WrapperModel(model) if wrapped else model), streamed=streamed)
     told = {None: 'Act on the screen.', 1000: f'Act on the screen. {GRID_SENTENCE}'}
     assert (down_saw, up_saw) == ([told[down_grid]] * 2, [told[up_grid]] * 2)
     [call] = _computer_calls(messages)
     assert call.coordinate_grid == up_grid
-
-
-async def test_a_wrapped_fallback_of_grid_models_is_told_its_grid() -> None:
-    # A wrapper around a `FallbackModel` has no profile of its own, so the grid comes from the models it wraps.
-    descriptions: list[str | None] = []
-    respond, _ = _click_then_stop(descriptions)
-    model = WrapperModel(FallbackModel(FunctionModel(respond, profile=GRID_PROFILE)))
-    messages = (await _grid_agent(model).run('Click.')).all_messages()
-    assert descriptions == [f'Act on the screen. {GRID_SENTENCE}'] * 2
-    [call] = _computer_calls(messages)
-    assert call.coordinate_grid == 1000
 
 
 async def test_a_wrapper_that_picks_its_own_model_is_not_told_the_grid_of_the_one_it_wraps() -> None:
@@ -424,6 +447,54 @@ async def test_a_model_is_refused_a_screenshot_larger_than_it_can_see(
     else:
         with pytest.raises(UserError, match=f"larger than 'small' can see. {refusal}"):
             await agent.run('Click.')
+
+
+@pytest.mark.parametrize(
+    'limits, answered',
+    [
+        pytest.param([1000, 2000], ['small', 'big'], id='small-first'),
+        pytest.param([2000, 1000], ['big', 'big'], id='big-first'),
+    ],
+)
+async def test_a_fallback_moves_on_from_a_model_that_cant_see_the_screenshot(
+    limits: list[int], answered: list[str]
+) -> None:
+    calls: list[str] = []
+
+    def model(name: str, max_side: int) -> FunctionModel:
+        respond, _ = _click_then_stop([])
+
+        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(name)
+            return respond(messages, info)
+
+        return FunctionModel(answer, model_name=name, profile=_limited(max_side, None))
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        """Act on the screen."""
+        return ['Done.', _screenshot(1280, 800)]
+
+    names = {1000: 'small', 2000: 'big'}
+    fallback = FallbackModel(*(model(names[limit], limit) for limit in limits))
+    agent = Agent(fallback, tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
+    assert (await agent.run('Click.')).output == 'ok'
+    assert calls == answered
+
+
+async def test_a_fallback_whose_models_all_cant_see_the_screenshot_raises_the_last_refusal() -> None:
+    respond, _ = _click_then_stop([])
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        """Act on the screen."""
+        return ['Done.', _screenshot(1280, 800)]
+
+    fallback = FallbackModel(
+        FunctionModel(respond, model_name='first', profile=_limited(1000, None)),
+        FunctionModel(respond, model_name='second', profile=_limited(1200, None)),
+    )
+    agent = Agent(fallback, tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
+    with pytest.raises(UserError, match=r"larger than 'second' can see\. Start the display at 1200x750 or smaller"):
+        await agent.run('Click.')
 
 
 @pytest.mark.parametrize('value', [True, 0, '1000'])

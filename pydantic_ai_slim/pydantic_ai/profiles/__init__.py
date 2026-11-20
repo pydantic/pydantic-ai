@@ -192,8 +192,8 @@ class ModelProfile(TypedDict, total=False):
 
     The model's maker sets this limit. The model records it on each of its `computer` calls as
     [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side], so a
-    capability that drives the screen can refuse a larger screen, and refuses a request whose latest screenshot is
-    larger with a [`UserError`][pydantic_ai.exceptions.UserError]. Set it, together with
+    capability that drives the screen can refuse a larger screen. The model refuses a request whose latest screenshot
+    is larger with a [`UserError`][pydantic_ai.exceptions.UserError]. Set it, together with
     `computer_use_screenshot_max_pixels`, for a model whose computer tool shrinks a larger screenshot. That model
     answers with positions in the smaller image's pixels.
     """
