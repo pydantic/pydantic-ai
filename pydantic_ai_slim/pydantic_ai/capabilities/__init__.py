@@ -37,7 +37,7 @@ from .abstract import (
     WrapToolValidateHandler,
 )
 from .batch_model_requests import BatchModelRequests
-from .caching import Caching
+from .caching import AutoCachePolicy, CachePolicy, CachePolicyName, Caching, StickyCachePolicy
 from .capability import Capability
 from .citations import Citations
 from .combined import CombinedCapability
@@ -147,6 +147,10 @@ __all__ = [
     'RaiseContentFilterError',
     'BatchModelRequests',
     'Caching',
+    'CachePolicy',
+    'CachePolicyName',
+    'AutoCachePolicy',
+    'StickyCachePolicy',
     'Capability',
     'Citations',
     'CAPABILITY_TYPES',
