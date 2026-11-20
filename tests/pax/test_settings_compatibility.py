@@ -465,7 +465,7 @@ def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fiel
 def test_session_naming_keeps_saved_choices(tmp_path: Path) -> None:
     """A user who turned naming on while it was opt-in keeps it on."""
     path = tmp_path / 'config.db'
-    store = SettingsStore(path)
+    SettingsStore(path)  # creates the settings table an older build wrote the row into
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'true')")
     assert SettingsStore(path).load().session_namer is True
