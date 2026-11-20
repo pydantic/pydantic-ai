@@ -614,8 +614,9 @@ async def test_prefect_durability_a_computer_refusal_reaches_flow_with_its_type(
     agent = Agent(
         # It can't take images, so it refuses the request before it's called.
         FunctionModel(
-            lambda messages, info: ModelResponse(parts=[]), profile=ModelProfile(supports_image_input=False)
-        ),  # pragma: no cover
+            lambda messages, info: ModelResponse(parts=[]),  # pragma: no cover
+            profile=ModelProfile(supports_image_input=False),
+        ),
         name='prefect_durability_computer_refusal',
         deps_type=type(None),
         tools=[Tool(computer, tool_kind=COMPUTER_KIND)],

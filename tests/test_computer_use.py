@@ -20,7 +20,7 @@ from pydantic_ai.computer_use import (
     ComputerReturnPart,
     Screenshot,
 )
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -474,17 +474,19 @@ def _big_screen(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
     return ['Done.', _screenshot(1280, 800)]
 
 
-def _fallback_agent(fallback: str, models: list[FunctionModel]) -> Agent[None, str]:
-    # A refusal is passed over whatever `fallback_on` says, so it's set to an error no model raises.
+def _fallback_agent(
+    fallback: str, models: list[FunctionModel], fallback_on: tuple[type[Exception], ...] = (ValueError,)
+) -> Agent[None, str]:
+    # A refusal is passed over whatever `fallback_on` says, so by default it's set to an error no model raises.
     if fallback == 'FallbackModel':
         return Agent(
-            FallbackModel(*models, fallback_on=(ValueError,)),
+            FallbackModel(*models, fallback_on=fallback_on),
             tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
         )
     return Agent(
         models[0],
         tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
-        capabilities=[ModelFallback(*models[1:], fallback_on=(ValueError,))],
+        capabilities=[ModelFallback(*models[1:], fallback_on=fallback_on)],
     )
 
 
@@ -527,8 +529,10 @@ async def test_a_fallback_whose_models_all_cant_see_the_screenshot_raises_the_la
     assert calls == ['first']
 
 
-async def test_model_fallback_moves_on_from_a_refusal_after_a_provider_error() -> None:
-    # The primary looks, then fails; the first fallback can't see the screenshot, so the second answers.
+@FALLBACKS
+@pytest.mark.parametrize('answered', [True, False], ids=['a-later-model-answers', 'no-model-answers'])
+async def test_a_fallback_moves_on_from_a_refusal_after_a_provider_error(fallback: str, answered: bool) -> None:
+    # The primary looks, then fails; the first fallback can't see the screenshot, so the second answers, if any.
     calls: list[str] = []
     looked = False
 
@@ -540,15 +544,19 @@ async def test_model_fallback_moves_on_from_a_refusal_after_a_provider_error() -
         looked = True
         return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
 
-    small = _look_at_a_big_screen(calls, 'small', 1000)
-    big = _look_at_a_big_screen(calls, 'big', 2000)
-    agent = Agent(
-        FunctionModel(primary),
-        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND)],
-        capabilities=[ModelFallback(small, big)],
-    )
-    assert (await agent.run('Look.')).output == 'ok'
-    assert calls == ['primary', 'primary', 'big']
+    models = [FunctionModel(primary), _look_at_a_big_screen(calls, 'small', 1000)]
+    if answered:
+        models.append(_look_at_a_big_screen(calls, 'big', 2000))
+    agent = _fallback_agent(fallback, models, fallback_on=(ModelAPIError,))
+    if answered:
+        assert (await agent.run('Look.')).output == 'ok'
+        assert calls == ['primary', 'primary', 'big']
+        return
+    # Not every model refused the request, so the run ends with all their errors.
+    with pytest.raises(FallbackExceptionGroup) as error:
+        await agent.run('Look.')
+    assert [type(failure) for failure in error.value.exceptions] == [ModelAPIError, UnservableRequestError]
+    assert calls == ['primary', 'primary']
 
 
 class _BatchModel(SlowBatchTestModel):

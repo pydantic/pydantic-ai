@@ -1248,13 +1248,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             cls.batch_decode = restoring_batch_decode
 
     def _refuse_unservable_computer_request(
-        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+        self, messages: Sequence[ModelMessage] | None, model_request_parameters: ModelRequestParameters | None
     ) -> None:
         """Refuse a request with a `computer` tool that this model can't serve, before anything is sent.
 
-        A model that hands its requests to other models, like `FallbackModel`, leaves it to them.
+        A model that hands its requests to other models, like `FallbackModel`, leaves it to them. A request whose
+        messages or parameters weren't found isn't checked.
         """
-        if not self._answers_requests_itself:
+        if messages is None or model_request_parameters is None or not self._answers_requests_itself:
             return
         try:
             profile = self.profile
@@ -1294,7 +1295,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 messages, params = _messages_and_parameters(args, kwargs)
                 self._refuse_unservable_computer_request(messages, params)
                 response = await request(self, *args, **kwargs)
-                if labels := self._computer_call_labels:
+                if params is not None and (labels := self._computer_call_labels):
                     label_computer_calls(response.parts, computer_tool_names(params), labels)
                 return response
 
@@ -3045,10 +3046,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
 def _messages_and_parameters(
     args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> tuple[list[ModelMessage], ModelRequestParameters]:
-    """The messages and parameters of a call to `request` or `request_stream`, however they were passed."""
-    messages = args[0] if args else kwargs['messages']
-    params = args[2] if len(args) > 2 else kwargs['model_request_parameters']
+) -> tuple[list[ModelMessage] | None, ModelRequestParameters | None]:
+    """The messages and parameters of a call to `request` or `request_stream`, each `None` where it isn't found.
+
+    They're its first and third arguments, or passed by the names `Model` gives them.
+    """
+    messages = args[0] if args else kwargs.get('messages')
+    params = args[2] if len(args) > 2 else kwargs.get('model_request_parameters')
     return messages, params
 
 

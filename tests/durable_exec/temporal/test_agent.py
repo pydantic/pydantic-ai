@@ -26,6 +26,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryImage,
     CancellationToken,
     ExternalToolset,
     FinalResultEvent,
@@ -54,6 +55,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._computer_use import UnservableRequestError
 from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -67,6 +69,7 @@ from pydantic_ai.capabilities import (
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -743,6 +746,68 @@ _capability_migration_agent = Agent(
         )
     ],
 )
+
+
+def _legacy_computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
+    """Act on the screen."""
+    return ['Done.']
+
+
+_refused_legacy_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        # It can't take images, so it refuses any request with a `computer` tool, in its activity, before it's called.
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[]),  # pragma: no cover
+            model_name='blind',
+            profile=ModelProfile(supports_image_input=False),
+        ),
+        name='temporal_refused_agent',
+        tools=[Tool(_legacy_computer, name='computer', tool_kind=COMPUTER_KIND)],
+    ),
+    # Retries allowed, to show the refusal isn't retried.
+    activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+    ),
+)
+
+
+@workflow.defn
+class TemporalAgentRefusedWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            await _refused_legacy_agent.run(prompt)
+        except UnservableRequestError as error:
+            return error.message
+        return 'not refused'  # pragma: no cover
+
+
+async def test_temporal_agent_refusal_in_the_model_activity_reaches_the_workflow_as_itself(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentRefusedWorkflow],
+        activities=_refused_legacy_agent.temporal_activities,
+    ):
+        handle = await client.start_workflow(
+            TemporalAgentRefusedWorkflow.run,
+            args=['Look.'],
+            id=f'{TemporalAgentRefusedWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+    assert output == snapshot(
+        "The `computer` tool needs a model that accepts images, and 'blind' does not: every `computer` call returns a "
+        'screenshot.'
+    )
+    attempts = [
+        event.activity_task_started_event_attributes.attempt
+        for event in history.events
+        if event.HasField('activity_task_started_event_attributes')
+    ]
+    assert attempts == [1]
 
 
 async def test_temporal_agent_rejects_timeout() -> None:
