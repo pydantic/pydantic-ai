@@ -325,8 +325,7 @@ root.mainloop()
 
 
 class TestLiveDaytonaDesktop:
-    """Runs the display against a sandbox started with a desktop. Commands and files are the module's other tests':
-    a desktop sandbox runs them the same way."""
+    """Runs the display against a sandbox started with a desktop."""
 
     @pytest.fixture(scope='class')
     @classmethod
