@@ -12,6 +12,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_path_authority,
@@ -81,6 +82,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         check_sandbox_timeout(self.sandbox_timeout)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
+        desktop_size(self.desktop)
 
     @classmethod
     def from_spec(
