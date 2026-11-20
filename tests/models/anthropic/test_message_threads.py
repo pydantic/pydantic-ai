@@ -599,11 +599,11 @@ async def test_cut_off_stream_starts_a_new_thread(allow_model_requests: None):
         first = await _run(agent, 'Hi', [], stream=True)
         await _run(agent, 'Again', first, stream=True)
 
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['Hi', 'Hel', 'Again']
     response = first[-1]
     assert isinstance(response, ModelResponse)
     assert response.state == 'incomplete'
-    assert api.bodies[1]['thread'] == {'type': 'create'}
-    assert _user_texts(api.bodies[1]) == ['Hi', 'Hel', 'Again']
 
 
 async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
