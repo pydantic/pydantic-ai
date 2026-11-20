@@ -4,6 +4,7 @@
     options:
       members:
         - ModelProfile
+        - ModelDeprecation
         - ModelProfileSpec
         - JsonSchemaTransformer
         - InlineDefsJsonSchemaTransformer
@@ -39,5 +40,7 @@
 ::: pydantic_ai.profiles.groq
 
 ::: pydantic_ai.profiles.zai
+
+::: pydantic_ai.profiles.minimax
 
 ::: pydantic_ai.profiles.decision

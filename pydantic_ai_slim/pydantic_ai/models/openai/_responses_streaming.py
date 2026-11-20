@@ -23,6 +23,8 @@ from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from .._history_digest import Hasher
+from .._tool_call_ids import stored_tool_call_id
 from ._citations import (
     jsonable_annotation,
     map_responses_citations,
@@ -30,7 +32,7 @@ from ._citations import (
     responses_output_text_annotation_ta,
 )
 from ._errors import map_api_errors, response_error, response_error_type
-from ._history_digest import Hasher, with_history_digest
+from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
 from ._native_tools import (
     map_code_interpreter_tool_call,
@@ -46,7 +48,6 @@ from ._response_fields import (
     map_logprobs,
     map_usage,
     response_status_to_state,
-    response_tool_call_id,
 )
 from ._settings import OpenAIResponsesModelSettings, echoed_store
 from ._tool_search import (
@@ -397,9 +398,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             vendor_part_id=item_id,
             tool_name=item.name,
             args=item.arguments,
-            tool_call_id=response_tool_call_id(
+            tool_call_id=stored_tool_call_id(
                 item.call_id,
-                self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                # Without the response ID yet, the ID is kept as sent rather than scoped by the timestamp:
+                # a request continuing this response by `previous_response_id` no longer holds it, so
+                # only the response ID can restore the IDs its results carry.
+                response_scoped=self._tool_call_ids_are_response_scoped and self.provider_response_id is not None,
+                provider_response_id=self.provider_response_id,
+                timestamp=self.timestamp,
             ),
             id=item_id,
             provider_name=self.provider_name,

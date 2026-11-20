@@ -82,7 +82,7 @@ from pydantic_ai_harness.ask_user import (
     check_response,
 )
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 
 def question(header: str = 'Approach', *, multi_select: bool = False, labels: Sequence[str] = ('A', 'B')) -> Question:
