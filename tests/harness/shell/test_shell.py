@@ -1184,7 +1184,7 @@ class TestProcessGroupKill:
         async with anyio.create_task_group() as tg:
             tg.start_soon(run_until_cancelled)
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                while not started.exists():
+                while not started.exists():  # real-wait: the trap runs in a real subprocess, which sets no event
                     await anyio.sleep(0.01)
             tg.cancel_scope.cancel()
         assert await persist_toolset.run_command(ctx, 'pwd') == f'[stdout]\n{shell_dir / "subdir"}\n'
