@@ -3893,6 +3893,35 @@ def test_dump_load_roundtrip_builtin_tool_return_before_function_call() -> None:
     assert reloaded == original
 
 
+def test_load_nested_builtin_tool_returns_keep_their_order() -> None:
+    """Native tool returns load in the order they arrived, ahead of a function call the same message lists.
+
+    A frontend keeps all of a response's calls on one `AssistantMessage` and appends each result as it streams
+    in, so a server tool called from inside another one (web fetch run by code execution) returns first.
+    """
+    tool_calls = ['pyd_ai_builtin|anthropic|srv_1', 'pyd_ai_builtin|anthropic|srv_2', 'call_1']
+    messages: list[Message] = [
+        UserMessage(id='msg_1', content='Find my earlier chats'),
+        AssistantMessage(
+            id='msg_2',
+            tool_calls=[ToolCall(id=id, function=FunctionCall(name='tool', arguments='{}')) for id in tool_calls],
+        ),
+        *(ToolMessage(id=f'result_{id}', tool_call_id=id, content='result') for id in reversed(tool_calls[:2])),
+    ]
+
+    response = AGUIAdapter.load_messages(messages)[1]
+    assert isinstance(response, ModelResponse)
+    assert [f'{type(part).__name__}:{getattr(part, "tool_call_id", None)}' for part in response.parts] == snapshot(
+        [
+            'NativeToolCallPart:srv_1',
+            'NativeToolCallPart:srv_2',
+            'NativeToolReturnPart:srv_2',
+            'NativeToolReturnPart:srv_1',
+            'ToolCallPart:call_1',
+        ]
+    )
+
+
 def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
     original: list[ModelMessage] = [
         ModelResponse(
