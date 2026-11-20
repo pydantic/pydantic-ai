@@ -9,10 +9,10 @@ from typing import Protocol, TypeVar
 
 import anyio
 
-from pydantic_ai._computer_use import PNG_SIGNATURE
 from pydantic_ai.computer_use import Point, Region
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai_harness._png import PNG_SIGNATURE
 
 from .computer_use import Display, DisplayAction, SupportsCursorPosition, SupportsZoom, UnsupportedActionError
 

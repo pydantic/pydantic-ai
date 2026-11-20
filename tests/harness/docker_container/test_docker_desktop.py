@@ -12,7 +12,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
-from pydantic_ai.computer_use import Click, Point
+from pydantic_ai.computer_use import Click, KeyDown, KeyUp, Point
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness._x11 import DESKTOP_PACKAGES
@@ -104,6 +104,16 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     xvfb_args = (docker.bin_dir / 'xvfb-starts').read_text()
     assert '-nolisten tcp -nolisten local' in xvfb_args and '-noreset' in xvfb_args
     assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
+
+
+async def test_a_key_held_with_key_down_stays_pressed_through_a_click(docker: FakeDocker, container_dir: Path) -> None:
+    workspace = screen(_desktop(container_dir, 'my-desktop'))
+
+    await workspace.act(KeyDown(keys=('shift',)))
+    await workspace.act(Click(x=3, y=4))
+    await workspace.act(KeyUp(keys=('shift',)))
+
+    assert docker.xdotool_calls[-3:] == [':1 keydown shift', ':1 mousemove 3 4 click --repeat 1 1', ':1 keyup shift']
 
 
 async def test_two_starts_at_once_start_one_x_server(docker: FakeDocker, container_dir: Path) -> None:

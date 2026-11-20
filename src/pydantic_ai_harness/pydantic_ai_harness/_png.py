@@ -1,15 +1,11 @@
-"""Computer use helpers shared by the `computer` tool's parts and the capabilities that run it."""
+"""PNG helpers for the screenshots a `computer` tool returns."""
 
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 
-from . import messages as _messages
-
-COMPUTER_KIND_ID = 'computer_use.computer'
-"""The id of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND], so this module needn't import it.
-
-Message histories store it, so it never changes."""
+from pydantic_ai import messages as _messages
+from pydantic_ai.computer_use import ComputerReturnPart
 
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
@@ -23,8 +19,6 @@ def png_size(data: bytes) -> tuple[int, int] | None:
 
 def latest_screenshot_size(messages: Sequence[_messages.ModelMessage]) -> tuple[int, int] | None:
     """The size of the latest screenshot a `computer` call returned in `messages`."""
-    from .computer_use import ComputerReturnPart
-
     for message in reversed(messages):
         if not isinstance(message, _messages.ModelRequest):
             continue

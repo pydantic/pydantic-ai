@@ -180,6 +180,8 @@ def test_the_computer_tool_schema_requires_type_first_and_only_names_it_declares
             'CursorPosition',
             'Drag',
             'HoldKeys',
+            'KeyDown',
+            'KeyUp',
             'MouseDown',
             'MouseMove',
             'MouseUp',

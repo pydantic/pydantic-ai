@@ -13,7 +13,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
@@ -84,6 +85,27 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, 
 def test_a_desktop_size_is_checked_when_the_capability_is_created() -> None:
     with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
         E2BSandbox(desktop=(0, 800))
+
+
+def _shift_click(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A `FunctionModel` function: holds shift in one call, shift-clicks and lets go in the next, then answers."""
+    steps = [
+        [{'type': 'key_down', 'keys': ['shift']}],
+        [{'type': 'click', 'x': 3, 'y': 4}, {'type': 'key_up', 'keys': ['shift']}],
+    ]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
+
+
+async def test_a_key_held_with_key_down_stays_pressed_across_calls(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    agent = Agent(FunctionModel(_shift_click), capabilities=[E2BSandbox(desktop=True), ComputerUse(native=False)])
+
+    await agent.run('Shift-click.')
+
+    pressed = [command.rsplit(' xdotool ', 1)[-1] for command in display.xdotool]
+    assert pressed[-3:] == ['keydown shift', 'mousemove 3 4 click --repeat 1 1', 'keyup shift']
 
 
 async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
