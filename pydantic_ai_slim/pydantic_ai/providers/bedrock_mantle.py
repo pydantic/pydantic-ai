@@ -74,8 +74,8 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
         # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
         # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
-        # provider error. OpenAI's native computer tool is the exception. It works on the `/openai/v1` endpoint as
-        # it does on OpenAI's own API, for the same models.
+        # provider error. The exception is OpenAI's native computer tool, which works on the `/openai/v1` endpoint
+        # for the same models as on OpenAI's API.
         supported_native_tools=frozenset({ComputerTool})
         if interface == 'openai-responses' and is_openai_computer_use_model(base_model_name)
         else frozenset(),

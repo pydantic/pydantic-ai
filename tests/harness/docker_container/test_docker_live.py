@@ -341,5 +341,4 @@ async def _xev_events(
 
 
 def _logged(events: list[tuple[str, str, int]], kind: str, detail: str) -> int:
-    """How many of `events` are of type `kind` for the keysym or button `detail`."""
     return sum(event[:2] == (kind, detail) for event in events)

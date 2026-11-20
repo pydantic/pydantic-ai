@@ -129,8 +129,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     @cached_property
     def _computer_batch(self) -> ComputerBatch:
-        # All computer toolset calls in a response form one batch: one `computer` call where the first call was. Its
-        # start event is sent when the response ends, once all the calls are known.
+        # The batch's start event is sent when the response ends, once all its calls are known.
         return ComputerBatch(self._native_computer, self.provider_name)
 
     def get(self) -> ModelResponse:
@@ -149,9 +148,6 @@ class AnthropicStreamedResponse(StreamedResponse):
             try:
                 async for event in MapStreamDecodeErrors(self._response, self._model_name):
                     for event_ in self._map_event(event):
-                        # The computer call's start event must come first, and the call is complete only when the
-                        # response ends. So every event after a toolset computer call, including text, is held until
-                        # then and arrives at once.
                         if self._computer_batch.blocks:
                             self._after_computer_batch.append(event_)
                         else:
@@ -480,13 +476,12 @@ class AnthropicStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         computer_input_json = ''.join(self._computer_input)
         try:
-            # With no input deltas, the whole input came with the block's start event, as an ordinary tool call's can.
+            # With no input deltas, the whole input came with the block's start event.
             computer_args: dict[str, Any] = (
                 pydantic_core.from_json(computer_input_json) if self._computer_input else {**current_block.input}
             )
         except ValueError:
-            # The input was cut off, as at `max_tokens`. It is kept as partial JSON, so the run stops on it, as it does
-            # for any cut-off tool call. It goes after the toolset's earlier calls, as the response's last part.
+            # Cut off, as at `max_tokens`: kept as partial JSON so the run stops on it, like any cut-off tool call.
             yield self._parts_manager.handle_part(
                 vendor_part_id=current_block.id,
                 part=ComputerCallPart(

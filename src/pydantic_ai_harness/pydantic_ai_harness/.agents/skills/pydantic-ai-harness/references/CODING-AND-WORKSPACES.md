@@ -510,7 +510,7 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
-- `desktop=True` gives the container a 1280x800 screen for `ComputerUse()`. Commands and files still work.
+- `desktop=True` gives the container a 1280x800 screen for `ComputerUse()`.
   Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox), and later runs reuse
   it. A custom `image` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`. Under durable execution, build the
   image before the first run and pass it as `image`.
