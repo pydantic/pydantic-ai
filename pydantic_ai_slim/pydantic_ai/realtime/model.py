@@ -589,6 +589,24 @@ KnownRealtimeModelName = TypeAliasType(
 """Known realtime model identifiers, surfaced for autocomplete and pinned to provider aliases by a sync test."""
 
 
+def _gateway_route(provider: str) -> str:
+    """The provider a `gateway/...` prefix routes to, as `infer_realtime_model` dispatches on it."""
+    from ..providers.gateway import normalize_gateway_provider
+
+    # Same alias resolution as `infer_model`: the gateway's Google upstream is the Vertex route,
+    # so `gateway/google` collapses onto `google-cloud`. The un-normalized string stays the
+    # model's `provider`, whose handshake reads the gateway base URL and bearer key from
+    # `gateway_provider` (the OpenAI protocol already carries the same trace context the
+    # gateway's HTTP request hook would add).
+    model_kind = normalize_gateway_provider(provider)
+    if model_kind not in ('openai', 'google-cloud'):
+        raise UserError(
+            f'Realtime model provider {provider!r} cannot be routed through the Pydantic AI Gateway. '
+            'Supported gateway routes are `gateway/openai` and `gateway/google`.'
+        )
+    return model_kind
+
+
 def infer_realtime_model(
     model: KnownRealtimeModelName | str, provider_factory: Callable[[str], Provider[Any]] | None = None
 ) -> RealtimeModel:
@@ -622,65 +640,52 @@ def infer_realtime_model(
     # `AzureProvider.for_realtime()` rather than the plain `infer_provider('azure')` provider).
     resolved_provider: Provider[Any] | str = provider if provider_factory is None else provider_factory(provider)
 
-    model_kind = provider
-    if model_kind.startswith('gateway/'):
-        from ..providers.gateway import normalize_gateway_provider
+    model_kind = _gateway_route(provider) if provider.startswith('gateway/') else provider
+    match model_kind:
+        case 'openai':
+            # OpenAI serves two different voice protocols behind one provider: `gpt-live-*` speaks
+            # GPT-Live (`/live/sessions`), everything else the Realtime API (`/realtime`). The prefix
+            # can't tell them apart, so the model name picks — the only place in this function where
+            # routing looks past the provider.
+            from ..profiles.openai import is_openai_live_model
 
-        # Same alias resolution as `infer_model`: the gateway's Google upstream is the Vertex route,
-        # so `gateway/google` collapses onto `google-cloud`. The un-normalized string stays the
-        # model's `provider`, whose handshake reads the gateway base URL and bearer key from
-        # `gateway_provider` (the OpenAI protocol already carries the same trace context the
-        # gateway's HTTP request hook would add).
-        model_kind = normalize_gateway_provider(model_kind)
-        if model_kind not in ('openai', 'google-cloud'):
+            if is_openai_live_model(model_name):
+                from .openai_live import OpenAILiveModel
+
+                return OpenAILiveModel(model_name, provider=resolved_provider)
+
+            from .openai import OpenAIRealtimeModel
+
+            return OpenAIRealtimeModel(model_name, provider=resolved_provider)
+        case 'azure':
+            from .azure import AzureRealtimeModel
+
+            return AzureRealtimeModel(model_name, provider=resolved_provider)
+        case 'xai':
+            from .xai import XaiRealtimeModel
+
+            return XaiRealtimeModel(model_name, provider=resolved_provider)
+        case 'elevenlabs':
+            from .elevenlabs import ElevenLabsRealtimeModel
+
+            return ElevenLabsRealtimeModel(model_name, provider=resolved_provider)
+        case 'elevenlabs-agents':
+            from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
+
+            # The model string names the model class; the provider is ElevenLabs' own.
+            if isinstance(resolved_provider, str):
+                resolved_provider = 'elevenlabs'
+            return ElevenLabsAgentsRealtimeModel(model_name, provider=resolved_provider)
+        # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
+        case 'google' | 'google-cloud':
+            from .google import GoogleRealtimeModel
+
+            if isinstance(resolved_provider, str):
+                resolved_provider = 'gateway' if resolved_provider.startswith('gateway/') else model_kind
+            return GoogleRealtimeModel(model_name, provider=resolved_provider)
+        case _:
             raise UserError(
-                f'Realtime model provider {provider!r} cannot be routed through the Pydantic AI Gateway. '
-                'Supported gateway routes are `gateway/openai` and `gateway/google`.'
+                f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
+                '`xai`, `elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / '
+                '`gateway/google` to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
             )
-
-    if model_kind == 'openai':
-        # OpenAI serves two different voice protocols behind one provider: `gpt-live-*` speaks
-        # GPT-Live (`/live/sessions`), everything else the Realtime API (`/realtime`). The prefix
-        # can't tell them apart, so the model name picks — the only place in this function where
-        # routing looks past the provider.
-        from ..profiles.openai import is_openai_live_model
-
-        if is_openai_live_model(model_name):
-            from .openai_live import OpenAILiveModel
-
-            return OpenAILiveModel(model_name, provider=resolved_provider)
-
-        from .openai import OpenAIRealtimeModel
-
-        return OpenAIRealtimeModel(model_name, provider=resolved_provider)
-    if model_kind == 'azure':
-        from .azure import AzureRealtimeModel
-
-        return AzureRealtimeModel(model_name, provider=resolved_provider)
-    if model_kind == 'xai':
-        from .xai import XaiRealtimeModel
-
-        return XaiRealtimeModel(model_name, provider=resolved_provider)
-    if model_kind == 'elevenlabs':
-        from .elevenlabs import ElevenLabsRealtimeModel
-
-        return ElevenLabsRealtimeModel(model_name, provider=resolved_provider)
-    if model_kind == 'elevenlabs-agents':
-        from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
-
-        # The model string names the model class; the provider is ElevenLabs' own.
-        if isinstance(resolved_provider, str):
-            resolved_provider = 'elevenlabs'
-        return ElevenLabsAgentsRealtimeModel(model_name, provider=resolved_provider)
-    # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
-    if model_kind in ('google', 'google-cloud'):
-        from .google import GoogleRealtimeModel
-
-        if isinstance(resolved_provider, str):
-            resolved_provider = 'gateway' if resolved_provider.startswith('gateway/') else model_kind
-        return GoogleRealtimeModel(model_name, provider=resolved_provider)
-    raise UserError(
-        f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, `elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / '
-        '`gateway/google` to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
-    )

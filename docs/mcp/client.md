@@ -18,16 +18,28 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note "FastMCP 4"
-    The command above installs FastMCP 4, which `MCPToolset` supports alongside FastMCP 3. Its
-    modern protocol mode does not support server-initiated sampling or elicitation, and cannot
-    apply `log_level`. `MCPToolset` warns when these options are configured; filter logs in
-    `log_handler` instead. For these options, FastMCP 4's legacy protocol mode retains the
-    FastMCP 3 behavior.
+    The command above installs FastMCP 4, which `MCPToolset` supports alongside FastMCP 3. By
+    default FastMCP 4 connects with the 2026-07-28 MCP protocol, which has no request for setting
+    a server's log level, so `log_level` isn't applied: `MCPToolset` warns, and you can filter by
+    level in `log_handler` instead. That protocol also changes how a server asks for
+    [sampling](#mcp-sampling) and [elicitation](#elicitation); see
+    [how the server asks](#how-the-server-asks).
+
+    `MCPToolset` refreshes its cached tools, resources and prompts when the server sends a
+    `list_changed` notification. On that protocol a server can only send one while it handles a
+    request: a FastMCP server does it with `ctx.send_notification(ToolListChangedNotification())`
+    (`ctx.session.send_tool_list_changed()` sends nothing). A change the server makes between
+    requests doesn't reach the toolset, so for such servers set
+    [`cache_tools=False`][pydantic_ai.mcp.MCPToolset.cache_tools].
 
     FastMCP 4 is also built on [`httpx2`](https://httpx2.pydantic.dev/) rather than legacy HTTPX.
     `MCPToolset` hands the [`auth`](#http-authentication) and
     [`http_client`](#custom-tls-ssl-configuration) objects you pass it straight to FastMCP without
     inspecting them, so build them with `httpx2` — or with legacy `httpx` if you've pinned FastMCP 3.
+
+    `[mcp]` installs `fastmcp-slim[client]`, which is the client half only. The server examples on
+    this page — the ones that build a `FastMCP` and run it — need the full package alongside it:
+    `pip install fastmcp`.
 
 ## Usage
 
@@ -55,7 +67,7 @@ The [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-ht
 Before creating the toolset, we need to run a server that supports the Streamable HTTP transport.
 
 ```python {title="streamable_http_server.py" dunder_name="not_main"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 app = FastMCP()
 
@@ -193,7 +205,8 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 ```
 
 Each entry supports `command`, `args`, `env` and `cwd` for a stdio server, or `url` and `headers`
-for an HTTP server. The configuration is validated as it's loaded, so a wrongly-typed field is reported
+for an HTTP server. An entry with both runs `command` and ignores `url` and `headers`, as FastMCP does.
+The configuration is validated as it's loaded, so a wrongly-typed field is reported
 straight away instead of failing later at connection time. Unknown keys are ignored, so a file shared with
 another MCP client still loads — but they are only ignored, never honoured. In particular
 `disabled` does not skip a server, and `type` does not choose the transport: that is inferred from
@@ -297,14 +310,13 @@ How the server reads the injected metadata is MCP server SDK specific. For examp
 ```python {title="mcp_server.py"}
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.session import ServerSession
+from fastmcp import Context, FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+async def echo_deps(ctx: Context) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -315,7 +327,9 @@ async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
     """
     await ctx.info('This is an info message')
 
-    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    request_context = ctx.request_context
+    assert request_context is not None  # set while the server handles a request
+    deps: Any = getattr(request_context.meta, 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
 
@@ -393,15 +407,17 @@ Tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overvie
 
 FastMCP 4 uses the newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663), where the server directs task creation. The `task` metadata and `prefer_tasks` client preference above therefore apply to FastMCP 3, not FastMCP 4. An ordinary call drives a task-only tool to completion with nothing extra installed; explicitly selecting the tasks extension with `use_task=True` requires the separate `fastmcp-tasks` package, available via the `mcp-tasks` optional group: `pip install "pydantic-ai-slim[mcp-tasks]"`.
 
-For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tasks extra with
-`pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with
-`task=TaskConfig(mode=...)`:
+To declare task support per tool with `task=TaskConfig(mode=...)`, install fastmcp's tasks extra with
+`pip install "fastmcp[tasks]"`. `TaskConfig` lives in `fastmcp.utilities.tasks` from FastMCP 4 on, and in
+`fastmcp.server.tasks` on [FastMCP 3](https://gofastmcp.com/v3/servers/tasks):
 
 ```python {title="background_task_server.py" dunder_name="not_main"}
 from fastmcp import FastMCP
-from fastmcp.server.tasks import TaskConfig
+from fastmcp.utilities.tasks import TaskConfig
+from fastmcp_tasks import TasksExtension
 
 mcp = FastMCP('long_running_server')
+mcp.add_extension(TasksExtension())  # (1)!
 
 
 @mcp.tool(task=TaskConfig(mode='optional'))
@@ -414,6 +430,9 @@ async def deep_research(topic: str) -> str:
 if __name__ == '__main__':
     mcp.run(transport='streamable-http')
 ```
+
+1. FastMCP 4 refuses to start a server that declares task tools without the tasks extension registered. On
+   FastMCP 3, drop this line and the `fastmcp_tasks` import: that generation serves task-augmented tools itself.
 
 By default, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] uses task-augmented execution when a tool supports it. A client that prefers normal calls for tools where task support is optional can set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks]. This setting does not affect tools where task support is required:
 
@@ -441,7 +460,7 @@ Text content is returned as `str`, and binary content as [`BinaryContent`][pydan
 Before consuming resources, we need to run a server that exposes some:
 
 ```python {title="mcp_resource_server.py"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
@@ -536,7 +555,7 @@ Use one `MCPToolset` per server, and keep it entered (`async with weather:`) whi
 
 [`capabilities.extensions`][pydantic_ai.mcp.ServerCapabilities.extensions] lists the extensions a server supports; MCP Apps servers list `'io.modelcontextprotocol/ui'`. Some servers only offer app tools to clients that advertise the matching client extension. `MCPToolset` doesn't by default. On FastMCP 4, pass a client that does; FastMCP 3 clients can't:
 
-```python {title="mcp_apps_extension.py" test="skip" typecheck="skip - FastMCP 4 API; the docs environment has FastMCP 3"}
+```python {title="mcp_apps_extension.py" test="skip"}
 from fastmcp import Client
 from mcp.client import advertise
 
@@ -692,8 +711,8 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
     import re
     from pathlib import Path
 
+    from fastmcp import Context, FastMCP
     from mcp import SamplingMessage
-    from mcp.server.fastmcp import Context, FastMCP
     from mcp.types import TextContent
 
     app = FastMCP()
@@ -745,6 +764,27 @@ async def main():
 
 _(This example is complete, it can be run "as is")_
 
+### How the server asks
+
+Sampling and elicitation are requests a server makes while one of its tools is running. A server can make them in two ways, and which one it uses decides what the client needs:
+
+- **By ending the tool call** with an `InputRequiredResult` that lists what it needs. This is how the 2026-07-28 MCP protocol does it: the FastMCP 4 client answers through `sampling_model` and `elicitation_handler`, then calls the tool again with the answers.
+- **In the middle of the tool call**, like `ctx.session.create_message()` and `ctx.elicit()` in this page's examples, or [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel]. The 2026-07-28 protocol forbids this, so on FastMCP 4's default connection the server's call fails with `NoBackChannelError`. It works with FastMCP 3, or with a FastMCP 4 `Client` you build in legacy mode and pass to `MCPToolset`:
+
+```python {title="legacy_session.py" test="skip"}
+from fastmcp.client import Client
+from fastmcp.client.transports import StdioTransport
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+client = Client(StdioTransport(command='python', args=['generate_svg.py']), mode='legacy')
+agent = Agent('{{ openai:medium }}', toolsets=[MCPToolset(client)])
+agent.set_mcp_sampling_model()
+```
+
+`MCPToolset` doesn't accept `sampling_model=` or `elicitation_handler=` together with a client you built, so set the sampling model with `set_mcp_sampling_model()` as above, and pass an elicitation handler to the `Client` itself.
+
 ## Elicitation
 
 In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows a server to request [structured input](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) from the client for missing or additional context during a session.
@@ -771,8 +811,10 @@ This allows for a more interactive and user-friendly experience, especially for 
 
 To enable elicitation, provide an `elicitation_handler` when creating your `MCPToolset`:
 
+(The server below asks in the middle of the tool call; on FastMCP 4 see [how the server asks](#how-the-server-asks).)
+
 ```python {title="restaurant_server.py"}
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 mcp = FastMCP(name='Restaurant Booking')
@@ -790,7 +832,7 @@ class BookingDetails(BaseModel):
 async def book_table(ctx: Context) -> str:
     """Book a restaurant table with user input."""
     # Ask user for booking details using Pydantic schema
-    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+    result = await ctx.elicit('Please provide your booking details:', response_type=BookingDetails)
 
     if result.action == 'accept' and result.data:
         booking = result.data
@@ -828,12 +870,13 @@ async def handle_elicitation(
     """Handle elicitation requests from MCP server."""
     print(f'\n{message}')
 
-    if not isinstance(params, ElicitRequestFormParams) or not params.requestedSchema:
+    # On FastMCP 3 (MCP SDK v1), this field is `params.requestedSchema`.
+    if not isinstance(params, ElicitRequestFormParams) or not params.requested_schema:
         response = input('Response: ')
         return ElicitResult(action='accept', content={'response': response})
 
     # Collect data for each field
-    properties = params.requestedSchema['properties']
+    properties = params.requested_schema['properties']
     data: dict[str, Any] = {}
 
     for field, info in properties.items():

@@ -351,6 +351,37 @@ def test_category_classify_falls_back_to_opencode_only_on_a_usage_limit() -> Non
 
 
 @pytest.mark.parametrize(
+    ('labels', 'has_label'),
+    [
+        pytest.param('size: S\nbug:unreleased\n', 'true', id='bug-unreleased'),
+        pytest.param('bug\n', 'true', id='bug'),
+        pytest.param('size: S\npkg:core\n', 'false', id='no-category'),
+    ],
+)
+def test_category_classify_skips_only_a_pr_that_has_a_category(tmp_path: Path, labels: str, has_label: str):
+    """A PR that already has a category, `bug:unreleased` included, is not classified, so `bug` never joins it."""
+    step = next(step for step in _workflow()['jobs']['category-classify']['steps'] if step.get('id') == 'check-label')
+    step = {**step, 'run': step['run'].replace('${{ github.event.pull_request.number }}', PR_NUMBER)}
+    output = tmp_path / 'github-output'
+    result, calls = _run_step(step, tmp_path / 'step', {'GITHUB_OUTPUT': str(output), 'FAKE_PR_VIEW': labels})
+    assert result.returncode == 0, result.stderr
+    assert calls == [f'pr view {PR_NUMBER} --repo {REPOSITORY} --json labels --jq .labels[].name']
+    assert output.read_text(encoding='utf-8') == f'has_label={has_label}\n'
+
+
+def test_bug_unreleased_is_left_out_of_release_notes_and_classifier_choices():
+    """Release notes skip `bug:unreleased`, and the classifier, which cannot see which release shipped a defect, never picks it."""
+    release = yaml.safe_load((WORKFLOW.parent.parent / 'release.yml').read_text(encoding='utf-8'))
+    assert 'bug:unreleased' in release['changelog']['exclude']['labels']
+    assert 'bug:unreleased' not in get_args(Classification.model_fields['category'].annotation)
+    steps = {step.get('id'): step for step in _workflow()['jobs']['category-classify']['steps']}
+    assert 'unreleased' not in steps['classify']['with']['prompt']
+    allowed = re.search(r'ALLOWED="([^"]*)"', steps['extract']['run'])
+    assert allowed is not None
+    assert tuple(allowed[1].split()) == get_args(Classification.model_fields['category'].annotation)
+
+
+@pytest.mark.parametrize(
     ('changed', 'fetches_diff'),
     [
         pytest.param('README.md\n', False, id='no-pyproject'),
