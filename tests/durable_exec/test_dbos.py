@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    BinaryImage,
     CancellationToken,
     CapabilityEvent,
     CapabilityInstructionSource,
@@ -70,6 +71,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
@@ -101,6 +103,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -2605,6 +2608,38 @@ _durability_fn_model = FunctionModel(_durability_model_fn)
 
 # DBOSDurability must be created after DBOS.launch() (in fixture), but since the module-level
 # agents are created at import time before DBOS is initialized, we use a fixture-based approach.
+
+
+async def test_dbos_durability_a_computer_refusal_reaches_workflow_with_its_type(dbos: DBOS) -> None:
+    """A model's refusal of a `computer` request it can't serve reaches the error hooks as itself, so a fallback
+    moves on from it."""
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
+        """Act on the screen."""
+        return ['Done.']
+
+    async def describe(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(type(error).__name__)])
+
+    agent = Agent(
+        # It can't take images, so it refuses the request before it's called.
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[]),  # pragma: no cover
+            profile=ModelProfile(supports_image_input=False),
+        ),
+        name='dbos_durability_computer_refusal',
+        deps_type=type(None),
+        tools=[Tool(computer, tool_kind=COMPUTER_KIND)],
+        capabilities=[Hooks[None](model_request_error=describe), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Look.')).output
+
+    assert await run_durable_agent() == 'UnservableRequestError'
 
 
 async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
