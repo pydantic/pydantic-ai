@@ -579,7 +579,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 gh-aw labels the issues it opens itself `agentic-workflows`: the `[aw] Detection Runs` tracker and the
 `agentics-maintenance.yml` activity report. Its issue cleanup operation closes only issues with that label.
-gh-aw reads that name from `issue_label` in `.github/workflows/aw.json`. This repository has no `aw.json`, so the name stays `agentic-workflows`.
+gh-aw reads that name from `issue_label` in [`.github/workflows/aw.json`](https://github.com/github/gh-aw/blob/v1.3.1/pkg/workflow/repo_config.go). This repository has no `aw.json`, so the name stays `agentic-workflows`.
 The repository's own automation, such as the provider-health controller, uses `area:agentic-workflows`.
 
 ## OpenCode threat detection
