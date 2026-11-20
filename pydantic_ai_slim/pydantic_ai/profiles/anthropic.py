@@ -732,7 +732,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
-def anthropic_computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
+def _anthropic_computer_use_profile(  # pyright: ignore[reportUnusedFunction]
+    model_name: str, profile: ModelProfile | None
+) -> AnthropicModelProfile:
     """The computer use facts to merge onto `profile`, the model's profile on a client that sends Anthropic's API.
 
     Anthropic's computer use tool is part of Anthropic's own request format. So only `AnthropicProvider` adds these.
@@ -770,8 +772,8 @@ def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | No
 
     A model with a tool gets `ComputerTool` in its supported native tools on `AnthropicProvider`. It is sent on the
     Claude API and both Bedrock APIs, the clients it has recorded test runs on. `AnthropicModel` removes it on Vertex
-    AI, Foundry and Claude Platform on AWS. Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1,
-    Sonnet 4 and 4.5) get the function tool.
+    AI, Foundry and Claude Platform on AWS. Claude 5.5 and later take only the toolset. Retired and retiring models
+    (Opus 4 and 4.1, Sonnet 4 and 4.5) get the function tool.
     https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     """
     if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
