@@ -383,11 +383,14 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         """{ echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
         'exit 1; }; '
         'else install="$elevate env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends"; '
-        # The display's own programs first, failing the start when they can't be installed.
-        '{ $elevate apt-get update -qq && '
-        f'{{ [ -z "$missing" ] || $install $xvfb_package {_PACKAGES}; }}; }} >{log} 2>&1 || [ -z "$missing" ] || '
-        f'{{ echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; }}; '
-        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. The next start tries again.
+        # With only the desktop's programs missing, so with `desktop` and 8 open, the update writes to the desktop log:
+        # starting Xvfb below empties `log`, and with it why a failed update left the desktop out.
+        'if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1; '
+        # Otherwise the display's own programs first, failing the start when they can't be installed.
+        f'elif ! {{ $elevate apt-get update -qq && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
+        f'echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; fi; '
+        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A later run, or a restart
+        # of the display after a failure, tries again.
         f'[ -z "$wanted" ] || $install $wanted >&8 2>&1 || true; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
