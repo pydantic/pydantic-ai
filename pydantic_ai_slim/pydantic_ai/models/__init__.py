@@ -555,8 +555,9 @@ class ModelRequestParameters:
     def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
         """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
 
-        A tool with `defer_loading=True` is included only once the message history has revealed it, unlike in
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind].
+        A tool with `defer_loading=True` is included only once the message history has revealed it.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] also returns a deferred tool,
+        so instructions that name it don't change when it is revealed.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
@@ -1261,7 +1262,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @property
     def _computer_call_labels(self) -> dict[str, int]:
-        """The grid and screenshot limits this model labels its `computer` calls with, from its profile."""
+        """The grid this model labels its `computer` calls with, from its profile."""
         if not self._answers_requests_itself:
             return {}
         try:
@@ -1274,8 +1275,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _apply_computer_use_profile_at_the_model_boundary(cls) -> None:
         """Wrap the request methods of `cls` to refuse unservable `computer` requests and label `computer` calls.
 
-        Done for every model class, so each call records the limits of the model that made it, which the `computer`
-        tool scales positions and screenshots by. Under a fallback that's the model that answered.
+        Done for every model class, so each call records the grid of the model that made it, which the `computer` tool
+        scales positions by. Under a fallback that's the model that answered.
         """
         request = cls.__dict__.get('request')
         if inspect.iscoroutinefunction(request):

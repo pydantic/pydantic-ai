@@ -74,7 +74,7 @@ class ModelResponsePartsManager:
     special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
     """Removes the joiner from the special tokens in the response, for a model whose requests have them."""
     computer_call_labels: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
-    """The grid and screenshot limits of the model streaming the response, recorded on each of its `computer` calls."""
+    """The grid of the model streaming the response, recorded on each of its `computer` calls."""
 
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""

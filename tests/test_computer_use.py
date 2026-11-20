@@ -395,23 +395,6 @@ def _limited(max_side: int | None, max_pixels: int | None) -> ModelProfile:
     return profile
 
 
-@pytest.mark.parametrize(
-    'limits, side, pixels',
-    [
-        pytest.param([(1568, 1_150_000)], 1568, 1_150_000, id='one-model'),
-        pytest.param([(2576, 3_600_000), (1568, None)], 2576, 3_600_000, id='the-model-that-answered-a-fallback'),
-    ],
-)
-async def test_a_computer_call_records_the_screenshots_its_model_takes(
-    limits: list[tuple[int | None, int | None]], side: int, pixels: int
-) -> None:
-    respond, _ = _click_then_stop([])
-    models = [FunctionModel(respond, profile=_limited(max_side, max_pixels)) for max_side, max_pixels in limits]
-    agent = _grid_agent(models[0] if len(models) == 1 else FallbackModel(*models))
-    [call] = _computer_calls((await agent.run('Click.')).all_messages())
-    assert (call.screenshot_max_side, call.screenshot_max_pixels, call.coordinate_grid) == (side, pixels, None)
-
-
 def _screenshot(width: int, height: int) -> BinaryImage:
     header = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + width.to_bytes(4, 'big') + height.to_bytes(4, 'big')
     return BinaryImage(data=header + b'\x08\x06\x00\x00\x00', media_type='image/png')
@@ -422,6 +405,18 @@ async def test_a_model_that_cant_see_images_is_refused_the_computer_tool() -> No
     agent = _grid_agent(FunctionModel(respond, model_name='blind', profile=ModelProfile(supports_image_input=False)))
     with pytest.raises(UserError, match="needs a model that accepts images, and 'blind' does not"):
         await agent.run('Click.')
+
+
+async def test_a_model_that_cant_see_images_answers_while_the_computer_tool_is_deferred() -> None:
+    # Until the history reveals the deferred tool, the model can't call it, so it needn't see screenshots.
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(
+        FunctionModel(respond, profile=ModelProfile(supports_image_input=False)),
+        tools=[Tool(_big_screen, name='computer', tool_kind=COMPUTER_KIND, defer_loading=True)],
+    )
+    assert (await agent.run('Hello.')).output == 'ok'
 
 
 @pytest.mark.parametrize(
@@ -596,9 +591,8 @@ async def test_a_batched_request_the_model_cant_serve_is_refused_before_it_is_su
 
 @pytest.mark.parametrize('value', [True, 0, '1000'])
 def test_a_computer_call_reads_only_real_labels(value: object) -> None:
-    keys = ('coordinate_grid', 'screenshot_max_side', 'screenshot_max_pixels')
-    call = ComputerCallPart('computer', {'actions': []}, provider_details=dict.fromkeys(keys, value))
-    assert (call.coordinate_grid, call.screenshot_max_side, call.screenshot_max_pixels) == (None, None, None)
+    call = ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': value})
+    assert call.coordinate_grid is None
     # A grid of one point can't say where anything is, so it reads as no grid.
     assert (
         ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': 1}).coordinate_grid is None

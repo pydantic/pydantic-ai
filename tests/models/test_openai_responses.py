@@ -5859,11 +5859,7 @@ async def test_openai_previous_response_id_auto_continues_after_a_computer_call_
         update={'id': 'resp_1'}
     )
     mock_client = MockOpenAIResponses.create_mock([call, _text_reply('resp_2', 'done')])
-    profile = OpenAIModelProfile(
-        computer_use_coordinate_grid=1000,
-        computer_use_screenshot_max_side=1568,
-        computer_use_screenshot_max_pixels=1_150_000,
-    )
+    profile = OpenAIModelProfile(computer_use_coordinate_grid=1000)
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
     screen = BinaryImage(data=b'png', media_type='image/png')
     agent = Agent(
@@ -5876,11 +5872,7 @@ async def test_openai_previous_response_id_auto_continues_after_a_computer_call_
 
     call_part = result.all_messages()[1].parts[0]
     assert isinstance(call_part, ComputerCallPart)
-    assert (call_part.coordinate_grid, call_part.screenshot_max_side, call_part.screenshot_max_pixels) == (
-        1000,
-        1568,
-        1_150_000,
-    )
+    assert call_part.coordinate_grid == 1000
     second_request = get_mock_responses_kwargs(mock_client)[1]
     assert second_request['previous_response_id'] == 'resp_1'
 

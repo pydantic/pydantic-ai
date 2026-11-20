@@ -21,15 +21,6 @@ if TYPE_CHECKING:
 COORDINATE_GRID = 'coordinate_grid'
 """The `provider_details` key where a model records the size of the grid its call's positions are on."""
 
-SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
-"""The `provider_details` key where a model records the longest screenshot side it can see."""
-
-SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
-"""The `provider_details` key where a model records the most screenshot pixels it can see."""
-
-LABEL_KEYS = frozenset({COORDINATE_GRID, SCREENSHOT_MAX_SIDE, SCREENSHOT_MAX_PIXELS})
-"""The `provider_details` keys a model adds to its `computer` calls, which the provider never sent."""
-
 COMPUTER_KIND_ID = 'computer_use.computer'
 """The id of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND], so this module needn't import it.
 
@@ -77,15 +68,10 @@ def computer_tool_names(params: ModelRequestParameters) -> set[str]:
 
 
 def computer_call_labels(profile: ModelProfile) -> dict[str, int]:
-    """The grid and screenshot limits a model's `computer` calls are labelled with, from its profile."""
+    """The grid a model's `computer` calls are labelled with, from its profile."""
     grid = profile.get('computer_use_coordinate_grid')
-    labels = {
-        # A grid of one point can't locate anything.
-        COORDINATE_GRID: grid if grid is not None and grid >= 2 else None,
-        SCREENSHOT_MAX_SIDE: profile.get('computer_use_screenshot_max_side'),
-        SCREENSHOT_MAX_PIXELS: profile.get('computer_use_screenshot_max_pixels'),
-    }
-    return {key: value for key, value in labels.items() if value is not None}
+    # A grid of one point can't locate anything.
+    return {COORDINATE_GRID: grid} if grid is not None and grid >= 2 else {}
 
 
 def label_calls(parts: Iterable[object], tool_names: Container[str], labels: Mapping[str, int]) -> None:
@@ -142,7 +128,8 @@ def refuse_unservable_computer_request(
 
     A model that takes images but not PNGs gets a note in place of each screenshot, so there is no size to check.
     """
-    if not computer_tool_names(params):
+    # A deferred tool the history hasn't revealed can't be called yet, so it doesn't count.
+    if not params.available_tool_names_for_kind(COMPUTER_KIND_ID):
         return
     if not profile.get('supports_image_input', True):
         raise UnservableRequestError(

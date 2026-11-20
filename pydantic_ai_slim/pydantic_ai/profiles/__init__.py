@@ -190,19 +190,16 @@ class ModelProfile(TypedDict, total=False):
     """The longest screenshot side, in pixels, that the model can see. Default: unset, which means no limit.
 
     The model refuses a request whose latest screenshot is larger with a
-    [`UserError`][pydantic_ai.exceptions.UserError], and under a fallback the next model answers instead. Its calls
-    record the limit as
-    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side]. Set it,
-    with `computer_use_screenshot_max_pixels`, for a model whose computer tool shrinks a larger screenshot, since it
-    would answer with positions on the smaller image.
+    [`UserError`][pydantic_ai.exceptions.UserError], and under a fallback the next model answers instead. Set it, with
+    `computer_use_screenshot_max_pixels`, for a model whose computer tool shrinks a larger screenshot, since it would
+    answer with positions on the smaller image.
     """
 
     computer_use_screenshot_max_pixels: int
     """The most pixels (width times height) in a screenshot that the model can see. Default: unset, which means no
     limit.
 
-    It works like `computer_use_screenshot_max_side`, and calls record it as
-    [`ComputerCallPart.screenshot_max_pixels`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_pixels].
+    It works like `computer_use_screenshot_max_side`.
     """
 
     supports_inline_system_prompts: bool

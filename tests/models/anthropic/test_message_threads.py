@@ -286,12 +286,12 @@ async def test_continue_after_a_computer_call_is_labelled(allow_model_requests: 
         model = AnthropicModel(
             model.model_name,
             provider=AnthropicProvider(anthropic_client=model.client),
-            profile={**model.profile, 'computer_use_screenshot_max_side': 1568},
+            profile={**model.profile, 'computer_use_coordinate_grid': 1000},
         )
         result = await Agent(model, tools=[computer], model_settings=_SETTINGS).run('Click.')
 
     call = result.all_messages()[1].parts[0]
-    assert isinstance(call, ComputerCallPart) and call.screenshot_max_side == 1568
+    assert isinstance(call, ComputerCallPart) and call.coordinate_grid == 1000
     _, cont = api.bodies
     assert cont['thread'] == {'type': 'continue', 'previous_message_id': 'msg_1'}
 
