@@ -608,6 +608,8 @@ class FakeMachines:
             raise owner.probe_errors.pop(0)
         if command == START_PANEL:
             # Not run on the host: it installs packages and writes the panel's settings under `$HOME`.
+            if owner.panel_error is not None:
+                raise owner.panel_error
             return ExecResult(stdout='', stderr='', exit_code=owner.panel_exit_code)
         process = await asyncio.create_subprocess_exec(
             '/bin/sh',
@@ -664,6 +666,7 @@ class FakeBoxd:
         self.exec_commands: list[str] = []
         self.desktop = FakeDesktop()
         self.panel_exit_code = 0
+        self.panel_error: BoxdError | None = None
         # The `Fs*` calls made, in order; with `agent_outdated`, each is refused as a machine's old agent refuses it.
         self.fs_calls: list[str] = []
         self.agent_outdated = False

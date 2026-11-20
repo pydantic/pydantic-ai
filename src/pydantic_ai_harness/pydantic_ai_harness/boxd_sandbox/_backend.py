@@ -116,8 +116,6 @@ _LIFECYCLE_TIMEOUT = 120.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.25
-# Installing the panel on an attached machine, or waiting for its spec to, takes up to about a minute.
-_PANEL_TIMEOUT = 360.0
 # The local backend's cap and preview: output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
@@ -265,6 +263,21 @@ async def _mapped_errors(
         if translated is error:
             raise
         raise translated from error
+
+
+async def _start_panel(client: AsyncBoxd, machine_id: str) -> None:
+    """Start the desktop's panel. Without it the screen still works, but shows the agent nothing to open.
+
+    No timeout: each wait in `START_PANEL` has its own bound. apt has its lock and network timeouts, the panel's
+    window gets 10 seconds, and the start lock is held only by another such start.
+    """
+    try:
+        result = await client.machines.exec(machine_id, START_PANEL)
+    except boxd.BoxdError:
+        logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, PANEL_LOG, exc_info=True)
+        return
+    if result.exit_code != 0:
+        logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, PANEL_LOG)
 
 
 async def _probe(client: AsyncBoxd, machine_id: str) -> WorkspaceUnavailableError | None:
@@ -470,6 +483,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 scope=self._display_scope,
             )
         )
+        # Set by each start of the display, so the next screen call starts the panel.
+        self._panel_due = False
         self._secrets = tuple(secrets or ())
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
@@ -516,21 +531,22 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                         raise gone from error
                     raise
 
-    def _attached_computer(self) -> tuple[AsyncComputer, str]:
+    async def _attached_computer(self) -> tuple[AsyncComputer, str]:
         # The display calls this only inside `_display_scope`, which has already connected to the machine.
         assert self._client is not None and self._ref is not None
-        return self._client.machines.computer, self._ref.id
+        client, machine_id = self._client, self._ref.id
+        if self._panel_due:
+            self._panel_due = False
+            await _start_panel(client, machine_id)
+        return client.machines.computer, machine_id
 
     async def _start_display(self, size: tuple[int, int]) -> None:
         """Start the desktop if it isn't running, and fix its screen at `size`."""
-        computer, machine_id = self._attached_computer()
+        assert self._client is not None and self._ref is not None
         # Fixing the size makes boxd's console scale the screen instead of resizing it. Anyone in the org can open it.
-        await computer.set_screen_size(machine_id, *size)
-        assert self._client is not None
-        # Without the panel the screen still works, but shows the agent nothing to open.
-        result = await self._client.machines.exec(machine_id, START_PANEL, timeout=_PANEL_TIMEOUT)
-        if result.exit_code != 0:
-            logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, PANEL_LOG)
+        await self._client.machines.computer.set_screen_size(self._ref.id, *size)
+        # Not started here, where a shell command would wait for its install too, but before the next screen call.
+        self._panel_due = True
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.

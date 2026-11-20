@@ -28,7 +28,7 @@ the live display tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before 
 from __future__ import annotations as _annotations
 
 import shlex
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -59,13 +59,13 @@ if TYPE_CHECKING:
 DISPLAY = ':100'
 """The X display number of the desktop on every boxd machine."""
 
-_INSTALL = (
-    'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends tint2 xterm'
-)
+# Ten times the 30 seconds the spec's install, update included, took live, so a second install outwaits the first.
+_APT = 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300'
+_INSTALL = f'{_APT} install -y --no-install-recommends tint2 xterm'
 
-INSTALL_PANEL = f'{_INSTALL} || {{ apt-get update && {_INSTALL}; }}'
-"""Installs the panel and the terminal it opens, as root. boxd's image has xterm, and its package lists find tint2
-without an update. The lock timeout makes a second install wait for one already running."""
+INSTALL_PANEL = f'{_INSTALL} || {{ {_APT} update && {_INSTALL}; }}'
+"""Installs the panel and the terminal it opens, as root. boxd's image has xterm; on 2026-11-20 tint2 needed an update
+of the package lists first. The lock timeout makes a second install wait for one already running."""
 
 PANEL_LOG = '/tmp/pydantic-ai-desktop.log'
 """Where the panel's install and the panel itself write, so a panel that didn't come up says why."""
@@ -78,14 +78,15 @@ _PANEL_DIR = '$HOME/.config/pydantic-ai-desktop'
 _PANEL_HEIGHT = 40
 
 # Opens xterm below the panel and as large as the rest of the screen, and gives it the keyboard. Nothing else on the
-# desktop places, sizes or focuses a new window. The font is named because xterm ignores `~/.Xdefaults` here. The
-# window can be focused only once it is viewable, at the next computer call, so focusing is retried for 30 seconds.
+# desktop places, sizes or focuses a new window. The font is named because xterm ignores `~/.Xdefaults` here; 14 is
+# the size the other sandboxes' desktops use, since models misread a smaller g as 9. The window can be focused only
+# once it is viewable, at the next computer call, so focusing is retried. Both waits end if xterm exits.
 _TERMINAL = f"""#!/bin/sh
-xterm -fa Monospace -fs 12 & pid=$!
-w=$(xdotool search --sync --pid $pid | head -1)
+xterm -fa Monospace -fs 14 & pid=$!
+until w=$(xdotool search --pid $pid 2>/dev/null | head -1); [ -n "$w" ]; do kill -0 $pid 2>/dev/null || exit; sleep 0.1; done
 eval "$(xdotool getdisplaygeometry --shell)"
 xdotool windowmove "$w" 0 {_PANEL_HEIGHT} windowsize "$w" "$WIDTH" $((HEIGHT - {_PANEL_HEIGHT}))
-i=0; until xdotool windowfocus "$w" 2>/dev/null || [ $i -ge 300 ]; do sleep 0.1; i=$((i+1)); done
+until xdotool windowfocus "$w" 2>/dev/null; do kill -0 $pid 2>/dev/null || exit; sleep 0.1; done
 wait $pid
 """
 
@@ -122,19 +123,21 @@ _TINT2RC = (
 )
 
 START_PANEL = (
-    f'exec >>{PANEL_LOG} 2>&1; '
+    # One start at a time, so two can't both find no panel and start two. tint2 must not hold the lock.
+    f'exec >>{PANEL_LOG} 2>&1 9>/tmp/.pydantic-ai-panel.lock; ! command -v flock >/dev/null || flock 9; '
     f'command -v tint2 >/dev/null && command -v xterm >/dev/null || sudo -n sh -c {shlex.quote(INSTALL_PANEL)}; '
     f'mkdir -p "{_PANEL_DIR}" && printf %s {shlex.quote(_TERMINAL)} >"{_PANEL_DIR}/terminal" && '
     f'chmod +x "{_PANEL_DIR}/terminal" && printf "%s\\n" {shlex.join(_TINT2RC)} >"{_PANEL_DIR}/tint2rc" || exit; '
     f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then '
-    f'boxd-desktop-launch "tint2 -c {_PANEL_DIR}/tint2rc >>{PANEL_LOG} 2>&1"; i=0; '
+    f'boxd-desktop-launch "tint2 -c {_PANEL_DIR}/tint2rc >>{PANEL_LOG} 2>&1" 9>&-; i=0; '
     f'until {_PANEL_SHOWS} || [ $i -ge 50 ]; do sleep 0.2; i=$((i+1)); done; fi; '
     f'{_PANEL_SHOWS}'
 )
 """Installs the panel and xterm unless both are there, writes the panel's settings, and starts the panel with boxd's
-`boxd-desktop-launch` unless it runs, waiting up to 10 seconds for its window, which took under a second live. Exits
-0 once the window is there. A machine created with `desktop` also installs both from its spec at boot, and whichever
-install comes second waits for the first to let go of apt's lock."""
+`boxd-desktop-launch` unless a tint2 panel already runs, waiting up to 10 seconds for its window, which took under a
+second live. Exits 0 once the window is there. Installing needs passwordless `sudo`. A machine created with `desktop`
+also installs both from its spec at boot, and whichever install comes second waits for the first to let go of apt's
+lock."""
 
 _RELEASE_TIMEOUT = 10
 """Seconds to spend letting go of the mouse button after a drag fails or is cancelled."""
@@ -198,33 +201,34 @@ class BoxdDesktop:
     """Controls a boxd machine's desktop with boxd's computer API.
 
     `attached` returns the API and the machine's ID. It is called again for every action, because the backend
-    reconnects with a new client after it closes the old one.
+    reconnects with a new client after it closes the old one. The backend also starts the panel in it, so only a call
+    that uses the screen waits for the panel.
     """
 
-    def __init__(self, attached: Callable[[], tuple[AsyncComputer, str]]):
+    def __init__(self, attached: Callable[[], Awaitable[tuple[AsyncComputer, str]]]):
         self._attached = attached
 
     async def display_size(self) -> tuple[int, int]:
-        computer, machine_id = self._attached()
+        computer, machine_id = await self._attached()
         result = await computer.cursor_position(machine_id)
         return result.screen_width, result.screen_height
 
     async def screenshot(self) -> bytes:
-        computer, machine_id = self._attached()
+        computer, machine_id = await self._attached()
         return _png(await computer.screenshot(machine_id))
 
     async def zoom(self, region: Region) -> bytes:
-        computer, machine_id = self._attached()
+        computer, machine_id = await self._attached()
         area = (region.left, region.top, region.right - region.left, region.bottom - region.top)
         return _png(await computer.screenshot(machine_id, region=area))
 
     async def cursor_position(self) -> Point:
-        computer, machine_id = self._attached()
+        computer, machine_id = await self._attached()
         cursor = (await computer.cursor_position(machine_id)).cursor
         return Point(x=cursor.x, y=cursor.y)
 
     async def act(self, action: DisplayAction) -> None:
-        computer, machine_id = self._attached()
+        computer, machine_id = await self._attached()
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 await computer.click(machine_id, x, y, button=button, count=count, modifiers=modifiers)

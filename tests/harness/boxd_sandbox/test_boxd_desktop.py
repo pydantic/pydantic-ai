@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 
 import anyio
 import pytest
-from boxd import NotFoundError, PermissionDeniedError
+from boxd import APIConnectionError, NotFoundError, PermissionDeniedError
 
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import (
@@ -28,7 +29,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
-from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL
+from pydantic_ai_harness.boxd_sandbox._desktop import (
+    _TERMINAL,  # pyright: ignore[reportPrivateUsage]
+    INSTALL_PANEL,
+    START_PANEL,
+)
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 
 from ..display_fakes import look_click_then_finish, screen
@@ -237,10 +242,24 @@ async def test_the_panel_starts_on_each_connection_after_the_screen_is_held(host
     assert host.exec_commands.count(START_PANEL) == 2
 
 
+async def test_a_command_does_not_wait_for_the_panel_but_the_next_look_does(host: FakeBoxd) -> None:
+    backend = BoxdSandboxBackend(desktop=True)
+
+    await backend.run(['true'])
+    assert START_PANEL not in host.exec_commands
+
+    await screen(backend).screenshot()
+    assert host.exec_commands.count(START_PANEL) == 1
+
+
+@pytest.mark.parametrize('fails', ['exit', 'error'])
 async def test_a_panel_that_does_not_start_leaves_the_screen_working(
-    host: FakeBoxd, caplog: pytest.LogCaptureFixture
+    host: FakeBoxd, caplog: pytest.LogCaptureFixture, fails: str
 ) -> None:
-    host.panel_exit_code = 1
+    if fails == 'exit':
+        host.panel_exit_code = 1
+    else:
+        host.panel_error = APIConnectionError('the connection dropped before the reply arrived')
     backend = BoxdSandboxBackend(desktop=True)
 
     with caplog.at_level(logging.WARNING):
@@ -249,6 +268,12 @@ async def test_a_panel_that_does_not_start_leaves_the_screen_working(
     assert caplog.messages == [
         'The panel did not start on boxd machine machine-1; see /tmp/pydantic-ai-desktop.log there'
     ]
+
+
+@pytest.mark.parametrize('script', [START_PANEL, INSTALL_PANEL, _TERMINAL])
+def test_the_panel_scripts_parse(script: str) -> None:
+    # The fake doesn't run them, so a shell syntax error would show only on a real machine.
+    subprocess.run(['/bin/sh', '-n', '-c', script], check=True)
 
 
 async def test_looks_come_from_the_desktop(host: FakeBoxd) -> None:
