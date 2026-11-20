@@ -5,7 +5,6 @@ from __future__ import annotations as _annotations
 from collections.abc import Sequence
 from typing import Any, Literal, assert_never
 
-import pydantic_core
 from anthropic.types.beta import (
     BetaInputTransformation,
     BetaIterationsUsage,
@@ -17,10 +16,10 @@ from anthropic.types.beta import (
     BetaStopReason,
     BetaUsage,
 )
-from opentelemetry.trace import get_current_span
 
 from ... import usage
 from ..._context_size import mark_context_input_tokens, marked_context_input_tokens
+from ..._instrumentation import add_input_transformations_event
 from ...messages import FinishReason, ModelMessage, ModelResponse
 from .. import StreamedResponse
 
@@ -46,13 +45,7 @@ def report_input_transformations(
     run; the span event surfaces it in the trace, on the model request that lost the reasoning.
     """
     reported = [transformation.model_dump() for transformation in transformations]
-    span = get_current_span()
-    attributes = getattr(span, 'attributes', {})
-    if span.is_recording() and attributes.get('gen_ai.operation.name') == 'chat':
-        span.add_event(
-            'anthropic.input_transformations',
-            attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
-        )
+    add_input_transformations_event('anthropic', reported)
     return reported
 
 

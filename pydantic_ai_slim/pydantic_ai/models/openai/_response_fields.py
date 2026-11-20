@@ -4,15 +4,14 @@ from __future__ import annotations as _annotations
 
 from typing import Any, Literal
 
-import pydantic_core
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionChunk, chat_completion_token_logprob
 from openai.types.responses import ResponseCompactionItem
 from openai.types.responses.response import InputTransformation
 from openai.types.responses.response_status import ResponseStatus
-from opentelemetry.trace import get_current_span
 
 from ... import usage
+from ..._instrumentation import add_input_transformations_event
 from ..._utils import is_str_dict as _is_str_dict
 from ...messages import STANDING_PROMPT_PLANTED_KEY, CompactionPart, FinishReason, ModelResponseState
 
@@ -36,13 +35,7 @@ def report_input_transformations(transformations: list[InputTransformation]) -> 
     after the run; the span event surfaces it in the trace, on the model request that lost it.
     """
     reported: list[dict[str, object]] = [transformation.model_dump(mode='json') for transformation in transformations]
-    span = get_current_span()
-    attributes = getattr(span, 'attributes', {})
-    if span.is_recording() and attributes.get('gen_ai.operation.name') == 'chat':
-        span.add_event(
-            'openai.input_transformations',
-            attributes={'openai.input_transformations': pydantic_core.to_json(reported).decode()},
-        )
+    add_input_transformations_event('openai', reported)
     return reported
 
 
