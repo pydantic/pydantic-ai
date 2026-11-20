@@ -5849,7 +5849,7 @@ async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_
 async def test_openai_previous_response_id_auto_continues_after_a_computer_call_is_labelled(
     allow_model_requests: None,
 ):
-    """A `computer` call is labelled with its model's grid and screenshot limits after the response's digest is taken.
+    """A `computer` call is labelled with its model's grid and screenshot limits, which the response's digest leaves out.
 
     The labels are never sent, so the next request still continues from the response.
 
