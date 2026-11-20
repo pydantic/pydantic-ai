@@ -2354,11 +2354,21 @@ def _check_declared_shape(
             # A generic subclass between this class and the base has type arguments of its own. When it has exactly
             # one, that one is read as the payload's shape.
             continue
+        if origin is base:
+            # Python 3.10 drops an omitted type argument instead of filling in its `Any` default.
+            declared += (Any,) * (len(shapes) - len(declared))
         for (label, shape), declared_shape in zip(shapes.items(), declared):
             if isinstance(declared_shape, TypeVar) or (
                 declared_shape is Any if shape is None else _same_shape(declared_shape, shape)
             ):
                 continue
+            if declared_shape is Any:
+                expected = ', '.join(_shape_name(s) if s is not None else 'Any' for s in shapes.values())
+                raise UserError(
+                    f'Typed tool part {cls.__qualname__} does not give the {label} type {_shape_name(shape)} that its '
+                    f'kind {kind.id!r} declares, so its `typed_{label}` would be typed `Any`. '
+                    f'Write `{base.__name__}[{expected}]`.'
+                )
             raise UserError(
                 f'Typed tool part {cls.__qualname__} parameterizes {base.__name__} with '
                 f'{_shape_name(declared_shape)}, but its kind {kind.id!r} declares '
