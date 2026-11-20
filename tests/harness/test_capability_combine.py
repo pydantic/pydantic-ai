@@ -62,6 +62,7 @@ from pydantic_ai_harness import (
     CodeMode,
     Coder,
     CompactOnRequest,
+    ComputerUse,
     CurrentTime,
     LabelCrossModelHistory,
     ModelChoice,
@@ -244,6 +245,11 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_computer_use(merged: ComputerUse[None]) -> None:
+    # One display: the later configuration wins, defaults included.
+    assert (merged.settle_seconds, merged.native) == (1, True)
+
+
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
@@ -304,6 +310,14 @@ COMBINE_POLICY: dict[str, Policy] = {
             SummarizingCompaction[Any](max_messages=50, keep_messages=7),
         ),
         _check_summarizing,
+    ),
+    'ComputerUse': Combines(
+        'an agent has one display: the later configuration wins',
+        lambda: (
+            ComputerUse[None](native=False),
+            ComputerUse[None](settle_seconds=1),
+        ),
+        _check_computer_use,
     ),
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',

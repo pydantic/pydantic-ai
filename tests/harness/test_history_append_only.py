@@ -45,6 +45,7 @@ from pydantic_ai_harness import (
     CodeMode,
     Coder,
     CompactOnRequest,
+    ComputerUse,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -118,6 +119,7 @@ from ..append_only import (
     skip_unless_installed,
 )
 from ._mcp_server import MCPServer
+from .display_fakes import ScreenProvider
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
@@ -349,6 +351,8 @@ FIXTURES: dict[str, Fixture] = {
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
     'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+    # The fake screen never changes, so settling after an action would only wait out its interval.
+    'ComputerUse': lambda _: [ScreenProvider().capability(), ComputerUse(settle_seconds=0)],
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
@@ -518,6 +522,16 @@ SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
     'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
+    # A button pressed in one step stays held into the run's next step, which releases it.
+    'ComputerUse': Scenario(
+        turns=(
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_down'}]}),)),
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_up'}, {'type': 'screenshot'}]}),)),
+            Turn(text='Clicked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        )
+    ),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
     ),
