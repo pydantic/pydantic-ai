@@ -1262,7 +1262,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @property
     def _computer_call_labels(self) -> dict[str, int]:
-        """The grid and screenshot limits this model labels its `computer` calls with, from its profile."""
+        """The grid this model labels its `computer` calls with, from its profile."""
         if not self._answers_requests_itself:
             return {}
         try:
@@ -1275,8 +1275,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _apply_computer_use_profile_at_the_model_boundary(cls) -> None:
         """Wrap the request methods of `cls` to refuse unservable `computer` requests and label `computer` calls.
 
-        Done for every model class, so each call records the limits of the model that made it, which the `computer`
-        tool scales positions and screenshots by. Under a fallback that's the model that answered.
+        Done for every model class, so each call records the grid of the model that made it, which the `computer` tool
+        scales positions by. Under a fallback that's the model that answered.
         """
         request = cls.__dict__.get('request')
         if inspect.iscoroutinefunction(request):

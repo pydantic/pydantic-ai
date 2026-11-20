@@ -41,7 +41,7 @@ from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
-from ._computer_use import COMPUTER_KIND_ID, COORDINATE_GRID, SCREENSHOT_MAX_PIXELS, SCREENSHOT_MAX_SIDE
+from ._computer_use import COMPUTER_KIND_ID, COORDINATE_GRID
 from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 
 __all__ = (
@@ -482,12 +482,6 @@ class ComputerResult(TypedDict):
     ran."""
 
 
-def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
-    """The value the model recorded on `part` under `key`, or `None` unless it is an `int` of at least `minimum`."""
-    value = (part.provider_details or {}).get(key)
-    return value if type(value) is int and value >= minimum else None
-
-
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
 )
@@ -514,25 +508,8 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         `None` means pixels. The model that made the call records it in `provider_details`, from its profile's
         `computer_use_coordinate_grid`. A history that lost `provider_details`, such as one a UI rebuilt, gives `None`.
         """
-        return _label(self, COORDINATE_GRID, minimum=2)
-
-    @property
-    def screenshot_max_side(self) -> int | None:
-        """The longest screenshot side, in pixels, that the model that made the call can see. `None` means no limit.
-
-        It comes from the model's profile setting `computer_use_screenshot_max_side`. A history a UI rebuilt gives
-        `None`.
-        """
-        return _label(self, SCREENSHOT_MAX_SIDE)
-
-    @property
-    def screenshot_max_pixels(self) -> int | None:
-        """The most pixels (width times height) in a screenshot that the model that made the call can see.
-
-        `None` means no limit. It comes from the model's profile setting `computer_use_screenshot_max_pixels`, like
-        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
-        """
-        return _label(self, SCREENSHOT_MAX_PIXELS)
+        grid = (self.provider_details or {}).get(COORDINATE_GRID)
+        return grid if type(grid) is int and grid >= 2 else None
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
