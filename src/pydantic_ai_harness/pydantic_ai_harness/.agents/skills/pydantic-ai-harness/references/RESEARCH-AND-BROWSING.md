@@ -452,7 +452,8 @@ Gotchas:
   converts to pixels. Under `ModelFallback` or a `FallbackModel`, each model that answers is told its own coordinates. A model that can't
   serve the request, because it can't take images or the latest screenshot is larger than it can see, is always skipped,
   whatever `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's
-  `UserError`; when another model failed in some other way, with a `FallbackExceptionGroup`.
+  `UserError`; when another model's failure was one `fallback_on` moves on from, with a
+  `FallbackExceptionGroup`. Any other failure is raised by itself.
   The previous `computer` call's actions have already run by then. A
   custom runner reads `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels` from each
   `ComputerCallPart`, not from the run's model.

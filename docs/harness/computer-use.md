@@ -157,8 +157,8 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't serve the request,
   because it can't take images or the latest screenshot is larger than it can see, is always skipped, whatever
   `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's `UserError`;
-  when another model failed in some other way, with a `FallbackExceptionGroup`. The `computer` call before that
-  request has already run its actions on the screen.
+  when another model's failure was one `fallback_on` moves on from, with a `FallbackExceptionGroup`. Any other
+  failure is raised by itself. The `computer` call before that request has already run its actions on the screen.
 
 ## Durable execution
 
