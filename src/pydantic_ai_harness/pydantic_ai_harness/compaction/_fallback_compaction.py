@@ -341,8 +341,18 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         )
         assert trigger is not None, 'a background compaction needs a trigger'
         reclaimed = estimate_token_count(messages, self.tokenizer) - estimate_token_count(held, self.tokenizer)
-        tokens = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=parameters) - reclaimed
-        if reclaimed <= 0 or tokens > trigger:
+        if reclaimed <= 0:
+            return None, 'stale'
+        # `reclaimed` is heuristic while the trigger reads the anchored base: on token-dense content
+        # the anchor bills the compacted-away text far above its heuristic size, so the raw
+        # subtraction overstates the swapped-in history and drops a summary that fits. Scale the
+        # reclaim into anchored units by the snapshot's anchored-to-heuristic ratio: the compaction
+        # happened inside the snapshot, and a usage anchor there billed exactly that region.
+        baseline = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=parameters)
+        snapshot_anchored = estimate_context_tokens(job.snapshot, self.tokenizer)
+        snapshot_heuristic = estimate_token_count(job.snapshot, self.tokenizer)
+        tokens = baseline - reclaimed * snapshot_anchored // snapshot_heuristic
+        if tokens > trigger:
             return None, 'stale'
         return held, 'used'
 
