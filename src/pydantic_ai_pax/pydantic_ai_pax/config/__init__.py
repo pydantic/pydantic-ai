@@ -135,8 +135,8 @@ class Settings(BaseModel):
     session_namer: bool = Field(
         default=True,
         description=(
-            'Name saved sessions in the background using a model, at extra cost. Left at its default, only sessions '
-            'held with the current model; saved, even as true, every session, from any workspace.'
+            'Name saved sessions in the background using a model, at extra cost. By default only sessions held with '
+            'the current model are named; once saved, even as true, every session from any workspace is.'
         ),
     )
     session_namer_model: str | None = Field(
