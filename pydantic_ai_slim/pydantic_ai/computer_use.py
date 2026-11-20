@@ -44,6 +44,7 @@ from pydantic import AfterValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
+from ._computer_use import COORDINATE_GRID, SCREENSHOT_MAX_PIXELS, SCREENSHOT_MAX_SIDE
 from .messages import BinaryImage, ToolCallPart, ToolKind, ToolReturnPart
 
 __all__ = (
@@ -484,20 +485,6 @@ class ComputerResult(TypedDict):
     actions as the ones that ran."""
 
 
-_COORDINATE_GRID = 'coordinate_grid'
-"""The `provider_details` key where a model records the size of the grid its call's positions are on."""
-
-_SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
-"""The `provider_details` key where a model records the longest screenshot side it can see."""
-
-_SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
-"""The `provider_details` key where a model records the most screenshot pixels it can see."""
-
-
-_LABEL_KEYS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
-"""The `provider_details` keys a model adds to its `computer` calls. The provider never sent or saw them."""
-
-
 def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
     """The value the model recorded on `part` under `key`, or `None` unless it is an `int` of at least `minimum`."""
     value = (part.provider_details or {}).get(key)
@@ -530,7 +517,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         `computer_use_coordinate_grid` setting in its profile, and stores it in the call's `provider_details`. A
         history that lost `provider_details`, such as one a UI rebuilt, gives `None`.
         """
-        return _label(self, _COORDINATE_GRID, minimum=2)
+        return _label(self, COORDINATE_GRID, minimum=2)
 
     @property
     def screenshot_max_side(self) -> int | None:
@@ -540,7 +527,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         capability reads it to refuse a screen the model can't see before the call does anything. A history a UI
         rebuilt gives `None`.
         """
-        return _label(self, _SCREENSHOT_MAX_SIDE)
+        return _label(self, SCREENSHOT_MAX_SIDE)
 
     @property
     def screenshot_max_pixels(self) -> int | None:
@@ -550,7 +537,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         profile, the same way as
         [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
         """
-        return _label(self, _SCREENSHOT_MAX_PIXELS)
+        return _label(self, SCREENSHOT_MAX_PIXELS)
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):

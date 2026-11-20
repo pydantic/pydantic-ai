@@ -1271,18 +1271,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if inspect.iscoroutinefunction(request):
 
             @wraps(request)
-            async def labelling_request(
-                self: Model,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings | None,
-                model_request_parameters: ModelRequestParameters,
-                *args: Any,
-                **kwargs: Any,
-            ) -> ModelResponse:
-                response = await request(self, messages, model_settings, model_request_parameters, *args, **kwargs)
-                label_computer_calls(
-                    response.parts, computer_tool_names(model_request_parameters), self._computer_call_labels
-                )
+            async def labelling_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = await request(self, *args, **kwargs)
+                if labels := self._computer_call_labels:
+                    params = kwargs['model_request_parameters'] if len(args) < 3 else args[2]
+                    label_computer_calls(response.parts, computer_tool_names(params), labels)
                 return response
 
             cls.request = labelling_request
@@ -1296,7 +1289,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 self: Model, *args: Any, **kwargs: Any
             ) -> AsyncGenerator[StreamedResponse, None]:
                 async with request_stream(self, *args, **kwargs) as stream:
-                    stream._parts_manager.computer_call_labels = self._computer_call_labels
+                    # A model that hands over another model's stream, like `FallbackModel`, has no labels of its own
+                    # and leaves that model's in place.
+                    if labels := self._computer_call_labels:
+                        stream._parts_manager.computer_call_labels = labels
                     yield stream
 
             cls.request_stream = labelling_request_stream
@@ -1307,8 +1303,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             @wraps(batch_decode)
             def labelling_batch_decode(self: Model, result: BatchResult, request: BatchRequest) -> ModelResponse:
                 response = batch_decode(self, result, request)
-                names = computer_tool_names(request.model_request_parameters)
-                label_computer_calls(response.parts, names, self._computer_call_labels)
+                if labels := self._computer_call_labels:
+                    label_computer_calls(response.parts, computer_tool_names(request.model_request_parameters), labels)
                 return response
 
             cls.batch_decode = labelling_batch_decode
