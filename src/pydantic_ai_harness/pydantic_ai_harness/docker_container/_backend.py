@@ -174,6 +174,10 @@ _CLIENT_ENV = (
 """Passed to the local `docker` client, on top of `LocalWorkspaceBackend`'s, so it finds the daemon it's configured for."""
 
 
+class _NotStartedError(WorkspaceUnavailableError):
+    """`docker exec` failed before the command started, so trying again can't run any of it twice."""
+
+
 def _after_ready(stderr: str) -> str:
     return stderr.partition(_READY)[2]
 
@@ -242,7 +246,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
 
     Built without a ref, the first operation creates a container; built with one, it starts that container
     if it is stopped and raises [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError]
-    if it is gone. The backend never removes the container: call
+    if it is gone. A container that stops later, such as through `docker stop`, is started again by the next
+    operation. The backend never removes the container: call
     [`DockerContainer.destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy] with its ref.
 
     Args:
@@ -405,7 +410,15 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
         # pulling an image can take minutes.
         # Commands start where `working_dir()` says they do, even if a symlink on the way changes.
         workdir = await self._acquire()
-        return await self._exec(argv, env=merged_env, timeout=timeout, workdir=workdir)
+        try:
+            return await self._exec(argv, env=merged_env, timeout=timeout, workdir=workdir)
+        except _NotStartedError:
+            # Stopped since it was acquired: start it again and run the command, which never started, once more.
+            if await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError) != 'stopped':
+                raise
+            self._resolved_working_dir = None
+            workdir = await self._acquire()
+            return await self._exec(argv, env=merged_env, timeout=timeout, workdir=workdir)
 
     async def _exec(
         self, argv: Sequence[str], *, env: Mapping[str, str], timeout: float | None, workdir: str | None
@@ -439,7 +452,7 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
                 or result.stdout.strip()
                 or f'`{posixpath.basename(self._executable)} exec` exited with code {result.exit_code}'
             )
-            raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {reason}')
+            raise _NotStartedError(f'Docker workspace {self._name} is unavailable: {reason}')
         # The command can learn its tag from the PID directory and print a marker of its own, so the wrapper's is
         # the last one with the tag whose status is also `docker exec`'s exit code, which the wrapper exits with.
         done = next(
@@ -451,7 +464,10 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
             None,
         )
         if done is None:
-            raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
+            raise WorkspaceUnavailableError(
+                f'Docker workspace {self._name}: the container stopped during the command, which may have partly run; '
+                'the next operation starts the container again'
+            )
         return CommandResult(
             exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
         )

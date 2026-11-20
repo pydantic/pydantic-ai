@@ -82,6 +82,7 @@ exec)
     name=$1
     shift
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
+    [ -f "$state/$name.running" ] || { echo "Error response from daemon: container $name is not running" >&2; exit 1; }
     [ "$name" != silent ] || exit 1
     # Each container gets a directory of its own for the backend's PID files; a `readonly` one's isn't writable.
     if [ "$1" = sh ] && [ "$2" = -c ]; then
@@ -150,6 +151,14 @@ class FakeDocker:
         (state / name).write_text(str(working_dir))
         if labeled:
             (state / f'{name}.labeled').touch()
+
+    def stop(self, name: str) -> None:
+        """Stop a container, like `docker stop`, so `exec` refuses it until it is started again."""
+        self.running_file(name).unlink()
+
+    def running_file(self, name: str) -> Path:
+        """The file whose removal stops the container, for a command that stops its own container."""
+        return self.bin_dir / 'containers' / f'{name}.running'
 
     def pid_files(self, name: str) -> set[Path]:
         """The backend's PID files in the container."""
