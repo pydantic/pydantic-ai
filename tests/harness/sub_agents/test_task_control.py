@@ -19,10 +19,12 @@ from uuid import NAMESPACE_URL, uuid5
 import anyio
 import anyio.lowlevel
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
@@ -100,6 +102,7 @@ from pydantic_ai_harness.sub_agents import (
     is_task_report,
     serialize_message,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness._rendering import sent_messages
 
 from .._deferred_tools import pending_agent
@@ -261,7 +264,7 @@ class TestSubAgentsTaskControl:
             scripted(call('delegate_task', agent_name='researcher', task='Find x.'), echo_last_return),
             capabilities=[controlled(), recorder],
         )
-        with anyio.fail_after(WAIT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             result = await parent.run('Go.')
         [assigned] = recorder.of(TaskAssignedEvent)
         assert result.output == f'Task {assigned.task_id} (ok):\nchild output'
@@ -296,7 +299,7 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(slow)), recorder],
         )
-        with anyio.fail_after(WAIT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             result = await parent.run('Go.')
         [receipt] = tool_returns(result.all_messages())
         assert 'is running in the background' in receipt
@@ -332,7 +335,7 @@ class TestSubAgentsTaskControl:
         )
         settings, exporter = traced(False)
         parent.instrument = settings
-        with anyio.fail_after(WAIT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             result = await parent.run('Go.')
         assert 'is running in the background' in tool_returns(result.all_messages())[0]
         assert [event.reason for event in recorder.of(TaskBackgroundedEvent)] == ['auto']
@@ -341,6 +344,14 @@ class TestSubAgentsTaskControl:
             'sub_agents task backgrounded',
             {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'auto'},
         ) in (decisions(exporter))
+        # The task settled after its tool call returned the receipt, so its outcome is a decision, not on that span.
+        [tool_span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
+        assert 'sub_agents.outcome' not in (tool_span.attributes or {})
+        # A durable unit doesn't return the model that served the task.
+        served = {} if durable else {'sub_agents.model': 'function:function:respond:stream'}
+        assert [attributes for name, attributes in decisions(exporter) if name == 'sub_agents task settled'] == [
+            {'sub_agents.agent_name': 'researcher', 'sub_agents.outcome': 'ok', **served}
+        ]
 
     async def test_a_listener_failing_on_auto_backgrounding_aborts_the_run(self) -> None:
         gate = Gate()
@@ -384,7 +395,7 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(asker)), recorder],
         )
-        with anyio.fail_after(WAIT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             result = await parent.run('Go.')
         returns = tool_returns(result.all_messages())
         assert 'is running in the background' in returns[0]
@@ -562,12 +573,20 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(slow)), recorder],
         )
+        settings, exporter = traced(False)
+        parent.instrument = settings
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert cancelled.forced
         assert len(recorder.of(TaskForceCancelRequestedEvent)) == 1
+        settled = {
+            'sub_agents.agent_name': 'researcher',
+            'sub_agents.outcome': 'cancelled',
+            'sub_agents.model': 'function:function:respond:stream',
+        }
+        assert ('sub_agents task settled', settled) in decisions(exporter)
 
     async def test_a_resumed_task_continues_its_conversation(self) -> None:
         recorder = Recorder()
@@ -2170,6 +2189,14 @@ class TestTaskControlTelemetry:
                 {'sub_agents.agent_name': 'researcher', 'sub_agents.event': 'sub_agents.task_assigned', **reason},
             ),
             ('sub_agents task backgrounded', {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'requested'}),
+            (
+                'sub_agents task settled',
+                {
+                    'sub_agents.agent_name': 'researcher',
+                    'sub_agents.outcome': 'ok',
+                    'sub_agents.model': 'function:function:respond:stream',
+                },
+            ),
             ('sub_agents wait for tasks', {'sub_agents.running_tasks': 1}),
         ]
 
@@ -2235,6 +2262,14 @@ class TestTaskControlTelemetry:
                 {'sub_agents.agent_name': 'researcher', 'sub_agents.event': 'sub_agents.task_answer'},
             ),
             ('sub_agents task backgrounded', {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'question'}),
+            (
+                'sub_agents task settled',
+                {
+                    'sub_agents.agent_name': 'researcher',
+                    'sub_agents.outcome': 'ok',
+                    'sub_agents.model': 'function:function:respond:stream',
+                },
+            ),
         ]
 
     async def test_a_refused_task_is_a_span(self) -> None:
@@ -2259,6 +2294,48 @@ class TestTaskControlTelemetry:
             'sub_agents.max_running_tasks': 1,
         }
         assert ('sub_agents task refused', refused) in decisions(exporter)
+
+    def waiting_parent(self, gate: Gate) -> Agent[None, str]:
+        """A parent that backgrounds a task the gate holds, so its run waits for it."""
+        slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
+        return Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Slow.', background=True), text('Waiting.')),
+            capabilities=[controlled(researcher(slow))],
+        )
+
+    async def test_an_error_ending_the_wait_is_recorded_by_type_only_without_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No real failure ends the wait, so one is injected: what is under test is how the span records it.
+        async def fail(self: DelegationTasks, task_id: str | None) -> None:
+            raise RuntimeError('quotes the task')
+
+        monkeypatch.setattr(DelegationTasks, 'wait_children', fail)
+        parent = self.waiting_parent(Gate())
+        settings, exporter = traced(False)
+        parent.instrument = settings
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(RuntimeError):
+            await parent.run('Go.')
+        [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
+        assert wait.status.status_code == StatusCode.ERROR
+        assert wait.status.description is None
+        assert [dict(event.attributes or {}) for event in wait.events] == snapshot(
+            [{'exception.type': 'RuntimeError', 'exception.escaped': 'False'}]
+        )
+
+    async def test_a_cancelled_wait_is_not_an_error(self) -> None:
+        # Not the child's gate: the child stays blocked, so the run is cancelled mid-wait.
+        waiting = Gate()
+        parent = self.waiting_parent(Gate())
+        settings, exporter = traced(False, OpensOnWait(waiting))
+        parent.instrument = settings
+        with anyio.fail_after(WAIT):
+            async with anyio.create_task_group() as group:
+                group.start_soon(parent.run, 'Go.')
+                await waiting.opened.wait()
+                group.cancel_scope.cancel()
+        [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
+        assert wait.status.status_code == StatusCode.UNSET
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_vetoed_created_agent_is_a_span(self, include_content: bool) -> None:
@@ -2318,6 +2395,122 @@ class TestTaskControlTelemetry:
                 for text_ in (span.name, *map(str, (span.attributes or {}).values()))
             ]
             assert not [text_ for text_ in recorded if 'poet' in text_ or 'private text' in text_]
+
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(
+        self, include_content: bool
+    ) -> None:
+        """A bound owner lets the run return before its task settles, after the run dropped its created agents."""
+        gate = Gate()
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            await gate.opened.wait()
+            yield 'A poem.'
+
+        settings, exporter = traced(include_content)
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='Poems.', instructions='Write.'),
+                call('delegate_task', agent_name='poet', task='One.', background=True),
+                text('Bye.'),
+            ),
+            capabilities=[
+                SubAgents(
+                    models={'slow': FunctionModel(stream_function=streamed)},
+                    task_control=TaskControl(),
+                    dynamic_agents=DynamicAgents(models=['slow']),
+                )
+            ],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks()
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+                gate.opened.set()
+                await owner.wait_children(None)
+
+        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
+        assert decisions(exporter) == [
+            ('sub_agents task backgrounded', {**name, 'sub_agents.reason': 'requested'}),
+            (
+                'sub_agents task settled',
+                {**name, 'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
+            ),
+        ]
+
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_created_agents_name_stays_content_in_a_later_run_of_the_conversation(
+        self, include_content: bool
+    ) -> None:
+        """A later run can steer a task whose agent an earlier run created, and dropped when it returned."""
+        gate = Gate()
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            await gate.opened.wait()
+            yield 'A poem.'
+
+        @dataclass
+        class Policy(AbstractCapability[object]):
+            @on_event(TaskSteeredEvent)
+            async def message(self, ctx: RunContext[object], event: TaskSteeredEvent) -> None:
+                event.veto()
+
+        owner = DelegationTasks()
+
+        def steer(messages: list[ModelMessage]) -> ModelResponse:
+            (record,) = owner.records.values()
+            return call('message_task', task_id=record.id, message='Shorter.')
+
+        settings, exporter = traced(include_content)
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='Poems.', instructions='Write.'),
+                call('delegate_task', agent_name='poet', task='One.', background=True),
+                text('Bye.'),
+                steer,
+                text('Steered.'),
+            ),
+            capabilities=[
+                SubAgents(
+                    models={'slow': FunctionModel(stream_function=streamed)},
+                    task_control=TaskControl(),
+                    dynamic_agents=DynamicAgents(models=['slow']),
+                ),
+                Policy(),
+            ],
+        )
+        parent.instrument = settings
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    first = await parent.run('Go.', conversation_id='session')
+                    await parent.run('Steer it.', message_history=first.all_messages(), conversation_id='session')
+                gate.opened.set()
+                await owner.wait_children(None)
+
+        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
+        assert ('sub_agents vetoed', {**name, 'sub_agents.event': 'sub_agents.task_message'}) in decisions(exporter)
+        if not include_content:
+            assert not [attributes for _, attributes in decisions(exporter) if 'sub_agents.agent_name' in attributes]
+
+    async def test_an_agent_on_the_bound_owners_roster_is_named_plainly(self) -> None:
+        # The application configured it on the owner, not on `SubAgents`, and the model did not choose its name.
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='alpha', task='Find x.'), echo_last_return),
+            capabilities=[controlled()],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks(agents={'alpha': researcher()})
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
+        assert (span.attributes or {}).get('sub_agents.agent_name') == 'alpha'
 
     async def test_a_remote_task_nobody_picks_up_is_a_span(self) -> None:
         parent, _ = remote_parent(
