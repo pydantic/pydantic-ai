@@ -732,9 +732,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
-def _anthropic_computer_use_profile(  # pyright: ignore[reportUnusedFunction]
-    model_name: str, profile: ModelProfile | None
-) -> AnthropicModelProfile:
+def anthropic_computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
     """The computer use facts to merge onto `profile`, the model's profile on a client that sends Anthropic's API.
 
     Anthropic's computer use tool is part of Anthropic's own request format. So only `AnthropicProvider` adds these.
