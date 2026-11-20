@@ -377,6 +377,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     changes to those messages, by a history processor or compaction for instance, don't reach the
     model: it continues from the conversation as OpenAI stored it.
 
+    OpenAI adds a response to its conversation only once the response completes. When the response found was
+    streamed and its stream dropped or was cancelled before it finished, Pydantic AI first lists the conversation's
+    items to check whether OpenAI completed it anyway, if the response has output items to look for. If it didn't,
+    or the response has none, that response is sent again, with the messages since the last response the
+    conversation holds. Counting tokens for such a request makes the same check, so it counts the same input.
+
     `'auto'` trusts the message history for this ID, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a
     conversation ID you saved on your server instead; see

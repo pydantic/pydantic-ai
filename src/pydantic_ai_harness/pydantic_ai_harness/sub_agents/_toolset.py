@@ -1678,7 +1678,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """
         timeout = sub_agent.timeout_seconds
         try:
-            result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
+            result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             if timeout is None or isinstance(exc, HookTimeoutError):
                 # The child itself timed out: a hook overran its own budget, or no

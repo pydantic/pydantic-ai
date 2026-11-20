@@ -131,15 +131,15 @@
   ],
   "growing_collections": [
     {
-      "path": "src/pydantic_clai2/pydantic_clai2/config/features.py",
+      "path": "src/pydantic_ai_pax/pydantic_ai_pax/config/features.py",
       "symbol": "SUPPORTED_FEATURES"
     },
     {
-      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "path": "src/pydantic_ai_pax/pydantic_ai_pax/config/__init__.py",
       "symbol": "SETTING_FIELDS"
     },
     {
-      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "path": "src/pydantic_ai_pax/pydantic_ai_pax/config/__init__.py",
       "symbol": "STRING_SETTINGS"
     },
     {
@@ -147,7 +147,7 @@
       "symbol": "CAPABILITY_TYPES"
     },
     {
-      "path": "src/pydantic_clai2/pydantic_clai2/models/model_catalog.py",
+      "path": "src/pydantic_ai_pax/pydantic_ai_pax/models/model_catalog.py",
       "symbol": "CODEX_MODELS"
     }
   ]

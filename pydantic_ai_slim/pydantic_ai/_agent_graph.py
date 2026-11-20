@@ -2377,7 +2377,7 @@ class _StreamOffer:
 class _StreamHandoff:
     """How the attempt loop in the `wrap_model_request` task and the consuming task open a stream together."""
 
-    offers: asyncio.Queue[_StreamOffer] = dataclasses.field(default_factory=asyncio.Queue[_StreamOffer])
+    offers: asyncio.Queue[_StreamOffer] = dataclasses.field(default_factory=asyncio.Queue[_StreamOffer])  # noqa: TID251  (not converted to anyio yet)
     open_error: Exception | None = None
     """The error the request step ended with when its last attempt failed to open a stream.
 
