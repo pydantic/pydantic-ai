@@ -1,9 +1,7 @@
 """How a model applies its profile's computer use settings to its own requests and responses.
 
-A model that points on a grid is told so in the `computer` tool's description. Its `computer` calls are labelled with
-its grid and screenshot limits, so the tool can scale positions to pixels. A request it can't serve, because it can't
-see images or the latest screenshot is larger than it can see, is refused before it's sent. Each model does this for
-itself, so under a fallback the model that answers decides, and a model that refuses is passed over.
+Each model does this itself, so under a fallback the model that answers labels the calls, and a model that refuses a
+request is passed over.
 """
 
 from __future__ import annotations as _annotations
@@ -30,12 +28,12 @@ SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
 """The `provider_details` key where a model records the most screenshot pixels it can see."""
 
 LABEL_KEYS = frozenset({COORDINATE_GRID, SCREENSHOT_MAX_SIDE, SCREENSHOT_MAX_PIXELS})
-"""The `provider_details` keys a model adds to its `computer` calls. The provider never sent or saw them."""
+"""The `provider_details` keys a model adds to its `computer` calls, which the provider never sent."""
 
 COMPUTER_KIND_ID = 'computer_use.computer'
-"""The id of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND], here so this module needn't import it.
+"""The id of [`COMPUTER_KIND`][pydantic_ai.computer_use.COMPUTER_KIND], so this module needn't import it.
 
-A kind's id is stored in message histories, so it never changes."""
+Message histories store it, so it never changes."""
 
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
@@ -49,7 +47,6 @@ class UnservableRequestError(UserError):
 
 
 def _grid_hint(grid: int) -> str:
-    """The sentence added to the `computer` tool's description for a model that points on a grid of `grid` points."""
     last = grid - 1
     return (
         f'Positions are on a 0-{last} grid over the latest screenshot: '
@@ -58,9 +55,9 @@ def _grid_hint(grid: int) -> str:
 
 
 def with_computer_grid_hint(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
-    """Tell a model that points on a grid so, in each `computer` tool's description.
+    """Add the grid sentence to each `computer` tool's description, for a model that points on a grid.
 
-    A request can be prepared more than once, so a description that already has the sentence is left as it is.
+    A request can be prepared more than once, so a description that already has it is left alone.
     """
     if (grid := computer_call_labels(profile).get(COORDINATE_GRID)) is None:
         return params
@@ -75,7 +72,6 @@ def with_computer_grid_hint(params: ModelRequestParameters, profile: ModelProfil
 
 
 def computer_tool_names(params: ModelRequestParameters) -> set[str]:
-    """The names of the request's `computer` tools."""
     kind = COMPUTER_KIND_ID
     return {tool.name for tool in params.function_tools if tool.tool_kind == kind}
 
@@ -84,7 +80,7 @@ def computer_call_labels(profile: ModelProfile) -> dict[str, int]:
     """The grid and screenshot limits a model's `computer` calls are labelled with, from its profile."""
     grid = profile.get('computer_use_coordinate_grid')
     labels = {
-        # A grid of one point can't say where anything is, so it isn't one.
+        # A grid of one point can't locate anything.
         COORDINATE_GRID: grid if grid is not None and grid >= 2 else None,
         SCREENSHOT_MAX_SIDE: profile.get('computer_use_screenshot_max_side'),
         SCREENSHOT_MAX_PIXELS: profile.get('computer_use_screenshot_max_pixels'),
@@ -98,8 +94,8 @@ def label_calls(parts: Iterable[object], tool_names: Container[str], labels: Map
         return
     for part in parts:
         if isinstance(part, _messages.ToolCallPart) and part.tool_name in tool_names:
-            # `provider_name` is left as sent, because the response digest includes it. The digest leaves these keys
-            # out of a `computer` call, so labelling after the digest is taken changes nothing.
+            # `provider_name` must stay as sent: the response digest includes it. The digest leaves these keys out,
+            # so labelling before or after it is taken changes nothing.
             part.provider_details = {**(part.provider_details or {}), **labels}
 
 
@@ -124,10 +120,7 @@ def latest_screenshot_size(messages: Sequence[_messages.ModelMessage]) -> tuple[
 
 
 def fit_screenshot(size: tuple[int, int], *, max_side: int | None, max_pixels: int | None) -> tuple[int, int]:
-    """The largest size with the same shape as `size` within the limits, `size` itself when it fits.
-
-    A limit left `None` is no limit.
-    """
+    """The largest size with the shape of `size` within the limits (`None` is no limit), or `size` when it fits."""
     width, height = size
     scale = min(
         max_side / max(width, height) if max_side else 1.0,
@@ -142,13 +135,12 @@ def refuse_unservable_computer_request(
     profile: ModelProfile,
     model_name: str,
 ) -> None:
-    """Refuse a request with a `computer` tool that this model can't serve, with an `UnservableRequestError`.
+    """Raise `UnservableRequestError` for a request with a `computer` tool that this model can't serve.
 
-    Every `computer` call returns a screenshot, so a model that can't see images can't use the tool. A model shown a
-    screenshot larger than it can see would see it scaled down and give positions on the smaller image.
+    Every `computer` call returns a screenshot, so the model must accept images. A screenshot larger than it can see
+    would be scaled down, and the model would give positions on the smaller image.
 
-    `messages` are the ones passed to the model's request. A model that takes images but not PNGs gets a note in place
-    of each screenshot, so there is no size to check and it isn't refused for one.
+    A model that takes images but not PNGs gets a note in place of each screenshot, so there is no size to check.
     """
     if not computer_tool_names(params):
         return
