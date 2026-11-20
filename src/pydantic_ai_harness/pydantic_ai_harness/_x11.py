@@ -250,6 +250,10 @@ DESKTOP_PACKAGES = ('xvfb', *_PACKAGES.split(), *_DESKTOP_PROGRAMS.split())
 _DESKTOP_LOG = '/tmp/pydantic-ai-desktop.log'
 """Where the desktop's install and its programs write, so a desktop that didn't come up says why."""
 
+_DESKTOP_INSTALL_FAILED = '/tmp/pydantic-ai-desktop-install-failed'
+"""Names the desktop's programs an install failed to install, so later starts don't run `apt-get` again for the same
+ones. Deleting it makes the next start try again."""
+
 _PANEL_SHOWS = 'xdotool search --onlyvisible --class tint2 >/dev/null 2>&1'
 
 
@@ -277,14 +281,20 @@ _DESKTOP_CONFIG = (
     # xterm's default font is a small bitmap one that models misread, such as `g` as `9`. xterm reads this file
     # however it is opened, from the panel, fluxbox's run box or a shell command, unless `xrdb` loaded settings.
     + _write_unless_present('$HOME/.Xdefaults', 'XTerm*faceName: Monospace', 'XTerm*faceSize: 14')
-    # A panel along the bottom with a button for each launcher whose program is installed, and a button per window.
+    # A panel along the bottom with Firefox's icon when it's installed, a button labelled Terminal, and a button per
+    # window. Models found the labelled button in fewer steps than an icon alone.
     + _write_unless_present(
         f'{_TINT2_DIR}/tint2rc',
+        # Backgrounds 1 (the panel) and 2 (the Terminal button), numbered in the order they're written.
         'rounded = 0',
         'border_width = 0',
         'background_color = #2b2b2b 100',
         'border_color = #2b2b2b 0',
-        'panel_items = LT',
+        'rounded = 0',
+        'border_width = 1',
+        'background_color = #444444 100',
+        'border_color = #888888 100',
+        'panel_items = LPT',
         'panel_position = bottom left horizontal',
         'panel_size = 100% 40',
         'panel_padding = 4 4 6',
@@ -294,7 +304,14 @@ _DESKTOP_CONFIG = (
         'launcher_icon_size = 32',
         'launcher_padding = 2 4 8',
         'launcher_item_app = /usr/share/applications/firefox-esr.desktop',
-        'launcher_item_app = /usr/share/applications/debian-xterm.desktop',
+        'button = new',
+        'button_icon = mini.xterm',
+        'button_text = Terminal',
+        'button_font = Sans 12',
+        'button_font_color = #ffffff 100',
+        'button_padding = 8 4 6',
+        'button_background_id = 2',
+        'button_lclick_command = xterm',
         'taskbar_padding = 2 2 4',
         'task_text = 1',
         'task_icon = 1',
@@ -312,7 +329,7 @@ _START_WINDOW_MANAGER = (
     'setsid fluxbox >&8 2>&1 8>&- 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; fi; '
-    # tint2 shows only once a window manager answers, so it starts after one. Before running a launcher's program,
+    # tint2 shows only once a window manager answers, so it starts after one. Before running a program its buttons open,
     # tint2 closes every file handle up to its soft open-file limit. Under a Kubernetes pod's 1,073,741,816, its
     # terminal button opened nothing; with the soft limit at 1,048,576 it opened xterm in under a second. So tint2
     # alone starts with its soft limit capped there, and the hard limit, which programs it opens can raise theirs to,
@@ -341,8 +358,9 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
     It first installs any of the programs it needs that's missing with `apt-get`, as root or through `sudo -n`, and
     fails naming them when it can't: `_CLIENTS`, and Xvfb unless an X server runs. With `desktop`, it then installs the
     desktop's programs, `_DESKTOP_PROGRAMS`, in a separate `apt-get install`, so one the package lists lack never stops
-    the display; when they can't be installed, or don't start, the display works without them. It fails once the X
-    server exits, or after 10 seconds, printing the end of `log`.
+    the display; when they can't be installed, or don't start, the display works without them. A failed install of
+    them after a working `apt-get update` is recorded in `_DESKTOP_INSTALL_FAILED`, and later starts skip it while the
+    same ones are missing. It fails once the X server exits, or after 10 seconds, printing the end of `log`.
 
     It takes `START_LOCK`, so a second start waits and finds the first one's install and X server. The lock is held
     until the script exits, so the rest of the script runs under it too; anything started in the background must close
@@ -361,6 +379,8 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         # `wanted` names the desktop's missing programs, which are installed when they can be and skipped otherwise.
         + (
             f'wanted=; for p in {_DESKTOP_PROGRAMS}; do command -v $p >/dev/null 2>&1 || wanted="$wanted $p"; done; '
+            # The same programs failed to install before, so this start doesn't try again.
+            f'[ "$wanted" != "$(cat {_DESKTOP_INSTALL_FAILED} 2>/dev/null)" ] || wanted=; '
             # The desktop writes to file descriptor 8 (9 is the lock). It points at `_DESKTOP_LOG` when that's missing
             # or a file that can be written, and at `/dev/null` otherwise, so the log never stops the display. Anything
             # else there isn't opened: a named pipe would wait for a reader, and a symlink would let a start as root
@@ -388,13 +408,17 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         'else install="$elevate env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends"; '
         # With only the desktop's programs missing, so with `desktop` and 8 open, the update writes to the desktop log:
         # starting Xvfb below empties `log`, and with it why a failed update left the desktop out.
-        'if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1; '
+        # `updated` is cleared when that update fails, so a failed install after it isn't recorded below.
+        'updated=1; if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1 || updated=; '
         # Otherwise the display's own programs first, failing the start when they can't be installed.
         f'elif ! {{ $elevate apt-get update -qq && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
         f'echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; fi; '
-        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A later run, or a restart
-        # of the display after a failure, tries again.
-        f'[ -z "$wanted" ] || $install $wanted >&8 2>&1 || true; '
+        # Then the desktop's, alone, so a package the lists lack only leaves the desktop out. A failure after a working
+        # update is recorded, unless a symlink is there, which a start as root would write through. A failed update,
+        # such as with the network down or apt's lock held, isn't, so the next start tries again.
+        f'if [ -n "$wanted" ]; then if $install $wanted >&8 2>&1; then rm -f {_DESKTOP_INSTALL_FAILED} 2>/dev/null; '
+        f'elif [ -n "$updated" ] && [ ! -L {_DESKTOP_INSTALL_FAILED} ]; then '
+        f'printf %s "$wanted" 2>/dev/null >{_DESKTOP_INSTALL_FAILED} || true; fi; fi; '
         'fi; fi; '
         # Asked again, since the image's own X server may have started during the install: its lock and socket stay.
         'if ! x_runs; then '
