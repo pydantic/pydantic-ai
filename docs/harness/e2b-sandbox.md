@@ -267,7 +267,7 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 | `client` | An `e2b.E2B` for the API key and connection settings. Default: `None`, which reads `E2B_API_KEY` and the rest of the environment. |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
-| `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. A value over your plan's limit raises `WorkspaceUnavailableError`. |
+| `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. Without `idle_timeout`, a value over your plan's limit raises `WorkspaceUnavailableError`. With it, the limit isn't checked up front, and the sandbox pauses at your plan's limit even while busy. |
 | `idle_timeout` | Seconds without a command or file operation before E2B pauses the sandbox. Each operation extends its lifetime, up to `sandbox_timeout` from the run's first use. Model turns count as idle, so use minutes. Default: `None`, the fixed `sandbox_timeout` lifetime. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/user` on the default template. Created on a new sandbox. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. The default locale is POSIX. Pass `{'LC_ALL': 'C.UTF-8'}` for tools that should count characters rather than bytes. |

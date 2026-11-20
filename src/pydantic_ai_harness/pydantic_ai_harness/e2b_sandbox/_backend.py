@@ -243,7 +243,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             again when attaching to it. When it runs out, E2B pauses the sandbox rather than
             killing it, and attaching resumes it. The default, 3600, is the most E2B's Hobby plan
             allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead the most the backend
-            extends the lifetime to, from its first use.
+            extends the lifetime to, from its first use, and a value over your plan's limit isn't refused
+            up front: the sandbox pauses at the plan's limit.
         idle_timeout: Seconds without a command or file operation after which E2B pauses the sandbox.
             Each operation extends the sandbox's lifetime with E2B's `set_timeout` as it starts, but
             never past `sandbox_timeout` from when the backend first used it. Time between operations,
