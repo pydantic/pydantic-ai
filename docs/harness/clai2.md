@@ -3,7 +3,7 @@ title: CLAI
 description: "CLAI is a coding agent for your terminal, built on Pydantic AI and the Pydantic AI Harness."
 ---
 
-<!-- Generated from src/pydantic_clai2/README.md by src/pydantic_clai2/scripts/sync_docs_page.py. Edit the README instead. -->
+<!-- Generated from src/pydantic_ai_pax/README.md by src/pydantic_ai_pax/scripts/sync_docs_page.py. Edit the README instead. -->
 
 # CLAI 2.0
 
@@ -15,7 +15,7 @@ subscription, or bring an API key for OpenAI, Anthropic, or another provider Pyd
 supports. The coding tools and integrations are plugins, so you can add tools,
 commands, and menus without forking anything.
 
-![CLAI starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/hero.png)
+![CLAI starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 - **Any model, any account.** Switch models mid-conversation. Sign in to several
   accounts and let CLAI move to the next one when you hit a limit.
@@ -26,7 +26,7 @@ commands, and menus without forking anything.
   Claude Code and Codex.
 - **Yours to change.** Turn plugins on and off from a menu, install one from Git, or
   write your own in a few lines of Python. Ask CLAI how: it can look up its own
-  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#ask-clai-about-itself)
+  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#ask-clai-about-itself)
   and plugin docs when you need them.
 
 CLAI runs commands and edits files as you, with no sandbox and no approval step. Run it
@@ -44,21 +44,24 @@ Three packages, each built on the one before it. Start with the one that matches
 |---|---|---|
 | [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
 | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [CLAI](#install) (`pydantic-clai2`) | A coding agent for your terminal, run as `clai2`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [CLAI](#install) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-clai2` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
 
 ## Install
 
 CLAI needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install --compile-bytecode pydantic-clai2
+uv tool install --compile-bytecode pydantic-ai-pax
 ```
 
-This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
+This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
+The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
+pointing here; your settings, sessions, and plugins carry over. A plugin that imports `pydantic_clai2` needs
+the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`.
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
-`/update now` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`/update now` uses it too. To try CLAI without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
@@ -66,7 +69,7 @@ installed too; `/model` tells you which one when you pick the model. TypeSafe's 
 models need an extra:
 
 ```bash
-uv tool install --compile-bytecode 'pydantic-clai2[typesafe]'
+uv tool install --compile-bytecode 'pydantic-ai-pax[typesafe]'
 ```
 
 ## First run
@@ -75,7 +78,7 @@ Open a terminal in your project and start CLAI:
 
 ```bash
 cd my-project
-clai2
+pax
 ```
 
 You get the CLAI banner, a prompt at the bottom, and a status row under it with the
@@ -91,7 +94,7 @@ A few keys to know:
 | Key | What it does |
 |---|---|
 | <kbd>Enter</kbd> | Send. While CLAI works, <kbd>Enter</kbd> queues your message for after the current turn. |
-| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
@@ -117,22 +120,22 @@ Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, 
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
 repository can also pin settings for everyone who works in it with a
-`.clai/settings.json` file. See [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#files)
-and [project settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#project-settings)
+`.clai/settings.json` file. See [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#files)
+and [project settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#project-settings)
 in the reference.
 
 ## Updating
 
 Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
-`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
+`/update now` installs without asking, and `pax update` (or `pax --update`) does it from your shell and exits
 (on Windows, use `/update now` instead).
 CLAI installs the newest build, then restarts into it with the same conversation open.
 In the web UI, **Update…** in Settings › About installs from any session's page, and the
-restart reopens the session the terminal shows, or under `clai2 --web`, the one CLAI started with.
+restart reopens the session the terminal shows, or under `pax --web`, the one CLAI started with.
 While other live sessions run turns, as ones the browser opened can, `/update now`
 and `/reload` ask you to try again when they finish; bare `/update` still shows the
 menu. Installs and reloads restart CLAI in the folder it started in, so a session
-from another folder shown in the terminal cannot run them. While another `clai2` process
+from another folder shown in the terminal cannot run them. While another `pax` process
 runs from the same install, updating would break it, so CLAI asks you to quit it first.
 
 When a newer build is out, the status row tells you, for example
@@ -151,10 +154,10 @@ There are two channels. Pick one with `/set updates.channel`:
 ```
 
 `/update now` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
-first and installs in a new PowerShell window; start `clai2` again when it is done.
-`/update now` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
+first and installs in a new PowerShell window; start `pax` again when it is done.
+`/update now` reinstalls `pydantic-ai-pax` without extras or `--with` packages, so add those
 again afterwards. See
-[Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#updating)
+[Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#updating)
 in the reference for the details.
 
 ## Models and accounts
@@ -164,7 +167,7 @@ in the reference for the details.
 `/model` lists the models you have added, with details for the highlighted one. Press
 <kbd>Enter</kbd> to switch. The next prompt uses the new model, and the conversation carries on.
 
-![The /model picker listing saved models](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/model.png)
+![The /model picker listing saved models](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/model.png)
 
 You can also type a model name directly, such as `/model anthropic:claude-sonnet-4-6`.
 <kbd>Tab</kbd> completes names. Highlight a model and press <kbd>Ctrl</kbd>+<kbd>D</kbd> to remove it from the list.
@@ -175,11 +178,11 @@ You can also type a model name directly, such as `/model anthropic:claude-sonnet
 price of each. Type to filter. Press <kbd>Enter</kbd> to use a model, or <kbd>Ctrl</kbd>+<kbd>S</kbd> to change its
 settings first, such as reasoning effort or thinking.
 
-![/model add showing Anthropic models with context size and prices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/model-add.png)
+![/model add showing Anthropic models with context size and prices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/model-add.png)
 
 Each model keeps its own settings. Change them later with `/model settings`, or use the
-shortcuts: `/effort high` sets reasoning effort, and `/fast` turns on priority
-processing for Codex models.
+shortcuts: `/effort high` sets reasoning effort, and `/fast` picks the speed of Codex
+models, ultrafast by default on the models that offer it.
 
 ### Sign in: `/login` and `/accounts`
 
@@ -190,7 +193,7 @@ signs in with GitHub Copilot. Neither needs an API key.
 limits where the provider reports them. Press `a` to add an account, `r` to rename one,
 `[` and `]` to change the order, and `d` to sign out.
 
-![/accounts listing signed-in accounts by provider](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/accounts.png)
+![/accounts listing signed-in accounts by provider](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/accounts.png)
 
 A second account of the same provider is a profile, written `PROVIDER@PROFILE`:
 
@@ -226,11 +229,11 @@ Linear and Notion can use a saved key by name, so you change it in one place. Th
 environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
 <kbd>d</kbd> to delete. Values are never shown.
 
-![/keys listing saved API key names](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/keys.png)
+![/keys listing saved API key names](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/keys.png)
 
-See [Models and their settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#models-and-their-settings),
-[Several accounts and fallback chains](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#several-accounts-and-fallback-chains),
-and [Environment variables](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#environment-variables)
+See [Models and their settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#models-and-their-settings),
+[Several accounts and fallback chains](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#several-accounts-and-fallback-chains),
+and [Environment variables](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#environment-variables)
 in the reference for everything else, including vLLM and OpenRouter.
 
 ## A tour
@@ -249,7 +252,7 @@ When a task could go more than one way, the model can ask you instead of guessin
 an answer with the arrow keys and <kbd>Enter</kbd>, or press its number. **Other** lets you type
 your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with a choice it states.
 
-![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/ask-user.png)
+![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/ask-user.png)
 
 ### Run a shell command: `!`
 
@@ -257,7 +260,7 @@ Start a line with `!` to run it as a shell command, without asking the model. Th
 its output are saved, so the model sees them on your next prompt. Use `!!` for
 interactive programs, such as `!!python`, to give them the whole terminal.
 
-![Running git log and the project's CLI with !](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/shell.png)
+![Running git log and the project's CLI with !](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/shell.png)
 
 ### Code mode and speculative execution
 
@@ -269,7 +272,7 @@ Press <kbd>Ctrl</kbd>+<kbd>X</kbd> <kbd>Ctrl</kbd>+<kbd>S</kbd> to turn on specu
 reads and searches the moment their line appears. A row above the status line counts how
 many early starts paid off, and the time they saved.
 
-![A run_code call reading files, with the Speculative Execution row showing hits](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/code-mode.png)
+![A run_code call reading files, with the Speculative Execution row showing hits](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/code-mode.png)
 
 ### Rewind a conversation
 
@@ -277,18 +280,19 @@ Between turns, press <kbd>Esc</kbd> twice to open **Rewind conversation**. Pick 
 and press <kbd>Enter</kbd>. CLAI removes it and everything after it from the conversation, and puts
 it back in the editor so you can change it. Rewinding does not undo changes to files.
 
-![The rewind picker listing earlier prompts](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/rewind.png)
+![The rewind picker listing earlier prompts](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/rewind.png)
 
 ### Pick up where you left off: `/resume`
 
 Every conversation is saved. `/resume` opens a browser with your projects on the left
-and their sessions on the right. CLAI names sessions in the background so you can find
-them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
+and their sessions on the right. Each session is titled from its first prompt;
+`/set sessions.naming true` has a model name them in the background instead, using your
+current model or a smaller `sessions.naming_model`. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
 <kbd>a</kbd> archives a session you are done with, hiding it without deleting anything, and <kbd>h</kbd> shows archived ones.
 
-![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)
+![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/resume.png)
 
-From your shell, `clai2 --resume` opens the same browser, and `clai2 --continue` (`-c`)
+From your shell, `pax --resume` opens the same browser, and `pax --continue` (`-c`)
 restores the most recent session in the current directory. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
 
@@ -296,10 +300,10 @@ With `/web` running, the browser can open other sessions while this one runs. `/
 of one of them shows it here, even mid-turn, instead of copying it; the session you
 left keeps running in the browser.
 
-On Unix, `clai2 sessions` lists live sessions across your terminal tabs and processes,
+On Unix, `pax sessions` lists live sessions across your terminal tabs and processes,
 including idle sessions and those waiting for an answer. It shows unique session-ID
 prefixes and folder names without opening a session or starting a turn. See
-[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#sessions).
+[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#sessions).
 
 ### Work in the background: `/fork`
 
@@ -307,16 +311,16 @@ prefixes and folder names without opening a session or starting a turn. See
 Add `@MODEL` to use a different model for it. When it finishes, CLAI prints its answer
 and the session to resume if you want to continue it.
 
-![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/fork.png)
+![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/fork.png)
 
-### Several sessions at once: `clai2 --web`
+### Several sessions at once: `pax --web`
 
-`clai2 --web` drives CLAI from your browser. Click any session in the sidebar and it
+`pax --web` drives CLAI from your browser. Click any session in the sidebar and it
 opens live, even while others run: each works in its own folder, with its own queued
 prompts and running turn, and a dot shows which ones are running or waiting for you.
 Esc stops only the session you are looking at. A session left idle for an hour
 closes; it stays saved, so click it to pick it up again. See
-[Several sessions in the web UI](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#several-sessions-in-the-web-ui).
+[Several sessions in the web UI](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#several-sessions-in-the-web-ui).
 
 ### Usage, cost, and `/compact`
 
@@ -332,7 +336,7 @@ When the conversation nears the model's context limit, CLAI summarises older mes
 for you. Run `/compact` to do it now, and add a note to say what the summary must keep,
 such as `/compact keep the API decisions`.
 
-![/usage table, /cost line, and /compact reporting the tokens it saved](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/usage.png)
+![/usage table, /cost line, and /compact reporting the tokens it saved](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/usage.png)
 
 ### Your own instructions: `/system_prompt`
 
@@ -340,7 +344,7 @@ such as `/compact keep the API decisions`.
 `AGENTS.md`, and what your plugins add. Add instructions of your own and CLAI sends them
 with every prompt, in this and later sessions.
 
-![The /system_prompt menu](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/system-prompt.png)
+![The /system_prompt menu](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/system-prompt.png)
 
 ## Make it yours
 
@@ -350,16 +354,16 @@ with every prompt, in this and later sessions.
 and apply right away. You can also type one directly, such as
 `/set display.thinking false`.
 
-![The /set menu](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/set.png)
+![The /set menu](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/set.png)
 
 ### Colours: `/theme`
 
 `/theme` previews each palette on a sample conversation before you pick it. `default`
 keeps CLAI's usual colours and leaves your terminal's palette alone.
 
-![The /theme picker previewing tokyo_night](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/theme-tokyo-night.png)
+![The /theme picker previewing tokyo_night](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/theme-tokyo-night.png)
 
-![The /theme picker previewing github_light](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/theme-github-light.png)
+![The /theme picker previewing github_light](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/theme-github-light.png)
 
 ### The working animation: `/spinner`
 
@@ -367,7 +371,7 @@ keeps CLAI's usual colours and leaves your terminal's palette alone.
 and `+` to change its speed. Add your own in `spinners.json`; `/spinner init` writes a
 starter file.
 
-![The /spinner picker](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/spinner.png)
+![The /spinner picker](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/spinner.png)
 
 ## Plugins
 
@@ -375,13 +379,13 @@ The coding tools are a plugin, and so are the integrations. `/plugins` lists the
 press <kbd>Space</kbd> to turn one on or off, <kbd>c</kbd> to configure it, <kbd>r</kbd> to reload it, and <kbd>d</kbd> to
 remove it. Changes apply from your next prompt, with no restart.
 
-![The /plugins menu listing built-in plugins](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/plugins.png)
+![The /plugins menu listing built-in plugins](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/plugins.png)
 
 These are on from the start:
 
 - `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills.
   Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
-  specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
+  specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
 - `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
@@ -406,47 +410,47 @@ The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode pydantic-ai-pax --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 
 Plugins are Python code that runs as you, so only install ones you trust.
 
-To write your own, read the [plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md).
+To write your own, read the [plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md).
 Or ask CLAI: it has a guide to its own plugin API, so you can ask it to "make a plugin
 that adds a `/standup` command".
 
 ## CLAI in your own code
 
-- `clai2 -p "Explain this repository"` runs one prompt and prints only the answer.
-- `clai2 --agent my_module:agent` chats with your own Pydantic AI agent.
+- `pax -p "Explain this repository"` runs one prompt and prints only the answer.
+- `pax --agent my_module:agent` chats with your own Pydantic AI agent.
 - `open_stock_agent(...)` gives your Python code CLAI's coding agent, without the terminal.
 - `chat(agent, deps=...)` opens the CLAI terminal on any agent.
 
-See [Using CLAI from code](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#using-clai-from-code)
+See [Using CLAI from code](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#using-clai-from-code)
 in the reference.
 
 ## Reference
 
-The [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md)
+The [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md)
 covers everything in detail:
 
-- [Commands](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#commands),
-  [command-line options](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#command-line-options),
-  [settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#settings),
-  [environment variables](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#environment-variables-at-a-glance),
-  and [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#files)
-- [Models and accounts](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#models-and-accounts):
+- [Commands](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#commands),
+  [command-line options](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#command-line-options),
+  [settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#settings),
+  [environment variables](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#environment-variables-at-a-glance),
+  and [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#files)
+- [Models and accounts](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#models-and-accounts):
   per-model settings, Codex, Copilot, vLLM, OpenRouter, and saved keys
-- [The prompt](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#the-prompt):
+- [The prompt](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#the-prompt):
   keys, images, history, and `!` commands
-- [Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#sessions):
+- [Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#sessions):
   `/resume`, `/fork`, and Git worktrees
-- [Plugins and integrations](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#plugins-and-integrations):
+- [Plugins and integrations](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#plugins-and-integrations):
   MCP, notifications, herdr, Agent of Empires, and telemetry
-- [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md):
+- [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
   every plugin method, event, and rule
 
 The screenshots are real CLAI sessions. Only the model is scripted (`demo:tour`), so they
 need no account and cost nothing. To make them again, run
-`src/pydantic_clai2/scripts/screenshots/capture.sh`.
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.

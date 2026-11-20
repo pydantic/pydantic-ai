@@ -2,11 +2,12 @@
 
 See `tests/append_only.py` for the scenario and the three invariants it checks. The cases are discovered
 from the package: every public capability class in `pydantic_ai.capabilities` and `pydantic_ai.models`
-runs, constructed with its defaults or with a fixture from `FIXTURES`, unless `EXEMPT` says why it can't
-be, so a new capability is checked without anyone adding it; one that can't be built with its defaults
-fails until it gets a fixture or an exemption. Agent features that render state into the prompt are
-cases too (`AGENT_FEATURES`). Durable execution engines in `pydantic_ai.durable_exec` are left to their
-own suites, which check that a durable run sends the same requests as a plain one.
+runs, constructed with its defaults or with the `build` of its case in `tests/capability_cases.py`, unless
+that `build` is `Unbuildable`, saying why it can't be, so a new capability is checked without anyone adding
+it; one that can't be built with its defaults fails until its case gets a `build`. Agent features that
+render state into the prompt are cases too (`AGENT_FEATURES`). Durable execution engines in
+`pydantic_ai.durable_exec` are left to their own suites, which check that a durable run sends the same
+requests as a plain one.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import json
 import re
 import sys
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -27,30 +27,14 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ModelRetry, RunContext, TextOutput
 from pydantic_ai.capabilities import (
-    MCP,
     AbstractCapability,
     Capability,
     CombinedCapability,
-    DynamicCapability,
-    FileUnderstanding,
-    HandleDeferredToolCalls,
     Hooks,
-    LocalWorkspace,
-    ModelFallback,
     NativeTool,
-    PrefixTools,
-    PrepareOutputTools,
     PrepareTools,
-    ProcessEventStream,
     ProcessHistory,
-    ResolveModelId,
-    SelectModel,
-    Thinking,
-    Toolset,
-    UseThreadExecutor,
     WrapModelRequestHandler,
-    WrapperCapability,
-    XSearch,
 )
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
@@ -64,12 +48,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
-from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
 from .append_only import (
@@ -79,7 +60,6 @@ from .append_only import (
     Change,
     Clock,
     ConversationResult,
-    Exempt,
     Fixture,
     Known,
     Provider,
@@ -88,18 +68,14 @@ from .append_only import (
     build_capabilities,
     check_conversation,
     discover_capabilities,
-    drain_events,
     inject_clock,
     provider_imports_successful,
     run_conversation,
+    skip_unless_installed,
     ui_imports_successful,
 )
+from .capability_cases import CASES, CORE_CAPABILITY_PACKAGES, Unbuildable
 from .conftest import try_import
-
-with try_import() as mcp_imports_successful:
-    from fastmcp.server import FastMCP
-
-    from pydantic_ai.mcp import MCPToolset
 
 # The module is skipped without the provider extras, so this needs no flag of its own.
 with try_import():
@@ -107,72 +83,6 @@ with try_import():
 
 pytestmark = pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
 
-
-def _mcp_server() -> FastMCP[None]:
-    server: FastMCP[None] = FastMCP('extra', instructions='Extra server instructions.')
-
-    @server.tool()
-    def extra_tool() -> str:
-        return 'extra'  # pragma: no cover
-
-    return server
-
-
-def _no_op_tool() -> str:
-    """Do nothing."""
-    return 'ok'  # pragma: no cover
-
-
-def _keep_history(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return messages
-
-
-def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
-    assert ctx.model is not None
-    return ctx.model
-
-
-FIXTURES: dict[str, Fixture] = {
-    'CombinedCapability': lambda _: CombinedCapability([Thinking()]),
-    'DynamicCapability': lambda _: DynamicCapability(lambda ctx: Thinking()),
-    'FileUnderstanding': lambda _: FileUnderstanding(fallback_subagent_model=TestModel()),
-    'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
-    'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
-    'MCP': lambda _: MCP(local=MCPToolset(_mcp_server())),
-    # The step's model answers, so the fallback model is never sent anything.
-    'ModelFallback': lambda _: ModelFallback(TestModel()),
-    'NativeTool': lambda _: NativeTool(CodeExecutionTool()),
-    'PrefixTools': lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
-    'PrepareOutputTools': lambda _: PrepareOutputTools(lambda ctx, tools: tools),
-    'PrepareTools': lambda _: PrepareTools(lambda ctx, tools: tools),
-    'ProcessEventStream': lambda _: ProcessEventStream(drain_events),
-    'ProcessHistory': lambda _: ProcessHistory(_keep_history),
-    'ResolveModelId': lambda _: ResolveModelId(lambda ctx, model_id: None),
-    'SelectModel': lambda _: SelectModel(_keep_model),
-    'Toolset': lambda _: Toolset(FunctionToolset([_no_op_tool])),
-    'UseThreadExecutor': lambda _: UseThreadExecutor(ThreadPoolExecutor(max_workers=1)),
-    'WrapperCapability': lambda _: WrapperCapability(Thinking()),
-    'XSearch': lambda _: XSearch(fallback_subagent_model=TestModel()),
-}
-"""Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
-
-EXEMPT: dict[str, Exempt] = {
-    'BatchModelRequests': Exempt(
-        "Sends each request through the provider's batch API, which the scenario doesn't serve. A batch item's body is "
-        "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
-        '`batch_encode` tests).'
-    ),
-    'RequestInput': Exempt(
-        "Deprecated alias of `HandleDeferredToolCalls` with a handler that takes a resume token, which that class's "
-        'case covers; constructing it warns.'
-    ),
-    'NativeOrLocalTool': Exempt(
-        'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
-    ),
-    'WindowsWorkspace': Exempt(
-        "Builds only on Windows; it's `LocalWorkspace` with another backend, which adds nothing to the conversation."
-    ),
-}
 
 _NO_LOCAL_FALLBACK = 'The provider has no native {}, and the default has no local fallback.'
 
@@ -544,12 +454,15 @@ RETRY_CASES: dict[str, tuple[Scenario, bool]] = {
     **{f'retry:{name}+request-scoped': (scenario, True) for name, scenario in RETRY_SCENARIOS.items()},
 }
 
-CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
+CAPABILITIES = discover_capabilities(CORE_CAPABILITY_PACKAGES)
 
 
-def test_every_capability_has_a_case():
+UNBUILDABLE = {name for name, case in CASES.items() if isinstance(case.build, Unbuildable)}
+
+
+def test_every_table_entry_names_a_capability():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
-    tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
+    tables = KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
     stale = (
         tables
         - CAPABILITIES.keys()
@@ -564,7 +477,7 @@ def test_every_capability_has_a_case():
 @pytest.mark.parametrize('provider', PROVIDERS)
 @pytest.mark.parametrize(
     'name',
-    sorted(CAPABILITIES.keys() - EXEMPT.keys())
+    sorted(CAPABILITIES.keys() - UNBUILDABLE)
     + sorted(AGENT_FEATURES)
     + sorted(RETRY_CASES)
     + sorted(VARIANTS)
@@ -575,8 +488,6 @@ async def test_conversation_only_appends(
 ):
     if reason := UNSUPPORTED.get((name, provider)):
         pytest.skip(reason)
-    if name == 'MCP' and not mcp_imports_successful():  # pragma: lax no cover
-        pytest.skip('mcp not installed')
     if name.startswith('ui:') and not ui_imports_successful():  # pragma: lax no cover
         pytest.skip('ag-ui-protocol not installed')
     if name in AGENT_FEATURES:
@@ -591,7 +502,9 @@ async def test_conversation_only_appends(
         fixture, scenario = VARIANTS[name]
         capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+        case = CASES[name]
+        skip_unless_installed(name, case.requires)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, case.fixture, tmp_path)
         scenario = Scenario()
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)
@@ -814,7 +727,7 @@ async def test_checks_report_what_they_catch(
 
 def test_a_capability_without_defaults_needs_a_fixture(tmp_path: Path):
     """A new capability that can't be built with its defaults fails with what to add, rather than a `TypeError`."""
-    with pytest.raises(pytest.fail.Exception, match='Add a `FIXTURES` entry'):
+    with pytest.raises(pytest.fail.Exception, match='Give its `CASES` entry a `build`'):
         build_capabilities('NativeTool', lambda: NativeTool, None, tmp_path)
 
 
