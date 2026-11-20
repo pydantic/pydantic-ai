@@ -8703,6 +8703,79 @@ async def test_temporal_workspace_activity_keeps_the_runs_content_setting(
     ] == [('workspace run', None), ('workspace run', None)]
 
 
+_content_free_worker_agent = Agent(
+    TestModel(call_tools=['probe_workspace_content']),
+    name='content_free_worker_agent',
+    deps_type=WorkspaceProbeDeps,
+    capabilities=[
+        Instrumentation(InstrumentationSettings(include_content=False)),
+        WorkspaceProbeCapability(),
+        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+_WORKSPACE_PATH_MARKER = 'workspace-path-marker-41c7'
+_WORKSPACE_COMMAND_MARKER = 'workspace-command-marker-41c7'
+_activity_content_flags: list[bool] = []
+"""`ctx.trace_include_content` as each `probe_workspace_content` call saw it inside its activity."""
+
+
+@_content_free_worker_agent.tool
+async def probe_workspace_content(ctx: RunContext[WorkspaceProbeDeps]) -> str:
+    _activity_content_flags.append(ctx.trace_include_content)
+    path = f'{_WORKSPACE_PATH_MARKER}.txt'
+    await ctx.workspace.write_text(path, 'hello')
+    await ctx.workspace.read_text(path)
+    await ctx.workspace.run(['true', _WORKSPACE_COMMAND_MARKER])
+    return 'done'
+
+
+@workflow.defn
+class ContentRunOnContentFreeWorkerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _content_free_worker_agent.run(
+            'Use the probe_workspace_content tool.',
+            deps=WorkspaceProbeDeps(prefix='worker'),
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+            capabilities=[Instrumentation(InstrumentationSettings(include_content=True))],
+        )
+        return result.output
+
+
+async def test_temporal_workspace_activity_keeps_the_workers_content_setting(
+    client_with_logfire: Client, capfire: CaptureLogfire
+):
+    """A run that records content keeps it out of an activity whose worker agent doesn't.
+
+    The activity sees the narrower setting on `ctx` too, so code reading `ctx.trace_include_content`
+    follows the same policy as the workspace spans.
+    """
+    _workspace_probe_backends.clear()
+    _activity_content_flags.clear()
+
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ContentRunOnContentFreeWorkerWorkflow],
+        plugins=[AgentPlugin(_content_free_worker_agent)],
+    ):
+        await client_with_logfire.execute_workflow(
+            ContentRunOnContentFreeWorkerWorkflow.run,
+            id=f'{ContentRunOnContentFreeWorkerWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    exported = json.dumps(spans, default=str)
+    # The run itself records content: the prompt is in its spans.
+    assert 'Use the probe_workspace_content tool.' in exported
+    assert {span['name'] for span in spans} >= {'workspace write_bytes', 'workspace read_bytes', 'workspace run'}
+    assert _WORKSPACE_PATH_MARKER not in exported
+    assert _WORKSPACE_COMMAND_MARKER not in exported
+    assert _activity_content_flags == [False]
+
+
 _untraced_workspace_probe_agent = Agent(
     TestModel(call_tools=['probe_workspace']),
     name='untraced_workspace_probe_agent',
