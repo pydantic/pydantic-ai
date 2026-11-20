@@ -2516,7 +2516,7 @@ execute trusted Python as your user. Review generated plugins before enabling th
 A custom agent can opt in by adding `PaxDocs()` from `pydantic_ai_pax.pax_docs`
 to its capabilities. Existing agents using `ClaiDocs` or `customization_guide()`
 keep the `clai_customization` capability and its `read_clai_docs` and
-`search_clai_docs` tools. The default agent also accepts these names for saved sessions.
+`search_clai_docs` tools. New sessions advertise only Pax docs tools. Resuming a session that loaded the old capability restores its tools.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions

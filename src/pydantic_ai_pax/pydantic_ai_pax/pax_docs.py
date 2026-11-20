@@ -92,6 +92,7 @@ _SLUG_DROP = re.compile(r'[^\w\- ]')
 _WORD = re.compile(r'\w+')
 
 CAPABILITY_ID = 'pax_customization'
+LEGACY_CAPABILITY_ID = 'clai_customization'
 _DESCRIPTION = (
     'Use when asked to customize Pax itself (plugins, CLI UX/UI, commands, rendering, TUI menus, '
     'models or providers), or when asked about Pax commands, settings, sessions, or its harness '
@@ -214,9 +215,18 @@ def _read_pax_docs(path: str = '') -> str:
             `doc#section` such as `reference#saved-api-keys` for one section with its subsections.
             `search_pax_docs` returns section paths.
     """
+    return _read_docs(path, read='read_pax_docs', search='search_pax_docs')
+
+
+def _read_clai_docs(path: str = '') -> str:
+    """List the docs, read a document, or read a section by path."""
+    return _read_docs(path, read='read_clai_docs', search='search_clai_docs')
+
+
+def _read_docs(path: str, *, read: str, search: str) -> str:
     path = path.strip()
     if not path:
-        lines = ['Pax docs. Read one with read_pax_docs(path), or find a section with search_pax_docs(query).', '']
+        lines = [f'Pax docs. Read one with {read}(path), or find a section with {search}(query).', '']
         for doc_id in _DOC_IDS:
             doc = _doc(doc_id)
             lines.append(f'- {doc_id} ({len(doc.text()) // 1000} KB): {doc.description}')
@@ -225,7 +235,7 @@ def _read_pax_docs(path: str = '') -> str:
     if doc_id not in _DOC_IDS:
         close = get_close_matches(doc_id, _DOC_IDS, n=3, cutoff=0.5)
         hint = f' Did you mean {", ".join(close)}?' if close else ''
-        raise ModelRetry(f'There is no Pax doc {doc_id!r}.{hint} Call read_pax_docs with no path to list the docs.')
+        raise ModelRetry(f'There is no Pax doc {doc_id!r}.{hint} Call {read} with no path to list the docs.')
     doc = _doc(doc_id)
     if not anchor:
         text = doc.text()
@@ -271,6 +281,15 @@ def _search_pax_docs(query: str) -> str:
     Args:
         query: Words to look for, such as `saved api keys` or `plugin settings menu`.
     """
+    return _search_docs(query, read='read_pax_docs')
+
+
+def _search_clai_docs(query: str) -> str:
+    """Search the docs for the sections that best match the query."""
+    return _search_docs(query, read='read_clai_docs')
+
+
+def _search_docs(query: str, *, read: str) -> str:
     words = _WORD.findall(query.lower())
     terms = [word for word in words if len(word) > 2 and word not in _STOP_WORDS] or words
     if not terms:
@@ -282,11 +301,11 @@ def _search_pax_docs(query: str) -> str:
             if (result := _search_result(doc, section, terms)) is not None:
                 scored.append(result)
     if not scored:
-        return f'No Pax docs section matches {query!r}. Call read_pax_docs with no path to list the docs.'
+        return f'No Pax docs section matches {query!r}. Call {read} with no path to list the docs.'
     # Sections that match more of the words first, then more of them in the heading, then more often.
     scored.sort(key=lambda result: (-result[0], -result[1], -result[2], result[3]))
     results = '\n'.join(summary for *_, summary in scored[:_SEARCH_RESULTS])
-    return f'{results}\n\nRead a section with read_pax_docs(path).'
+    return f'{results}\n\nRead a section with {read}(path).'
 
 
 def _search_result(doc: _Doc, section: _Section, terms: list[str]) -> _SearchResult | None:
@@ -335,9 +354,9 @@ class ClaiDocs(Capability[None]):
 
     def __init__(self) -> None:
         super().__init__(
-            id='clai_customization',
-            description='Compatibility name for pax_customization. New sessions should load pax_customization.',
+            id=LEGACY_CAPABILITY_ID,
+            description=_DESCRIPTION,
             defer_loading=True,
-            instructions='Use search_clai_docs and read_clai_docs for Pax documentation.',
-            tools=[Tool(_search_pax_docs, name='search_clai_docs'), Tool(_read_pax_docs, name='read_clai_docs')],
+            instructions=_HINT.replace('_pax_docs', '_clai_docs'),
+            tools=[Tool(_search_clai_docs, name='search_clai_docs'), Tool(_read_clai_docs, name='read_clai_docs')],
         )

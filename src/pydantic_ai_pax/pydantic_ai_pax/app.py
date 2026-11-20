@@ -11,14 +11,15 @@ from anyio import CancelScope, create_task_group
 from pydantic import JsonValue
 from rich.console import Console
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_pax import warm_imports
-from pydantic_ai_pax.clai_docs import ClaiDocs
+from pydantic_ai_pax.clai_docs import CAPABILITY_ID as LEGACY_DOCS_ID, ClaiDocs
 from pydantic_ai_pax.cli.self_update import WebHandoff
 from pydantic_ai_pax.commands import (
     Commands,
@@ -41,6 +42,7 @@ from pydantic_ai_pax.runtime.session import (
     ModelDefaults,
     SessionModels,
     StockAgent,
+    WorkspacelessCapability,
     local_workspace,
     resolve_model_name,
 )
@@ -59,9 +61,13 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+def _resumed_docs(ctx: RunContext[None]) -> ClaiDocs | None:
+    return ClaiDocs() if LEGACY_DOCS_ID in parse_loaded_capabilities(ctx.messages) else None
+
+
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), ClaiDocs()])
+    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -69,7 +75,13 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[PaxDocs(), ClaiDocs()], name='clai2')
+    return StockAgent(
+        model,
+        deps_type=type(None),
+        output_type=str,
+        capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)],
+        name='clai2',
+    )
 
 
 @asynccontextmanager

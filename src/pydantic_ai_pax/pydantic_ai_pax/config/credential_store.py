@@ -87,7 +87,7 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
 
 
 _NO_OLDER_ENTRY: set[str] = set()
-"""Default accounts already found to have no older per-entry login; this Pax never writes one."""
+"""Default accounts already found to have no older per-entry login; this Pax process never writes one."""
 
 
 def has_credentials(*, account: str) -> bool:
@@ -229,7 +229,7 @@ def replace_credentials(*, value: str, account: str) -> bool:
     after a sign-out cannot sign the account back in: it either saves first and is then deleted, or
     finds nothing to replace.
     """
-    with credential_lock(account=account, busy=f'Another Pax is updating the {account} login. Try again.'):
+    with credential_lock(account=account, busy=f'Another Pax process is updating the {account} login. Try again.'):
         encrypted, plaintext = _files(account=account, fallback=None)
         if not (encrypted.is_file() or plaintext.is_file()):
             return False

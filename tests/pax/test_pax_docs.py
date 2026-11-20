@@ -22,6 +22,7 @@ from pydantic_ai_pax.pax_docs import (
     _PAX_DOCS,  # pyright: ignore[reportPrivateUsage]
     _READ_LIMIT,  # pyright: ignore[reportPrivateUsage]
     CAPABILITY_ID,
+    ClaiDocs,
     PaxDocs,
 )
 
@@ -57,23 +58,25 @@ LONG_LINE = f'{"-" * 140}needle{"+" * 280}'
 
 
 def _call_docs_tool(
-    name: Literal['read_pax_docs', 'search_pax_docs'],
+    name: Literal['read_pax_docs', 'search_pax_docs', 'read_clai_docs', 'search_clai_docs'],
     arguments: dict[str, str],
     *,
     expect_retry: bool = False,
 ) -> str:
     """Exercise every lookup through the public capability and real agent tool lifecycle."""
 
+    docs = ClaiDocs() if '_clai_' in name else PaxDocs()
+
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             assert [tool.name for tool in info.function_tools] == ['load_capability']
-            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': docs.id})])
         if len(messages) == 3:
             assert name in {tool.name for tool in info.function_tools}
             return ModelResponse(parts=[ToolCallPart(name, arguments)])
         return ModelResponse(parts=[TextPart('done')])
 
-    result = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[PaxDocs()]).run_sync('Look up docs')
+    result = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[docs]).run_sync('Look up docs')
     [returned] = [
         part
         for message in result.all_messages()
@@ -83,6 +86,13 @@ def _call_docs_tool(
     assert returned.outcome == ('retried' if expect_retry else 'success')
     assert isinstance(returned.content, str)
     return returned.content
+
+
+def test_legacy_tools_suggest_callable_names() -> None:
+    assert 'read_clai_docs(path)' in _call_docs_tool('read_clai_docs', {})
+    assert 'Read a section with read_clai_docs(path).' in _call_docs_tool(
+        'search_clai_docs', {'query': 'saved api keys'}
+    )
 
 
 def read_docs(path: str = '', *, expect_retry: bool = False) -> str:
