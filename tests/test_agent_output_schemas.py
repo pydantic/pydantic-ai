@@ -678,6 +678,16 @@ async def test_deferred_output_json_schema():
                             'title': 'Metadata',
                             'type': 'object',
                         },
+                        'validated_args': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Validated Args',
+                            'type': 'object',
+                        },
+                        '_kinds': {
+                            'additionalProperties': {'enum': ['approval', 'question', 'external'], 'type': 'string'},
+                            'title': 'Kinds',
+                            'type': 'object',
+                        },
                     },
                     'title': 'DeferredToolRequests',
                     'type': 'object',
@@ -794,6 +804,16 @@ async def test_deferred_output_json_schema():
                         'metadata': {
                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
+                            'type': 'object',
+                        },
+                        'validated_args': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Validated Args',
+                            'type': 'object',
+                        },
+                        '_kinds': {
+                            'additionalProperties': {'enum': ['approval', 'question', 'external'], 'type': 'string'},
+                            'title': 'Kinds',
                             'type': 'object',
                         },
                     },

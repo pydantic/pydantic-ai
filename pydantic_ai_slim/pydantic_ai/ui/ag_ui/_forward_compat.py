@@ -128,12 +128,8 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
     return {'type': prefix if prefix in ('image', 'audio', 'video') else 'document', 'source': source}
 
 
-def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | None:
-    """Re-read a rejected request, skipping unsupported tagged items and translating retired ones.
-
-    Returns the adapted payload and labels for the skipped tags, or `None` when nothing was skipped
-    or translated, in which case the caller should let the original `ValidationError` stand.
-    """
+def _read_payload(body: bytes) -> tuple[dict[str, JsonValue], list[JsonValue]] | None:
+    """The JSON object `body` holds and its `messages` list, or `None` when it holds no such list."""
     try:
         payload: JsonValue = json.loads(body)
     except (ValueError, RecursionError):
@@ -148,6 +144,47 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | N
     messages = payload.get('messages')
     if not isinstance(messages, list):
         return None
+    return payload, messages
+
+
+def _adapt_content(
+    message: dict[str, JsonValue], content: list[JsonValue], skipped: set[str]
+) -> tuple[list[JsonValue], bool]:
+    """`message`'s `content` without its unsupported tagged items, and whether a retired one was translated.
+
+    Adds the label of each skipped item to `skipped`.
+    """
+    translated = False
+    kept_content: list[JsonValue] = []
+    for item in content:
+        if isinstance(item, dict) and (
+            (unknown_type := _unknown_tag(item, 'type', _KNOWN_INPUT_CONTENT_TYPES)) is not None
+        ):
+            if item.get('type') != 'binary':
+                skipped.add(unknown_type)
+                continue
+            # `binary` was only ever a user-message part, so elsewhere it stays in and fails validation.
+            if message.get('role') == 'user' and (media_part := _translate_binary_part(item)) is not None:
+                translated = True
+                kept_content.append(media_part)
+                continue
+            # No payload at all: kept so validation rejects it, as 0.x's validator does.
+        elif isinstance(item, dict) and (unknown_source := _unknown_source_tag(item)) is not None:
+            skipped.add(unknown_source)
+            continue
+        kept_content.append(item)
+    return kept_content, translated
+
+
+def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | None:
+    """Re-read a rejected request, skipping unsupported tagged items and translating retired ones.
+
+    Returns the adapted payload and labels for the skipped tags, or `None` when nothing was skipped
+    or translated, in which case the caller should let the original `ValidationError` stand.
+    """
+    if (read := _read_payload(body)) is None:
+        return None
+    payload, messages = read
 
     skipped: set[str] = set()
     translated = False
@@ -167,24 +204,8 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | N
             elif isinstance(content := message.get('content'), list):
                 # No such contract exists for content: the `InputContent` members share no field
                 # beyond the discriminator, so a string `type` is all an unknown one can be held to.
-                kept_content: list[JsonValue] = []
-                for item in content:
-                    if isinstance(item, dict) and (
-                        (unknown_type := _unknown_tag(item, 'type', _KNOWN_INPUT_CONTENT_TYPES)) is not None
-                    ):
-                        if item.get('type') != 'binary':
-                            skipped.add(unknown_type)
-                            continue
-                        # `binary` was only ever a user-message part, so elsewhere it stays in and fails validation.
-                        if message.get('role') == 'user' and (media_part := _translate_binary_part(item)) is not None:
-                            translated = True
-                            kept_content.append(media_part)
-                            continue
-                        # No payload at all: kept so validation rejects it, as 0.x's validator does.
-                    elif isinstance(item, dict) and (unknown_source := _unknown_source_tag(item)) is not None:
-                        skipped.add(unknown_source)
-                        continue
-                    kept_content.append(item)
+                kept_content, content_translated = _adapt_content(message, content, skipped)
+                translated |= content_translated
                 message['content'] = kept_content
         kept_messages.append(message)
 

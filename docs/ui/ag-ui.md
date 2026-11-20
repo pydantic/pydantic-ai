@@ -329,6 +329,7 @@ The mapping the adapter applies (matching the AG-UI Python SDK field names):
 | `Interrupt.reason`      | Always `"tool_call"` for `requires_approval=True` tools                                                         |
 | `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
 | `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
+| `Interrupt.message`     | `Approve <tool_name>(<args>)?`: each argument the model sent, as JSON, with the value the tool will receive from [`DeferredToolRequests.validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args]. A default and an argument a validation hook added stay on the server, at any depth; an argument whose validated value can't be matched to it, such as one under a validation alias, shows the model's value |
 | `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
 | `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; omitting either optional field or sending it as `null` is accepted |
 | `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
@@ -551,7 +552,7 @@ So when the frontend holds the message history through `@ag-ui/client`, these re
 
 The model then sees a different conversation than it did on the earlier run, and the request no longer starts with the same bytes, so the [prompt cache](../capabilities/caching.md) misses as well.
 
-To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client.
+To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client. Or have the adapter load and save the conversation for you through a [conversation store](./overview.md#saving-to-a-conversation-store).
 
 If the frontend must hold the history, it can send the records back itself. This middleware puts the `pydantic_ai_*` activity messages from `agent.messages` back into each request, in their original positions:
 

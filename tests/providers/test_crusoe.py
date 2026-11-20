@@ -10,7 +10,10 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 
@@ -98,7 +101,7 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('openai/gpt-oss-120b')
     harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
-    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == _GptOssJsonSchemaTransformer
 
     # Test moonshotai provider
     moonshotai_profile = provider.model_profile('moonshotai/Kimi-K2.6')

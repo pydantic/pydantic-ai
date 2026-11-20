@@ -70,8 +70,8 @@ custom = Researcher(instructions=DEFAULT_RESEARCHER_INSTRUCTIONS + 'Answer in Fr
 Gotchas:
 
 - A run without a workspace fails at start with `UserError`. Attach `LocalWorkspace('.')` or a sandbox
-  capability, or pass `store=LocalFileStore()` (`from pydantic_ai_harness.tool_output_limits import
-  LocalFileStore`) to spill on the agent's host. Custom delegates need their own store.
+  capability, or pass `store=LocalFileOverflowStore()` (`from pydantic_ai_harness.tool_output_limits import
+  LocalFileOverflowStore`) to spill on the agent's host. Custom delegates need their own store.
 - `Researcher` has no search-backend parameter. For Exa or You.com, compose the parts yourself:
   `Capability(instructions=...)`, the search capability, `SubAgents(agents=[...], agent_folders=None)`,
   `ToolOutputLimits()`. The search capability goes on the delegate that searches (see the Exa
@@ -97,11 +97,11 @@ from pydantic_ai_harness import ExaAgent, ExaSearch
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[ExaSearch(num_results=5, include_deep_search=True), ExaAgent(effort='low')],
+    capabilities=[ExaSearch(max_results=5, include_deep_search=True), ExaAgent(effort='low')],
 )
 ```
 
-`ExaSearch` fields: `num_results=5` (1 to 100), `max_text_chars=10_000` (1 to 10,000; `get_page` cap,
+`ExaSearch` fields: `max_results=5` (1 to 100), `max_text_chars=10_000` (1 to 10,000; `get_page` cap,
 head kept), `text_summary=False` (`True` or a format string prepends a `Summary:` line),
 `include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive; they filter
 `web_search` and `deep_search`, not `get_page`),
@@ -146,12 +146,12 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 from pydantic_ai_harness import ExaSearch, SubAgents, ToolOutputLimits
-from pydantic_ai_harness.subagents import SubAgent
+from pydantic_ai_harness.sub_agents import SubAgent
 
 researcher = Agent(
     name='researcher',
     description='Research one sub-question on the web; report findings with source links',
-    capabilities=[ExaSearch(num_results=5), ToolOutputLimits()],
+    capabilities=[ExaSearch(max_results=5), ToolOutputLimits()],
 )
 orchestrator = Agent(
     'anthropic:claude-sonnet-5',
@@ -183,7 +183,7 @@ agent = Agent(
 )
 ```
 
-`YouSearch`: `num_results=10` (1 to 20), `extraction_mode='highlights'` or `'full_page'`,
+`YouSearch`: `max_results=10` (1 to 20), `extraction_mode='highlights'` or `'full_page'`,
 `max_text_chars=10_000`, `include_domains` / `exclude_domains` / `boost_domains`, `freshness=None`
 (`'day'|'week'|'month'|'year'|'YYYY-MM-DDtoYYYY-MM-DD'`), `country=None`, `guidance=None`,
 `timeout_ms=60_000`, `client=None`.
@@ -208,7 +208,7 @@ Gotchas:
 ## KeenableSearch
 
 `KeenableSearch` adds `web_search` (a short excerpt per hit) and `get_page` (one URL as markdown).
-It needs no extra and no API key: Keenable's public endpoints are keyless, and the client uses `httpx`,
+It needs no extra and no API key: Keenable's public endpoints are keyless, and the client uses `httpx2`,
 which the harness already depends on.
 
 ```bash
@@ -240,7 +240,7 @@ Gotchas:
   become `ModelRetry`; 401/402/403 stop the run. `get_page` reads Keenable's indexed copy, and
   Keenable documents that an unindexed URL fails to fetch. For tests, pass `client=` a fake
   satisfying the exported `KeenableClient` protocol.
-- `HttpKeenableClient(http_client=...)` sends every request through your `httpx.AsyncClient` (connection
+- `HttpKeenableClient(http_client=...)` sends every request through your `httpx2.AsyncClient` (connection
   reuse, proxy, TLS, retrying transport); you close it. Without it, each request uses a fresh client.
 - A non-empty `guidance` replaces the default instructions, untrusted-content rule included, like
   `ExaSearch` and `YouSearch`.
@@ -344,6 +344,26 @@ Fields: `headless=True`, `allowed_domains=None` (exact host plus subdomains), `p
 `max_content_tokens=4000`, `action_timeout_ms=5000`, `navigation_timeout_ms=60000` (`0` disables
 either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=None` (Playwright
 cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium).
+`cdp_url` also takes a sync or async function of the run context that returns the endpoint: the
+first browser tool call of a run calls it and the result is reused for that run; a timeout is a
+tool error and is retried, an exception ends the run, and the capability only disconnects, so the
+app deletes what the function created (record it on `ctx.deps`). `cdp_context='default'` reuses
+sign-ins and tabs instead of creating a `'new'` context. It requires a CDP endpoint and excludes
+`storage_state`. The agent can act as every signed-in account, so attach it to a profile dedicated
+to the agent, never an everyday browser, and set `allowed_domains` for untrusted pages. Only
+`http(s)`, `about:blank` and error-page tabs are adopted: any other tab (the browser's start page,
+extension pages, `file:`, `data:`, `blob:`) is left out whatever the policy, and so is a tab holding a
+non-web frame other than an inline `srcdoc`/`data:`/`blob:` one, such as an extension's injected
+`chrome-extension://` UI (use a profile whose extensions do not inject frames); for a tracked tab that
+moves to one or gets such a frame, the call that finds it returns an error naming the page by its scheme and host only, and
+the agent stops using that tab, which stays open in the browser. A frame that appears during a call can still be
+captured by that call's `snapshot` or `screenshot_on_navigate` image; the next call drops the tab. Loaded tabs and frames must pass the egress policy
+(each document once, at most five seconds per call; a call that runs out asks the model to retry), and new service-worker
+registrations are refused; downloads follow the browser's settings.
+Playwright routes service-worker requests through the guards unless
+`PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
+them, as does a new WebSocket opened through the native `WebSocket` constructor that script running
+before attachment kept, and a page loaded before attachment can register a worker until it navigates.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
@@ -375,8 +395,9 @@ Gotchas:
   `resolved_addresses`, as above.
 - `policy` together with `allowed_domains` or `block_private_addresses=False` raises `UserError`; put
   those on the `EgressPolicy` instead. A wildcard entry like `'*.example.com'` raises.
-- Chromium starts lazily on the first browser tool call and closes at run end. A missing binary returns
-  an install hint as the tool result and emits `BrowserUnavailableWarning`.
+- Chromium starts lazily on the first browser tool call. At run end a local browser closes and a CDP
+  connection disconnects; runs using `cdp_context='default'` on one browser share its pages. A missing
+  binary returns an install hint as the tool result and emits `BrowserUnavailableWarning`.
 - Durable execution (Temporal, DBOS, Prefect capabilities) is rejected with `UserError` at agent
   construction.
 - `storage_state` is credential material and is not accepted by agent-spec loading.

@@ -31,7 +31,7 @@ import uuid
 from pathlib import Path
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 
@@ -177,7 +177,7 @@ def _assert_success(output: str) -> None:
 
 
 async def _info(endpoint_url: str) -> dict[str, object]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx2.AsyncClient(timeout=10.0) as client:
         response = await client.get(endpoint_url.rstrip('/') + '/_localstack/info')
     response.raise_for_status()
     return _LOCALSTACK_INFO.validate_json(response.content)
@@ -185,9 +185,9 @@ async def _info(endpoint_url: str) -> dict[str, object]:
 
 async def _is_reachable(endpoint_url: str) -> bool:
     try:
-        async with httpx.AsyncClient(timeout=1.0) as client:
+        async with httpx2.AsyncClient(timeout=1.0) as client:
             await client.get(endpoint_url.rstrip('/') + '/_localstack/health')
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         return False
     return True
 
