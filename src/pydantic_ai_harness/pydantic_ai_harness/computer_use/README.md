@@ -69,36 +69,31 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## What the display needs
 
-The agent sees a desktop: a panel along the bottom with a button labelled Terminal that opens a terminal. By
-default, the terminal uses a large monospace font, so its text is easier to read in screenshots. If the image already
-has a `~/.Xdefaults` file, or loads X settings with `xrdb`, the terminal uses those instead. Each new window fills the
-screen above the panel. There's no web browser unless the image has one, or the agent installs one with
-[`Coder`](../coder/).
+The agent sees a desktop: a panel along the bottom with a button labelled Terminal, and windows that fill the screen
+above it. The terminal uses a large monospace font so screenshots are easy to read, unless the image has its own
+`~/.Xdefaults` or loads X settings with `xrdb`. There's no web browser unless the image has one or the agent installs
+one with [`Coder`](../coder/).
 
-Eight programs inside the sandbox make this desktop:
+These programs inside the sandbox make the desktop:
 
-- Xvfb draws the screen. It's needed only when no X server is running already.
+- Xvfb draws the screen, when no X server is running already.
 - `xdotool` moves the mouse and types.
 - `xwininfo` (in Debian's `x11-utils`) reads the screen size.
 - `scrot` takes screenshots.
 - `setsid` keeps the screen running after the command that started it ends.
-- `fluxbox` gives each window a title bar and focuses the window the agent clicks.
+- `fluxbox` gives windows title bars and focuses the one the agent clicks.
 - `tint2` draws the panel, and `xterm` is the terminal its button opens.
 
-The first use of the display installs any of them that's missing with `apt-get`, as root or with passwordless `sudo`.
-That takes 20 to 60 seconds; add them to your image to skip it.
+The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. That
+takes 20 to 60 seconds; add them to your image to skip it.
 
-If the first five can't be installed, because the image has no `apt-get` or no root, the run ends with a
-`WorkspaceUnavailableError` that names what's missing. If `fluxbox`, `tint2` or `xterm` can't be installed or
-don't start, the screen still works, but without what they add: the panel, its terminal button, and windows that fill
-the screen. A restart of the screen starts them again. An install that fails after `apt-get update` worked isn't
-run again while the same ones are missing; to try it again, delete `/tmp/pydantic-ai-desktop-install-failed` in the
-sandbox. When `apt-get update` fails, such as with the network down, the next start tries again. When an install or
-start failed and the sandbox could write `/tmp/pydantic-ai-desktop.log`, that file says why. To get the desktop for
-sure, add them to your image.
+If one of the first five can't be installed, because the image has no `apt-get` or no root, the run ends with a
+`WorkspaceUnavailableError` naming what's missing. If `fluxbox`, `tint2` or `xterm` can't be installed or don't
+start, the screen still works without the panel and full-screen windows, and `/tmp/pydantic-ai-desktop.log` in the
+sandbox says why. An install that fails after a working `apt-get update` isn't retried while the same programs are
+missing; delete `/tmp/pydantic-ai-desktop-install-failed` to retry it.
 
-[E2B](../e2b_sandbox/#give-the-agent-a-desktop) and [Daytona](../daytona_sandbox/#give-the-agent-a-desktop) start their own desktop,
-XFCE, and don't get this one.
+[E2B](../e2b_sandbox/#give-the-agent-a-desktop) and [Daytona](../daytona_sandbox/#give-the-agent-a-desktop) start their own XFCE desktop instead.
 
 ## Models
 
