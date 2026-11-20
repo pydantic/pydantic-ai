@@ -146,7 +146,7 @@ def _flagged(*actions: dict[str, object]) -> FunctionModel:
 class TestConfirmation:
     """A call the provider flags for a person's confirmation."""
 
-    async def test_it_waits_for_approval_and_its_result_says_it_was_confirmed(self) -> None:
+    async def test_it_waits_for_approval_before_it_runs(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
             _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
@@ -166,7 +166,35 @@ class TestConfirmation:
         )
         assert provider.actions == [TypeText(text='rm -rf x')]
         (tool_return,) = _returns(resumed.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'confirmed': True}
+        assert tool_return.metadata == {'performed': 1}
+
+    async def test_it_asks_before_the_tool_hooks_run(self) -> None:
+        """So every result after the approval came from a call a person approved, which a provider is told."""
+        seen: list[bool] = []
+        hooks = Hooks[object]()
+
+        @hooks.on.before_tool_execute
+        async def record(
+            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            seen.append(ctx.tool_call_approved)
+            return args
+
+        agent = Agent(
+            _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
+            capabilities=[ScreenProvider().capability(), ComputerUse(), hooks],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert seen == []
+
+        (call,) = paused.output.approvals
+        await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+        assert seen == [True]
 
     async def test_a_denied_call_does_not_run(self) -> None:
         provider = ScreenProvider()
@@ -1165,7 +1193,8 @@ The `computer` tool shows and controls this computer's screen.
         assert tool_return.content_items()[0] == snapshot(
             "Action 3 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The left mouse button was released. The shift key was released. Screenshot attached (1280x800)."
         )
-        assert provider.actions == [KeyDown(keys=('shift',)), MouseDown(), KeyUp(keys=('shift',)), MouseUp()]
+        # Released in reverse order, so a drop with shift held still has shift held.
+        assert provider.actions == [KeyDown(keys=('shift',)), MouseDown(), MouseUp(), KeyUp(keys=('shift',))]
 
     async def test_a_key_down_the_display_refuses_leaves_nothing_held(self) -> None:
         class NoHeldKeys(ScreenBackend):
@@ -1204,7 +1233,8 @@ The `computer` tool shows and controls this computer's screen.
             'Ran 2 actions. The left and right mouse buttons are still pressed. Screenshot attached (1280x800).',
             SCREENSHOT,
         ]
-        assert provider.actions == [MouseDown(), MouseDown(button='right'), MouseUp(), MouseUp(button='right')]
+        # The run's end releases them in reverse order too.
+        assert provider.actions == [MouseDown(), MouseDown(button='right'), MouseUp(button='right'), MouseUp()]
 
     async def test_a_run_that_fails_or_is_cancelled_releases_the_buttons_it_holds(self) -> None:
         provider = ScreenProvider()
