@@ -30,7 +30,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness._monty_turns import MontyFailure, exceeded_sandbox_limit
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.conftest import Instrumented
@@ -405,7 +404,3 @@ class TestRunCodeFailureTelemetry:
         assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
             ('app request', {})
         ]
-
-
-def test_a_failure_that_is_not_a_runtime_crash_or_disconnect_names_no_limit() -> None:
-    assert exceeded_sandbox_limit(MontyFailure(kind='syntax')) is None

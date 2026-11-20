@@ -403,7 +403,8 @@ def exceeded_sandbox_limit(failure: MontyFailure) -> SandboxLimit | None:
             return 'max_duration_seconds' if failure.timed_out else None
         case 'disconnected':
             return 'max_duration_seconds' if failure.cause == 'turn_timeout' else None
-        case _:
+        # Callers pass only runtime, crashed or disconnected failures.
+        case _:  # pragma: no cover
             return None
 
 
