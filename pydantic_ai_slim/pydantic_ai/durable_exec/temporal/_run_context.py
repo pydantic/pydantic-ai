@@ -87,11 +87,12 @@ def deserialize_run_context(
     settings = agent_instrumentation_settings(agent) if agent is not None else None
     _restore_tracer(ctx, settings)
     if settings is not None and get_current_span().is_recording():
-        # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them.
+        # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them,
+        # on the tool's own tracer (a subclass may have restored its own).
         # They capture content only if both the run and this worker do; a context that didn't carry the
         # run's flag counts as no content.
         run_content = 'trace_include_content' in ctx.__dict__ and ctx.trace_include_content
-        publish_run_telemetry(settings.tracer, include_content=run_content and settings.include_content)
+        publish_run_telemetry(ctx.tracer, include_content=run_content and settings.include_content)
     return ctx
 
 
