@@ -26,6 +26,7 @@ from temporalio import activity
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
+from ..._computer_use import UnservableRequestError
 from ...exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -50,6 +51,9 @@ _STREAMED_KEY = 'pydantic_ai_streamed_before_failing'
 """The detail that holds what a streamed request produced before the error ended it; see `mark_streamed_before_failing`."""
 
 _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
+
+_REFUSAL_KEY = 'pydantic_ai_unservable_request'
+"""Marks the `ApplicationError` detail that holds the message of a model's refusal of a request it can't serve."""
 
 _RETRY_MODEL_REQUEST_KEY = 'pydantic_ai_retry_model_request'
 """Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
@@ -130,6 +134,21 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
 
 
 @contextmanager
+def refusals_as_application_errors() -> Generator[None]:
+    """In a model activity, raise a model's refusal of a request it can't serve as one the workflow rebuilds it from.
+
+    A fallback in the workflow moves on from it, and asking the same model again won't change the answer, so it isn't
+    retried.
+    """
+    try:
+        yield
+    except UnservableRequestError as error:
+        raise ApplicationError(
+            str(error), {_REFUSAL_KEY: error.message}, type=type(error).__name__, non_retryable=True
+        ) from error
+
+
+@contextmanager
 def model_errors_as_application_errors(
     non_retryable: tuple[type[ModelAPIError], ...] = (),
 ) -> Generator[None]:
@@ -143,7 +162,8 @@ def model_errors_as_application_errors(
     Temporal waits that long before the next attempt rather than the retry policy's backoff; see `_next_retry_delay`.
     """
     try:
-        yield
+        with refusals_as_application_errors():
+            yield
     except ModelAPIError as error:
         # Checked here, where the error's class is the same as in the workflow, so the workflow can
         # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
@@ -219,7 +239,7 @@ def _retry_policy_type(error: ModelAPIError) -> str:
 
 @contextmanager
 def rebuilt_model_errors() -> Generator[None]:
-    """In the workflow, re-raise a model error a model activity failed with as its original type.
+    """In the workflow, re-raise a model error, or a model's refusal, a model activity failed with as its original type.
 
     Any other activity failure, including one from an error that wasn't a model error, is raised
     unchanged.
@@ -233,11 +253,13 @@ def rebuilt_model_errors() -> Generator[None]:
         raise
 
 
-def _rebuild(application_error: ApplicationError) -> ModelAPIError | None:
+def _rebuild(application_error: ApplicationError) -> ModelAPIError | UnservableRequestError | None:
     details = application_error.details
     if not details or not isinstance(details[0], dict):
         return None
     detail = cast(dict[str, Any], details[0])
+    if isinstance(refusal := detail.get(_REFUSAL_KEY), str):
+        return UnservableRequestError(refusal)
     encoded = detail.get(_DETAILS_KEY)
     if not isinstance(encoded, dict):
         return None

@@ -70,9 +70,9 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## What the display needs
 
-The agent sees a desktop: a panel along the bottom with a button that opens a terminal. By default, the terminal
-uses a large monospace font, so its text is easier to read in screenshots. If the image already has a
-`~/.Xdefaults` file, or loads X settings with `xrdb`, the terminal uses those instead. Each new window fills the
+The agent sees a desktop: a panel along the bottom with a button labelled Terminal that opens a terminal. By
+default, the terminal uses a large monospace font, so its text is easier to read in screenshots. If the image already
+has a `~/.Xdefaults` file, or loads X settings with `xrdb`, the terminal uses those instead. Each new window fills the
 screen above the panel. There's no web browser unless the image has one, or the agent installs one with
 [`Coder`](../coder/).
 
@@ -92,9 +92,11 @@ That takes 20 to 60 seconds; add them to your image to skip it.
 If the first five can't be installed, because the image has no `apt-get` or no root, the run ends with a
 `WorkspaceUnavailableError` that names what's missing. If `fluxbox`, `tint2` or `xterm` can't be installed or
 don't start, the screen still works, but without what they add: the panel, its terminal button, and windows that fill
-the screen. A later run, or a restart of the screen after a failure, tries again. When an install or start failed
-and the sandbox could write `/tmp/pydantic-ai-desktop.log`, that file says why. To get the desktop for sure, add them
-to your image.
+the screen. A restart of the screen starts them again. An install that fails after `apt-get update` worked isn't
+run again while the same ones are missing; to try it again, delete `/tmp/pydantic-ai-desktop-install-failed` in the
+sandbox. When `apt-get update` fails, such as with the network down, the next start tries again. When an install or
+start failed and the sandbox could write `/tmp/pydantic-ai-desktop.log`, that file says why. To get the desktop for
+sure, add them to your image.
 
 [E2B](../e2b_sandbox/#give-the-agent-a-desktop) and [Daytona](../daytona_sandbox/#give-the-agent-a-desktop) start their own desktop,
 XFCE, and don't get this one.
@@ -225,11 +227,12 @@ The message history holds the same record. Each result is a `ComputerReturnPart`
   out, pass `InstrumentationSettings(include_binary_content=False)`.
 - [`Advisor(forward_history=True)`](../advisor/) sends every screenshot to the advisor model. Anthropic refuses an
   advisor request with more than 600 images.
-- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told which coordinates it
-  uses: pixels, or Gemini 3's grid. If that model can't take images, or would get the latest screenshot scaled down,
-  the run ends with a `UserError` before the model is called. In a
-  [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every model in the
-  `FallbackModel` uses the grid.
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) or a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), each model
+  that answers is told which coordinates it uses: pixels, or Gemini 3's grid. A model that can't serve the request,
+  because it can't take images or the latest screenshot is larger than it can see, is always skipped, whatever
+  `fallback_on` says. When every model couldn't serve the request, the run ends with the last model's `UserError`;
+  when another model's failure was one `fallback_on` moves on from, with a `FallbackExceptionGroup`. Any other
+  failure is raised by itself. The `computer` call before that request has already run its actions on the screen.
 
 ## Durable execution
 

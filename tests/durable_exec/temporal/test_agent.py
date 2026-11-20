@@ -26,6 +26,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryImage,
     CancellationToken,
     ExternalToolset,
     FinalResultEvent,
@@ -54,6 +55,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._computer_use import UnservableRequestError
 from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -67,9 +69,11 @@ from pydantic_ai.capabilities import (
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelRateLimitError,
     ModelRetry,
     RunCancelled,
     ToolFailed,
@@ -126,7 +130,7 @@ try:
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
-    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
+    from temporalio.exceptions import ActivityError, ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
@@ -743,6 +747,120 @@ _capability_migration_agent = Agent(
         )
     ],
 )
+
+
+def _legacy_computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:  # pragma: no cover
+    """Act on the screen."""
+    return ['Done.']
+
+
+async def _ignore_legacy_events(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in events:  # pragma: no cover
+        pass
+
+
+def _rate_limited(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelRateLimitError('limited', 'Slow down.')
+
+
+class _AppUserError(UserError):
+    """An application's own subclass of `UserError`, which a retry policy naming `UserError` doesn't cover."""
+
+
+def _app_user_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise _AppUserError('Not configured.')
+
+
+# Retries allowed, to show which errors are retried. A rate limit is named non-retryable, by its class name.
+_legacy_retrying_config = ActivityConfig(
+    start_to_close_timeout=timedelta(seconds=60),
+    retry_policy=RetryPolicy(
+        maximum_attempts=3,
+        initial_interval=timedelta(milliseconds=10),
+        non_retryable_error_types=['ModelRateLimitError'],
+    ),
+)
+
+
+def _legacy_error_agent(name: str, model: FunctionModel, streamed: bool = False):
+    return TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(model, name=name, tools=[Tool(_legacy_computer, name='computer', tool_kind=COMPUTER_KIND)]),
+        activity_config=_legacy_retrying_config,
+        event_stream_handler=_ignore_legacy_events if streamed else None,
+    )
+
+
+# It can't take images, so it refuses any request with a `computer` tool, in its activity, before it's called.
+_blind_legacy_model = FunctionModel(
+    lambda messages, info: ModelResponse(parts=[]),  # pragma: no cover
+    model_name='blind',
+    profile=ModelProfile(supports_image_input=False),
+)
+_legacy_error_agents = {
+    'refused': _legacy_error_agent('temporal_refused_agent', _blind_legacy_model),
+    'refused-streamed': _legacy_error_agent('temporal_refused_streamed_agent', _blind_legacy_model, streamed=True),
+    'rate-limited': _legacy_error_agent('temporal_rate_limited_agent', FunctionModel(_rate_limited)),
+    'app-user-error': _legacy_error_agent('temporal_app_user_error_agent', FunctionModel(_app_user_error)),
+}
+
+
+@workflow.defn
+class TemporalAgentErrorWorkflow:
+    @workflow.run
+    async def run(self, which: str) -> str:
+        try:
+            await _legacy_error_agents[which].run('Look.')
+        except UnservableRequestError as error:
+            return error.message
+        except ActivityError as error:
+            assert isinstance(error.cause, ApplicationError)
+            return f'ActivityError: {error.cause.type}'
+        return 'no error'  # pragma: no cover
+
+
+_REFUSED = (
+    "The `computer` tool needs a model that accepts images, and 'blind' does not: every `computer` call returns a "
+    'screenshot.'
+)
+
+
+@pytest.mark.parametrize(
+    'which, expected, attempts',
+    [
+        # A refusal isn't retried, whatever the retry policy says.
+        pytest.param('refused', _REFUSED, 1, id='refused'),
+        pytest.param('refused-streamed', _REFUSED, 1, id='refused-streamed'),
+        # Other errors reach the retry policy, and the workflow, as they did before refusals crossed: a rate limit
+        # under its own class name, which the policy names, and a subclass of `UserError` retried, as the policy
+        # doesn't name it.
+        pytest.param('rate-limited', 'ActivityError: ModelRateLimitError', 1, id='rate-limited'),
+        pytest.param('app-user-error', 'ActivityError: _AppUserError', 3, id='app-user-error'),
+    ],
+)
+async def test_temporal_agent_model_activity_errors_reach_the_workflow_as_before(
+    client: Client, which: str, expected: str, attempts: int
+) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentErrorWorkflow],
+        activities=[activity for agent in _legacy_error_agents.values() for activity in agent.temporal_activities],
+    ):
+        handle = await client.start_workflow(
+            TemporalAgentErrorWorkflow.run,
+            args=[which],
+            id=f'{TemporalAgentErrorWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+    assert output == expected
+    # The history records the start of the last attempt only, with its number.
+    assert [
+        event.activity_task_started_event_attributes.attempt
+        for event in history.events
+        if event.HasField('activity_task_started_event_attributes')
+    ] == [attempts]
 
 
 async def test_temporal_agent_rejects_timeout() -> None:
