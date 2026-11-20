@@ -281,8 +281,9 @@ _DESKTOP_CONFIG = (
     # xterm's default font is a small bitmap one that models misread, such as `g` as `9`. xterm reads this file
     # however it is opened, from the panel, fluxbox's run box or a shell command, unless `xrdb` loaded settings.
     + _write_unless_present('$HOME/.Xdefaults', 'XTerm*faceName: Monospace', 'XTerm*faceSize: 14')
-    # A panel along the bottom with Firefox's icon when it's installed, a button labelled Terminal, and a button per
-    # window. Models found the labelled button in fewer steps than an icon alone.
+    # A panel along the bottom with a button labelled Terminal, then Firefox's icon when it's installed, then a button
+    # per window. Models found the labelled button in fewer steps than an icon alone, and putting it first keeps it in
+    # one place whether or not the image has Firefox.
     + _write_unless_present(
         f'{_TINT2_DIR}/tint2rc',
         # Backgrounds 1 (the panel) and 2 (the Terminal button), numbered in the order they're written.
@@ -294,7 +295,7 @@ _DESKTOP_CONFIG = (
         'border_width = 1',
         'background_color = #444444 100',
         'border_color = #888888 100',
-        'panel_items = LPT',
+        'panel_items = PLT',
         'panel_position = bottom left horizontal',
         'panel_size = 100% 40',
         'panel_padding = 4 4 6',
