@@ -754,7 +754,7 @@ class RunCodeExecution:
     # Set by the feed that failed; eager execution fails before `run_code`'s span opens, so it is recorded later.
     failure: RunCodeFailure | None = None
 
-    def record_outcome(self, ctx: RunContext[Any]) -> None:
+    def record_outcome(self, ctx: RunContext[object]) -> None:
         """Put how this call ended (budget, error kind, session reset, limit) on its `execute_tool` span."""
         span = current_span(ctx)
         span.set_attribute('code_mode.budget_exhausted', self.budget_exhausted)
