@@ -901,9 +901,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_workspace: ContextVar[_utils.Option[WorkspaceBackend | WorkspaceRef | Literal['new']]] = (
             ContextVar('_override_workspace', default=None)
         )
-        self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
-            '_override_root_capability', default=None
-        )
+        # The override's root, and the ids of the infrastructure capabilities it injected itself (see
+        # `_override_added_capabilities`).
+        self._override_root_capability: ContextVar[
+            _utils.Option[tuple[CombinedCapability[AgentDepsT], frozenset[int]]]
+        ] = ContextVar('_override_root_capability', default=None)
         self._entered_count = 0
         self._exit_stack = None
         self._entered_model_ids: set[int] = set()
@@ -2549,8 +2551,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # be preserved for that capability's async, deps-aware resolver. Explicit params take
         # precedence over spec values.
         override_capability: CombinedCapability[AgentDepsT] | None = None
+        injected: frozenset[int] = frozenset()
         if _utils.is_set(capabilities):
-            override_capability = self._bind_override_capabilities(capabilities)
+            override_capability, injected = self._bind_override_capabilities(capabilities)
         elif resolved is not None and resolved.capability is not None:
             override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
@@ -2646,7 +2649,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Auto-inject infrastructure capabilities since the override replaces
         # (not merges with) the agent's root capability.
         if override_capability is not None:
-            cap_token = self._override_root_capability.set(_utils.Some(override_capability))
+            cap_token = self._override_root_capability.set(_utils.Some((override_capability, injected)))
         else:
             cap_token = None
 
@@ -3536,7 +3539,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _effective_root_capability(self) -> CombinedCapability[AgentDepsT]:
         """Return the override capability when present, otherwise the configured root."""
         override = self._override_root_capability.get()
-        return override.value if override is not None else self._root_capability
+        return override.value[0] if override is not None else self._root_capability
 
     def _startup_banner_details(
         self,
@@ -3604,15 +3607,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _bind_override_capabilities(
         self, capabilities: Sequence[AgentCapability[AgentDepsT]]
-    ) -> CombinedCapability[AgentDepsT]:
+    ) -> tuple[CombinedCapability[AgentDepsT], frozenset[int]]:
         """Build the root capability `override(capabilities=...)` installs, binding only what the agent hasn't bound.
 
         Items taken from `root_capability.capabilities` are bound to this agent already, so they pass through;
         every other item goes through `for_agent`, and so does anything it holds. The agent's own capabilities
         validate the leaves that pass through, before anything is bound: a durability capability reached any
         other way would be bound again and register its durable units a second time.
+
+        Also returns the ids of the infrastructure capabilities injected for what the list leaves out.
         """
         override_caps = wrap_capability_funcs(capabilities)
+        supplied = len(override_caps)
         _inject_auto_capabilities(override_caps)
         _reject_second_of_a_kind(override_caps)
         configured = {id(capability) for capability in self._root_capability.capabilities}
@@ -3625,28 +3631,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 for leaf in leaf_capabilities(capability)
             ]
         )
-        return CombinedCapability(
-            [
-                capability if id(capability) in configured else capability._keep_authority(capability.for_agent(self))  # pyright: ignore[reportPrivateUsage]
-                for capability in override_caps
-            ]
-        )
+        bound = [
+            capability if id(capability) in configured else capability._keep_authority(capability.for_agent(self))  # pyright: ignore[reportPrivateUsage]
+            for capability in override_caps
+        ]
+        # `_inject_auto_capabilities` appends, so the injected items are the tail.
+        injected = frozenset(id(leaf) for capability in bound[supplied:] for leaf in leaf_capabilities(capability))
+        return CombinedCapability(bound), injected
 
     def _override_added_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """The leaves an active capability override holds that the agent wasn't constructed with.
 
         A durable engine registered nothing for them, so `_resolve_run_capabilities` validates them with the
-        run's own capabilities. Auto-injected infrastructure is left out.
+        run's own capabilities. The infrastructure the override injected for what its list left out isn't an
+        addition; a `ToolSearch` the list supplies itself is, as it would be passed to a run.
         """
         override = self._override_root_capability.get()
         if override is None:
             return []
+        root, injected = override.value
         configured = {id(leaf) for leaf in leaf_capabilities(self._root_capability)}
-        return [
-            leaf
-            for leaf in leaf_capabilities(override.value)
-            if id(leaf) not in configured and not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES)
-        ]
+        return [leaf for leaf in leaf_capabilities(root) if id(leaf) not in configured and id(leaf) not in injected]
 
     def _bind_run_capabilities(
         self, extra_capabilities: list[AbstractCapability[AgentDepsT]]

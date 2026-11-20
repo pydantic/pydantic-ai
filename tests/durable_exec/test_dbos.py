@@ -68,6 +68,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ModelFallback,
     SetToolMetadata,
+    ToolSearch,
     WrapperCapability,
     durable_operation,
 )
@@ -5836,7 +5837,8 @@ async def test_dbos_durability_override_capabilities_entered_inside_a_workflow(d
     """An override entered inside a workflow follows the per-run rules there, as one carried in from outside does.
 
     A list of just the bound `DBOSDurability` and `Instrumentation` runs: the auto-injected capabilities the override
-    builds afresh for a list without them are infrastructure, not additions.
+    builds afresh for a list without them are infrastructure, not additions. A `ToolSearch` the list supplies itself
+    is an addition, refused like `run(capabilities=[ToolSearch(...)])`.
     """
     agent = Agent(_durability_fn_model, name='durability_override_inside', capabilities=[DBOSDurability()])
     bound = DBOSDurability.from_agent(agent)
@@ -5852,6 +5854,11 @@ async def test_dbos_durability_override_capabilities_entered_inside_a_workflow(d
         with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideAddedOperation()]):
             await agent.run('Hello')
 
+    @DBOS.workflow()
+    async def run_with_tool_search() -> None:
+        with agent.override(capabilities=[bound, ToolSearch(strategy='keywords')]):
+            await agent.run('Hello')
+
     assert await run_with_instrumentation() == snapshot('Echo: Hello')
     with workflow_raises(
         UserError,
@@ -5864,6 +5871,13 @@ async def test_dbos_durability_override_capabilities_entered_inside_a_workflow(d
         ),
     ):
         await run_with_operation()
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: ToolSearch. DBOS registers durable steps when a capability is bound to the agent, before the workflow starts. A capability added per-run therefore has no registered durable steps for the toolsets it contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction time so `DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_tool_search()
 
 
 @pytest.mark.parametrize('kind', ['mcp', 'dynamic'])

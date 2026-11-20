@@ -3767,7 +3767,7 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
     agent = Agent('magic-model', name='resolve_override_root', capabilities=[_StringResolver(target=chain_target)])
 
     override_root = CombinedCapability[Any]([_StringResolver(target=override_target)])
-    token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
+    token = agent._override_root_capability.set(Some((override_root, frozenset())))  # pyright: ignore[reportPrivateUsage]
     try:
         resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
             agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
