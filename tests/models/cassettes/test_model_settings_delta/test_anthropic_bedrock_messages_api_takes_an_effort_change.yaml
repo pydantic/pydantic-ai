@@ -1,0 +1,173 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "289"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Name a primary color.
+            type: text
+        model: anthropic.claude-opus-5-5
+        output_config:
+          effort: low
+        stream: true
+        system:
+        - type: text
+          text: Answer in one short sentence.
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_bdrk_wwggz6aeqtswlpmqgthnxtwcq4sehb4en5xir2py3yt253v5ge5q","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":26,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard"}}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Red is a primary color."}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":26,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10,"output_tokens_details":{"thinking_tokens":0}}}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-10-27T00:52:46.602849+00:00
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "505"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Name a primary color.
+            type: text
+        - role: assistant
+          content:
+          - text: Red is a primary color.
+            type: text
+        - role: user
+          content:
+          - text: Name another.
+            type: text
+        - role: system
+          content: []
+          output_config:
+            effort: medium
+        model: anthropic.claude-opus-5-5
+        output_config:
+          effort: low
+        stream: true
+        system:
+        - type: text
+          text: Answer in one short sentence.
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_bdrk_nfr4m3cz5aymdkqszrhuoexg62d7k7wpjsyf57fvzdt6nkeuybwq","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":42,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard"}}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSkwUKEggTEAEYAjgBQgh0aGlua2luZxIMs8fxouInfT776br5Ggy2Ohm31MIAe/5NGCEiMF2udFkh5VGXQpbmYl4oh/JOZGchGH4md4dEyzQp/8u0fMzNx1ZMbhZpWjmmJD1lSyquBN8CUJ+2lbFf/Wp+2UfIEPxQK9NBBUCQ07PyXPyMoURYJFbylRfCNeTZ4IclVzSqOaOIC5Ce3up3NplCShcn5uKO91lWmLFNwG9BxS1/T5WSsubYPtkFshCk+hHZDZoctsTZztUue3p1fMHqUIwF7/q3gUkPBJ1Pc9ba9N3XW5kmHH7Ot2aYMO/+5ba1rTRnykPYVgPMMXZtwwI6lxgL1WEdKKSzLRoFNu13zHYdaZTrcVDBWayF+cAqT3/J9VROTCK9x8u4NhNtxiVsieIXj+I8qwYS3+67Gq9yRxQALbe91GZW/ja2OAJhuh+kGTeEbX6twzY2iOKe/D+h7O9RA3j1Ilp87A23jNhXqwJfADKhIDBtt+5rAPKVXZo8v801E40bUX5bkNIiEtCqlTyotb3xDkiciEu6P45vC96n65xKF2Vngk/umWFUiOkE6mwEdVCA2KP+5m2q4JauEWuy77QD8W9w6/XSFQbVqug1QFXnElPHaqx5lLBpT/brxqTGQBm+YMdoOchctTnviHIdOoKIypxijRzJTDARFnUZLC/BqbvGzBSt1GgGoitHXQZajbqe/165IHpTJzqiakxs11oWGESIVI9TEyHW0HJAtLhQJWEjd3/Pff/xOT2/Gvy29PNWGWSwm5Jnuz5oQDH/54M6pkIDJgxgOq5qhi6ja0Q8Km0+4+Ordq0hUdGBlZlgiUfZWjpAraEaqWRNvAwIkquh2YZg1omcGlF1Nx8T7RgB"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Blue is another primary"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" color."}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":42,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":70,"output_tokens_details":{"thinking_tokens":59}}}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-10-27T00:52:48.246518+00:00

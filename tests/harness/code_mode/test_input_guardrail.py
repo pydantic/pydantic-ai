@@ -29,11 +29,9 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._recording_durability import RecordingDurability
-
-READINESS_WAIT_TIMEOUT = 5
-"""Bounds a wait on a test's own events, which only times out when the expected ordering broke."""
 
 CODE = 'a = await ping(n=1)\nb = await ping(n=2)\n[a, b]'
 _ARGS = json.dumps({'code': CODE})
@@ -103,7 +101,7 @@ class GuardedRun:
             self.call_started.set()
             return await input_guardrails_allow(ctx)
 
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.input_guardrails_allow', allow)
+        monkeypatch.setattr('pydantic_ai_harness._code_tools.input_guardrails_allow', allow)
 
     async def ping(self, n: int) -> int:
         self.calls.append(n)
@@ -393,7 +391,11 @@ class TestCodeModeInputGuardrail:
             FunctionModel(respond),
             name='guarded',
             deps_type=type(None),
-            capabilities=[CodeMode[None](), InputGuardrail[None](guard=guard, parallel=True), RecordingDurability()],
+            capabilities=[
+                CodeMode[None](),
+                InputGuardrail[None](guard=guard, parallel=True, id='guard'),
+                RecordingDurability(),
+            ],
         )
         agent.tool_plain(run.ping)
 

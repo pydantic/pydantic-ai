@@ -82,6 +82,7 @@ Entry shape (script writes this):
 - Decision: <one line>
 - Why: <one line>
 - Source: <link — mandatory>
+- Session: <harness session id, if available>
 - Supersedes: <earlier title, if applicable>
 ```
 

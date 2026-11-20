@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -42,16 +43,21 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    OperatorSource,
+    OperatorText,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -90,6 +96,9 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from ..conftest import try_import
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
+
+with try_import() as openai_live_installed:
+    from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
 
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
@@ -433,6 +442,42 @@ def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentatio
 
 
 # --- tool spans: owned by the `Instrumentation` capability via `Agent.realtime_session` ----------
+
+
+@dataclass(kw_only=True)
+class _SeededNudgePart(InstructionCapabilityPart, namespace='test_realtime_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _SeededPagePart(DataCapabilityPart, namespace='test_realtime_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_seeded_capability_parts_honor_include_content(include_content: bool) -> None:
+    """Capability parts in seeded history reach the session span's `pydantic_ai.all_messages` only with content on."""
+    settings, exporter = _settings(include_content=include_content)
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Check the page.'),
+                _SeededNudgePart(content=OperatorText('SENTINEL-capability-instruction'), source=OperatorSource()),
+                _SeededPagePart(content='SENTINEL-capability-data', source=ToolResultSource(tool_name='fetch')),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Done.')]),
+    ]
+    agent: Agent[None, str] = Agent()
+    agent.instrument = settings
+    async with agent.realtime(_Model(_Connection([ResponseDone()])), message_history=history).session() as session:
+        _ = [e async for e in session]
+
+    [session_span] = [s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent']
+    exported = json.dumps(dict(session_span.attributes or {}), default=str)
+    assert 'pydantic_ai.all_messages' in exported
+    for sentinel in ('SENTINEL-capability-instruction', 'SENTINEL-capability-data'):
+        assert (sentinel in exported) is include_content
 
 
 async def test_nested_agent_run_nests_under_session_span() -> None:
@@ -794,6 +839,37 @@ async def test_request_config_respects_include_model_request_parameters() -> Non
             {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
         ]
         # The spec-standard setting is still emitted when the serialized blobs are gated off.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+@pytest.mark.skipif(not openai_live_installed(), reason='openai not installed')
+async def test_request_config_omits_model_settings_without_content() -> None:
+    # Provider settings can carry prompt text (GPT-Live's spoken-behavior instructions, Gemini's
+    # `google_config_overrides`, ...), so with `include_content=False` the serialized `model_settings`
+    # blob is left off. The spec-standard `gen_ai.request.max_tokens` still goes out, like the classic path.
+    settings, exporter = _settings(include_content=False)
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_request_parameters=ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')]),
+        model_settings=OpenAILiveModelSettings(
+            max_tokens=4096, openai_live_instructions='You are Ada, a secret persona.'
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert 'model_settings' not in attributes
+        assert 'model_settings' not in json.loads(str(attributes['logfire.json_schema']))['properties']
+        assert 'secret persona' not in json.dumps(dict(attributes))
+        assert 'model_request_parameters' in attributes
         assert attributes['gen_ai.request.max_tokens'] == 4096
 
 

@@ -770,3 +770,4 @@ LLMJudge(rubric='...')  # Uses Claude
 
 - **[Custom Evaluators](custom.md)** - Write custom evaluation logic
 - **[Native Evaluators](built-in.md)** - Complete evaluator reference
+- **[LLM-as-a-Judge: A Practical Guide with Pydantic Evals](https://pydantic.dev/articles/llm-as-a-judge)** - Case-specific judges and writing good rubrics, on the Pydantic blog

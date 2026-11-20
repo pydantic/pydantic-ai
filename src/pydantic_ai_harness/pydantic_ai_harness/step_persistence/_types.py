@@ -65,7 +65,7 @@ class StepEvent:
     side-effect status.
 
     `conversation_id` mirrors pydantic_ai's three-level identity stack --
-    conversation (the dialogue) → run (one `Agent.run` call) → step
+    conversation (the dialogue) -> run (one `Agent.run` call) -> step
     (one graph node). Two `Agent.run` calls that share a
     `conversation_id` produce two separate `run_id`s.
     """

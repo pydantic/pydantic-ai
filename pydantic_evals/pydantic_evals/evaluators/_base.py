@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 from abc import ABCMeta
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import MISSING, Field, dataclass, fields
 from typing import Any
 
 from pydantic import ConfigDict, model_serializer
@@ -62,10 +63,28 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             A JSON-serializable representation of this evaluator as an EvaluatorSpec.
         """
         return to_jsonable_python(
-            self.as_spec(),
+            self._serialization_spec(),
             context=info.context,
             serialize_unknown=True,
         )
+
+    def _serialization_spec(self) -> EvaluatorSpec:
+        # Pydantic always calls the serializer of the declared field type (e.g. `Evaluator`), never a subclass's own
+        # `model_serializer`, so this is where a subclass that can't be serialized raises.
+        return self.as_spec()
+
+    def _init_fields(self) -> list[Field[Any]]:
+        """The dataclass fields that `__init__` takes, which are all a spec holds.
+
+        `__post_init__` or the field's default restores an `init=False` field, but a hand-written `__init__` can
+        still take one by name. An `__init__` that takes `*args`, `**kwargs` or a parameter no field or `InitVar`
+        declares may fill any field, so then every field counts.
+        """
+        parameters = inspect.signature(type(self)).parameters
+        declared = type(self).__dataclass_fields__
+        if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) or p.name not in declared for p in parameters.values()):
+            return list(fields(self))
+        return [field for field in fields(self) if field.init or field.name in parameters]
 
     def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()
@@ -74,12 +93,16 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         if len(raw_arguments) == 0:
             arguments = None
         elif len(raw_arguments) == 1:
-            # Only use the compact tuple form if the single non-default field is the first
-            # dataclass field, since the tuple form passes the value as the first positional arg.
-            first_field_name = fields(self)[0].name
+            # The compact tuple form passes the value as the first positional argument.
+            first_field = next(iter(self._init_fields()), None)
             key = next(iter(raw_arguments))
             value = raw_arguments[key]
-            if key == first_field_name and not serializes_as_string_keyed_dict(value):
+            if (
+                first_field is not None
+                and key == first_field.name
+                and not first_field.kw_only
+                and not serializes_as_string_keyed_dict(value)
+            ):
                 arguments = (value,)
             else:
                 arguments = raw_arguments
@@ -91,13 +114,14 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
     def build_serialization_arguments(self) -> dict[str, Any]:
         """Build the arguments for serialization.
 
+        By default, these are the dataclass fields `__init__` takes, except those still at their default value.
         If you want to modify how the evaluator is serialized, you can override this method.
 
         Returns:
             A dictionary of arguments to be used during serialization.
         """
         raw_arguments: dict[str, Any] = {}
-        for field in fields(self):
+        for field in self._init_fields():
             value = getattr(self, field.name)
             # always exclude defaults:
             if field.default is not MISSING:

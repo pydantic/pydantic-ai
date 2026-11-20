@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 SPLIT_LINES = 24
 _MAX_DEPTH = 3
@@ -74,31 +74,43 @@ def _partition(
             return None
         return _partition(body[0], start, end, symbol, syntax, depth + 1)
 
-    out: list[Range] = []
-    cursor = start
-    group: list[NodeT] = []
-
-    def flush(*, last: bool) -> None:
-        nonlocal cursor
-        stop = end if last else min(end, syntax.span(group[-1])[1])
-        if stop >= cursor:
-            inner = None
-            if len(group) == 1 and depth < _MAX_DEPTH:
-                inner = _partition(group[0], cursor, stop, symbol, syntax, depth + 1)
-            out.extend(inner or [Range(start=cursor, end=stop, symbol=symbol)])
-            cursor = stop + 1
-        group.clear()
-
+    split = _BlockSplit(end=end, symbol=symbol, syntax=syntax, depth=depth, cursor=start, group=[], out=[])
     for index, stmt in enumerate(body):
         first, last = syntax.span(stmt)
         span = last - first + 1
-        if group and (span >= _BLOCK_LINES or last - cursor + 1 > _GROUP_LINES):
-            flush(last=False)
-        group.append(stmt)
+        if split.group and (span >= _BLOCK_LINES or last - split.cursor + 1 > _GROUP_LINES):
+            _flush_group(split, last=False)
+        split.group.append(stmt)
         if span >= _BLOCK_LINES and index != len(body) - 1:
-            flush(last=False)
-    flush(last=True)
-    return out if len(out) > 1 else None
+            _flush_group(split, last=False)
+    _flush_group(split, last=True)
+    return split.out if len(split.out) > 1 else None
+
+
+@dataclass(kw_only=True)
+class _BlockSplit(Generic[NodeT]):
+    """What `_partition` tracks while it splits one body: the group being built and the ranges so far."""
+
+    end: int
+    symbol: str | None
+    syntax: Syntax[NodeT]
+    depth: int
+    cursor: int
+    """The first line no range covers yet."""
+    group: list[NodeT]
+    out: list[Range]
+
+
+def _flush_group(split: _BlockSplit[NodeT], *, last: bool) -> None:
+    """End the group: emit its ranges up to its last line, or to the body's end when `last`."""
+    stop = split.end if last else min(split.end, split.syntax.span(split.group[-1])[1])
+    if stop >= split.cursor:
+        inner = None
+        if len(split.group) == 1 and split.depth < _MAX_DEPTH:
+            inner = _partition(split.group[0], split.cursor, stop, split.symbol, split.syntax, split.depth + 1)
+        split.out.extend(inner or [Range(start=split.cursor, end=stop, symbol=split.symbol)])
+        split.cursor = stop + 1
+    split.group.clear()
 
 
 def structure_ranges(nodes: Sequence[NodeT], syntax: Syntax[NodeT]) -> list[Range]:

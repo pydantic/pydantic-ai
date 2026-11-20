@@ -44,9 +44,10 @@ class CodeModeReplStore(Protocol[AgentDepsT]):
     no one else can write to.
 
     A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save`
-    leaves what the store held before. A `save` still running after `SAVE_TIMEOUT_SECONDS` is
-    cancelled; work it handed to a thread may still finish, so write atomically. Each is logged as a
-    warning.
+    leaves what the store held before. A run whose `load` failed does not save, so the state it
+    could not read is still there for the next run, unless it restarted the REPL with `restart: true`.
+    A `save` still running after `SAVE_TIMEOUT_SECONDS` is cancelled; work it handed to a thread may
+    still finish, so write atomically. Each is logged as a warning.
     """
 
     async def load(self, ctx: RunContext[AgentDepsT]) -> bytes | None:
@@ -66,20 +67,30 @@ class PersistentRepl(Generic[AgentDepsT]):
     limits: ResourceLimits
     """The run's resolved resource limits, which a restored REPL must have been saved under."""
     ctx: RunContext[AgentDepsT] | None = None
-    """The context of the run's first `run_code` call. Until it is set, nothing is loaded or saved."""
+    """The context the REPL is saved under at the end of the run. While it is unset, nothing is saved."""
+    began: bool = False
+    """Set by the run's first `run_code` call, so the store is loaded at most once per run."""
     pending: bytes | None = None
     """Loaded from the store and not yet restored into a session."""
     restarted: bool = False
 
     async def begin(self, ctx: RunContext[AgentDepsT]) -> None:
         """Load the saved state on the run's first `run_code` call."""
-        if self.ctx is not None:
+        if self.began:
             return
-        self.ctx = ctx
+        self.began = True
         try:
             self.pending = await self.store.load(ctx)
         except Exception as error:
-            _logger.warning('CodeMode could not load the saved REPL state, so this run starts fresh: %s', error)
+            # Leave `ctx` unset: the store may still hold a state this run could not read, which its
+            # fresh REPL must not replace. Only `restart: true` sets it again, to discard that state.
+            _logger.warning(
+                'CodeMode could not load the saved REPL state, so this run starts fresh '
+                'and saves over it only on a restart: %s',
+                error,
+            )
+            return
+        self.ctx = ctx
 
     async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, in_temporal_workflow: bool) -> bool:
         """Load the pending state into the run's first session; return whether it was restored.
@@ -114,6 +125,7 @@ class PersistentRepl(Generic[AgentDepsT]):
 
     def restart(self, ctx: RunContext[AgentDepsT]) -> None:
         """Record `restart: true`: the saved state is not restored, and is forgotten if nothing replaces it."""
+        self.began = True
         self.ctx = ctx
         self.pending = None
         self.restarted = True
@@ -127,7 +139,7 @@ class PersistentRepl(Generic[AgentDepsT]):
 
         Shielded, so a cancelled run still saves, and bounded by `SAVE_TIMEOUT_SECONDS`. A REPL a
         failure reset (a timeout, a crash, a cancelled snippet) and no later snippet rebuilt keeps
-        the state saved before this run.
+        the state saved before this run, as does a run whose `load` failed and that did not restart.
         """
         ctx = self.ctx
         if ctx is None:

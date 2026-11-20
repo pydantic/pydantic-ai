@@ -23,6 +23,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    Conversation,
     ModelRequest,
     NativeOutput,
     PendingModelResponse,
@@ -45,7 +46,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, READINESS_WAIT_TIMEOUT, SlowBatchTestModel
-from ..conftest import try_import
+from ..conftest import no_leaked_tasks, try_import
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -413,11 +414,30 @@ async def test_cancelling_a_run_from_an_anyio_scope_cancels_its_batch() -> None:
     assert wrapped.canceled == [wrapped.created[0].id]
 
 
-async def test_request_timeout_covers_the_wait_for_the_batch() -> None:
-    """The deadline spans the submission and every check, so the run stops waiting at it and cancels the batch."""
-    wrapped = SlowBatchTestModel(pending_checks=100_000)
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_request_timeout_covers_the_wait_for_the_batch(
+    anyio_backend: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deadline spans the submission and every check, so the run stops waiting at it and cancels the batch.
+
+    The first check moves the event loop's clock past the deadline rather than waiting for it, so a loaded runner
+    can't make the deadline pass before the batch is checked.
+    """
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    offset = 0.0
+
+    def pass_deadline_at_first_check(method: str) -> None:
+        nonlocal offset
+        if method == 'batch_status':
+            offset = 7200
+
+    monkeypatch.setattr(loop, 'time', lambda: real_time() + offset)
+    wrapped = SlowBatchTestModel(pending_checks=3, on_batch_call=pass_deadline_at_first_check)
     agent = Agent(
-        wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)], model_settings={'request_timeout': 0.5}
+        wrapped,
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+        model_settings={'request_timeout': 3600},
     )
 
     with pytest.raises(ModelRequestTimeout):
@@ -688,23 +708,22 @@ async def test_exiting_the_capability_ends_its_queued_and_running_work() -> None
             await never.wait()
             raise AssertionError('unreachable')  # pragma: no cover
 
-    tasks_before = asyncio.all_tasks()
-    wrapped = HangingModel(pending_checks=1)
-    batching = BatchModelRequests(**FAST_POLLING, max_wait=None, max_requests=1)
-    agent = Agent(wrapped, capabilities=[batching])
-    async with batching:
-        checked = asyncio.create_task(agent.run('Check on me'))
-        await wrapped.wait_until(lambda m: m.status_checks == 1)
-        submitting = asyncio.create_task(agent.run('Hang on submission'))
-        await wrapped.wait_until(lambda m: isinstance(m, HangingModel) and m.submissions == 2)
-        batching._pool.max_requests = 2  # pyright: ignore[reportPrivateUsage]
-        queued = asyncio.create_task(agent.run('Queue me'))
-        await wrapped.wait_until(lambda m: m.encoded == 3)
+    with no_leaked_tasks():
+        wrapped = HangingModel(pending_checks=1)
+        batching = BatchModelRequests(**FAST_POLLING, max_wait=None, max_requests=1)
+        agent = Agent(wrapped, capabilities=[batching])
+        async with batching:
+            checked = asyncio.create_task(agent.run('Check on me'))
+            await wrapped.wait_until(lambda m: m.status_checks == 1)
+            submitting = asyncio.create_task(agent.run('Hang on submission'))
+            await wrapped.wait_until(lambda m: isinstance(m, HangingModel) and m.submissions == 2)
+            batching._pool.max_requests = 2  # pyright: ignore[reportPrivateUsage]
+            queued = asyncio.create_task(agent.run('Queue me'))
+            await wrapped.wait_until(lambda m: m.encoded == 3)
 
-    for run in (queued, submitting, checked):
-        with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
-            await run
-    assert asyncio.all_tasks() - tasks_before == {asyncio.current_task()} - tasks_before
+        for run in (queued, submitting, checked):
+            with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
+                await run
 
 
 async def test_closing_before_a_submission_starts_fails_its_requests() -> None:
@@ -795,6 +814,51 @@ async def test_a_failed_submission_reaches_every_request_in_the_batch() -> None:
     results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
 
     assert [type(result).__name__ for result in results] == ['ModelHTTPError', 'ModelHTTPError']
+    # Each run gets its own error, so the conversation a failed run attaches isn't another run's.
+    first, second = results
+    assert isinstance(first, ModelHTTPError) and isinstance(second, ModelHTTPError)
+    assert first is not second
+    assert (first.status_code, first.body, str(first)) == (second.status_code, second.body, str(second))
+    assert [_prompt_of(error.conversation) for error in (first, second)] == ['one', 'two']
+
+
+async def test_a_failed_submission_whose_error_cant_be_copied_still_reaches_every_request() -> None:
+    class _CodedError(ModelAPIError):
+        def __init__(self, code: int) -> None:
+            super().__init__('test', f'batch creation failed with {code}')
+
+    error = _CodedError(7)
+
+    class FailingBatchModel(TestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            raise error
+
+    agent = Agent(FailingBatchModel(), capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+    results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert results == [error, error]
+
+
+async def test_a_failed_submission_that_isnt_a_run_error_reaches_every_request_as_is() -> None:
+    error = RuntimeError('batch creation failed')
+
+    class FailingBatchModel(TestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            raise error
+
+    agent = Agent(FailingBatchModel(), capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+    results = await asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+
+    assert results == [error, error]
+
+
+def _prompt_of(conversation: Conversation | None) -> object:
+    assert conversation is not None
+    request = conversation.messages[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    return part.content
 
 
 async def test_identical_requests_get_distinct_ids_in_a_batch() -> None:
@@ -1144,7 +1208,7 @@ async def test_a_batch_has_its_own_trace_linked_to_the_requests_in_it(capfire: C
         (batch.context.span_id, 'in_progress'),
         (batch.context.span_id, 'ended'),
     ]
-    assert not [span for span in spans if 'propagated trace context' in span.name]
+    assert not [span for span in spans if span.name.startswith('Found propagated')]
     for chat in chats:
         assert (chat.attributes or {})['pydantic_ai.batch.id'] == batch_id
         assert [link.context.span_id for link in chat.links] == [batch.context.span_id]

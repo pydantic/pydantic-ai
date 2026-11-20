@@ -24,8 +24,6 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
-
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -47,6 +45,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from tests.harness.code_mode.stored_sessions import stored_session_pool
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -61,7 +60,6 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
     dbos_config: DBOSConfig = {
         'name': 'pydantic_ai_harness_dbos_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
-        'run_admin_server': False,
         'enable_otlp': False,
     }
     dbos = DBOS(config=dbos_config)
@@ -70,7 +68,6 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
         yield dbos
     finally:
         DBOS.destroy()
-        detach_dbos_logging()
 
 
 # ---------------------------------------------------------------------------
@@ -89,10 +86,12 @@ def add(a: int, b: int) -> int:
 
 
 _captured_tool_defs: list[list[ToolDefinition]] = []
+_captured_instructions: list[str | None] = []
 
 
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     _captured_tool_defs.append(info.function_tools)
+    _captured_instructions.append(info.instructions)
 
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -127,6 +126,22 @@ code_mode_agent = Agent(
 )
 
 
+remote_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='remote_code_mode_dbos_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=stored_session_pool),
+        DBOSDurability(),
+    ],
+)
+
+
+@DBOS.workflow()
+def run_remote_code_mode_agent(prompt: str) -> str:
+    return str(remote_code_mode_agent.run_sync(prompt).output)
+
+
 @DBOS.workflow()
 def run_code_mode_agent(prompt: str) -> dict[str, Any]:
     result = code_mode_agent.run_sync(prompt)
@@ -148,6 +163,8 @@ def run_limited_code_mode_agent(prompt: str, tool_calls_limit: int) -> None:
         _limit_errors.append(str(error))
         if len(_limit_errors) == 1:
             raise _LimitAbortCrash from error
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
         raise
 
 
@@ -195,6 +212,12 @@ def run_gather_agent(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def test_remote_code_mode_with_an_id_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """Turn activities are Temporal's: under DBOS a `CodeMode` with an `id` and a remote sandbox runs as before."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert run_remote_code_mode_agent('Calculate 3 + 4') == 'done: 7'
+
+
 def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     """CodeMode's snapshot-based execution loop works inside a DBOS durable
     workflow under DBOS's default `parallel_ordered_events` mode.
@@ -203,6 +226,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     model requests through DBOS steps: `DBOSDurability` is transparent outside
     a workflow, so a passing run alone would not show durability engaged."""
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
@@ -260,15 +284,18 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     # The model was called twice (first request + after tool return), both
     # should see the same tool definitions.
     assert len(_captured_tool_defs) == 2
-    for tool_defs in _captured_tool_defs:
+    for tool_defs, instructions in zip(_captured_tool_defs, _captured_instructions, strict=True):
         tool_names = [td.name for td in tool_defs]
         # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 
+        # The catalog crosses the model request in the instructions, not in `run_code`'s description.
+        assert instructions is not None
+        assert 'async def add' in instructions
         run_code_td = next(td for td in tool_defs if td.name == 'run_code')
         assert run_code_td.description is not None
-        assert 'async def add' in run_code_td.description
+        assert 'async def add' not in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
 
     # 6. Durability engaged: model requests were recorded as DBOS steps
@@ -287,6 +314,7 @@ def test_tool_calls_limit_refuses_during_recovery(
 ) -> None:
     _limit_errors.clear()
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
     _additions.clear()
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_LimitAbortCrash):

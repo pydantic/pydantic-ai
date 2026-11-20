@@ -21,6 +21,8 @@ from typing import Any, Protocol
 
 from pydantic import TypeAdapter
 
+from pydantic_ai.messages import _JOURNAL_CONTEXT  # pyright: ignore[reportPrivateUsage]
+
 
 class DurabilityCodec(Protocol):
     """Reduces a value to a durably-storable payload and rebuilds it on the other side.
@@ -63,7 +65,7 @@ class _JsonCodec(DurabilityCodec):
         return self._adapter(tp).dump_python(value, mode='json')
 
     def load(self, tp: Any, payload: Any) -> Any:
-        return self._adapter(tp).validate_python(payload)
+        return self._adapter(tp).validate_python(payload, context=_JOURNAL_CONTEXT)
 
 
 IDENTITY_CODEC: DurabilityCodec = _IdentityCodec()

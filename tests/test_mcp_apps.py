@@ -34,10 +34,15 @@ with try_import() as imports_successful:
     from mcp import types as mcp_types
     from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ToolResult
     from pydantic_ai.ui.ag_ui import AGUIAdapter
-    from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import (
+        ACTIVITY_EVENTS_VERSION,
+        DEFAULT_AG_UI_VERSION,
+        detect_ag_ui_version,
+        parse_ag_ui_version,
+    )
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 with try_import() as logfire_imports_successful:
@@ -47,7 +52,7 @@ with try_import() as logfire_imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='fastmcp, ag-ui-protocol or starlette not installed')
 
-MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
+MCP_SDK_V2 = imports_successful() and _mcp_compat.MCP_SDK_V2
 
 # FastMCP 4 servers stamp every result's `_meta` with their identity, which the app data passes through.
 SERVER_INFO: dict[str, Any] = (
@@ -379,7 +384,7 @@ async def test_tool_span_omits_app_binary_without_binary_content(capfire: Captur
         return FastMCPToolResult(
             content=[
                 TextContent(type='text', text='A chart'),
-                ImageContent(type='image', data='aGk=', mimeType='image/png'),
+                ImageContent.model_validate({'type': 'image', 'data': 'aGk=', 'mimeType': 'image/png'}),
                 EmbeddedResource(
                     type='resource',
                     resource=BlobResourceContents.model_validate(
@@ -561,12 +566,15 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
     ]
 
     activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    # 1.0 leaves `replace` out, which the spec defines as replacing, like 0.x's default `True`.
+    replace = {} if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= (1, 0) else {'replace': True}
     assert activities == snapshot(
         [
             {
                 'type': 'ACTIVITY_SNAPSHOT',
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
+                **replace,
                 'activityType': 'mcp-apps',
                 'content': {
                     'resourceUri': 'ui://weather/forecast',
@@ -575,7 +583,6 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
                     'serverId': 'weather',
                     'serverHash': 'weather',
                 },
-                'replace': True,
             }
         ]
     )
@@ -678,11 +685,11 @@ async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any]
 
     The error is injected because in-process FastMCP servers turn every tool failure into an `isError` result.
     """
-    # SDK v1 wraps an `ErrorData`; v2 takes the fields directly, and CI type-checks against v1.
+    # SDK v2 takes the fields directly; v1 wraps an `ErrorData`. Pyright checks against v2, the locked generation.
     error = (
-        cast(Any, McpError)(code=-32001, message='call refused')
+        McpError(code=-32001, message='call refused')
         if MCP_SDK_V2
-        else McpError(mcp_types.ErrorData(code=-32001, message='call refused'))
+        else cast(Any, McpError)(mcp_types.ErrorData(code=-32001, message='call refused'))
     )
 
     async def refuse(*args: Any, **kwargs: Any) -> Any:

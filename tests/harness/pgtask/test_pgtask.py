@@ -13,6 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 
 import anyio
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip('pgtask')
 pytest.importorskip('fastmcp')
@@ -44,6 +45,7 @@ from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolse
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
 from pydantic_ai_harness.pgtask._context import _occurrences  # pyright: ignore[reportPrivateUsage]
 from tests.durable_exec.counting_mcp import counting_mcp_server
+from tests.harness._rate_limited_model import rate_limited_once
 
 from ...conftest import try_import
 from ._task import PGTaskDatabase, checkpoints, run_in_task
@@ -711,6 +713,28 @@ class TestCrashMidRun:
 
 
 class TestCapabilityOperation:
+    async def test_undecodable_checkpoint_raises_decode_error(self, pgtask_db: PGTaskDatabase) -> None:
+        class Reader(AbstractCapability[object]):
+            id = 'reader'
+
+            async def before_run(self, ctx: RunContext[object]) -> None:
+                await self.read(ctx)
+
+            @durable_operation('read')
+            async def read(self, ctx: RunContext[object]) -> int:  # pragma: no cover
+                pytest.fail('The checkpointed operation must not run again')
+
+        agent = Agent(_make_model(), name='cap', capabilities=[Reader(), PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            with pytest.raises(CheckpointDecodeError) as exc_info:
+                await agent.run('hi')
+            assert isinstance(exc_info.value.__cause__, ValidationError)
+
+        await run_in_task(
+            pgtask_db, body, seed={('cap__capability__reader.read', 0): {'value': 'invalid', 'usage_delta': {}}}
+        )
+
     async def test_operation_is_checkpointed_and_replayed(self, pgtask_db: PGTaskDatabase) -> None:
         calls: list[str] = []
 
@@ -866,3 +890,42 @@ class TestCodeMode:
 
         await run_in_task(pgtask_db, body, attempts=2)
         assert calls['calls'] == 1
+
+
+class TestRetryAfter:
+    async def test_model_step_waits_retry_after_and_runs_again(self, pgtask_db: PGTaskDatabase) -> None:
+        """The failed attempt is saved, the task sleeps the wait, and the model step runs again; a replay serves
+        both from the saved steps."""
+        counter = {'calls': 0}
+        # A wait that has already passed.
+        agent = Agent(rate_limited_once(counter, 0.0), name='limited', capabilities=[PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            assert (await agent.run('hi')).output == 'ok'
+
+        task_id = await run_in_task(pgtask_db, body, attempts=2)
+
+        assert counter['calls'] == 2
+        stored = await checkpoints(pgtask_db, task_id)
+        assert stored[('limited__model.request', 0)] == {'__pydantic_ai_harness_retry_after__': 0.0}
+        # The wait is a durable sleep step of its own, between the two attempts.
+        assert ('limited__model.request.retry_after', 0) in stored
+        assert ('limited__model.request', 1) in stored
+
+    async def test_model_error_fails_the_attempt_without_a_wait_when_no_attempts_are_left(
+        self, pgtask_db: PGTaskDatabase
+    ) -> None:
+        """On the task's last attempt there is no attempt left to run the request again in, so the model error fails
+        the run rather than waiting."""
+        counter = {'calls': 0}
+        agent = Agent(rate_limited_once(counter, 5.0), name='last', capabilities=[PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            # pgtask raises a step's failure as a `RuntimeError` naming the error.
+            with pytest.raises(RuntimeError, match='ModelRateLimitError'):
+                await agent.run('hi')
+
+        task_id = await run_in_task(pgtask_db, body, attempts=1)
+
+        assert counter['calls'] == 1
+        assert await checkpoints(pgtask_db, task_id) == {}

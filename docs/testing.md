@@ -30,6 +30,7 @@ The simplest and fastest way to exercise most of your application code is using 
     There's no ML or AI in `TestModel`, it's just plain old procedural Python code that tries to generate data that satisfies the JSON schema of a tool.
 
     The resulting data won't look pretty or relevant, but it should pass Pydantic's validation in most cases.
+    It doesn't generate strings that match a `pattern`, or values that avoid what a `not` rejects, so such a field can get a value its schema rejects. A string `format` it doesn't know gets an ordinary string.
     If you want something more sophisticated, use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] and write your own data generation logic.
 
 !!! note "Testing agents with native tools"
@@ -157,6 +158,7 @@ async def test_forecast():
                 output_tokens=7,
             ),
             model_name='test',
+            model_id='test:test',
             timestamp=IsNow(tz=UTC),
             provider_name='test',
             run_id=IsStr(),
@@ -187,6 +189,7 @@ async def test_forecast():
                 output_tokens=16,
             ),
             model_name='test',
+            model_id='test:test',
             timestamp=IsNow(tz=UTC),
             provider_name='test',
             run_id=IsStr(),

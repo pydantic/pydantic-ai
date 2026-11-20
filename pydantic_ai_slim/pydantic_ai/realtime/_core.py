@@ -91,6 +91,7 @@ from .codec import (
     ConversationItemCreated,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
@@ -103,6 +104,22 @@ _WAV_MEDIA_TYPE = 'audio/wav'
 
 MAX_CUTTABLE_OUTPUT_ITEMS = 32
 """How many recent assistant audio items a barge-in can still cut off: far more than can be queued for playback."""
+
+
+def _interrupted_at(part: SpeechPart, interrupted_at_ms: int | None) -> SpeechPart:
+    """`part`, interrupted `interrupted_at_ms` into its audio: speech timed from there on was never heard."""
+    timestamps = part.timestamps
+    if interrupted_at_ms is not None and timestamps is not None:
+        timestamps = [timestamp for timestamp in timestamps if timestamp.start_ms < interrupted_at_ms]
+    return replace(part, interrupted_at_ms=interrupted_at_ms, timestamps=timestamps)
+
+
+def _cut_off_last_speech(parts: list[ModelResponsePart], interrupted_at_ms: int | None) -> None:
+    """Replace the last `SpeechPart` in `parts` with a copy interrupted `interrupted_at_ms` into its audio."""
+    for index in range(len(parts) - 1, -1, -1):
+        if isinstance(part := parts[index], SpeechPart):
+            parts[index] = _interrupted_at(part, interrupted_at_ms)
+            break
 
 
 # --- commands: what the caller did -------------------------------------------------------------------
@@ -581,122 +598,154 @@ class SessionCore:
 
     def apply(self, item: CoreInput) -> None:  # noqa: C901
         """Apply one event or command. Synchronous, so it is one transition."""
-        if isinstance(item, ResponseStarted):
-            self._start_response(item)
-        elif isinstance(item, ResponseEnded):
-            self._end_response(item)
-        elif isinstance(item, (AudioDelta, OutputTranscript)):
-            self._response_content(item)
-        elif isinstance(item, ToolCall):
-            self._tool_call(item)
-        elif isinstance(item, RealtimeSessionReconnectEvent):
-            # The new connection hears none of what was being said on the old one: a turn still spoken is over,
-            # with the audio sent for it.
-            for turn_id in [turn_id for turn_id, turn in self._turns.items() if turn.speaking]:
-                self._speech_ended(turn_id)
-            self._user_speaking = False
-        elif isinstance(item, ConversationItemCreated):
-            if item.replayed:
-                # A natively resumed conversation's replay of what history already has: nothing in it is new.
-                if item.item_id is not None:
-                    self._replayed_items.add(item.item_id)
-                if item.tool_call_id is not None:
-                    self._replayed_calls.add(item.tool_call_id)
-        elif isinstance(item, OutputItemDetails):
-            if (response := self._open_response(item.response_id)) is not None:
-                response.item_details[item.item_id] = item.provider_details
-        elif isinstance(item, OutputItemCut):
-            self._cut_recorded_item(item.item_id, _Cut(heard_ms=item.heard_ms, heard_transcript=item.heard_transcript))
-        elif isinstance(item, SessionUsage):
-            self._usage(item)
-        elif isinstance(item, UserTurnStarted):
-            self._turn(item.turn_id)
-        elif isinstance(item, UserTurnEnded):
-            self._end_turn(item.turn_id, still_speaking=item.still_speaking, before=item.before_response)
-        elif isinstance(item, UserTurnClosed):
-            self._turn_closed(item.turn_id)
-        elif isinstance(item, InputTranscript):
-            self._input_transcript(item)
-        elif isinstance(item, RealtimeInputTranscriptionErrorEvent):
-            # One naming no item is the latest turn's, as a transcript is.
-            turn = self._turns.get(item.item_id) if item.item_id is not None else self._latest_turn()
-            if turn is not None and not turn.transcribed:  # (a stray one, after its transcript, changes nothing)
-                self._transcribed(turn, failed=True)
-        elif isinstance(item, RealtimeInputSpeechStartEvent):
-            self._user_speaking = True
-        elif isinstance(item, RealtimeInputSpeechEndEvent):
-            self._speech_ended(item.item_id)
-        elif isinstance(item, InputAdded):
-            self._place_input(item.input_id)
-        elif isinstance(item, AnswersRevised):
-            self._revise_answers(item)
-        elif isinstance(item, (ResponseRequestRefused, InputLost)):
-            self._settle(item.input_ids, 'refused' if isinstance(item, ResponseRequestRefused) else 'lost')
-        elif isinstance(item, InputRejected):
-            # (Refusing the content of an input that records none, a bare request for a response, takes nothing back.)
-            if item.refused == 'content' and item.input_index in self._inputs:
-                self._withdraw((item.input_index,))
-        elif isinstance(item, ToolCallCancelled):
-            self._settled_calls.update(item.tool_call_ids)
-            # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
-            for call_id in item.tool_call_ids:
-                self._call_unanswered(call_id)
-        elif isinstance(item, ToolCallsAbandoned):
-            self._abandon_calls(item.tool_call_ids)
-        elif isinstance(
-            item,
-            (
-                RealtimeOutputSpeechStartEvent,
-                RealtimeOutputSpeechEndEvent,
-                RealtimeResponseInterruptedEvent,
-                RealtimeSessionErrorEvent,
-                ConversationCreated,
-            ),
-        ):
-            pass
-        elif isinstance(item, ResponseDone):
-            # The lifecycle's `ResponseEnded` ends the response; its terminal can still name it, if nothing had.
-            if item.provider_response_id and (response := self._open_response(None)) is not None:
-                response.reported_id = response.reported_id or item.provider_response_id
-        elif isinstance(item, (PartStartEvent, PartEndEvent)):
-            self._native_part(item)
-        elif isinstance(item, LifecycleEvent):
-            raise TypeError(f'The session core has no handling for the lifecycle event {item!r}.')
-        else:
-            self._command(item)
+        match item:
+            case ResponseStarted():
+                self._start_response(item)
+            case ResponseEnded():
+                self._end_response(item)
+            case AudioDelta() | OutputTranscript():
+                self._response_content(item)
+            case OutputSpeechTimestamps():
+                self._speech_timestamps(item)
+            case ToolCall():
+                self._tool_call(item)
+            case RealtimeSessionReconnectEvent():
+                self._reconnected()
+            case ConversationItemCreated():
+                self._item_created(item)
+            case OutputItemDetails():
+                self._item_details(item)
+            case OutputItemCut():
+                self._cut_recorded_item(
+                    item.item_id, _Cut(heard_ms=item.heard_ms, heard_transcript=item.heard_transcript)
+                )
+            case SessionUsage():
+                self._usage(item)
+            case UserTurnStarted():
+                self._turn(item.turn_id)
+            case UserTurnEnded():
+                self._end_turn(item.turn_id, still_speaking=item.still_speaking, before=item.before_response)
+            case UserTurnClosed():
+                self._turn_closed(item.turn_id)
+            case InputTranscript():
+                self._input_transcript(item)
+            case RealtimeInputTranscriptionErrorEvent():
+                self._transcription_failed(item)
+            case RealtimeInputSpeechStartEvent():
+                self._user_speaking = True
+            case RealtimeInputSpeechEndEvent():
+                self._speech_ended(item.item_id)
+            case InputAdded():
+                self._place_input(item.input_id)
+            case AnswersRevised():
+                self._revise_answers(item)
+            case ResponseRequestRefused():
+                self._settle(item.input_ids, 'refused')
+            case InputLost():
+                self._settle(item.input_ids, 'lost')
+            case InputRejected():
+                self._input_rejected(item)
+            case ToolCallCancelled():
+                self._calls_cancelled(item)
+            case ToolCallsAbandoned():
+                self._abandon_calls(item.tool_call_ids)
+            case (
+                RealtimeOutputSpeechStartEvent()
+                | RealtimeOutputSpeechEndEvent()
+                | RealtimeResponseInterruptedEvent()
+                | RealtimeSessionErrorEvent()
+                | ConversationCreated()
+            ):
+                pass
+            case ResponseDone():
+                self._response_done(item)
+            case PartStartEvent() | PartEndEvent():
+                self._native_part(item)
+            case LifecycleEvent():
+                raise TypeError(f'The session core has no handling for the lifecycle event {item!r}.')
+            case _:
+                self._command(item)
+
+    def _reconnected(self) -> None:
+        # The new connection hears none of what was being said on the old one: a turn still spoken is over, with the
+        # audio sent for it.
+        for turn_id in [turn_id for turn_id, turn in self._turns.items() if turn.speaking]:
+            self._speech_ended(turn_id)
+        self._user_speaking = False
+
+    def _item_created(self, event: ConversationItemCreated) -> None:
+        if event.replayed:
+            # A natively resumed conversation's replay of what history already has: nothing in it is new.
+            if event.item_id is not None:
+                self._replayed_items.add(event.item_id)
+            if event.tool_call_id is not None:
+                self._replayed_calls.add(event.tool_call_id)
+
+    def _item_details(self, event: OutputItemDetails) -> None:
+        if (response := self._open_response(event.response_id)) is not None:
+            response.item_details[event.item_id] = event.provider_details
+
+    def _transcription_failed(self, event: RealtimeInputTranscriptionErrorEvent) -> None:
+        # One naming no item is the latest turn's, as a transcript is.
+        turn = self._turns.get(event.item_id) if event.item_id is not None else self._latest_turn()
+        if turn is not None and not turn.transcribed:  # (a stray one, after its transcript, changes nothing)
+            self._transcribed(turn, failed=True)
+
+    def _input_rejected(self, event: InputRejected) -> None:
+        # (Refusing the content of an input that records none, a bare request for a response, takes nothing back.)
+        if event.refused == 'content' and event.input_index in self._inputs:
+            self._withdraw((event.input_index,))
+
+    def _calls_cancelled(self, event: ToolCallCancelled) -> None:
+        self._settled_calls.update(event.tool_call_ids)
+        # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
+        for call_id in event.tool_call_ids:
+            self._call_unanswered(call_id)
+
+    def _response_done(self, event: ResponseDone) -> None:
+        # The lifecycle's `ResponseEnded` ends the response; its terminal can still name it, if nothing had.
+        if event.provider_response_id and (response := self._open_response(None)) is not None:
+            response.reported_id = response.reported_id or event.provider_response_id
 
     def _command(self, command: Command) -> None:
-        if isinstance(command, InputSent):
-            self._input_sent(command)
-        elif isinstance(command, InputWithdrawn):
-            self._withdraw(command.input_ids)
-        elif isinstance(command, (AudioSent, AudioCleared)):
-            self._input_audio_command(command)
-        elif isinstance(command, (ToolReturned, ToolCallRefused, ToolCallsPruned)):
-            self._tool_command(command)
-        elif isinstance(command, Interrupted):
-            # (A later cancel without a position doesn't erase where an earlier interruption cut the response.)
-            if (response := self._speaking_response()) is not None and command.played_ms is not None:
-                response.interrupted_at_ms = command.played_ms
-            for item_id, heard_ms in command.cuts:
-                self._cut_recorded_item(item_id, _Cut(heard_ms=heard_ms))
-        elif isinstance(command, ExchangeAbandoned):
-            self._abandon_exchange()
-        elif isinstance(command, TranscriptOverdue):
-            self._end_transcriptions([command.turn_id])
-        elif isinstance(command, ResponseOverdue):
-            self._release_held_turns(command.response_id)
-        elif isinstance(command, ResponseRefused):
-            self._refuse_response(command.response_id)
-        elif isinstance(command, ReceiveEnded):
-            self._receiving = False
-            # Nothing more will be read: not the rest of a response under way, nor of a turn that joined.
-            self._lose_open_responses()
-            self._end_transcriptions([turn_id for turn_id, turn in self._turns.items() if turn.ended])
-        elif isinstance(command, Closed):
-            self._close()
-        else:
-            assert_never(command)
+        match command:
+            case InputSent():
+                self._input_sent(command)
+            case InputWithdrawn():
+                self._withdraw(command.input_ids)
+            case AudioSent() | AudioCleared():
+                self._input_audio_command(command)
+            case ToolReturned() | ToolCallRefused() | ToolCallsPruned():
+                self._tool_command(command)
+            case Interrupted():
+                self._interrupted(command)
+            case ExchangeAbandoned():
+                self._abandon_exchange()
+            case TranscriptOverdue():
+                self._end_transcriptions([command.turn_id])
+            case ResponseOverdue():
+                self._release_held_turns(command.response_id)
+            case ResponseRefused():
+                self._refuse_response(command.response_id)
+            case ReceiveEnded():
+                self._receive_ended()
+            case Closed():
+                self._close()
+            case _:
+                assert_never(command)
+
+    def _interrupted(self, command: Interrupted) -> None:
+        # (A later cancel without a position doesn't erase where an earlier interruption cut the response.)
+        if (response := self._speaking_response()) is not None and command.played_ms is not None:
+            response.interrupted_at_ms = command.played_ms
+        for item_id, heard_ms in command.cuts:
+            self._cut_recorded_item(item_id, _Cut(heard_ms=heard_ms))
+
+    def _receive_ended(self) -> None:
+        self._receiving = False
+        # Nothing more will be read: not the rest of a response under way, nor of a turn that joined.
+        self._lose_open_responses()
+        self._end_transcriptions([turn_id for turn_id, turn in self._turns.items() if turn.ended])
 
     def _tool_command(self, command: ToolReturned | ToolCallRefused | ToolCallsPruned) -> None:
         if isinstance(command, ToolReturned):
@@ -807,6 +856,25 @@ class SessionCore:
         if appended:
             self._effects.append(PartDeltaEvent(index=index, delta=delta))
 
+    def _speech_timestamps(self, event: OutputSpeechTimestamps) -> None:
+        response = self._open_response(event.response_id)
+        if (
+            response is None
+            or not event.timestamps
+            or (event.item_id is not None and event.item_id in self._replayed_items)
+        ):
+            return
+        delta = SpeechPartDelta(speaker='assistant', timestamps=event.timestamps)
+        if event.item_id is not None and event.item_id != response.open_part_item:
+            closed = response.closed_parts.get(event.item_id)
+            if closed is not None and isinstance(closed_part := closed[1], SpeechPart):
+                # Timing of an item that already closed goes on the part the item made, as a late transcript does.
+                self._restream_closed_part(response, event.item_id, delta.apply(closed_part), delta)
+                return
+        part = self._open_part(response, output_text=False, item_id=event.item_id)
+        response.open_part = delta.apply(part)
+        self._effects.append(PartDeltaEvent(index=response.open_part_index, delta=delta))
+
     def _open_part(self, response: _Response, *, output_text: bool, item_id: str | None) -> SpeechPart | TextPart:
         part = response.open_part
         if part is not None:
@@ -842,37 +910,56 @@ class SessionCore:
         closed = response.closed_parts.get(event.item_id)
         if closed is None or event.output_text != isinstance(closed[1], TextPart):
             return False
-        stream_index, part = closed
-        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        part = closed[1]
         updated: SpeechPart | TextPart
-        restarted: SpeechPart | TextPart
         delta: SpeechPartDelta | TextPartDelta
         if isinstance(part, TextPart):
             updated, appended = fold_part_transcript(part, event.text)
-            restarted, delta = part, TextPartDelta(content_delta=appended)
+            delta = TextPartDelta(content_delta=appended)
         else:
             updated, appended = fold_part_transcript(part, event.text)
-            # Retained audio appears at a part's end, not at its start.
-            restarted = replace(part, audio=None)
             delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
-        response.parts[position] = updated
-        response.closed_parts[event.item_id] = (stream_index, updated)
-        if appended:
-            # Streamed again under the index it ended with, which a `PartStartEvent` replaces, so the item still
-            # streams as one part.
-            self._effects.extend(
-                [
-                    PartStartEvent(index=stream_index, part=restarted),
-                    PartDeltaEvent(index=stream_index, delta=delta),
-                    PartEndEvent(index=stream_index, part=updated),
-                ]
-            )
+        self._restream_closed_part(response, event.item_id, updated, delta if appended else None)
         return True
+
+    def _restream_closed_part(
+        self,
+        response: _Response,
+        item_id: str,
+        updated: SpeechPart | TextPart,
+        delta: SpeechPartDelta | TextPartDelta | None,
+    ) -> None:
+        """Replace the part `item_id` already closed with `updated` and, given the `delta`, stream it again.
+
+        It streams again under the index it ended with, which a `PartStartEvent` replaces, so the item still streams
+        as one part.
+        """
+        stream_index, part = response.closed_parts[item_id]
+        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        response.parts[position] = updated
+        response.closed_parts[item_id] = (stream_index, updated)
+        if delta is None:
+            return
+        # Retained audio appears at a part's end, not at its start.
+        restarted = replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        self._effects.extend(
+            [
+                PartStartEvent(index=stream_index, part=restarted),
+                PartDeltaEvent(index=stream_index, delta=delta),
+                PartEndEvent(index=stream_index, part=updated),
+            ]
+        )
 
     def _with_item_details(
         self, response: _Response, part: SpeechPart | TextPart, item_id: str | None
     ) -> SpeechPart | TextPart:
-        if item_id is None or (details := response.item_details.get(item_id)) is None:
+        if item_id is None:
+            return part
+        if isinstance(part, SpeechPart):
+            # Only speech takes the item ID: a `TextPart.id` is replayed to the API that produced it, and a realtime
+            # item ID means nothing to a standard model.
+            part = replace(part, id=item_id, provider_name=self._provider_name)
+        if (details := response.item_details.get(item_id)) is None:
             return part
         return replace(part, provider_name=self._provider_name, provider_details=details)
 
@@ -1087,22 +1174,26 @@ class SessionCore:
             message = self._responses[response_id].message
             waiting: list[str] = []
             for call_id in call_ids:
-                result = self._result_input.get(call_id)
-                outcome = self._obligations.get(result) if result is not None else None
-                if outcome == 'answered' and message is not None:
-                    calls.extend(
-                        part
-                        for part in message.parts
-                        if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
-                    )
-                elif outcome == 'pending' or (result is None and call_id not in self._settled_calls):
-                    waiting.append(call_id)
+                self._round_call(call_id, message, calls, waiting)
             if waiting:
                 self._unrounded[response_id] = waiting
             else:
                 del self._unrounded[response_id]
         if calls:
             self._effects.append(ToolRoundsOver(tuple(calls)))
+
+    def _round_call(
+        self, call_id: str, message: ModelResponse | None, calls: list[ToolCallPart], waiting: list[str]
+    ) -> None:
+        """Add a call of a tool round that is over to `calls` if the provider answered it, or to `waiting` if it may."""
+        result = self._result_input.get(call_id)
+        outcome = self._obligations.get(result) if result is not None else None
+        if outcome == 'answered' and message is not None:
+            calls.extend(
+                part for part in message.parts if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
+            )
+        elif outcome == 'pending' or (result is None and call_id not in self._settled_calls):
+            waiting.append(call_id)
 
     def end_frame(self) -> None:
         """The frame applied is over: an exchange a response ended in it, with nothing more owed, is over.
@@ -1154,12 +1245,7 @@ class SessionCore:
             # Cut off before it said anything or was billed: there is nothing to record.
             return None
         parts = [*response.native_parts, *response.parts]
-        for item_id, (_, part) in response.closed_parts.items():
-            if isinstance(part, SpeechPart):
-                self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
-                self._recorded_items.move_to_end(item_id)
-        while len(self._recorded_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
-            self._recorded_items.popitem(last=False)
+        self._index_cuttable_items(response, parts)
         pending_cuts = [
             (item_id, self._pending_cuts.pop(item_id))
             for item_id in response.closed_parts
@@ -1169,10 +1255,7 @@ class SessionCore:
         # one that had already ended is (see `_cut_recorded_item`).
         cut = response.interrupted_at_ms is not None and any(isinstance(part, SpeechPart) for part in parts)
         if interrupted or cut:
-            for index in range(len(parts) - 1, -1, -1):
-                if isinstance(part := parts[index], SpeechPart):
-                    parts[index] = replace(part, interrupted_at_ms=response.interrupted_at_ms)
-                    break
+            _cut_off_last_speech(parts, response.interrupted_at_ms)
         finish_reason = event.finish_reason or response.usage_finish_reason
         if finish_reason is None and not interrupted and event.provider_details is None:
             finish_reason = 'stop'
@@ -1207,6 +1290,18 @@ class SessionCore:
             self._cut_recorded_item(item_id, cut)
         return response.message
 
+    def _index_cuttable_items(self, response: _Response, parts: list[ModelResponsePart]) -> None:
+        """Index the spoken items of a response being recorded by their place in `parts`, for a barge-in to cut.
+
+        Only the latest `MAX_CUTTABLE_OUTPUT_ITEMS` are kept.
+        """
+        for item_id, (_, part) in response.closed_parts.items():
+            if isinstance(part, SpeechPart):
+                self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
+                self._recorded_items.move_to_end(item_id)
+        while len(self._recorded_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
+            self._recorded_items.popitem(last=False)
+
     def _cut_recorded_item(self, item_id: str, cut: _Cut) -> None:
         """Record that the listener heard only part of a recorded response's output item.
 
@@ -1231,7 +1326,7 @@ class SessionCore:
         assert isinstance(part, SpeechPart)
         updated = part
         if cut.heard_ms is not None and (part.interrupted_at_ms is None or cut.heard_ms < part.interrupted_at_ms):
-            updated = replace(updated, interrupted_at_ms=cut.heard_ms)
+            updated = _interrupted_at(updated, cut.heard_ms)
         if cut.heard_transcript is not None and (cut.heard_transcript or None) != part.transcript:
             details = dict(part.provider_details or {})
             details.setdefault('original_transcript', part.transcript)
@@ -1533,6 +1628,10 @@ class SessionCore:
             if outcome == 'pending':
                 self._obligations[input_id] = 'void'
         self._settled_calls.update(self._call_response)
+
+    def release_annotator(self) -> None:
+        """Drop the response annotator, which holds a bound method back to the session."""
+        self._annotate_response = None
 
     def set_conversation_id(self, conversation_id: str) -> None:
         """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it."""
@@ -1851,23 +1950,36 @@ class SessionCore:
             if token in seen:
                 continue
             seen.add(token)
-            if token.kind == 'input':
-                input_id = int(token.key)
-                outcome = self._obligations.get(input_id, 'void')
-                if outcome == 'pending':
-                    owed.add(token)
-                elif outcome == 'answered':
-                    pending.append(replace(token, kind='response', key=self._answered_by[input_id]))
-            elif token.kind == 'response':
-                response = self._responses[token.key]
-                if response.status is None:
-                    owed.add(token)
-                elif response.status == 'completed':
-                    pending.extend(replace(token, kind='call', key=call_id) for call_id in response.tool_calls)
-                    if (continuation := self._continued_by.get(token.key)) is not None:
-                        pending.append(replace(token, key=continuation))
-            elif (result := self._result_input.get(token.key)) is not None:
-                pending.append(replace(token, kind='input', key=str(result)))
-            elif token.key not in self._settled_calls:
-                owed.add(token)
+            match token.kind:
+                case 'input':
+                    self._follow_input(token, owed, pending)
+                case 'response':
+                    self._follow_response(token, owed, pending)
+                case 'call':
+                    self._follow_call(token, owed, pending)
+                case _:
+                    assert_never(token.kind)
         return frozenset(owed)
+
+    def _follow_input(self, token: Owed, owed: set[Owed], pending: list[Owed]) -> None:
+        input_id = int(token.key)
+        outcome = self._obligations.get(input_id, 'void')
+        if outcome == 'pending':
+            owed.add(token)
+        elif outcome == 'answered':
+            pending.append(replace(token, kind='response', key=self._answered_by[input_id]))
+
+    def _follow_response(self, token: Owed, owed: set[Owed], pending: list[Owed]) -> None:
+        response = self._responses[token.key]
+        if response.status is None:
+            owed.add(token)
+        elif response.status == 'completed':
+            pending.extend(replace(token, kind='call', key=call_id) for call_id in response.tool_calls)
+            if (continuation := self._continued_by.get(token.key)) is not None:
+                pending.append(replace(token, key=continuation))
+
+    def _follow_call(self, token: Owed, owed: set[Owed], pending: list[Owed]) -> None:
+        if (result := self._result_input.get(token.key)) is not None:
+            pending.append(replace(token, kind='input', key=str(result)))
+        elif token.key not in self._settled_calls:
+            owed.add(token)

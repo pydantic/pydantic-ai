@@ -13,6 +13,23 @@ Salesforce, or Zendesk. Each instance is scoped to one linked account, which is 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: StackOne: run actions in a user's linked business apps
+    accDescr: Inside your agent, the model searches and then executes through the StackOne capability, whose two tools end in _search_actions and _execute_action. The capability calls StackOne MCP at api.stackone.com/mcp with an API key and x-account-id. StackOne MCP sends the action to the linked account, such as BambooHR or Salesforce, and gets the result.
+    subgraph agent["Your agent"]
+        model(["model"])
+        stackone["StackOne()<br/>..._search_actions,<br/>..._execute_action"]:::capability
+    end
+    mcp["StackOne MCP<br/>api.stackone.com/mcp"]:::external
+    account["linked account<br/>such as BambooHR<br/>or Salesforce"]:::external
+    model <-->|"search, then execute"| stackone
+    stackone <-->|"API key, x-account-id"| mcp
+    mcp <-->|"action, result"| account
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Before you start
 
 Follow the [StackOne docs](https://docs.stackone.com) to:
@@ -41,7 +58,7 @@ export OPENAI_API_KEY='your-openai-api-key'
 ```
 
 `StackOne` reads `STACKONE_API_KEY` automatically. The example reads `STACKONE_ACCOUNT_ID` explicitly so the account
-ID is not hard-coded. You can pass `api_key=` directly instead, but keep secrets out of source control.
+ID is not hard-coded. You can pass `auth=` directly instead, but keep secrets out of source control.
 
 ## Run your first agent
 
@@ -63,6 +80,38 @@ print(result.output)
 
 By default, the model receives two tools. It searches for an action that matches the request, then executes the
 returned action ID. The final output depends on the linked provider and its data.
+
+## Authenticate each user
+
+`auth` takes the API key as a string, or a sync or async function of the run context that returns one. The function is
+called at the start of each run, so the key can come from deps or a secret store rather than the capability's
+configuration. The function never falls back to `STACKONE_API_KEY`: if it returns `None` or `''`, that run gets no
+StackOne tools. Each key must belong to the StackOne project that owns `account_id`.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import StackOne
+
+
+@dataclass
+class Deps:
+    stackone_api_key: str | None
+
+
+def stackone_api_key(ctx: RunContext[Deps]) -> str | None:
+    return ctx.deps.stackone_api_key
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    deps_type=Deps,
+    capabilities=[StackOne(account_id='your-linked-account-id', auth=stackone_api_key)],
+)
+```
+
+`auth` replaces `api_key`, which still works but emits a `HarnessDeprecationWarning`. Passing both raises an error.
 
 ## Control available actions
 
@@ -103,8 +152,8 @@ from pydantic_ai_harness import StackOne
 StackOne(account_id='your-linked-account-id', defer_loading=True)
 ```
 
-Two capabilities on the *same* account share that id and are rejected at agent construction, which is what you want:
-one linked account is one connection. Pass an explicit `id=` if you need to override the derived one.
+Two capabilities on the *same* account share that id and are rejected at agent construction: one linked account is
+one connection. Pass an explicit `id=` if you need to override the derived one.
 
 ### Two accounts on one agent
 
@@ -117,8 +166,7 @@ UserError: StackOneToolset 'stackone-crm-account' defines a tool whose name conf
 existing tool from StackOneToolset: 'bamboohr_list_employees'
 ```
 
-Namespace them with [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/overview/), which is
-what it is for:
+Namespace them with [`PrefixTools`](../capabilities/prefix-tools.md):
 
 ```python
 from pydantic_ai import Agent
@@ -147,13 +195,13 @@ capability to reduce oversized tool returns agent-wide:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne, ToolOutputLimits
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
 agent = Agent(
     '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id='your-linked-account-id'),
-        ToolOutputLimits(store=LocalFileStore()),
+        ToolOutputLimits(store=LocalFileOverflowStore()),
     ],
 )
 ```
@@ -182,7 +230,7 @@ Handle the resulting deferred approval requests as described in the linked guide
 ## Define the agent in YAML or JSON
 
 The capability also works with Pydantic AI's [agent spec](../agent-spec.md) format for YAML or JSON.
-Keep the API key in `STACKONE_API_KEY` rather than storing it in the file:
+Keep the API key in `STACKONE_API_KEY` rather than storing it in the file. Specs take no `auth`, and a spec's `api_key` is deprecated:
 
 ```yaml
 # agent.yaml
@@ -200,7 +248,7 @@ from pydantic_ai_harness import StackOne
 agent = Agent.from_file('agent.yaml', custom_capability_types=[StackOne])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate `StackOne`.
+## Connection customization
 
 Use the lower-level `StackOneToolset` directly when you need
 [`Agent(toolsets=[...])`](../toolsets.md) or other toolset wrappers.
@@ -210,6 +258,10 @@ Custom `base_url` and URL-valued `client` values must use HTTPS. The toolset add
 with the configured mode because rewriting would invalidate signed URLs. When using `search_execute` with a signed
 URL, include `tool-mode=search_execute` before signing. Prebuilt clients are used as-is; configure their HTTPS
 transport, auth, account selection, and tool mode yourself.
+
+## Further reading
+
+- [StackOne is now a Pydantic AI capability](https://pydantic.dev/articles/stackone-pydantic-ai-harness) (Pydantic)
 
 ## API reference
 

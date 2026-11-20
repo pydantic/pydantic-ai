@@ -10,6 +10,7 @@ import ssl
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from importlib.util import find_spec
 from inspect import FrameInfo, unwrap
 from pathlib import Path
 from textwrap import indent
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -48,6 +49,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
     StructuredContent,
+    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -85,6 +87,7 @@ from pydantic_ai.realtime.codec import (
 
 from .conftest import TestEnv, legacy_retry_prompt_part, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
@@ -116,10 +119,33 @@ class ExamplesConfig(BaseExamplesConfig):
     known_first_party: list[str] = field(default_factory=list[str])
     known_local_folder: list[str] = field(default_factory=list[str])
 
+    # Docs examples are application code, which runs on asyncio as `examples/` does, so they may use the `asyncio`
+    # primitives that `banned-api` bans in backend-neutral code. The other entries still hold.
+    asyncio_bans: ClassVar[frozenset[str]] = frozenset(
+        {
+            'asyncio.sleep',
+            'asyncio.Event',
+            'asyncio.to_thread',
+            'asyncio.wait_for',
+            'asyncio.timeout',
+            'asyncio.Queue',
+            'asyncio.Semaphore',
+            'asyncio.Condition',
+        }
+    )
+
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
         config = tuple(arg for arg in config if not arg.startswith('--config='))
-        config = (*config, '--config', str(Path(__file__).parent.parent / 'pyproject.toml'))
+        pyproject = Path(__file__).parent.parent / 'pyproject.toml'
+        config = (*config, '--config', str(pyproject))
+        lint = tomllib.loads(pyproject.read_text(encoding='utf-8'))['tool']['ruff']['lint']
+        held = ', '.join(
+            f'{json.dumps(name)} = {{ msg = {json.dumps(ban["msg"])} }}'
+            for name, ban in lint['flake8-tidy-imports']['banned-api'].items()
+            if name not in self.asyncio_bans
+        )
+        config = (*config, '--config', f'lint.flake8-tidy-imports.banned-api = {{ {held} }}')
         if self.known_first_party:  # pragma: no branch
             config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
         if self.known_local_folder:
@@ -127,13 +153,39 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset(
+    {
+        'artifact-scanning.md',
+        'aws-lambda.md',
+        'azure-durable-task.md',
+        'deny-unanswered.md',
+        'detect-loops.md',
+        'memory.md',
+        'permissions.md',
+        'report-remaining-budget.md',
+        'report-tool-errors.md',
+        'tool-budgets.md',
+        'wrap-up-at-limits.md',
+    }
+)
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
 def _is_harness_page(path: Path) -> bool:
     root_dir = Path(__file__).parent.parent
     return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
+
+
+_MOVES_CACHE_PREFIX = {
+    'dynamic_toolset.py': TOOLS_CHANGE_MID_RUN,
+    'output_functions.py': (
+        'the router hands its conversation, without its last response, to an agent with other instructions and tools'
+    ),
+    'wrap_up_near_request_limit.py': (
+        'a request-scoped prompt counts down the requests left, and the last request withdraws the function tools'
+    ),
+}
+"""Examples whose `FunctionModel` conversation moves the prompt-cache prefix on purpose, by title, with the reason."""
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
@@ -170,6 +222,19 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if _is_harness_page(ex.path) and ex.path.name == 'azure-durable-task.md':
+                marks.append(pytest.mark.skipif(find_spec('durabletask') is None, reason='durabletask not installed'))
+            if (
+                _is_harness_page(ex.path) and ex.path.name == 'aws-lambda.md'
+            ) or title == 'deferred_tool_calls_lambda.py':
+                marks.append(
+                    pytest.mark.skipif(
+                        find_spec('aws_durable_execution_sdk_python') is None,
+                        reason='aws-durable-execution-sdk-python not installed',
+                    )
+                )
+            if title in _MOVES_CACHE_PREFIX:
+                marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
 
 
@@ -222,7 +287,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     else:
         mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
     try:
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+        mocker.patch('fastmcp.FastMCP')
     except (ImportError, AttributeError):
         pass
 
@@ -595,6 +660,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('STAV_API_KEY', 'testing')
     env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
@@ -612,6 +678,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OTARI_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
@@ -811,6 +878,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/models/openai.md
+    'Triage the open tickets.': 'The open tickets are triaged.',
+    'Draft the replies.': 'The replies are drafted.',
     # docs/capabilities/thinking.md
     'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
     'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
@@ -852,6 +922,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
+    "What is today's date?": 'Today is January 2, 2032.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
     'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
     'first run': 'Response to first run.',
@@ -876,6 +947,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'A new error was just reported — include it in the summary.': (
         'Updated summary: 12 services updated, all green; one new error in the auth service was just reported.'
     ),
+    'Refactor the billing module': 'Refactored the billing module into smaller functions.',
+    'Then update the changelog.': 'Refactored the billing module and added a changelog entry.',
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
@@ -927,6 +1000,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
+        tool_name='load_capability', args={'id': 'refunds'}
+    ),
+    # docs/models/decision.md: the decision model picks the `refunds` capability
+    'Has the refund for my returned blender gone through?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
     'I just lost my card!': ToolCallPart(
@@ -1144,6 +1221,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
+    # docs/capabilities/handle-deferred-tool-calls.md: the refund waits for the approval endpoint
+    'Refund order 1234, it arrived broken.': ToolCallPart(
+        tool_name='issue_refund', args={'order_id': '1234', 'amount': 50}, tool_call_id='issue_refund_1234'
+    ),
 }
 
 model_routes: dict[str, str] = {
@@ -1813,6 +1894,17 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
+    elif isinstance(m, SystemPromptPart) and m.content == (
+        '<pyai:context id="capability:refunds">\nConfirm the order ID before issuing a refund.\n</pyai:context>'
+    ):
+        # docs/models/decision.md: with `refunds` loaded, the decision model picks its tool
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='latest_refund', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'latest_refund':
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'resolved': True}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
         return ModelResponse(
             parts=[
@@ -1970,6 +2062,9 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'issue_refund':
+        # docs/capabilities/handle-deferred-tool-calls.md: the approved refund ran
+        return ModelResponse(parts=[TextPart("I've refunded $50 for order 1234.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
@@ -2069,7 +2164,7 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
-def mock_infer_model(model: Model | KnownModelName) -> Model:
+def mock_infer_model(model: Model | KnownModelName | str) -> Model:
     if model == 'test':
         return TestModel()
 
@@ -2103,8 +2198,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
                 mock_fallback_models.append(mock_infer_model(m))
         mocked = FallbackModel(*mock_fallback_models)
         # Keep the example's own `fallback_on`, so a response handler it passes still applies.
-        mocked._exception_handlers = model._exception_handlers  # pyright: ignore[reportPrivateUsage]
-        mocked._response_handlers = model._response_handlers  # pyright: ignore[reportPrivateUsage]
+        mocked._predicates = model._predicates  # pyright: ignore[reportPrivateUsage]
         return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
@@ -2113,13 +2207,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
     else:
-        model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(
-            model_logic,
-            stream_function=stream_model_logic,
-            model_name=model_name,
-            profile=model.profile if isinstance(model, Model) else None,
+        # A model name was inferred into a model above.
+        assert isinstance(model, Model)
+        mocked_model = FunctionModel(
+            model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
         )
+        # Named after the provider it stands in for, so the `model_id` responses record is the one the user would see.
+        mocked_model._system = model.system  # pyright: ignore[reportPrivateUsage]
+        return mocked_model
 
 
 def fast_batching(self: BatchModelRequests) -> None:

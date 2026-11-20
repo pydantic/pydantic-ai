@@ -32,11 +32,13 @@ from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal, TypeGuard
 
 import httpx2
 import pytest
+from pydantic_core import to_json
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
@@ -50,9 +52,9 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
@@ -113,7 +115,10 @@ def inject_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     still pass: route new time reads through `pydantic_ai._utils.now_utc`.
     """
     CLOCK.now = START
-    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass.
+    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass. Rebuilt, so
+    # it knows every capability part kind defined since it was first built, which would otherwise get an adapter of
+    # their own built after the swap.
+    ModelMessagesTypeAdapter.rebuild(force=True)
     ModelMessagesTypeAdapter.validate_json(b'[]')
     for name, module in list(sys.modules.items()):
         if name.startswith('pydantic_ai') and getattr(module, 'datetime', None) is _real_datetime:
@@ -374,6 +379,13 @@ with try_import() as provider_imports_successful:
         pass
 
 
+with try_import() as ui_imports_successful:
+    # Imported up front: the request models build their schemas on import, which the patched clock breaks.
+    from pydantic_ai.ui import UIAdapter
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+
 _DEFAULT_MODEL_NAMES: dict[Provider, str] = {
     'anthropic': 'claude-opus-5-5',
     'openai-responses': 'gpt-5.6-sol',
@@ -423,6 +435,10 @@ class Scenario:
     """Awaited after the first run, before the second: for work that settles in between."""
     model_names: Mapping[Provider, str] = field(default_factory=dict[Provider, str])
     """The model to talk to per provider, in place of the default: for features only some models support."""
+    ui_adapter: Literal['vercel', 'agui'] | None = None
+    """Run every run through this protocol's UI adapter with `manage_message_history='server'`, passing the
+    stored history as `message_history` while the client sends its whole conversation back, as `useChat` and
+    `@ag-ui/client` do."""
 
     def script(self) -> list[Turn]:
         if self.turns is not None:
@@ -510,17 +526,12 @@ class ConversationResult:
     def record_kind(self, part: ModelRequestPart) -> RecordKind | None:
         """What framework record a dropped part is, from its structure, or `None` for real history.
 
-        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. A `UserPromptPart` that
-        the persisted history doesn't have was added to that one request only. Anything else is history the
-        model saw, so dropping or changing it is a rewrite.
+        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. Anything else is history
+        the model saw, so dropping or changing it is a rewrite: that includes a request-only user prompt, which
+        no shipped capability adds since `Planning` records its reminder (#11521).
         """
         if isinstance(part, SystemPromptPart) and part.scope == 'request':
             return 'request-scoped system prompt'
-        persisted = (p for message in self.history if isinstance(message, ModelRequest) for p in message.parts)
-        if isinstance(part, UserPromptPart) and part not in persisted:
-            # TODO: request-only user prompts carry no provenance of their own, so this can't tell which
-            # capability added one; core history-part provenance will let an allowance pin its origin.
-            return 'request-only user prompt'
         return None
 
     def changes(self) -> list[Change]:
@@ -566,6 +577,58 @@ class ConversationResult:
         ]
 
 
+def _client_messages(protocol: Literal['vercel', 'agui'], history: list[ModelMessage], prompt: str) -> bytes:
+    """The request body a client holding `history` sends for `prompt`: its whole conversation, as the clients do."""
+    new_id = f'user-{len(history)}'
+    if protocol == 'vercel':
+        messages = [*VercelAIAdapter.dump_messages(history)]
+        messages_json = [m.model_dump(mode='json', by_alias=True, exclude_none=True) for m in messages]
+        new = {'id': new_id, 'role': 'user', 'parts': [{'type': 'text', 'text': prompt}]}
+        return to_json({'trigger': 'submit-message', 'id': 'chat', 'messages': [*messages_json, new]})
+    messages_json = [
+        m.model_dump(mode='json', by_alias=True, exclude_none=True) for m in AGUIAdapter.dump_messages(history)
+    ]
+    new = {'id': new_id, 'role': 'user', 'content': prompt}
+    return to_json(
+        {
+            'threadId': 'chat',
+            'runId': new_id,
+            'state': {},
+            'messages': [*messages_json, new],
+            'tools': [],
+            'context': [],
+            'forwardedProps': None,
+        }
+    )
+
+
+async def _run_through_ui(
+    protocol: Literal['vercel', 'agui'],
+    agent: Agent[Any, Any],
+    prompt: str,
+    *,
+    message_history: list[ModelMessage] | None = None,
+    event_stream_handler: Any = None,
+    **kwargs: Any,
+) -> AgentRunResult[Any]:
+    """Run `agent` on `prompt` the way an endpoint that keeps the history on the server does.
+
+    An adapter run always streams, so `event_stream_handler` isn't needed.
+    """
+    body = _client_messages(protocol, message_history or [], prompt)
+    adapter: UIAdapter[Any, Any, Any, Any, Any] = (
+        VercelAIAdapter(agent, VercelAIAdapter.build_run_input(body), manage_message_history='server')
+        if protocol == 'vercel'
+        else AGUIAdapter(agent, AGUIAdapter.build_run_input(body), manage_message_history='server')
+    )
+    result: AgentRunResult[Any] | None = None
+    async for event in adapter.run_stream_native(message_history=message_history, **kwargs):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+    assert result is not None
+    return result
+
+
 async def run_conversation(
     provider: Provider,
     capabilities: Sequence[AbstractCapability[Any]],
@@ -593,12 +656,17 @@ async def run_conversation(
             return messages
         return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
+    async def run(prompt: str, **kwargs: Any) -> AgentRunResult[Any]:
+        if scenario.ui_adapter is None:
+            return await agent.run(prompt, **kwargs)
+        return await _run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
+
     async with scenario.around() if scenario.around is not None else nullcontext():
-        first = await agent.run('What is the weather and the news?', **scenario.run_kwargs)
+        first = await run('What is the weather and the news?', **scenario.run_kwargs)
         if scenario.between_runs is not None:
             await scenario.between_runs()
         # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
-        second = await agent.run(
+        second = await run(
             'And what else?',
             message_history=stored(first.all_messages()),
             event_stream_handler=drain_events,
@@ -612,8 +680,10 @@ async def run_conversation(
         replays: list[bytes] = []
         for _ in range(2):
             clock.now = replay_at
+            # Response IDs count `sent`, and a replay that sends two requests echoes its first ID in the second.
+            del transport.sent[len(conversation) :]
             transport.script = [Turn(text=scenario.replay_text)]
-            await agent.run('Anything more?', message_history=history, **scenario.run_kwargs)
+            await run('Anything more?', message_history=history, **scenario.run_kwargs)
             replays.append(transport.sent[-1])
 
     assert len(parameters) == len(conversation)
@@ -897,6 +967,35 @@ def _module_paths(package: str) -> Iterator[tuple[str, Path]]:
         yield '.'.join((package, *(parts[:-1] if parts[-1] == '__init__' else parts))), path
 
 
+_Definitions = tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]
+"""A module's top-level classes by name, and what each name it imports refers to."""
+
+
+@cache
+def _definitions(path: Path, package: str) -> _Definitions:
+    """The definitions of the module at `path`, whose relative imports start from `package`.
+
+    Cached for the process: several suites discover capabilities while they are collected, and each discovery
+    would otherwise parse the same files again.
+    """
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    names: dict[str, tuple[str, str | None]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = package
+            for _ in range(node.level - 1):
+                base = base.rpartition('.')[0]
+            target = '.'.join(part for part in (base if node.level else '', node.module or '') if part)
+            for alias in node.names:
+                names[alias.asname or alias.name] = (target, alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split('.')[0]
+                names[local] = (alias.name if alias.asname else local, None)
+    return classes, names
+
+
 @dataclass
 class _Source:
     """The modules of the scanned packages, parsed only when resolving a name needs them.
@@ -906,46 +1005,24 @@ class _Source:
     """
 
     paths: dict[str, Path]
-    packages: set[str] = field(init=False)
-    """The modules that are packages, having modules of their own."""
-    _definitions: dict[str, tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]] = field(
-        init=False, default_factory=dict[str, tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]]
-    )
+    import_bases: dict[str, str] = field(init=False)
+    """The package each module's relative imports start from."""
     _capabilities: dict[str, bool] = field(init=False, default_factory=dict[str, bool])
 
     def __post_init__(self) -> None:
-        self.packages = {module.rpartition('.')[0] for module in self.paths}
+        packages = {module.rpartition('.')[0] for module in self.paths}
+        # A package's `__init__` is the package itself, so relative imports there start from it.
+        self.import_bases = {
+            module: module if module in packages else module.rpartition('.')[0] for module in self.paths
+        }
 
     def classes(self, module: str) -> dict[str, ast.ClassDef]:
         """The module's top-level classes, by name."""
-        return self._definitions_of(module)[0]
+        return _definitions(self.paths[module], self.import_bases[module])[0]
 
     def imports(self, module: str) -> dict[str, tuple[str, str | None]]:
         """Each name the module imports and what it refers to: `(module, attribute)`, or `(module, None)`."""
-        return self._definitions_of(module)[1]
-
-    def _definitions_of(self, module: str) -> tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]:
-        if (cached := self._definitions.get(module)) is not None:
-            return cached
-        tree = ast.parse(self.paths[module].read_text(encoding='utf-8'))
-        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-        # A package's `__init__` is the package itself, so relative imports there start from it.
-        package = module if module in self.packages else module.rpartition('.')[0]
-        names: dict[str, tuple[str, str | None]] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                base = package
-                for _ in range(node.level - 1):
-                    base = base.rpartition('.')[0]
-                target = '.'.join(part for part in (base if node.level else '', node.module or '') if part)
-                for alias in node.names:
-                    names[alias.asname or alias.name] = (target, alias.name)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    local = alias.asname or alias.name.split('.')[0]
-                    names[local] = (alias.name if alias.asname else local, None)
-        self._definitions[module] = classes, names
-        return classes, names
+        return _definitions(self.paths[module], self.import_bases[module])[1]
 
     def is_capability(self, qualified: str) -> bool:
         """Whether the class's bases lead to `AbstractCapability`, resolving each through the source."""
@@ -994,13 +1071,13 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
     return inspect.isclass(obj) and issubclass(obj, AbstractCapability)
 
 
-def skip_unless_installed(name: str, optional_dependencies: Mapping[str, str]) -> None:
-    """Skip the case for `name` when the module its optional dependency group provides isn't installed.
+def skip_unless_installed(name: str, module: str | None) -> None:
+    """Skip the case for `name` when `module`, which its optional dependency group provides, isn't installed.
 
     Checked with `find_spec` rather than imported, since several of these SDKs are kept out of collection
-    (`TID253`). Only capabilities listed here may be skipped: any other `ImportError` fails the test.
+    (`TID253`). Only a case that names its module in `requires` may be skipped: any other `ImportError` fails
+    the test.
     """
-    module = optional_dependencies.get(name)
     if module is not None and importlib.util.find_spec(module) is None:  # pragma: lax no cover
         pytest.skip(f'`{name}` needs `{module}`, from an optional dependency group that is not installed')
 
@@ -1021,22 +1098,15 @@ def build_capabilities(
         return [cls()]
     except (TypeError, ValueError, UserError) as exc:
         pytest.fail(
-            f'`{name}()` cannot be built with its defaults ({exc}). Add a `FIXTURES` entry that configures it, '
-            "or an `EXEMPT` entry saying why it can't run offline.",
+            f'`{name}()` cannot be built with its defaults ({exc}). Give its `CASES` entry a `build` that '
+            "configures it, or an `Unbuildable` saying why it can't run offline.",
             pytrace=False,
         )
 
 
-@dataclass(frozen=True)
-class Exempt:
-    """A capability the test can't construct generically, with the reason."""
-
-    reason: str
-
-
 Check = Literal['prefix', 'ids', 'determinism', 'request-scope']
 
-RecordKind = Literal['request-scoped system prompt', 'request-only user prompt']
+RecordKind = Literal['request-scoped system prompt']
 """A framework record a request carries for itself only, identified by structure (see `ConversationResult.record_kind`)."""
 
 

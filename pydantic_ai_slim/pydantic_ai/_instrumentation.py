@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from functools import cache
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -16,11 +16,12 @@ from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, PydanticUserError, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
+from ._durable_replay import ReplaySnapshot, snapshot as replay_snapshot_now, start_as_current_span
 from ._genai_prices import best_effort_price
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
-    from pydantic_ai.native_tools import AbstractNativeTool
+    from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
     from pydantic_ai.settings import ModelSettings
     from pydantic_ai.tools import AgentDepsT, ToolDefinition
     from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
@@ -88,7 +89,7 @@ _model_request_span_captures: ContextVar[
     tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
 ] = ContextVar('model_request_span_captures', default=())
 _model_response_span_captures: ContextVar[
-    tuple[tuple[ModelRequestContext, Callable[[ModelResponse, float | None], None]], ...]
+    tuple[tuple[ModelRequestContext, Callable[[ModelResponse | None, float | None], None]], ...]
 ] = ContextVar('model_response_span_captures', default=())
 
 
@@ -160,6 +161,18 @@ def open_request_policy() -> ContentPolicy | None:
     return policy
 
 
+def current_model_request_span() -> Span | None:
+    """The request-policy span, only while it's the caller's current span, for a model to record attributes on."""
+    policy = include_content_ctx.get()
+    if (
+        policy is None
+        or not policy.span.is_recording()
+        or get_current_span().get_span_context() != policy.span.get_span_context()
+    ):
+        return None
+    return policy.span
+
+
 @contextmanager
 def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
     """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
@@ -181,10 +194,14 @@ def capture_model_request_span_context(request_context: ModelRequestContext) -> 
 
 def capture_model_response_span_context(
     request_context: ModelRequestContext,
-    response: ModelResponse,
+    response: ModelResponse | None,
     time_to_first_chunk: float | None = None,
 ) -> None:
-    """Capture a response before an after hook can reject it when instrumentation is active."""
+    """Capture a response before an after hook can reject it when instrumentation is active.
+
+    `None` releases the captured response once a hook has moved the request on to another attempt
+    with `RetryModelRequest`: that response is recorded as a failed attempt with its own span.
+    """
     for owner, capture in _model_response_span_captures.get():
         if owner is request_context:
             capture(response, time_to_first_chunk)
@@ -192,7 +209,7 @@ def capture_model_response_span_context(
 
 @contextmanager
 def model_response_span_capture(
-    request_context: ModelRequestContext, capture: Callable[[ModelResponse, float | None], None]
+    request_context: ModelRequestContext, capture: Callable[[ModelResponse | None, float | None], None]
 ) -> Generator[None]:
     """Scope response capture to the active instrumentation wrapper."""
     token = _model_response_span_captures.set((*_model_response_span_captures.get(), (request_context, capture)))
@@ -219,6 +236,12 @@ class CachedMessageJson:
     """The serialized fragment (see `message_json_fragment`)."""
     mcp_url_ids: frozenset[str] = frozenset()
     """MCP names withheld from the serialized historical message fragment."""
+    request_scoped: bool = False
+    """Whether the message holds a request-scoped system prompt, whose fragment changes once its request
+    has been answered."""
+    answered: bool = False
+    """Whether the fragment marks the message's request-scoped system prompts as no longer visible (see
+    `message_json_fragment`)."""
 
 
 MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
@@ -324,6 +347,10 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # `validated_args` is left out: it's already dumped to JSON, where a validation hook's
+                # `BinaryContent` or `bytes` is base64 text that can't be told apart from other text.
+                # Kind names, so never binary; serialized only when there are questions, as the type does.
+                **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
         if isinstance(value, Mapping):
             return {  # pyright: ignore[reportUnknownVariableType]
@@ -362,15 +389,25 @@ def safe_to_json(value: object) -> bytes:
 
 
 def message_json_fragment(
-    settings: InstrumentationSettings, message: ModelMessage, mcp_url_ids: frozenset[str] = frozenset()
+    settings: InstrumentationSettings,
+    message: ModelMessage,
+    mcp_url_ids: frozenset[str] = frozenset(),
+    *,
+    answered: bool = False,
 ) -> bytes:
     """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
 
     A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
     system/user messages) or to none (an empty request), so the fragment is the whole serialized
     array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    With `answered`, the message is from a request before the current one, so its request-scoped
+    system prompts are marked as no longer visible.
     """
-    return safe_to_json(settings.messages_to_otel_messages([message], mcp_url_ids=mcp_url_ids))[1:-1]
+    return safe_to_json(
+        settings._span_input_messages(  # pyright: ignore[reportPrivateUsage]
+            [message], mcp_url_ids=mcp_url_ids, current_request_start=1 if answered else 0
+        )
+    )[1:-1]
 
 
 def has_stale_message_json(
@@ -395,7 +432,7 @@ def has_stale_message_json(
         if (
             entry is not None
             and entry.parts is message.parts
-            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids)
+            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids, answered=entry.answered)
         ):
             return True
     return False
@@ -517,20 +554,22 @@ def mcp_telemetry_url_toolset_ids(toolset: AbstractToolset[AgentDepsT]) -> set[s
 def mcp_telemetry_url_tool_names(tools: Mapping[str, ToolsetTool[AgentDepsT]] | None) -> set[str]:
     """Identify resolved tools owned by a URL-derived local MCP toolset."""
     names: set[str] = set()
-    if tools is not None and 'pydantic_ai.mcp' in sys.modules:
-        from pydantic_ai.mcp import MCPToolset
-        from pydantic_ai.toolsets.combined import _CombinedToolsetTool  # pyright: ignore[reportPrivateUsage]
+    if tools is None or 'pydantic_ai.mcp' not in sys.modules:
+        return names
+    from pydantic_ai.mcp import MCPToolset
+    from pydantic_ai.toolsets.combined import _CombinedToolsetTool  # pyright: ignore[reportPrivateUsage]
 
-        if isinstance(MCPToolset, type):
-            for name, tool in tools.items():
-                while isinstance(tool, _CombinedToolsetTool):
-                    tool = tool.source_tool
+    if not isinstance(MCPToolset, type):
+        return names
+    for name, tool in tools.items():
+        while isinstance(tool, _CombinedToolsetTool):
+            tool = tool.source_tool
 
-                def collect_mcp_toolset(child: AbstractToolset[AgentDepsT]) -> None:
-                    if isinstance(child, MCPToolset) and getattr(child, '_telemetry_url_derived_id', None):
-                        names.add(name)
+        def collect_mcp_toolset(child: AbstractToolset[AgentDepsT]) -> None:
+            if isinstance(child, MCPToolset) and getattr(child, '_telemetry_url_derived_id', None):
+                names.add(name)
 
-                tool.toolset.apply(collect_mcp_toolset)
+        tool.toolset.apply(collect_mcp_toolset)
     return names
 
 
@@ -570,11 +609,13 @@ def mcp_telemetry_history_ids(messages: Iterable[ModelMessage], known_ids: froze
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
-    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
-    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
-    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
-    structure rather than message content, and `include_model_request_parameters=False` drops the
-    whole attribute for anyone who wants them gone as well.
+    Three fields here are that text: the instructions, whose dynamic parts can be built from deps, the
+    prompted-output template, and the descriptions in the deferred capability catalog, which the catalog
+    in the instructions repeats. Instruction parts keep their origin and ids, and catalog entries their
+    ids and whether they're active, so what the parts are and how they cache stays visible. Tool and
+    output *schemas* stay too -- they are the request's structure rather than message content, and
+    `include_model_request_parameters=False` drops the whole attribute for anyone who wants them gone
+    as well.
 
     `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
     walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
@@ -591,6 +632,9 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
+    for entry in cast('list[dict[str, Any]]', parameters.get('deferred_capabilities', [])):
+        # The deferred capability catalog's descriptions, the same text as the catalog instruction part.
+        entry.pop('description', None)
     return parameters
 
 
@@ -603,9 +647,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
     the same flat key it serializes to everywhere else.
     """
-    from pydantic_ai.messages import CapabilityInstructionSource, ToolsetInstructionSource
-    from pydantic_ai.native_tools import MCPServerTool
+    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, MCPServerTool
 
+    native_tool_types = tuple(NATIVE_TOOL_TYPES.values())
     url_ids = model_request_telemetry_url_ids(model_request_parameters)
     toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
     tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
@@ -615,70 +659,31 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         # Keep the established serializer, including its fallback, byte-for-byte for requests
         # outside the affected MCP paths.
         try:
-            return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+            return _model_request_parameters_adapter(native_tool_types).dump_python(
+                model_request_parameters, mode='json'
+            )
         except Exception:
             return serialize_any(model_request_parameters)
 
-    native_tools: list[AbstractNativeTool] = []
-    for tool in model_request_parameters.native_tools:
-        if isinstance(tool, MCPServerTool):
-            tool = replace(
-                tool,
-                id='[REDACTED]' if tool.id in url_ids else tool.id,
-                url='[REDACTED]',
-                authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
-                headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
-            )
-        native_tools.append(tool)
-
+    native_tools: list[AbstractNativeTool] = [
+        _redact_mcp_server_tool(tool, url_ids) if isinstance(tool, MCPServerTool) else tool
+        for tool in model_request_parameters.native_tools
+    ]
     native_names = {f'mcp_server:{identity}' for identity in url_ids}
-    redacted_tool_lists: list[list[ToolDefinition]] = []
-    for tools in (model_request_parameters.function_tools, model_request_parameters.output_tools):
-        redacted_tools: list[ToolDefinition] = []
-        for tool in tools:
-            # A separate toolset may have a caller-chosen id equal to an MCP URL-derived id.
-            # Its tool definitions are not MCP-owned merely because the strings collide.
-            if (
-                tool.capability_id in url_ids
-                or tool.unless_native in native_names
-                or tool.with_native in native_names
-                or (tool.toolset_id in toolset_ids and (tool_names is None or tool.name in tool_names))
-            ):
-                tool = replace(
-                    tool,
-                    toolset_id=(
-                        '[REDACTED]'
-                        if tool.toolset_id in toolset_ids and (tool_names is None or tool.name in tool_names)
-                        else tool.toolset_id
-                    ),
-                    capability_id='[REDACTED]' if tool.capability_id in url_ids else tool.capability_id,
-                    unless_native='mcp_server:[REDACTED]' if tool.unless_native in native_names else tool.unless_native,
-                    with_native='mcp_server:[REDACTED]' if tool.with_native in native_names else tool.with_native,
-                )
-            redacted_tools.append(tool)
-        redacted_tool_lists.append(redacted_tools)
-
-    instruction_parts: list[InstructionPart] | None = model_request_parameters.instruction_parts
-    if instruction_parts is not None and (url_ids or toolset_ids):
-        instruction_parts = []
-        for part in model_request_parameters.instruction_parts or ():
-            instruction_id = part.id
-            if instruction_id is not None and (
-                (isinstance(source := instruction_id.source, ToolsetInstructionSource) and source.id in toolset_ids)
-                or (isinstance(source, CapabilityInstructionSource) and source.id in url_ids)
-            ):
-                instruction_parts.append(
-                    replace(part, id=replace(instruction_id, source=replace(source, id='[REDACTED]')))
-                )
-            else:
-                instruction_parts.append(part)
-
     safe_parameters = replace(
         model_request_parameters,
-        function_tools=redacted_tool_lists[0],
-        output_tools=redacted_tool_lists[1],
+        function_tools=[
+            _redact_mcp_tool_definition(tool, url_ids, toolset_ids, tool_names, native_names)
+            for tool in model_request_parameters.function_tools
+        ],
+        output_tools=[
+            _redact_mcp_tool_definition(tool, url_ids, toolset_ids, tool_names, native_names)
+            for tool in model_request_parameters.output_tools
+        ],
         native_tools=native_tools,
-        instruction_parts=instruction_parts,
+        instruction_parts=_redact_mcp_instruction_parts(
+            model_request_parameters.instruction_parts, url_ids, toolset_ids
+        ),
         deferred_capability_ids={
             '[REDACTED]' if identity in url_ids else identity
             for identity in model_request_parameters.deferred_capability_ids
@@ -688,17 +693,87 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         _telemetry_mcp_url_tool_names=set(),
     )
     try:
-        return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')
+        return _model_request_parameters_adapter(native_tool_types).dump_python(safe_parameters, mode='json')
     except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(safe_parameters)
 
 
-@cache
-def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+def _redact_mcp_server_tool(tool: MCPServerTool, url_ids: set[str]) -> MCPServerTool:
+    return replace(
+        tool,
+        id='[REDACTED]' if tool.id in url_ids else tool.id,
+        url='[REDACTED]',
+        authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
+        headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
+    )
+
+
+def _redact_mcp_tool_definition(
+    tool: ToolDefinition,
+    url_ids: set[str],
+    toolset_ids: set[str],
+    tool_names: set[str] | None,
+    native_names: set[str],
+) -> ToolDefinition:
+    # A separate toolset may have a caller-chosen id equal to an MCP URL-derived id.
+    # Its tool definitions are not MCP-owned merely because the strings collide.
+    mcp_toolset_owned = tool.toolset_id in toolset_ids and (tool_names is None or tool.name in tool_names)
+    if not (
+        tool.capability_id in url_ids
+        or tool.unless_native in native_names
+        or tool.with_native in native_names
+        or mcp_toolset_owned
+    ):
+        return tool
+    return replace(
+        tool,
+        toolset_id='[REDACTED]' if mcp_toolset_owned else tool.toolset_id,
+        capability_id='[REDACTED]' if tool.capability_id in url_ids else tool.capability_id,
+        unless_native='mcp_server:[REDACTED]' if tool.unless_native in native_names else tool.unless_native,
+        with_native='mcp_server:[REDACTED]' if tool.with_native in native_names else tool.with_native,
+    )
+
+
+def _redact_mcp_instruction_parts(
+    instruction_parts: list[InstructionPart] | None, url_ids: set[str], toolset_ids: set[str]
+) -> list[InstructionPart] | None:
+    from pydantic_ai.messages import CapabilityInstructionSource, ToolsetInstructionSource
+
+    if instruction_parts is None or not (url_ids or toolset_ids):
+        return instruction_parts
+    redacted_parts: list[InstructionPart] = []
+    for part in instruction_parts:
+        instruction_id = part.id
+        if instruction_id is not None and (
+            (isinstance(source := instruction_id.source, ToolsetInstructionSource) and source.id in toolset_ids)
+            or (isinstance(source, CapabilityInstructionSource) and source.id in url_ids)
+        ):
+            redacted_parts.append(replace(part, id=replace(instruction_id, source=replace(source, id='[REDACTED]'))))
+        else:
+            redacted_parts.append(part)
+    return redacted_parts
+
+
+@lru_cache(maxsize=1)
+def _model_request_parameters_adapter(
+    native_tool_types: tuple[type[AbstractNativeTool], ...],
+) -> TypeAdapter[ModelRequestParameters]:
+    """Build the adapter from `NATIVE_TOOL_TYPES`, whose current contents `native_tool_types` passes as the cache key.
+
+    The parameters' native tools serialize through a union of the registered types. A type registers when its class
+    is defined, which can be after the first request, and an adapter built before then can't serialize its instances
+    through their own schema. The cache keeps only the adapter for the registry's current contents.
+
+    A registered type pydantic can't build a schema for fails the whole build. The parameters then serialize by
+    inference, as the `serialize_any` fallback does, without retrying the build on every request.
+    """
     from pydantic_ai.models import ModelRequestParameters
 
-    return TypeAdapter(ModelRequestParameters)
+    try:
+        return TypeAdapter(ModelRequestParameters)
+    except PydanticUserError:
+        return ANY_ADAPTER
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
@@ -724,15 +799,18 @@ def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelR
     if not tool_defs:
         return
     for part in response.parts:
-        if isinstance(part, BaseToolCallPart) and (tool_def := tool_defs.get(part.tool_name)):
-            if tool_def.metadata:
-                otel_metadata: _otel_messages.ToolCallPartOtelMetadata = {}
-                if code_arg_name := tool_def.metadata.get('code_arg_name'):
-                    otel_metadata['code_arg_name'] = code_arg_name
-                if code_arg_language := tool_def.metadata.get('code_arg_language'):
-                    otel_metadata['code_arg_language'] = code_arg_language
-                if otel_metadata:
-                    part.otel_metadata = otel_metadata
+        if not isinstance(part, BaseToolCallPart):
+            continue
+        tool_def = tool_defs.get(part.tool_name)
+        if not tool_def or not tool_def.metadata:
+            continue
+        otel_metadata: _otel_messages.ToolCallPartOtelMetadata = {}
+        if code_arg_name := tool_def.metadata.get('code_arg_name'):
+            otel_metadata['code_arg_name'] = code_arg_name
+        if code_arg_language := tool_def.metadata.get('code_arg_language'):
+            otel_metadata['code_arg_language'] = code_arg_language
+        if otel_metadata:
+            part.otel_metadata = otel_metadata
 
 
 def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
@@ -829,7 +907,7 @@ class _FinishModelRequestSpan(Protocol):
 
 
 def _prepare_model_request_span_context(
-    settings: InstrumentationSettings, request_context: ModelRequestContext
+    settings: InstrumentationSettings, request_context: ModelRequestContext, span: Span
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
     # The model warns about ignored settings when it prepares the request to send it.
     with suppress_unsupported_setting_warnings():
@@ -838,6 +916,9 @@ def _prepare_model_request_span_context(
         )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    # A sampled-out span drops its attributes; metrics need only the model attributes above.
+    if not span.is_recording():
+        return prepared, attributes
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
         attributes.update(
@@ -962,10 +1043,12 @@ def open_model_request_span(
     prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
+    replay_snapshot: ReplaySnapshot | None = None
     previous_include_content = include_content_ctx.get()
     try:
         with (
-            settings.tracer.start_as_current_span(
+            start_as_current_span(
+                settings.tracer,
                 span_name,
                 attributes=attributes,
                 kind=SpanKind.CLIENT,
@@ -976,14 +1059,16 @@ def open_model_request_span(
         ):
             # Set inside the `with`, because the policy names the span it speaks for.
             include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+            # Inside the span, so only the durable units this request ran under count.
+            replay_snapshot = replay_snapshot_now()
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
-                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context, span)
 
-                # Preserve attributes set while the request ran, notably the concrete model selected
-                # by `FallbackModel`, while filling all request fields from the final context.
-                request_attributes.update(getattr(span, 'attributes', {}))
+                # Keep attributes set on the span since it opened, but describe the model this request
+                # is now made to: a hook can move it on to another model for a later attempt (#7018).
+                attributes.update(getattr(span, 'attributes', {}))
                 attributes.update(request_attributes)
                 span.set_attributes(request_attributes)
                 span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
@@ -1063,7 +1148,8 @@ def open_model_request_span(
                 yield finish, prepared_request_context
     finally:
         include_content_ctx.set(previous_include_content)
-        if record_metrics:
+        # A request a durable engine served from its journal was already recorded when it ran.
+        if record_metrics and not (replay_snapshot is not None and replay_snapshot.replayed()):
             record_metrics()
 
 
@@ -1125,10 +1211,10 @@ def get_instructions(
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
     from pydantic_ai.messages import InstructionPart
-    from pydantic_ai.models import Model
+    from pydantic_ai.models import _instruction_parts_of  # pyright: ignore[reportPrivateUsage]
 
     if model_request_parameters:
-        parts = Model._get_instruction_parts(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        parts = _instruction_parts_of(messages, model_request_parameters)
         return InstructionPart.join(parts) if parts else None
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)

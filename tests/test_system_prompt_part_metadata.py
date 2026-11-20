@@ -161,7 +161,9 @@ async def test_reinjector_keeps_metadata_on_parts_added_during_the_run():
         ModelRequest(parts=[SystemPromptPart('Stale.'), UserPromptPart('hi')]),
         ModelResponse(parts=[TextPart('hello')]),
     ]
-    result = await agent.run('again', message_history=history)
+    # A capability enqueuing a bare `SystemPromptPart` is warned toward `CapabilityPart`, but still works.
+    with pytest.warns(UserWarning, match='enqueued a bare `SystemPromptPart`'):
+        result = await agent.run('again', message_history=history)
 
     system_prompts = [
         (part.content, part.metadata)
@@ -186,6 +188,7 @@ def test_serialization_round_trip():
                 'content': 'Be brief.',
                 'timestamp': IsDatetime(iso_string=True),
                 'dynamic_ref': None,
+                'context_id': None,
                 'scope': 'conversation',
                 'metadata': {'origin': 'my_app', 'version': 2},
                 'part_kind': 'system-prompt',
