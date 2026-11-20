@@ -3,6 +3,11 @@
 Qwen3 Next's profile sets it; `tests/profiles/test_resolution_matrix.py` pins which routes resolve it. These pin the
 bytes each adapter sends, that the cached prefix holds as the conversation grows, and that the history keeps the
 tool's output as returned.
+
+These aren't VCR tests: VCR's body matching can't tell a wrapped tool output from an unwrapped one, so a cassette
+would replay the same response either way. The adapter tests read the bytes off a mock client instead. The
+`prepare_messages` tests feed `FunctionModel` histories a live provider can't be made to produce on demand: a denied
+call, a skipped call's stub, status text from an earlier run, a note in place of an unreadable file.
 """
 
 from __future__ import annotations as _annotations
