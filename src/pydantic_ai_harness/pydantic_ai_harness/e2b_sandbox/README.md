@@ -278,9 +278,9 @@ async def main():
 
 A new sandbox uses E2B's `desktop` template: Ubuntu with the XFCE desktop, a terminal and Google Chrome. The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. To also give the agent the sandbox's shell and files, add `Coder`.
 
-XFCE keeps some keys for itself, so the window in front never receives them. `printscreen` opens XFCE's screenshot tool. The media and volume keys also go to XFCE.
+XFCE keeps `printscreen` (it opens XFCE's screenshot tool) and the media and volume keys, so the window in front never gets them.
 
-If you pass your own `template`, it must include these programs: Xvfb draws the screen, `xdotool` moves the mouse and types, `xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen running after the command that started it ends. For the XFCE desktop, it also needs `startxfce4`.
+Your own `template` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop.
 
 The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
 
