@@ -25,9 +25,10 @@ from pydantic_ai_pax.builtin_plugins.logfire_mcp import LogfireMCPSettings
 from pydantic_ai_pax.builtin_plugins.notion import NotionSource
 from pydantic_ai_pax.builtin_plugins.ordinal import OrdinalSource
 from pydantic_ai_pax.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
+from pydantic_ai_pax.cli.cli import _settings_for  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.commands import Commands, config_command
-from pydantic_ai_pax.config import SETTING_FIELDS, PluginSettings, Settings, features
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_ai_pax.config.api_keys import KeyReference
 from pydantic_ai_pax.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_ai_pax.config.project_settings import PROJECT_FILE, load_project_settings
@@ -36,6 +37,7 @@ from pydantic_ai_pax.models.model_settings import model_settings_from_json
 from pydantic_ai_pax.plugins import PluginHost, SessionStart
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.ui.menus.field_menu import FieldMenu
+from pydantic_ai_pax.ui.menus.footer_menu import FOOTER_SETTING
 from pydantic_ai_pax.ui.menus.model_menu import ModelSettingsSource
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
 from tests.pax.dialog_script import ScriptedDialogs, Type
@@ -321,6 +323,22 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
 
 
+def test_full_screen_preference_defaults_off_and_survives_reopen(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        # A database from a build without the setting.
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.thinking', 'false'))
+    store = SettingsStore(path)
+    assert store.load().full_screen is False
+    store.set('display.full_screen', True)
+    reopened = SettingsStore(path)
+    assert reopened.load().full_screen is True
+    assert reopened.overrides() == {'display.thinking': False, 'display.full_screen': True}
+    reopened.reset('display.full_screen')
+    assert SettingsStore(path).overrides() == {'display.thinking': False}
+
+
 def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
     path = tmp_path / 'config.db'
     store = SettingsStore(path)
@@ -331,6 +349,117 @@ def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
     assert reopened.overrides() == {'display.task_models': False}
     reopened.reset('display.task_models')
     assert SettingsStore(path).load().task_models is True
+
+
+@pytest.mark.parametrize('layout', [[], ['activity', 'assistant_age', 'model']])
+def test_footer_layout_survives_a_build_without_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: list[str]
+) -> None:
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test"'))
+    store = SettingsStore(path)
+    defaults: list[str] = [
+        'model',
+        'workspace',
+        'context',
+        'output',
+        'cost',
+        'activity',
+        'plugins',
+        'updates',
+        'live',
+        'queued',
+    ]
+    assert store.load().footer_fields == defaults
+    assert store.overrides() == {'model': 'test'}
+    config_command(store, ['set', 'display.footer_fields', json.dumps(layout)])
+    assert SettingsStore(path).load().footer_fields == layout
+
+    older = {key: name for key, name in SETTING_FIELDS.items() if key != 'display.footer_fields'}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_ai_pax.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_ai_pax.config.settings_store.SETTING_FIELDS', older)
+        store = SettingsStore(path)
+        assert store.load().footer_fields == defaults
+        assert store.overrides() == {'model': 'test'}
+        config_command(store, ['set', 'display.thinking', 'false'])
+        assert not SettingsStore(path).load().thinking
+        config_command(store, ['reset', 'display.thinking'])
+    reopened = SettingsStore(path)
+    assert reopened.load().footer_fields == layout
+    assert reopened.overrides() == {'model': 'test', 'display.footer_fields': layout}
+    reopened.reset('display.footer_fields')
+    assert SettingsStore(path).load().footer_fields == defaults
+    assert SettingsStore(path).overrides() == {'model': 'test'}
+
+
+@pytest.mark.parametrize('fields', [['model', 'future-field', 'activity'], ['future-field']])
+def test_future_layout_fields_are_read_without_rewriting_saved_or_project_values(
+    tmp_path: Path, fields: list[str]
+) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    raw = json.dumps(fields)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
+    expected = [name for name in fields if name != 'future-field']
+    assert store.load().footer_fields == expected
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
+    context.set_setting(['display.thinking', 'false'])
+    context.reset_setting('display.thinking')
+    assert SettingsStore(store.path).load().footer_fields == expected
+    assert store.overrides()[FOOTER_SETTING] == fields
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert (
+            connection.execute('SELECT value_json FROM settings WHERE key = ?', (FOOTER_SETTING,)).fetchone()[0] == raw
+        )
+    project_file = tmp_path / '.clai' / 'settings.json'
+    project_file.parent.mkdir()
+    contents = json.dumps({'footer_fields': fields, 'thinking': False, 'future_setting': {'keep': True}})
+    project_file.write_text(contents)
+    project = load_project_settings(tmp_path, store=store)
+    assert project.overrides[FOOTER_SETTING] == fields
+    settings_for = _settings_for(store, model=None, request_limit=None)
+    assert settings_for(project).footer_fields == expected
+    context.use_project(project, settings_for(project))
+    context.set_setting(['display.spinner', 'working'])
+    assert load_project_settings(tmp_path, store=store).overrides[FOOTER_SETTING] == fields
+    assert project_file.read_text() == contents
+    assert store.overrides()[FOOTER_SETTING] == fields
+    for write in (
+        lambda: store.set(FOOTER_SETTING, list(fields)),
+        lambda: context.set_setting([FOOTER_SETTING, raw]),
+        lambda: config_command(store, ['set', FOOTER_SETTING, raw]),
+    ):
+        with pytest.raises(ValidationError):
+            write()
+    context.set_setting([FOOTER_SETTING, '["activity"]'])
+    assert store.load().footer_fields == ['activity']
+    config_command(store, ['reset', FOOTER_SETTING])
+    assert store.load().footer_fields == list(DEFAULT_FOOTER_FIELDS)
+    assert project_file.read_text() == contents
+
+
+@pytest.mark.parametrize('fields', ['model', [1], ['model', 'model']])
+def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fields: object) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    raw = json.dumps(fields)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
+    with pytest.raises(ValidationError):
+        store.load()
+    project_file = tmp_path / '.clai' / 'settings.json'
+    project_file.parent.mkdir()
+    project_file.write_text(json.dumps({'footer_fields': fields}))
+    with pytest.raises(ValueError):
+        load_project_settings(tmp_path)
+    store.reset(FOOTER_SETTING)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.thinking', '"invalid"'))
+    with pytest.raises(ValidationError):
+        store.load()
 
 
 def test_session_naming_is_opt_in_and_keeps_saved_choices(tmp_path: Path) -> None:
@@ -609,6 +738,88 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
     source.reset(row)
     assert SettingsStore(path).model_settings(name) == {'openai_reasoning_effort': 'high', 'future_option': 42}
     assert source.current(row) == 'default'
+
+
+@pytest.mark.parametrize(
+    ('stored', 'speed', 'tier'),
+    [
+        pytest.param('{"service_tier":"default"}', 'standard', 'default', id='fast-off'),
+        pytest.param('{"service_tier":"priority"}', 'fast', 'priority', id='fast-on'),
+        pytest.param('{"service_tier":"flex"}', '(not set)', 'flex', id='other-tier'),
+        pytest.param('{"max_tokens":64}', 'ultrafast', 'ultrafast', id='unrelated'),
+    ],
+)
+def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
+    """A tier an older CLAI's `/fast` saved picks the speed instead of the ultrafast default; other rows gain it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings() or {}
+    assert (settings.get('openai_service_tier') or settings.get('service_tier')) == tier
+    source = ModelSettingsSource(SettingsStore(path), name)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None and source.current(row) == speed
+    assert SettingsStore(path).model_settings(name) == json.loads(stored)
+
+
+@pytest.mark.parametrize(
+    ('stored', 'speed', 'tier'),
+    [
+        pytest.param(
+            '{"codex_speed":"ultrafast","service_tier":"default"}', 'standard', 'default', id='off-after-ultrafast'
+        ),
+        pytest.param('{"codex_speed":"fast","service_tier":"default"}', 'standard', 'default', id='off-after-fast'),
+        pytest.param(
+            '{"codex_speed":"standard","service_tier":"priority"}', 'fast', 'priority', id='on-after-standard'
+        ),
+        pytest.param('{"codex_speed":"ultrafast","service_tier":"priority"}', 'ultrafast', 'ultrafast', id='unchanged'),
+    ],
+)
+async def test_older_builds_fast_outranks_a_stale_speed(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
+    """An older build's `/fast` rewrites only `service_tier`; that later choice wins over the `codex_speed` beside it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', (name, stored))
+    store = SettingsStore(path)
+    settings = model_settings_from_json(store.model_settings(name), model=name).to_model_settings() or {}
+    assert settings.get('openai_service_tier') == tier
+    source = ModelSettingsSource(store, name)
+    row = FieldMenu(source).row_for('codex_speed')
+    assert row is not None and source.current(row) == speed
+    assert store.model_settings(name) == json.loads(stored)
+
+
+def test_codex_chain_keeps_its_saved_tier(tmp_path: Path) -> None:
+    """A chain's tier, as an older CLAI's `/fast` saved it, picks its Codex members' speed."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    members = ['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra']
+    store.save_chain(name='pool', models=members)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO model_settings VALUES (?, ?)', ('chain:pool', '{"service_tier":"priority"}'))
+    context = CommandContext(
+        settings=Settings(model='chain:pool'), store=store, apply_setting=lambda key, settings: None
+    )
+    defaults = context.model_defaults('chain:pool')
+    assert [(defaults(member) or {}).get('openai_service_tier') for member in members] == ['priority', 'priority']
+
+
+def test_codex_speed_survives_edits_to_other_settings(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    original: dict[str, JsonValue] = {'codex_speed': 'fast', 'future_option': 42}
+    store.save_model_settings(name, original)
+    source = ModelSettingsSource(SettingsStore(path), name)
+    row = FieldMenu(source).row_for('openai_reasoning_effort')
+    assert row is not None and source.apply(row, 'high').startswith('Saved')
+    assert SettingsStore(path).model_settings(name) == {**original, 'openai_reasoning_effort': 'high'}
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings()
+    assert settings is not None and settings.get('openai_service_tier') == 'priority'
 
 
 def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
@@ -1052,20 +1263,37 @@ async def test_saved_aoe_titles_load_in_builds_with_and_without_the_feature(
     await loader.close('exit')
 
 
+@pytest.mark.parametrize(
+    ('row', 'defer_loading'),
+    [
+        (
+            '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+            '{"servers": {"docs": {"type": "stdio", "command": "docs"}}}}',
+            None,
+        ),
+        (
+            '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+            '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
+            True,
+        ),
+        (
+            '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
+            '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": false}}}}',
+            False,
+        ),
+    ],
+    ids=['unset', 'on-demand', 'eager'],
+)
 async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_feature(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, row: str, defer_loading: bool | None
 ) -> None:
-    """`mcp` plugin-settings servers using `defer_loading` are tagged; a build lacking the feature drops them."""
+    """`mcp` plugin-settings servers setting `defer_loading` are tagged; a build lacking the feature drops them.
+
+    A server saved without the key, as older builds saved an eager one, now loads on demand and stays untagged.
+    """
     store = SettingsStore(tmp_path / 'settings.db')
     with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute(
-            'INSERT INTO plugins VALUES (?, ?)',
-            (
-                'mcp',
-                '{"id": "mcp", "factory": "pydantic_clai2.mcp", "enabled": true, "settings": '
-                '{"servers": {"docs": {"type": "stdio", "command": "docs", "defer_loading": true}}}}',
-            ),
-        )
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('mcp', row))
 
     def loader() -> PluginLoader[None]:
         return PluginLoader(
@@ -1077,9 +1305,15 @@ async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_f
 
     this_build = loader()
     await this_build.load_all()
+    [entry] = [entry for entry in this_build.entries() if entry.name == 'mcp']
+    assert entry.loaded is not None
+    assert entry.loaded.plugin.settings.model_dump()['servers']['docs']['defer_loading'] is (defer_loading is not False)
     await this_build.disable('mcp')
     await this_build.enable('mcp')
     await this_build.close('exit')
+    if defer_loading is None:
+        assert store.plugin_requirements('mcp') is None, 'a server without the key loads in every build'
+        return
     assert store.plugin_requirements('mcp') == {'servers': ['mcp-defer-loading']}, 'saving tags the servers'
     saved = store.plugins()
 

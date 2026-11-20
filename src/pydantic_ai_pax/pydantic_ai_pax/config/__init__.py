@@ -4,11 +4,21 @@ import re
 from pathlib import Path
 from typing import Annotated, Literal, get_args
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from pydantic_ai_pax.config.theme_names import names
 
 _WORKTREE_COMMAND_PLACEHOLDER = re.compile(r'{[A-Za-z_]\w*}')
+_STORED_FOOTER_FIELDS: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
@@ -16,6 +26,21 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+FooterField = Literal[
+    'model',
+    'workspace',
+    'context',
+    'output',
+    'cost',
+    'activity',
+    'plugins',
+    'updates',
+    'live',
+    'queued',
+    'assistant_age',
+]
+FOOTER_FIELDS: tuple[FooterField, ...] = get_args(FooterField)
+DEFAULT_FOOTER_FIELDS: tuple[FooterField, ...] = tuple(name for name in FOOTER_FIELDS if name != 'assistant_age')
 PermissionMode = Literal['full', 'auto', 'read-only']
 """harness `PermissionMode`, spelled out so reading settings imports no harness code."""
 PERMISSION_MODES: tuple[PermissionMode, ...] = get_args(PermissionMode)
@@ -121,6 +146,13 @@ class Settings(BaseModel):
         min_length=1,
         description='Working animation; /spinner previews the choices. An unknown name shows working.',
     )
+    footer_fields: list[FooterField] = Field(
+        default=list(DEFAULT_FOOTER_FIELDS),
+        description=(
+            'Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. '
+            'Use /set to configure the layout or reset it. assistant_age is off by default.'
+        ),
+    )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     task_models: bool = Field(
         default=True,
@@ -130,6 +162,13 @@ class Settings(BaseModel):
         ),
     )
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
+    full_screen: bool = Field(
+        default=False,
+        description=(
+            'Take the whole terminal height from the start, instead of starting compact below the shell '
+            'and growing as the session needs room. Takes effect next start.'
+        ),
+    )
     tool_calls: ToolCallDisplay = Field(
         default='detailed',
         description=(
@@ -165,6 +204,14 @@ class Settings(BaseModel):
         default={},
         description='Confirmed removal on exit: absolute Git common directory -> argv.',
     )
+
+    @field_validator('footer_fields')
+    @classmethod
+    def validate_footer_fields(cls, value: list[FooterField]) -> list[FooterField]:
+        """One occurrence per visible field; omitted fields are hidden."""
+        if len(value) != len(set(value)):
+            raise ValueError('Footer fields must be unique')
+        return value
 
     @field_validator('worktree_remove_commands')
     @classmethod
@@ -209,7 +256,9 @@ SETTING_FIELDS = {
     'display.task_models': 'task_models',
     'display.theme': 'theme',
     'display.spinner': 'spinner',
+    'display.footer_fields': 'footer_fields',
     'display.splash': 'splash',
+    'display.full_screen': 'full_screen',
     'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
@@ -257,12 +306,17 @@ STRING_SETTINGS = frozenset(
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 
 
-def resolve_settings(overrides: dict[str, JsonValue]) -> Settings:
-    """Reject unknown setting names and validate stored or supplied values."""
+def resolve_settings(overrides: dict[str, JsonValue], *, stored: bool = False) -> Settings:
+    """Validate values; stored layouts may name fields supported only by another build."""
     unknown = overrides.keys() - SETTING_FIELDS.keys()
     if unknown:
         raise ValueError(f'Unknown settings: {", ".join(sorted(unknown))}')
-    return Settings.model_validate({SETTING_FIELDS[key]: value for key, value in overrides.items()})
+    values: dict[str, JsonValue] = {SETTING_FIELDS[key]: value for key, value in overrides.items()}
+    if stored and 'footer_fields' in values:
+        # Project and store overrides remain raw; only the effective snapshot skips future names.
+        fields = _STORED_FOOTER_FIELDS.validate_python(values['footer_fields'], strict=True)
+        values['footer_fields'] = [field for name in fields for field in FOOTER_FIELDS if field == name]
+    return Settings.model_validate(values)
 
 
 _CODER_FACTORY = 'pydantic_ai_harness.coder:Coder'

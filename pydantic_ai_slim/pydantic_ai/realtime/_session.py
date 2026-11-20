@@ -139,9 +139,9 @@ from ._utils import (
     InstructionChangeContext,
     SystemPromptContext,
     SystemPromptText,
+    pcm_from_wav,
     render_instruction_change,
     replay_recorded_system_prompts_in_place,
-    seed_pcm_audio,
 )
 from .codec import (
     AudioDelta,
@@ -327,7 +327,7 @@ _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:  # noqa: TID251  (not converted to anyio yet)
     """Put without blocking the pump, retaining the newest bounded window.
 
     The queue is sized one over its data window so the completion sentinel always fits. Returns the
@@ -382,7 +382,7 @@ class _AudioTap:
     so a device-side playback position can be mapped back into those coordinates.
     """
 
-    queue: asyncio.Queue[bytes | object]
+    queue: asyncio.Queue[bytes | object]  # noqa: TID251  (not converted to anyio yet)
     subscribed_at_bytes: int
     max_buffered_bytes: int
     """How much audio the queue may hold before the oldest chunks are dropped to make room."""
@@ -399,7 +399,7 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
-    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    progress: asyncio.Event = field(default_factory=asyncio.Event)  # noqa: TID251  (not converted to anyio yet)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
 
@@ -863,7 +863,7 @@ class RealtimeSession:
         # guards is a property of the response, not of how long the user kept talking. Released
         # when the next response opens, and by a reconnect that discards the one it referred to.
         self._server_cancelled_the_response_on_speech = False
-        self._exchange_progress = asyncio.Event()
+        self._exchange_progress = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Whether the frame being handled lost a response under way (a reconnect that didn't carry it).
         self._frame_lost_response = False
         # Answered calls of tool rounds that are over, which the connection may delete from the provider's
@@ -880,7 +880,7 @@ class RealtimeSession:
         # abandon the reader generator without affecting resource lifetime, and `__aexit__` still
         # drains everything before the connection and toolset close.
         self._queue: deque[RealtimeEvent | object] = deque()
-        self._queue_event = asyncio.Event()
+        self._queue_event = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._queue_delta_count = 0
         self._queue_dropped_deltas = 0
         self._queue_structural_count = 0
@@ -888,8 +888,8 @@ class RealtimeSession:
         self._queue_changed = object()
         self._tap_finished = object()
         self._audio_taps: set[_AudioTap] = set()
-        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
-        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()  # noqa: TID251  (not converted to anyio yet)
         self._audio_tap_drops = 0
         self._transcript_tap_drops = 0
         # Emitted-audio coordinates for `interrupt(played_bytes=...)`: cumulative output audio bytes,
@@ -925,8 +925,8 @@ class RealtimeSession:
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
         # `finally`, including cancellation and failure paths.
-        self._tool_completion_events: set[asyncio.Event] = set()
-        self._last_tool_barrier: asyncio.Event | None = None
+        self._tool_completion_events: set[asyncio.Event] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._last_tool_barrier: asyncio.Event | None = None  # noqa: TID251  (not converted to anyio yet)
         # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
         # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
         # released the moment `handle_call` settles (the same event-loop segment that records a
@@ -1543,7 +1543,7 @@ class RealtimeSession:
         self._ensure_streamable()
         # The queue itself is unbounded: `_AudioTap.put` bounds it by bytes, and the completion
         # sentinel always fits behind a full buffer without discarding audio or blocking teardown.
-        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()  # noqa: TID251  (not converted to anyio yet)
         tap = _AudioTap(
             queue=queue,
             subscribed_at_bytes=self._emitted_audio_bytes,
@@ -1725,7 +1725,7 @@ class RealtimeSession:
         # Each kind gets its own subscription, so a consumer's window is never spent on items it
         # would discard: sharing one queue let a burst of deltas evict the finalized part a
         # `delta=False` consumer was waiting for, and the two speakers' transcripts interleave.
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)  # noqa: TID251  (not converted to anyio yet)
         taps: set[Any] = self._transcript_delta_taps if delta else self._transcript_taps
         taps.add(queue)
         if self._pump_finished:
@@ -1991,10 +1991,10 @@ class RealtimeSession:
             # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
             # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
             await self.send_audio(
-                seed_pcm_audio(
-                    audio=content,
-                    provider_name=self._provider_name or 'realtime',
+                pcm_from_wav(
+                    content.data,
                     sample_rate=self.audio_input_sample_rate,
+                    error_prefix='Cannot send WAV audio through `session.send()`',
                 )
             )
         elif content.media_type == 'audio/pcm':
@@ -2713,8 +2713,8 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -2952,9 +2952,9 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
-        completion: asyncio.Event,
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
+        completion: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -3099,7 +3099,7 @@ class RealtimeSession:
         # `output_parts` in emission order whatever the mode.
         order_index = self._next_tool_order_index
         self._next_tool_order_index += 1
-        completion = asyncio.Event()
+        completion = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         if is_barrier:
             execution_prerequisites = tuple(self._tool_completion_events)
             self._last_tool_barrier = completion
@@ -3108,7 +3108,7 @@ class RealtimeSession:
         else:
             execution_prerequisites = ()
         self._tool_completion_events.add(completion)
-        validation_done = asyncio.Event()
+        validation_done = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         task = asyncio.create_task(
             self._run_tool(
                 call_part,
@@ -3412,7 +3412,7 @@ class RealtimeSession:
         for tap in self._audio_taps:
             self._audio_tap_drops += tap.put(chunk)
 
-    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:
+    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:  # noqa: TID251  (not converted to anyio yet)
         for queue in queues:
             if _put_tap(queue, item) is not None:
                 self._transcript_tap_drops += 1

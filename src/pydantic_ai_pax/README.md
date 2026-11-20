@@ -180,8 +180,8 @@ settings first, such as reasoning effort or thinking.
 ![/model add showing Anthropic models with context size and prices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/model-add.png)
 
 Each model keeps its own settings. Change them later with `/model settings`, or use the
-shortcuts: `/effort high` sets reasoning effort, and `/fast` turns on priority
-processing for Codex models.
+shortcuts: `/effort high` sets reasoning effort, and `/fast` picks the speed of Codex
+models, ultrafast by default on the models that offer it.
 
 ### Sign in: `/login` and `/accounts`
 

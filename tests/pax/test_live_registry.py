@@ -31,9 +31,9 @@ from pydantic_ai_pax.runtime.live_registry import (
     peer_uid,
     request,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 _RECORD = TypeAdapter(LiveRecord)
-READINESS_WAIT_TIMEOUT = 10
 
 
 def subscribe(callback: Callable[[], None]) -> Callable[[], None]:

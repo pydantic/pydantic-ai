@@ -39,6 +39,7 @@ from pydantic_ai_pax.plugins import TaskInfo
 from pydantic_ai_pax.runtime.tasks import Tasks, task_tree
 from pydantic_ai_pax.ui.menus.menu_worker import run_worker, worker_stopping
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.history import prompt_text
 from pydantic_ai_pax.ui.rendering.rendering import markdown_style
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
@@ -139,14 +140,6 @@ def _quote(text: str) -> str:
 def _clip(text: str, width: int) -> str:
     text = ' '.join(text.split())
     return text if len(text) <= width else text[: width - 1] + '…'
-
-
-def _age(seconds: float) -> str:
-    minutes, seconds = divmod(max(0, int(seconds)), 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f'{hours}h{minutes:02}m'
-    return f'{minutes}m{seconds:02}s' if minutes else f'{seconds}s'
 
 
 def _layout(area: Rect) -> list[Rect]:
@@ -406,7 +399,10 @@ def _row_lines(row: Row, *, selected: bool, frame: str, width: int) -> tuple[str
     glyph, role = (frame, theme.ACCENT) if running else _SETTLED.get(info.outcome or '', ('✗', theme.ERROR))
     indent = '  ' * row.depth
     marker = f'{theme.sgr(theme.ACCENT)}❯{_RESET}' if selected else ' '
-    age = _age(((info.finished_at or datetime.now(UTC)) - info.started_at).total_seconds())
+    age = format_duration(
+        ((info.finished_at or datetime.now(UTC)) - info.started_at).total_seconds(),
+        started_at=info.started_at.timestamp(),
+    )
     name = terminal_text(f'{info.agent} {info.id[:8]}', keep='')
     gap = ' ' * max(1, width - len(indent) - len(name) - len(age) - 4)
     head = (

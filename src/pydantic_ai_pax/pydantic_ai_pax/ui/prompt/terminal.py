@@ -170,6 +170,8 @@ class Terminal(Generic[DepsT, OutputT]):
             spinner=lambda: self._shown().spinners.active(),
             panel=lambda glyph: (*self._shown().tasks.rows(glyph), *self._shown().forks.rows(glyph)),
             queue_changed=lambda: self._shown().live_session.changed(),
+            queue_in_toolbar=lambda: 'queued' in self._shown().context.settings.footer_fields,
+            full_screen=self._shown().context.settings.full_screen,
         )
         try:
             async with self.editor.opened():

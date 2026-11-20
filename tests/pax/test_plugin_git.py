@@ -24,10 +24,9 @@ from pydantic_ai_pax.config.plugin_requirements import Requirements
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins.git import clone_repository, parse_repository
 from pydantic_ai_pax.plugins.loader import PluginError
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .test_plugin_loader import SEGMENT, Harness
-
-READINESS_WAIT_TIMEOUT = 30
 
 PLUGIN = """\
 from collections.abc import Sequence

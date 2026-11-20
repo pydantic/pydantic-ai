@@ -158,7 +158,8 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=24),
             store=SettingsStore(tmp_path / 'settings.db'),
-            settings=Settings(model=None, session_namer=False),
+            # A compact panel prints the conversation into scrollback when `/resume` takes over.
+            settings=Settings(model=None, session_namer=False, full_screen=True),
         )
     text = '\n'.join(Text.from_ansi(row).plain for row in surfaces[0].transcript.frame(width=200, height=200).rows)
     assert '> hello' not in text and 'fresh answer' not in text

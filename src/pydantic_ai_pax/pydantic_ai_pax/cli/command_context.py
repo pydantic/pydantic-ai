@@ -141,7 +141,7 @@ class CommandContext:
         starting = (
             self.settings_for(project)
             if self.settings_for is not None
-            else resolve_settings(self.store.overrides() | project.overrides)
+            else resolve_settings(self.store.overrides() | project.overrides, stored=True)
         )
         for key in changed:
             field = SETTING_FIELDS[key]
@@ -232,9 +232,11 @@ class CommandContext:
         """
         from pydantic_ai_pax.models.model_settings import default_model_settings
 
-        return lambda name: default_model_settings(
-            model=name, saved=self.store.model_settings(model) if name == model else {}
-        )
+        def defaults(name: str) -> ModelSettings | None:
+            saved = self.store.model_settings(model)
+            return default_model_settings(model=name, saved=saved if name == model else {}, selected=saved)
+
+        return defaults
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
@@ -265,7 +267,7 @@ class CommandContext:
         self.saved(key)
 
     def _when(self, key: str) -> str:
-        when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'
+        when = 'Applies at next startup.' if key in ('display.splash', 'display.full_screen') else 'Applied.'
         if self.from_project(key):
             when += ' The project file sets it again at next start.'
         return when

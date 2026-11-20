@@ -30,7 +30,7 @@ from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
+from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS
 from pydantic_ai_pax.ui.rendering import theme
 from tests.conftest import no_leaked_tasks
 from tests.pax.surface_terminal import SurfaceTerminal
@@ -44,8 +44,11 @@ async def editor(
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
     key_wait_limit: float = 5,
+    inline: bool = False,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    The panel is full screen, as `display.full_screen` makes it, so frames have fixed rows, unless `inline`.
 
     A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
     """
@@ -67,13 +70,15 @@ async def editor(
             toolbar=toolbar,
             clock=clock,
             panel=panel,
+            full_screen=not inline,
         )
         async with live.opened():
             yield live, pipe, output
         assert console.file is output
         value = output.getvalue()
-        assert value.rindex(LEAVE) > value.rindex(ENTER), 'the editor returns the main screen'
-        assert value.rindex(MODES_OFF) > value.rindex(MODES_ON)
+        if not inline:
+            assert value.rindex(LEAVE) > value.rindex(ENTER), 'the editor returns the main screen'
+        assert value.rindex(MODES_OFF) > value.rindex(KEYS_ON)
 
 
 async def test_long_paste_submission_and_history() -> None:
@@ -361,6 +366,25 @@ async def test_queue_labels_and_small_terminal() -> None:
         assert len(live.frame()) == 1
 
 
+async def test_draft_rows_follow_a_prompt_marker() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('a' * 79 + '\nxy')
+        frame = live.frame()
+        # The title rule, three draft rows, the bottom rule, and the footer.
+        draft = frame[1:-2]
+        assert [Text.from_ansi(row).plain for row in draft] == ['❯ ' + 'a' * 78, '  a', '  xy ']
+        # The cursor paints after the indent, not at the left edge.
+        assert draft[-1].endswith('  xy\x1b[7m \x1b[27m')
+        live.buffer.cursor = 0
+        first = live.frame()[1]
+        assert Text.from_ansi(first).plain == '❯ ' + 'a' * 78
+        assert first.index('❯') < first.index('\x1b[7ma\x1b[27m')
+        # A draft taller than its rows scrolls to the cursor, and the marker stays on the top row shown.
+        live.buffer.replace('\n'.join(f'line {index}' for index in range(20)))
+        plain = [Text.from_ansi(row).plain for row in live.frame()[1:-2]]
+        assert plain == ['❯ line 12', *(f'  line {index}' for index in range(13, 19)), '  line 19 ']
+
+
 async def test_completion_acceptance_and_cycling() -> None:
     ready = anyio.Event()
 
@@ -509,7 +533,7 @@ async def test_suggestions_expand_the_prompt_box() -> None:
         dashes = [index for index, row in enumerate(plain) if row and set(row) == {'─'}]
         top, bottom = dashes[0], dashes[-1]
         inside = plain[top + 1 : bottom]
-        assert inside[0].startswith('/he')
+        assert inside[0].startswith('❯ /he')
         assert inside[1].startswith('/help Help')
         assert inside[2].startswith('/hello Hello command')
         assert all('│' not in row and not row.startswith('>') for row in inside)
@@ -910,6 +934,29 @@ async def test_ctrl_enter_enters_outside_windows() -> None:
     assert steered == ['steered']
 
 
+@pytest.mark.parametrize('shift_enter', ['\x1b[13;2u', '\x1b[27;2;13~'])
+@pytest.mark.parametrize('windows', [True, False])
+async def test_windows_ctrl_enter_steers_and_shift_enter_inserts_a_newline(shift_enter: str, windows: bool) -> None:
+    """Windows Terminal sends Ctrl+Enter as LF unless it reports modified keys (#13907)."""
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, pipe, _):
+        live.steer = steer
+        live.ctrl_enter_steers = windows
+        pipe.send_text(f'steer\x1b[13;5uLF\none{shift_enter}two\r')
+        if windows:
+            assert await live.read() == 'one\ntwo'
+        else:
+            # Ctrl+Enter is Enter and Ctrl-J a newline, as before.
+            assert await live.read() == 'steer'
+            assert await live.read() == 'LF\none\ntwo'
+    assert steered == (['steer', 'LF'] if windows else [])
+
+
 class FrameClock:
     """A settable clock that records the times at which the editor built a frame."""
 
@@ -1031,3 +1078,27 @@ async def test_reading_shows_the_status_the_shell_set_before_it() -> None:
         with pytest.raises(PromptWakeup):
             await live.read()
         assert terminal.lines()[-1].strip() == 'new-model'
+
+
+async def test_the_editor_opens_compact_below_the_shell() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    terminal.write('$ clai2\r\n')
+    async with editor(output=terminal, inline=True) as (live, _, _):
+        live.buffer.replace('draft')
+        live.paint()
+        assert not terminal.alternate
+        lines = terminal.lines()
+        assert lines[0] == '$ clai2' and lines[1] == ''
+        assert any(line.startswith('❯ draft') for line in lines[2:6])
+        assert lines[-1] == '', 'the panel takes only the rows it needs'
+
+
+async def test_the_full_screen_editor_takes_the_terminal_from_the_start() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    terminal.write('$ clai2\r\n')
+    async with editor(output=terminal) as (live, _, _):
+        live.buffer.replace('draft')
+        live.paint()
+        assert terminal.alternate
+        assert terminal.lines()[0] == ''
+        assert terminal.lines()[-1].strip() == 'ready', 'the editor sits at the bottom of the terminal'

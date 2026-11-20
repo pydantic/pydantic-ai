@@ -42,7 +42,7 @@ def test_terminal_fixture_returns_on_main_screen_newlines_only() -> None:
 
 
 class Screen:
-    def __init__(self, *, width: int = 80, height: int = 24) -> None:
+    def __init__(self, *, width: int = 80, height: int = 24, inline: bool = False) -> None:
         self.now = 0.0
         self.terminal = SurfaceTerminal(width=width, height=height)
         self.opened: list[str] = []
@@ -52,6 +52,7 @@ class Screen:
             clock=lambda: self.now,
             open_url=self.opened.append,
         )
+        self.surface.full_screen = not inline
 
     def write(self, text: str) -> None:
         """Write a frame interval apart, so every write paints."""
@@ -65,6 +66,7 @@ class Screen:
 def test_modified_key_and_mouse_reporting_are_scoped_to_editor_ownership() -> None:
     output = io.StringIO()
     surface = PromptSurface(output=output, size=lambda: (80, 24))
+    surface.full_screen = True
     for activation in range(1, 3):
         surface.paint(ROWS)
         surface.paint((*ROWS, 'EXTRA ROW'))
@@ -386,8 +388,12 @@ def test_short_transcripts_do_not_scroll() -> None:
 def test_scroll_anchor_survives_eviction_by_following_again() -> None:
     terminal = SurfaceTerminal(width=40, height=8)
     surface = PromptSurface(
-        output=terminal, size=lambda: (40, 8), transcript=TranscriptBuffer(max_lines=10), clock=lambda: 1.0
+        output=terminal,
+        size=lambda: (40, 8),
+        transcript=TranscriptBuffer(max_lines=10),
+        clock=lambda: 1.0,
     )
+    surface.full_screen = True
     surface.paint(('EDITOR',))
     for index in range(10):
         surface.write(f'line {index}\n')
@@ -870,3 +876,107 @@ def test_the_wheel_scrolls_both_ways_with_or_without_modifiers() -> None:
     assert screen.lines()[0] == f'line {int(newest.split()[1]) - WHEEL_ROWS}'
     screen.surface.transcript_key('mouse', '\x1b[<65;1;1M')
     assert screen.surface.view.anchor is None
+
+
+def test_the_panel_starts_compact_below_earlier_output_and_grows_to_full_screen() -> None:
+    """Like Claude Code: a short session leaves the shell above it, and only a full panel takes the screen."""
+    terminal = SurfaceTerminal(width=40, height=10)
+    ticks = iter(range(1000))
+    surface = PromptSurface(output=terminal, size=lambda: (40, 10), clock=lambda: float(next(ticks)))
+    terminal.write('$ clai2\r\n')
+    console = Console(file=terminal, force_terminal=True)
+    with surface.transcript.capture(console):
+        console.print('banner')
+    terminal.write('\r')  # Startup runs in cooked mode, where the newline also returned the carriage.
+    surface.paint(ROWS)
+    assert not terminal.alternate, 'the panel starts on the main screen'
+    assert terminal.lines() == ['$ clai2', 'banner', '', *ROWS, '', '', '']
+    surface.write('answer\n')
+    assert terminal.lines() == ['$ clai2', 'banner', 'answer', '', *ROWS, '', '']
+    surface.paint(('TOP', 'DRAFT', 'BOTTOM'))
+    assert terminal.lines() == ['$ clai2', 'banner', 'answer', '', 'TOP', 'DRAFT', 'BOTTOM', '', '', '']
+    surface.paint(ROWS)
+    start = len(terminal.getvalue())
+    surface.paint(ROWS)
+    assert terminal.getvalue()[start:] == '', 'an unchanged panel is not painted again'
+    with surface.held():
+        assert terminal.lines() == ['$ clai2', 'banner', *[''] * 8], 'a full-screen menu finds the panel erased'
+    surface.paint(ROWS)
+    assert terminal.lines() == ['$ clai2', 'banner', 'answer', '', *ROWS, '', '']
+    for index in range(3):
+        surface.write(f'line {index}\n')
+    assert not terminal.alternate
+    assert terminal.lines() == ['banner', 'answer', 'line 0', 'line 1', 'line 2', '', *ROWS], 'it grows into scrollback'
+    assert terminal.history == ['$ clai2']
+    surface.write('line 3\n')
+    assert terminal.alternate, 'output that fills the terminal takes it over'
+    assert terminal.lines() == ['answer', *(f'line {index}' for index in range(4)), '', *ROWS]
+    surface.restore()
+    assert not terminal.alternate
+    assert terminal.history == ['$ clai2']
+    assert terminal.lines()[:7] == ['banner', 'answer', *(f'line {index}' for index in range(4)), '']
+
+
+def test_a_width_change_moves_the_inline_panel_to_full_screen() -> None:
+    """A terminal that reflows text moves the inline rows, so erasing them by count would guess."""
+    screen = Screen(width=40, height=10, inline=True)
+    screen.surface.paint(ROWS)
+    assert not screen.terminal.alternate
+    screen.terminal.resize(width=30, height=10)
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate
+    assert screen.lines()[-4:] == list(ROWS)
+    screen.terminal.resize(width=40, height=12)
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate, 'full screen is for good'
+
+
+def test_a_taller_terminal_keeps_the_panel_inline_and_a_shorter_one_moves_it_to_full_screen() -> None:
+    screen = Screen(width=40, height=10, inline=True)
+    screen.surface.paint(ROWS)
+    screen.terminal.resize(width=40, height=12)
+    screen.surface.paint(ROWS)
+    assert not screen.terminal.alternate
+    assert screen.lines()[:5] == ['', *ROWS]
+    # A shorter terminal may have pushed the panel's top rows into scrollback, out of reach of an erase.
+    screen.terminal.resize(width=40, height=11)
+    screen.surface.paint(ROWS)
+    assert screen.terminal.alternate
+    assert screen.lines()[-4:] == list(ROWS)
+
+
+def test_releasing_the_inline_panel_prints_it_so_others_can_write_below() -> None:
+    """A command such as `/update now` may write to the terminal itself, below rows the panel erases by count."""
+    screen = Screen(width=40, height=10, inline=True)
+    screen.terminal.write('$ clai2\r\n')
+    screen.surface.paint(ROWS)
+    screen.write('answer\n')
+    screen.surface.release()
+    assert not screen.terminal.alternate
+    assert screen.lines()[:3] == ['$ clai2', 'answer', ''], 'the transcript is in scrollback; the editor is gone'
+    screen.write('command output\n')
+    screen.write('progress.')
+    screen.write('.')
+    screen.surface.refresh()  # The frame interval's float sum can fall just short.
+    assert screen.lines()[2:5] == ['command output', 'progress..', ''], 'an unfinished line shows as it grows'
+    screen.write(' done\n')
+    screen.surface.refresh()
+    assert screen.lines()[2:5] == ['command output', 'progress.. done', '']
+    screen.terminal.write('written by the command itself\r\n')
+    screen.surface.paint(ROWS)
+    assert not screen.terminal.alternate, 'the panel comes back inline below it'
+    printed = ['$ clai2', 'answer', 'command output', 'progress.. done', 'written by the command itself']
+    assert screen.lines() == [*printed, '', *ROWS]
+    screen.surface.restore()
+    assert screen.lines()[:6] == [*printed, '']
+
+
+def test_releasing_the_inline_panel_mid_turn_moves_it_to_full_screen() -> None:
+    """The turn may still extend a part it streamed, so it cannot be printed into scrollback yet."""
+    screen = Screen(width=40, height=10, inline=True)
+    screen.surface.paint(ROWS)
+    screen.write('streamed\n')
+    screen.surface.release(turn_running=True)
+    assert screen.terminal.alternate
+    assert screen.lines()[0] == 'streamed'

@@ -7,7 +7,6 @@ import importlib.util
 import os
 import re
 import secrets
-import socket
 import sys
 import warnings
 from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
@@ -33,7 +32,15 @@ from pytest_mock import MockerFixture
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BinaryImage,
+    DeferredToolRequests,
+    DeprecatedModelWarning,
+    Embedder,
+    ImageGenerator,
+)
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
@@ -63,8 +70,9 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards, gc_isolation
+from . import cassette_hooks, cost_guards, gc_isolation, span_schema
 from ._inline_snapshot import Builder, Custom, customize
+from ._ports import reserve_loopback_port
 from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
@@ -132,6 +140,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
+    config.pluginmanager.register(span_schema, span_schema.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -1045,6 +1054,64 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
 
 
+DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
+    # Anthropic, retires 2026-06-15: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-20250514',
+    # Anthropic, retires 2026-08-05: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-1-20250805',
+    # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-mythos-preview',
+    # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.5-preview',
+    # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037
+    'o1-mini',
+    # OpenAI, retires 2026-05-07: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4o-audio-preview',
+    # OpenAI, retires 2026-07-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'computer-use-preview',
+    # OpenAI, retires 2026-10-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.1-nano',
+    'o3-mini',
+    'o4-mini',
+    # OpenAI, retires 2026-12-11: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-pro',
+    'o3',
+    # OpenAI, retires 2027-01-20: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-audio-mini',
+    # OpenAI, retires 2027-04-01: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5.4-nano',
+)
+"""Models the suite's recordings and mocks use, which their providers have since deprecated.
+
+Grouped by the provider's announcement, each group with its retirement date and the issue tracking the move of its
+tests to a current model. See `ignore_deprecated_models_in_recordings`.
+"""
+
+
+def ignore_deprecated_models_in_recordings(record_mode: str | None) -> None:
+    """Ignore the deprecation warnings for `DEPRECATED_MODELS_IN_RECORDINGS`, unless the run records cassettes.
+
+    Replaying an existing recording against one of these models is fine, but recording a new one must fail, so a test
+    moves to a current model before it's re-recorded. That covers Pydantic AI's `DeprecatedModelWarning` and the
+    `anthropic` SDK's own `DeprecationWarning` for the models in its table, which pytest shows.
+    """
+    if record_mode not in (None, 'none'):
+        return
+    model_ids = '|'.join(map(re.escape, DEPRECATED_MODELS_IN_RECORDINGS))
+    warnings.filterwarnings('ignore', f"Model '[^']*:(?:{model_ids})' is deprecated", DeprecatedModelWarning)
+    warnings.filterwarnings('ignore', f"The model '(?:{model_ids})' is deprecated", DeprecationWarning)
+
+
+@pytest.fixture(autouse=True)
+def replay_deprecated_models(request: pytest.FixtureRequest) -> None:
+    ignore_deprecated_models_in_recordings(request.config.getoption('record_mode'))
+
+
 @pytest.fixture
 def restore_native_tool_types() -> Iterator[None]:
     """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
@@ -1103,26 +1170,6 @@ except ImportError:
     pass
 
 
-def _reserve_loopback_port() -> int:
-    """A loopback port that no other `bind(0)` is handed while it is in `TIME_WAIT`, but a server can still bind.
-
-    Closing an accepted connection first leaves the port itself in `TIME_WAIT`: the kernel then skips it
-    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. Linux
-    allows that bind only if the socket that left the port in `TIME_WAIT` set `SO_REUSEADDR` too, so the
-    listener sets it, as Rust's `TcpListener::bind` does for the Temporal SDK, which reserves its
-    dev-server ports the same way.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(('127.0.0.1', 0))
-        listener.listen()
-        port: int = listener.getsockname()[1]
-        with socket.create_connection(('127.0.0.1', port)):
-            accepted, _ = listener.accept()
-            accepted.close()
-    return port
-
-
 @pytest.fixture(scope='session')
 def prefect_test_server() -> Iterator[None]:
     """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
@@ -1163,7 +1210,7 @@ def prefect_test_server() -> Iterator[None]:
         # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
         # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
         # Temporal dev server, can be handed it and answer the harness's health check, failing its setup.
-        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
+        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', reserve_loopback_port)
         with prefect_test_harness(server_startup_timeout=120):
             yield
 

@@ -36,6 +36,7 @@ def test_defaults_apply_without_saved_preferences(tmp_path: Path, provider: str,
         'openai_reasoning_mode': 'standard',
         'openai_reasoning_summary': 'detailed',
         'openai_text_verbosity': 'low',
+        **({'openai_service_tier': 'ultrafast'} if model == 'openai-codex:gpt-6-astra' else {}),
     }
     assert context.store.model_settings(model) == {}
 

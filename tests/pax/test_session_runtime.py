@@ -8,7 +8,9 @@ from pathlib import Path
 
 import anyio
 import pytest
+from rich.color import ColorSystem
 from rich.console import Console
+from rich.style import Style
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
@@ -30,20 +32,26 @@ from pydantic_ai_pax.runtime.session import resolve_model_name
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.tasks import TaskRouter, Tasks
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
+from pydantic_ai_pax.ui.rendering import theme
 from tests.pax.test_tasks import task
 
 
 def runtime_over(
-    process: ClaiProcess, workspace: Path, agent: Agent[None, str] | None = None
+    process: ClaiProcess, workspace: Path, agent: Agent[None, str] | None = None, *, colored: bool = False
 ) -> tuple[SessionRuntime[None, str], io.StringIO]:
     workspace.mkdir(exist_ok=True)
     output = io.StringIO()
+    console = (
+        Console(file=output, color_system='truecolor', width=120)
+        if colored
+        else Console(file=output, force_terminal=False, width=120)
+    )
     runtime = create_shell(
         agent or Agent(TestModel(), deps_type=type(None)),
         deps=None,
         plugins=(),
         usage_limits=None,
-        console=Console(file=output, force_terminal=False, width=120),
+        console=console,
         settings=Settings(model='test') if agent is None else None,
         store=None,
         builtin_plugins=(),
@@ -73,6 +81,23 @@ async def test_a_runtime_without_a_terminal_serves_input_over_the_process_stores
     assert '> hello\n\nsuccess (no tool calls)' in output.getvalue()
     saved = await process.conversations.get(conversation_id=runtime.session.summary.id)
     assert saved.summary.workspace == str((tmp_path / 'project').resolve())
+
+
+async def test_command_results_and_errors_are_shown_as_returned(tmp_path: Path) -> None:
+    """Rich's repr highlighter does not colour a command's result or error, such as `True` or `/set`."""
+    process = ClaiProcess.open(SettingsStore(tmp_path / 'config.db'))
+    runtime, output = runtime_over(process, tmp_path / 'project', colored=True)
+
+    runtime.send_input('/set display.thinking')
+    runtime.send_input('/set nope 1')
+    runtime.send_input('/exit')
+
+    assert await runtime.run() == 'exit'
+    lines = output.getvalue().splitlines()
+    # The result has no escape codes, and the error only the error colour around the whole line.
+    assert 'True' in lines
+    usage = 'Usage: /set SETTING VALUE. Press Tab for suggestions.'
+    assert Style.parse(theme.color(theme.ERROR)).render(usage, color_system=ColorSystem.TRUECOLOR) in lines
 
 
 async def test_runtimes_share_the_process_services(tmp_path: Path) -> None:

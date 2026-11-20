@@ -2,7 +2,13 @@
 
 import asyncio
 import io
+import re
+import threading
+import webbrowser
+from collections.abc import Callable
+from pathlib import Path
 
+import anyio
 import httpx2
 import keyring
 import pytest
@@ -25,11 +31,17 @@ from pydantic_ai_pax.commands import Command, Commands
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.api_keys import forget_connection
 from pydantic_ai_pax.config.credential_store import has_credentials, load_codex_credentials
+from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.models import codex as codex_models
+from pydantic_ai_pax.models.model_catalog import CODEX_MODELS
 from pydantic_ai_pax.plugins import PluginLogin
 from pydantic_ai_pax.plugins.menus import Dialogs
+from pydantic_ai_pax.ui.menus.dialogs import TerminalDialogs
 from pydantic_ai_pax.ui.menus.field_menu import Runners
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.pax.dialog_script import Back, ScriptedDialogs
 from tests.pax.surface_terminal import SurfaceTerminal
 
 CREDENTIALS = OpenAICodexCredentials(
@@ -342,3 +354,163 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_default_model() -> None:
     assert Settings().model == 'openai-codex:gpt-6-astra'
+
+
+def mock_provider(account: str, respond: Callable[[httpx2.Request], httpx2.Response]) -> OpenAICodexProvider:
+    """The account's core provider, answered by `respond` instead of the Codex backend."""
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    return OpenAICodexProvider(credential_source=CodexCredentials(account=account), http_client=client)
+
+
+def serve_codex_models(monkeypatch: pytest.MonkeyPatch, status: int = 200) -> list[httpx2.Request]:
+    """Answer the Codex catalog `GET {base_url}/models` through the real discovery, recording each request."""
+    requests: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        served = [
+            {'slug': 'gpt-6.2-sol', 'display_name': 'GPT-6.2-Sol', 'visibility': 'list'},
+            {'slug': 'codex-auto-review', 'display_name': 'Codex Auto Review', 'visibility': 'hide'},
+            {'slug': 'gpt-6.1-terra', 'display_name': 'GPT-6.1 Terra', 'visibility': 'list'},
+        ]
+        return httpx2.Response(status, json={'models': served})
+
+    def account_provider(self: CodexAuth, account: str, base_url: str | None = None) -> OpenAICodexProvider:
+        return mock_provider(account, respond)
+
+    monkeypatch.setattr(CodexAuth, 'account_provider', account_provider)
+    return requests
+
+
+def codex_signs_in(monkeypatch: pytest.MonkeyPatch) -> CodexAuth:
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    monkeypatch.setattr('pydantic_ai_pax.auth.open_browser', fake_browser)
+    return CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+
+
+@pytest.mark.parametrize(('target', 'prefix'), [('codex', 'openai-codex'), ('openai-codex@work', 'openai-codex@work')])
+async def test_codex_login_adds_the_account_models(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: str, prefix: str
+) -> None:
+    requests = serve_codex_models(monkeypatch)
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command([target], codex=codex_signs_in(monkeypatch), store=store)
+    assert message.endswith(' Added 2 Codex models.')
+    assert store.models() == [f'{prefix}:gpt-6.1-terra', f'{prefix}:gpt-6.2-sol']
+    assert [
+        (
+            request.url.host,
+            request.url.path,
+            request.url.params['client_version'],
+            request.headers['authorization'],
+            request.headers['chatgpt-account-id'],
+        )
+        for request in requests
+    ] == [('chatgpt.com', '/backend-api/codex/models', '0.170.0', 'Bearer fake-access', 'fake-account')]
+
+
+async def test_codex_login_falls_back_to_the_static_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    serve_codex_models(monkeypatch, status=500)
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command(['codex@work'], codex=codex_signs_in(monkeypatch), store=store)
+    assert 'Codex model discovery failed' in message
+    assert f'Added the {len(CODEX_MODELS)} built-in Codex models.' in message
+    assert store.models() == sorted(name.replace('openai-codex:', 'openai-codex@work:') for name in CODEX_MODELS)
+
+
+async def test_codex_discovery_rejects_an_unexpected_catalog() -> None:
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'data': []})
+
+    await CodexCredentials().save_login(CREDENTIALS)
+    with pytest.raises(UserError, match='Codex returned an invalid model list'):
+        await codex_models.discover(mock_provider('openai-codex', respond))
+
+    def hidden(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'models': [{'slug': 'codex-auto-review', 'visibility': 'hide'}]})
+
+    with pytest.raises(UserError, match='Codex returned no models for this account'):
+        await codex_models.discover(mock_provider('openai-codex', hidden))
+
+
+async def test_cancelled_codex_login_adds_no_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    requests = serve_codex_models(monkeypatch)
+    await CodexCredentials().save_login(CREDENTIALS)
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command(
+        ['codex'], codex=CodexAuth(Console(file=io.StringIO())), store=store, dialogs=ScriptedDialogs([Back()])
+    )
+    assert message == 'ChatGPT/Codex sign-in cancelled.'
+    assert requests == []
+    assert store.models() == []
+
+
+def hyperlinks(text: str) -> list[str]:
+    """The targets of the OSC 8 hyperlinks in `text`, in order."""
+    return [target for target in re.findall(r'\x1b\]8;[^;\x1b]*;([^\x1b]*)\x1b\\', text) if target]
+
+
+async def test_terminal_sign_in_links_the_url_and_opens_it_with_webbrowser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sign-in's own opener is mocked at `webbrowser`, so this pins the whole path from the login to it."""
+    opened: list[str] = []
+    urls: list[str] = []
+    launched = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def open_url(url: str, *args: object, **kwargs: object) -> bool:
+        opened.append(url)
+        loop.call_soon_threadsafe(launched.set)  # The browser opens in a thread.
+        return True
+
+    def default_browser(using: str | None = None) -> webbrowser.BaseBrowser:
+        return webbrowser.BaseBrowser('fake')  # Not a command-line opener, so `webbrowser.open` opens it.
+
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        urls.append(self.authorization_url())
+        await launched.wait()
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    monkeypatch.setattr(webbrowser, 'get', default_browser)
+    monkeypatch.setattr(webbrowser, 'open', open_url)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        assert 'connected' in await CodexAuth(console, read_line=never_pasted).login([])
+    [url] = urls
+    assert opened == [url]
+    rows = [row for row in output.getvalue().splitlines() if hyperlinks(row)]
+    assert len(rows) > 1, 'Rich wraps the URL'
+    assert all(hyperlinks(row) == [url] for row in rows), 'every wrapped row links to the whole URL'
+    assert ''.join(re.sub(r'\x1b\]8;[^\x1b]*\x1b\\', '', row) for row in rows) == url
+
+
+async def test_terminal_waiting_screen_links_the_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The URL is folded over the preview pane's lines, each a link to all of it."""
+    previews: list[str] = []
+    urls: list[str] = []
+    shown = threading.Event()
+
+    def run_choice(menu: Menu) -> MenuResult:
+        render = menu._preview  # pyright: ignore[reportPrivateUsage]
+        assert render is not None and shown.wait(timeout=READINESS_WAIT_TIMEOUT)
+        previews.append(render(menu._items[0]))  # pyright: ignore[reportPrivateUsage]
+        return MenuResult(cancelled=True)
+
+    async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
+        urls.append(self.authorization_url())  # The screen shows the link before the callback is awaited.
+        shown.set()
+        return await never_called_back(self)
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
+    dialogs = TerminalDialogs(Runners(run_choice=run_choice))
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        assert await CodexAuth(Console(file=io.StringIO())).login([], dialogs=dialogs) == (
+            'ChatGPT/Codex sign-in cancelled.'
+        )
+    [preview], [url] = previews, urls
+    assert set(hyperlinks(preview)) == {url}
+    assert url in re.sub(r'\x1b\]8;[^\x1b]*\x1b\\|\n', '', preview), 'the whole URL shows, over several lines'

@@ -323,7 +323,7 @@ def test_a_small_terminal_gives_its_space_to_the_transcript(
     record.started_at = time.time() - 3725
     screen = Driver(record, size=size).screen()
     assert all(title in screen for title in shown) and not any(title in screen for title in hidden)
-    assert ('1h02m' in screen) == ('Tasks' in shown), 'a running task shows how long it has run'
+    assert ('1h 2m' in screen) == ('Tasks' in shown), 'a running task shows how long it has run'
     assert ('PgUp/PgDn scroll' in screen) == (size[0] == 110), 'the footer keeps the hints that fit'
 
 
