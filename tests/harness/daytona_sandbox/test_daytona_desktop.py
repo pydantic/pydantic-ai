@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
 from contextlib import nullcontext
 from pathlib import Path
@@ -454,7 +455,9 @@ def test_chromium_gets_no_sandbox_only_where_its_sandbox_cannot_work(
         (bin_dir / name).chmod(0o755)
     env = {'PATH': f'{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin'}
 
-    subprocess.run(['/bin/sh', '-c', ALLOW_CHROMIUM.replace(CHROMIUM_SETTINGS_DIR, str(settings))], env=env, check=True)
+    # Daytona runs it with zsh.
+    shell = shutil.which('zsh') or '/bin/sh'
+    subprocess.run([shell, '-c', ALLOW_CHROMIUM.replace(CHROMIUM_SETTINGS_DIR, str(settings))], env=env, check=True)
 
     added = [path.read_text() for path in settings.iterdir()]
     assert added == (['CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"\n'] if flag_added else [])
