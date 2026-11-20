@@ -377,6 +377,7 @@ SANDBOX_LIMIT_MARKERS: Final[Mapping[SandboxLimit, str]] = {
     'max_memory': 'memory limit exceeded',
     'max_suspensions': 'suspension limit ',
 }
+_SUSPENSION_LIMIT_MESSAGE = re.compile(rf'{re.escape(SANDBOX_LIMIT_MARKERS["max_suspensions"])}[0-9]+ exceeded')
 
 
 def exceeded_sandbox_limit(failure: MontyFailure) -> SandboxLimit | None:
@@ -416,8 +417,7 @@ def _runtime_sandbox_limit(failure: MontyFailure) -> SandboxLimit | None:
     mentions_memory_limit = SANDBOX_LIMIT_MARKERS['max_memory'] in message and not mentions_time_limit
     if 'MemoryError' in failure.exception_types and (not failure.has_traceback or mentions_memory_limit):
         return 'max_memory'
-    suspension_message = rf'{re.escape(SANDBOX_LIMIT_MARKERS["max_suspensions"])}[0-9]+ exceeded'
-    if 'RuntimeError' in failure.exception_types and re.fullmatch(suspension_message, message):
+    if 'RuntimeError' in failure.exception_types and _SUSPENSION_LIMIT_MESSAGE.fullmatch(message):
         return 'max_suspensions'
     return None
 
