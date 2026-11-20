@@ -46,6 +46,13 @@ class SessionName(BaseModel):
         return list(dict.fromkeys(tag for tag in cleaned if tag))
 
 
+_MAX_TOKENS = 4096
+"""Room for a reasoning model to think before its short answer, within every current model's output ceiling.
+
+A model that does not reason stops after a few dozen tokens, so this bounds only a runaway response.
+"""
+
+
 @dataclass(frozen=True, kw_only=True)
 class NamingResult:
     """Generated metadata and auxiliary usage, never foreground message history."""
@@ -68,7 +75,9 @@ async def generate_name(*, model: Model | str, prompt: str) -> NamingResult:
             'naming what sets this conversation apart from them. Given a previous title, keep it and describe the current task in the subtitle. Do not expose secrets in names.'
         ),
     )
-    result = await agent.run(prompt, usage_limits=UsageLimits(request_limit=2), model_settings={'max_tokens': 250})
+    result = await agent.run(
+        prompt, usage_limits=UsageLimits(request_limit=2), model_settings={'max_tokens': _MAX_TOKENS}
+    )
     return NamingResult(name=result.output, tokens=result.usage.total_tokens)
 
 

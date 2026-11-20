@@ -10,7 +10,8 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ThinkingPart, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_pax.runtime.session import Session
@@ -28,6 +29,29 @@ async def test_structured_name_and_auxiliary_usage() -> None:
     name = SessionName(title='Fix\nrenderer\x1b', tags=['#SQLite', 'sqlite', '  ', 'tools'])
     assert name.title == 'Fix renderer'
     assert name.tags == ['sqlite', 'tools']
+
+
+async def test_a_reasoning_model_has_room_to_think_before_naming() -> None:
+    """A reasoning model spends output tokens thinking before its title; a tight cap left it no answer (#14082)."""
+    caps: list[int | None] = []
+
+    async def reasoning_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        cap = (info.model_settings or {}).get('max_tokens')
+        caps.append(cap)
+        if cap is None or cap < 2000:
+            # The whole budget went on reasoning, as GLM-5.3 did with 250 tokens.
+            return ModelResponse(parts=[ThinkingPart('Considering the conversation...')], finish_reason='length')
+        return ModelResponse(
+            parts=[
+                ThinkingPart('Considering the conversation...'),
+                ToolCallPart(info.output_tools[0].name, {'title': 'Greet the user'}),
+            ]
+        )
+
+    result = await generate_name(model=FunctionModel(reasoning_model), prompt='Current conversation tail:\nuser: hi')
+    assert result.name.title == 'Greet the user'
+    # Still bounded, so a model that never stops costs a known amount.
+    assert caps == [4096]
 
 
 async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
