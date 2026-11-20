@@ -153,7 +153,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 ),
                 # GPT-6.2 and later put the top-level `instructions` after `input` and bill them at the uncached rate,
                 # and OpenAI recommends leading input messages for reusable instructions (measured live:
-                # https://github.com/pydantic/pydantic-ai/issues/13923). Set here rather than in `openai_model_profile`
+                # https://github.com/pydantic/pydantic-ai/pull/14095). Set here rather than in `openai_model_profile`
                 # because OpenAI-compatible endpoints that share it may render instructions differently.
                 # https://developers.openai.com/api/docs/guides/latest-model
                 openai_responses_stable_instructions_as_input=model_name.startswith(_GPT_6_2_MODEL_PREFIXES),
