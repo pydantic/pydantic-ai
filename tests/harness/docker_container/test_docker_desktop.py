@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.computer_use import Click, Point
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai_harness._x11 import DESKTOP_PACKAGES
 from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE, DockerContainer, DockerContainerBackend
 
 from ..display_fakes import FAKE_SCREENSHOT, screen
@@ -56,6 +58,13 @@ async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: Fa
 
     await _desktop(container_dir).working_dir()
     assert len([call for call in docker.calls if call.startswith('build ')]) == 1
+
+
+def test_the_desktop_image_installs_every_package_the_desktop_needs() -> None:
+    """A Dockerfile can't import `DESKTOP_PACKAGES`, so this keeps its package list in step. It may add more, such as
+    Firefox."""
+    (packages,) = re.findall(r'--no-install-recommends(.*?)&&', DESKTOP_DOCKERFILE, re.DOTALL)
+    assert set(DESKTOP_PACKAGES) <= set(packages.replace('\\', ' ').split())
 
 
 async def test_a_custom_image_is_not_built(docker: FakeDocker, container_dir: Path) -> None:

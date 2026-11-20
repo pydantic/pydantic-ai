@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        xvfb xdotool x11-utils scrot fluxbox tint2 xterm firefox-esr \
+        xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm firefox-esr \
         fonts-dejavu-core fonts-wqy-microhei fonts-noto-color-emoji ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # The window manager's and panel's settings are written when the display starts, as for every other sandbox.
