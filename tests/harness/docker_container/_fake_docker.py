@@ -245,6 +245,9 @@ _FAKE_APT_GET = """#!/bin/sh
 bin=$(dirname "$0")
 echo "${FAKE_SUDO:+sudo }$*" >> "$bin/apt-get-calls"
 if [ "$1" = install ] && [ -e "$bin/apt-get-fails" ]; then echo 'E: Unable to locate package xdotool' >&2; exit 100; fi
+if [ "$1" = update ] && [ -e "$bin/apt-get-update-fails" ]; then
+    echo 'E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease' >&2; exit 100
+fi
 if [ "$1" = install ]; then
     # Like apt-get, nothing is installed when one package can't be found.
     for package; do
@@ -268,7 +271,7 @@ exit 0
 """
 """Stands in for `apt-get`: logs each call, prefixed `sudo` when run through the fake `sudo`, and has `install` put back
 the programs in the packages it names that `uninstall` took away, or fail if `apt-get-fails` exists or the package
-lists lack one of them. With `x-starts-during-install`, an install also
+lists lack one of them. `update` fails if `apt-get-update-fails` exists. With `x-starts-during-install`, an install also
 brings up the image's own X server, `Xvnc`, as PID 25."""
 
 
@@ -379,6 +382,10 @@ class FakeDocker:
 
     def fail_installs(self) -> None:
         (self.bin_dir / 'apt-get-fails').touch()
+
+    def fail_updates(self) -> None:
+        """Have `apt-get update` fail, as it does when the package mirror can't be reached."""
+        (self.bin_dir / 'apt-get-update-fails').touch()
 
     def set_image_env(self, name: str, value: str) -> None:
         """Set `name` in every container command's environment, as an image's `ENV` line would."""
