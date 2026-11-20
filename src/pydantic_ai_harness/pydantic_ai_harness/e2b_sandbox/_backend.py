@@ -129,7 +129,6 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 _DESKTOP_TEMPLATE = 'desktop'
-"""E2B's desktop template. A new sandbox uses it when `desktop` is set and no `template` is given."""
 
 
 _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
@@ -664,7 +663,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         argv = command_argv(command, shell)
         check_timeout(timeout)
         if self._display is not None:
-            # Start the display first, so a program the command opens appears on the screen.
             await self._display.start()
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
 
