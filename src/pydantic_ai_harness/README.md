@@ -181,7 +181,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 | [Render Sandbox](pydantic_ai_harness/render_sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [boxd Sandbox](pydantic_ai_harness/boxd_sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
-| [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
+| [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
 | [Bubblewrapped Workspace](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
 ### Files & shell

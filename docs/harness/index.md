@@ -168,7 +168,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 | [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
-| [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
+| [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
 | [Bubblewrapped Workspace](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
 ### Files & shell {#files-shell}
