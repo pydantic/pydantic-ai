@@ -2140,7 +2140,8 @@ async def _wait_for_exit(pid: int) -> None:
                 os.kill(pid, 0)
             except ProcessLookupError:
                 return
-            except PermissionError:  # pragma: no cover - macOS refuses a group holding only unreaped zombies
+            # macOS refuses a signal to a group holding only unreaped zombies.
+            except PermissionError:  # pragma: no cover
                 pass
             await anyio.sleep(0.01)  # pragma: lax no cover
 
