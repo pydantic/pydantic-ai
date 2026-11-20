@@ -1299,7 +1299,7 @@ class TestSpritesSandbox:
         monkeypatch.setattr('sprites.websocket.connect', slow_connect)
         async with anyio.create_task_group() as group:
             group.start_soon(backend.run, ['sh', '-c', f'echo secret >&2; : > {running}; exec sleep 30'])
-            while not running.exists():
+            while not running.exists():  # real-wait: the command runs in a real subprocess, which sets no event
                 await anyio.sleep(0.01)
             group.cancel_scope.cancel()
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
