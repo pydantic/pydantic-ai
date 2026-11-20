@@ -156,3 +156,31 @@ async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path, in
         for span in exporter.get_finished_spans()
         if span.name.startswith('workspace ')
     ] == [('workspace working_dir', 'local'), ('workspace exists', 'local')]
+
+
+@pytest.mark.parametrize('worker_content', [False, True])
+async def test_workspace_content_needs_the_workers_content_setting_too(tmp_path: Path, worker_content: bool) -> None:
+    """A serialized context asking for content can't turn it on for a worker configured without it."""
+    from .conftest import TaskBoundary, rewrite_tool_context, run_agent_in_task
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = TestModel(call_tools=['look'])
+    runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
+    agent = Agent(model, name='content-agent', deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), runtime])
+    agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=worker_content)
+
+    @agent.tool
+    async def look(ctx: RunContext[None]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    def rewrite(fields: dict[str, object]) -> None:
+        fields['trace_include_content'] = True
+
+    try:
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_request=rewrite_tool_context(rewrite)))
+        [exists] = [span for span in exporter.get_finished_spans() if span.name == 'workspace exists']
+        assert ('file.path' in (exists.attributes or {})) is worker_content
+    finally:
+        provider.shutdown()

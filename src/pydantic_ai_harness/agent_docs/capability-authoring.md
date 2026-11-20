@@ -437,10 +437,10 @@ what happened uses the words the capability's API already uses for it, such as t
 `GuardrailResult` actions (`block`, `replace`, `approve`) or `SubAgents`' `DelegationOutcome`, so an
 operator reading a trace and a developer reading the code name the same outcome the same way.
 
-Memory (`memory/_toolset.py`, `memory/_capability.py`) still opens its spans on `ctx.tracer` directly; a
-follow-up PR moves it onto these functions. Smart search (`smart_search/_toolset.py`) does so on purpose:
-its span records no failure and leaves it to the enclosing tool span, which redacts it by
-`include_content`. Don't copy either.
+Code that still calls `ctx.tracer.start_span` or `start_as_current_span`, or checks
+`ctx.trace_include_content` itself, predates these functions and moves onto them in follow-ups; don't
+copy it. Smart search (`smart_search/_toolset.py`) keeps its own span on purpose: the span records no
+failure and leaves it to the enclosing tool span, which redacts it by `include_content`.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.
