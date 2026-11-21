@@ -1718,6 +1718,197 @@ def test_strict_bedrock_inlining_keeps_the_root_definition_a_ref_under_not_leads
     assert not validator.is_valid({'n': 1, 'child': {'n': 1}})
 
 
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+@pytest.mark.parametrize('model_name', ['us.zai.glm-5.3', 'minimax.minimax-m2'])
+def test_strict_bedrock_inlining_keeps_recursive_definition_referenced_under_not(model_name: str):
+    """A walked recursive definition also referenced under `not` keeps an as-written copy for `not`."""
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_cls = profile.get('json_schema_transformer')
+    assert transformer_cls is not None
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'root': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {
+                    'n': {'type': 'integer', 'minimum': 0},
+                    'next': {'$ref': '#/$defs/Node'},
+                    'child': {'not': {'$ref': '#/$defs/Node'}},
+                },
+                'required': ['n'],
+            }
+        },
+    }
+
+    walked = transformer_cls(deepcopy(schema), strict=True).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'root': {'n': 1, 'child': {'n': -1}}})
+    assert validator.is_valid({'root': {'n': 1, 'child': {'n': 1, 'next': {'n': -1}}}})
+    assert not validator.is_valid({'root': {'n': 1, 'child': {'n': 1}}})
+    assert walked['$defs']['Node']['properties']['n'] == {'type': 'integer', 'description': 'minimum=0'}
+    assert walked['$defs']['Node_unwalked']['properties']['n'] == {'type': 'integer', 'minimum': 0}
+
+    root_ref_schema: JsonSchema = {
+        '$ref': '#/$defs/Node',
+        '$defs': deepcopy(schema['$defs']),
+    }
+    root_walked = transformer_cls(root_ref_schema, strict=True).walk()
+    root_validator = validator_for(root_walked)(root_walked)
+    assert root_validator.is_valid({'n': 1, 'child': {'n': -1}})
+    assert not root_validator.is_valid({'n': 1, 'child': {'n': 1}})
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+def test_strict_bedrock_inlining_keeps_walked_recursive_def_separate_from_root_not():
+    """Root-level `not` reaching a walked recursive definition gets the as-written copy without altering walked paths."""
+    profile = BedrockProvider.model_profile('us.zai.glm-5.3')
+    assert profile is not None
+    transformer_cls = profile.get('json_schema_transformer')
+    assert transformer_cls is not None
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'root': {'$ref': '#/$defs/Node'},
+            'n': {'type': 'integer'},
+            'next': {'type': 'object', 'properties': {'n': {'type': 'integer'}}, 'required': ['n']},
+        },
+        'not': {'$ref': '#/$defs/Node'},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {
+                    'n': {'type': 'integer', 'minimum': 0},
+                    'next': {'$ref': '#/$defs/Node'},
+                },
+                'required': ['n'],
+            }
+        },
+    }
+
+    walked = transformer_cls(deepcopy(schema), strict=True).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'root': {'n': 1}, 'n': 1, 'next': {'n': -1}})
+    assert not validator.is_valid({'root': {'n': 1}, 'n': 1, 'next': {'n': 0}})
+
+
+def test_inlining_propagates_unwalked_renames_across_mutual_recursion():
+    """Mixed colliding and non-colliding kept definitions copy only the colliding recursive subgraph."""
+
+    class _DropMinimum(JsonSchemaTransformer):
+        def __init__(self, schema: JsonSchema):
+            super().__init__(schema, prefer_inlined_defs=True)
+
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            schema.pop('minimum', None)
+            return schema
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'entry': {'$ref': '#/$defs/Alpha'},
+            'beta_entry': {'$ref': '#/$defs/Beta'},
+            'unchanged': {'$ref': '#/$defs/Unchanged'},
+            'guard': {'not': {'$ref': '#/$defs/Alpha'}},
+            'unchanged_guard': {'not': {'$ref': '#/$defs/Unchanged'}},
+            'extra': {'not': {'$ref': '#/$defs/Helper'}},
+        },
+        '$defs': {
+            'Alpha': {
+                'type': 'object',
+                'properties': {
+                    'beta': {'$ref': '#/$defs/Beta'},
+                    'next': {'$ref': '#/$defs/Alpha'},
+                },
+                'required': ['beta'],
+            },
+            'Beta': {
+                'type': 'object',
+                'properties': {
+                    'n': {'type': 'integer', 'minimum': 0},
+                    'next': {'$ref': '#/$defs/Beta'},
+                    'alpha': {'$ref': '#/$defs/Alpha'},
+                },
+                'required': ['n'],
+            },
+            'Unchanged': {
+                'type': 'object',
+                'properties': {'next': {'$ref': '#/$defs/Unchanged'}},
+            },
+            'Helper': {
+                'type': 'object',
+                'properties': {'next': {'$ref': '#/$defs/Helper'}},
+            },
+        },
+    }
+
+    walked = _DropMinimum(deepcopy(schema)).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'entry': {'beta': {'n': -1}}, 'guard': {'beta': {'n': -1}}})
+    assert not validator.is_valid({'entry': {'beta': {'n': 1}}, 'guard': {'beta': {'n': 1}}})
+    assert 'Helper' in walked['$defs']
+    assert 'Unchanged' in walked['$defs']
+    assert 'Unchanged_unwalked' not in walked['$defs']
+    assert 'Alpha_unwalked' in walked['$defs']
+    assert 'Beta_unwalked' in walked['$defs']
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+def test_strict_bedrock_inlining_avoids_alias_collision_and_keeps_lossless_unchanged():
+    """Existing `<name>_unwalked` names are skipped and lossless transformers emit no duplicate definitions."""
+    profile = BedrockProvider.model_profile('us.zai.glm-5.3')
+    assert profile is not None
+    transformer_cls = profile.get('json_schema_transformer')
+    assert transformer_cls is not None
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'root': {'$ref': '#/$defs/Node'},
+            'alt': {'$ref': '#/$defs/Node_unwalked'},
+        },
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {
+                    'n': {'type': 'integer', 'minimum': 0},
+                    'next': {'$ref': '#/$defs/Node'},
+                    'child': {'not': {'$ref': '#/$defs/Node'}},
+                },
+                'required': ['n'],
+            },
+            'Node_unwalked': {
+                'type': 'object',
+                'properties': {'next': {'$ref': '#/$defs/Node_unwalked'}},
+            },
+        },
+    }
+
+    walked = transformer_cls(deepcopy(schema), strict=True).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'root': {'n': 1, 'child': {'n': -1}}})
+    assert not validator.is_valid({'root': {'n': 1, 'child': {'n': 1}}})
+    assert 'Node_unwalked_unwalked' in walked['$defs']
+
+    lossless_schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'root': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {
+                    'n': {'type': 'integer', 'minimum': 0},
+                    'next': {'$ref': '#/$defs/Node'},
+                    'child': {'not': {'$ref': '#/$defs/Node'}},
+                },
+                'required': ['n'],
+            }
+        },
+    }
+    lossless_walked = InlineDefsJsonSchemaTransformer(deepcopy(lossless_schema)).walk()
+    assert set(lossless_walked['$defs']) == {'Node', 'root'}
+
+
 @pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])
 @pytest.mark.parametrize('value', [True, False])
 def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bool):

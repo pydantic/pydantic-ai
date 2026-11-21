@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, ca
 from pydantic import JsonValue
 
 from ._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, iter_subschemas, map_subschemas
-from ._utils import contains_ref
+from ._utils import contains_ref, is_str_dict
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
@@ -219,6 +219,48 @@ def definition_refs(schema: Subschema) -> Iterator[str]:
             pending.extend(iter_subschemas(node))
 
 
+def _encode_definition_ref(name: str) -> str:
+    """The `#/$defs/...` JSON pointer `$ref` targeting `$defs` key `name`."""
+    return '#/$defs/' + name.replace('~', '~0').replace('/', '~1')
+
+
+def _unwalked_definition_refs(node: Subschema, *, unwalked: bool = False) -> Iterator[str]:
+    """Each `#/$defs/...` `$ref` inside `node` under a keyword `UnwalkedRefWriter` does not walk into."""
+    if isinstance(node, bool):
+        return
+    if unwalked and isinstance(ref := node.get('$ref'), str) and ref.startswith('#/$defs/'):
+        yield ref
+    for keyword in node:
+        if keyword in SUBSCHEMA_KEYWORDS:
+            child_unwalked = unwalked or (keyword != '$defs' and keyword not in UnwalkedRefWriter.WALKED_KEYWORDS)
+            for member in iter_subschemas(node, (keyword,)):
+                yield from _unwalked_definition_refs(member, unwalked=child_unwalked)
+
+
+def _rewrite_definition_refs(node: JsonSchema, renames: Mapping[str, str], *, unwalked: bool) -> JsonSchema:
+    """`node` with `#/$defs/...` `$ref`s under unwalked subtrees pointed at `renames`."""
+    rewritten = map_subschemas(
+        node,
+        lambda keyword, member: (
+            member
+            if isinstance(member, bool)
+            else _rewrite_definition_refs(
+                member,
+                renames,
+                unwalked=unwalked or keyword not in UnwalkedRefWriter.WALKED_KEYWORDS,
+            )
+        ),
+    )
+    if (
+        unwalked
+        and isinstance(ref := rewritten.get('$ref'), str)
+        and ref.startswith('#/$defs/')
+        and (new_name := renames.get(definition_name(ref))) is not None
+    ):
+        rewritten['$ref'] = _encode_definition_ref(new_name)
+    return rewritten
+
+
 def merge_definition(definition: _JsonSchemaNode, siblings: JsonSchema) -> JsonSchema:
     """A copy of `definition` with the other keywords of a `$ref` to it merged over it, as inlining the `$ref` does."""
     if isinstance(definition, bool):
@@ -375,11 +417,22 @@ class JsonSchemaTransformer(ABC):
     def walk(self) -> JsonSchema:
         self._inlined.count = 0
         walked = self._walk_schema()
-        if self.prefer_inlined_defs and any(
-            resolve_json_pointer(walked, ref) is None for ref in definition_refs(walked)
-        ):
+        if self._needs_unwalked_ref_pass(walked):
             return self._walk_with_unwalked_refs_written_out(walked)
         return walked
+
+    def _needs_unwalked_ref_pass(self, walked: JsonSchema) -> bool:
+        """Whether `walked` needs the second pass that writes out `$defs` `$ref`s under unwalked keywords."""
+        if not self.prefer_inlined_defs:
+            return False
+        if any(resolve_json_pointer(walked, ref) is None for ref in definition_refs(walked)):
+            return True
+        walked_defs = walked.get('$defs')
+        if not is_str_dict(walked_defs):
+            return False
+        return any(name in self.defs and walked_defs[name] != self.defs[name] for name in walked_defs) and any(
+            _unwalked_definition_refs(walked)
+        )
 
     def _walk_schema(self) -> JsonSchema:
         """One pass of `walk()` over `self.schema`."""
@@ -406,7 +459,7 @@ class JsonSchemaTransformer(ABC):
                 definition = merge_definition(writer.defs[name], {})
                 writer.inlined.add_copy(definition)
                 kept[name] = writer.write_out(definition, unwalked=True, stack=(name,))
-            self._add_referenced_definitions(defs, handled, kept)
+            handled = self._merge_kept_definitions(defs, handled, kept, writer.kept)
         if not defs:
             return handled
 
@@ -414,6 +467,39 @@ class JsonSchemaTransformer(ABC):
         root_ref, root_key = self._root_ref_and_key(defs)
         defs[root_key] = handled
         return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+
+    def _merge_kept_definitions(
+        self,
+        defs: dict[str, JsonSchema],
+        handled: JsonSchema,
+        kept: Mapping[str, JsonSchema],
+        order: Sequence[str],
+    ) -> JsonSchema:
+        """Add as-written `kept` definitions to `defs`, keeping separate copies where `defs` transformed them."""
+        colliding = {name for name in kept if name in defs and kept[name] != defs[name]}
+        if not colliding:
+            self._add_referenced_definitions(defs, handled, kept)
+            return handled
+
+        used = set(defs) | set(kept)
+        renames: dict[str, str] = {}
+        for name in order:
+            if name in colliding:
+                alias = f'{name}_unwalked'
+                while alias in used:
+                    alias = f'{alias}_unwalked'
+                used.add(alias)
+                renames[name] = alias
+
+        rewritten_kept = {
+            renames.get(name, name): _rewrite_definition_refs(def_schema, renames, unwalked=True)
+            for name, def_schema in kept.items()
+        }
+        for key, def_schema in defs.items():
+            defs[key] = _rewrite_definition_refs(def_schema, renames, unwalked=False)
+        handled = _rewrite_definition_refs(handled, renames, unwalked=False)
+        self._add_referenced_definitions(defs, handled, rewritten_kept)
+        return handled
 
     def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
         """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.
