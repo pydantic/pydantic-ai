@@ -2314,9 +2314,12 @@ class TestLocal:
         with pytest.raises(ValueError, match=r'^Usage: /sandbox \[local \| e2b \| .* \| kubernetes \| delete\]$'):
             await plugin.command(['smolvm'])
 
-    @pytest.mark.parametrize('platform', ['linux', 'darwin', 'win32'])
-    def test_missing(self, platform: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ('platform', 'machine'), [('linux', 'x86_64'), ('darwin', 'arm64'), ('darwin', 'x86_64'), ('win32', 'AMD64')]
+    )
+    def test_missing(self, platform: str, machine: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(local_provider.sys, 'platform', platform)
+        monkeypatch.setattr(local_provider.platform, 'machine', lambda: machine)
         provider = local_provider.LocalProvider()
         empty = tmp_path / 'empty'
         empty.mkdir()
@@ -2338,6 +2341,8 @@ class TestLocal:
             'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
             'into a folder on PATH. It needs the Windows Hypervisor Platform.'
             if platform == 'win32'
+            else 'SmolVM runs only on Macs with Apple silicon.'
+            if machine == 'x86_64' and platform == 'darwin'
             else "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
         )
 

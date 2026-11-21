@@ -11,6 +11,7 @@ included, CLAI drives the `smolvm` CLI on `PATH`, whose VM would outlive CLAI, s
 next command starts the VM again, and a conversation resumed later finds its files.
 """
 
+import platform
 import sys
 from collections.abc import Mapping
 from contextlib import suppress
@@ -62,6 +63,8 @@ class LocalProvider:
                 'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
                 'into a folder on PATH. It needs the Windows Hypervisor Platform.'
             )
+        if sys.platform == 'darwin' and platform.machine() != 'arm64':
+            return 'SmolVM runs only on Macs with Apple silicon.'
         return "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
 
     def _backend(self, ref: WorkspaceRef | None) -> SandboxBackend:
