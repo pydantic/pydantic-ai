@@ -506,7 +506,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             evaluators: Evaluators specific to this case, in addition to dataset-level evaluators. Plain functions
                 are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
         """
-        if name in {case.name for case in self.cases}:
+        if name is not None and name in {case.name for case in self.cases}:
             raise ValueError(f'Duplicate case name: {name!r}')
 
         case = Case[InputsT, OutputT, MetadataT](
