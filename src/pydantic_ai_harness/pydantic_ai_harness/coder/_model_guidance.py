@@ -58,17 +58,16 @@ STRUCTURED_HANDOFF = (
 )
 """For models whose notes leave out the evidence a reviewer needs."""
 
-PURE_FUNCTIONS = (
-    'When a task says a function must derive its answer only from its arguments '
-    '(no files, commands, network, or mutation), write it as plain self-contained Python: dicts, lists, loops, '
-    'and helper functions. Import only the basic standard modules it needs (re, math, json, copy, heapq, '
-    'bisect, datetime); no typing, collections.abc, __future__, or dataclasses imports. '
-    "Don't define classes or generators (yield), and don't call iter(), id(), divmod(), hasattr(), or object()."
+ENVIRONMENT_CONSTRAINTS = (
+    'When a task states constraints on where or how the code will run '
+    '(a restricted or sandboxed interpreter, no dependencies, a specific Python version, pure functions, no I/O), '
+    "find out what's actually allowed before writing code. Then prefer the simplest constructs that fit, "
+    'and if possible check the code under those constraints.'
 )
-"""For models that otherwise write typed or class-based Python a restricted interpreter will reject."""
+"""For models that otherwise ignore stated runtime constraints when choosing language features."""
 
 MODEL_GUIDANCE: tuple[ModelGuidance, ...] = (
-    ModelGuidance('openai', replace={'misread': MISREAD_CLASSIFY}, add=(STRUCTURED_HANDOFF, PURE_FUNCTIONS)),
+    ModelGuidance('openai', replace={'misread': MISREAD_CLASSIFY}, add=(STRUCTURED_HANDOFF, ENVIRONMENT_CONSTRAINTS)),
 )
 """The table `Coder` uses by default, applied only at `'max'` autonomy."""
 

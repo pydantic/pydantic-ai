@@ -286,7 +286,7 @@ model name), except `gpt-oss-*`.
 
 At `'max'`, a matching run replaces the default misread sentence with one that first checks whether
 the task or its rules classify inconsistent inputs, and appends two sentences: one for structured
-handoff notes, and one for functions that must derive their answer only from their arguments. At
+handoff notes, and one for tasks that state constraints on where or how the code will run. At
 `'high'`, `'medium'`, and `'low'`, and for every other model, the prompt is unchanged.
 
 Pass `Coder(model_guidance=())` to disable the table. Pass an explicit sequence of `ModelGuidance`

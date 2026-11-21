@@ -31,12 +31,11 @@ _STRUCTURED_HANDOFF = (
     'the exact verification commands with their observed results, the remaining risk, '
     'and what was out of scope or not done.'
 )
-_PURE_FUNCTIONS = (
-    'When a task says a function must derive its answer only from its arguments '
-    '(no files, commands, network, or mutation), write it as plain self-contained Python: dicts, lists, loops, '
-    'and helper functions. Import only the basic standard modules it needs (re, math, json, copy, heapq, '
-    'bisect, datetime); no typing, collections.abc, __future__, or dataclasses imports. '
-    "Don't define classes or generators (yield), and don't call iter(), id(), divmod(), hasattr(), or object()."
+_ENVIRONMENT_CONSTRAINTS = (
+    'When a task states constraints on where or how the code will run '
+    '(a restricted or sandboxed interpreter, no dependencies, a specific Python version, pure functions, no I/O), '
+    "find out what's actually allowed before writing code. Then prefer the simplest constructs that fit, "
+    'and if possible check the code under those constraints.'
 )
 
 
@@ -82,54 +81,56 @@ async def test_default_table_applies_only_for_openai_family_at_max(tmp_path: Pat
     assert _MISREAD in openai_high
     assert _MISREAD_CLASSIFY not in openai_high
     assert _STRUCTURED_HANDOFF not in openai_high
-    assert _PURE_FUNCTIONS not in openai_high
+    assert _ENVIRONMENT_CONSTRAINTS not in openai_high
 
     openai_max = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='max')
     assert _MISREAD_CLASSIFY in openai_max
     assert _STRUCTURED_HANDOFF in openai_max
-    assert _PURE_FUNCTIONS in openai_max
+    assert _ENVIRONMENT_CONSTRAINTS in openai_max
     assert _MISREAD_MAX not in openai_max
 
     anthropic_max = await _run_guidance(tmp_path, system='anthropic', name='claude-opus-4', autonomy='max')
     assert anthropic_max != openai_max
-    assert _PURE_FUNCTIONS not in anthropic_max
+    assert _ENVIRONMENT_CONSTRAINTS not in anthropic_max
     assert _MISREAD_MAX in anthropic_max
 
     gateway_max = await _run_guidance(tmp_path, system='openrouter', name='openai/gpt-6.2-sol', autonomy='max')
-    assert _PURE_FUNCTIONS in gateway_max
+    assert _ENVIRONMENT_CONSTRAINTS in gateway_max
     routed_other = await _run_guidance(tmp_path, system='openrouter', name='anthropic/claude-opus-4', autonomy='max')
-    assert _PURE_FUNCTIONS not in routed_other
+    assert _ENVIRONMENT_CONSTRAINTS not in routed_other
     assert _MISREAD_MAX in routed_other
 
     azure_gpt = await _run_guidance(tmp_path, system='azure', name='gpt-4o', autonomy='max')
-    assert _PURE_FUNCTIONS in azure_gpt
+    assert _ENVIRONMENT_CONSTRAINTS in azure_gpt
     azure_chatgpt = await _run_guidance(tmp_path, system='azure', name='chatgpt-4o-latest', autonomy='max')
-    assert _PURE_FUNCTIONS in azure_chatgpt
+    assert _ENVIRONMENT_CONSTRAINTS in azure_chatgpt
     azure_o = await _run_guidance(tmp_path, system='azure', name='o3-mini', autonomy='max')
-    assert _PURE_FUNCTIONS in azure_o
+    assert _ENVIRONMENT_CONSTRAINTS in azure_o
     groq = await _run_guidance(tmp_path, system='groq', name='llama-3.1-70b', autonomy='max')
-    assert _PURE_FUNCTIONS not in groq
+    assert _ENVIRONMENT_CONSTRAINTS not in groq
     oss = await _run_guidance(tmp_path, system='groq', name='gpt-oss-120b', autonomy='max')
-    assert _PURE_FUNCTIONS not in oss
+    assert _ENVIRONMENT_CONSTRAINTS not in oss
     oss_prefixed = await _run_guidance(tmp_path, system='openrouter', name='openai/gpt-oss-120b', autonomy='max')
-    assert _PURE_FUNCTIONS not in oss_prefixed
+    assert _ENVIRONMENT_CONSTRAINTS not in oss_prefixed
 
 
 async def test_empty_table_disables_default_guidance(tmp_path: Path):
     """An empty table turns the default row off; the function model issues no provider request."""
     text = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='max', model_guidance=())
     assert _MISREAD_CLASSIFY not in text
-    assert _PURE_FUNCTIONS not in text
+    assert _ENVIRONMENT_CONSTRAINTS not in text
     assert _MISREAD_MAX in text
 
 
 async def test_explicit_table_applies_at_high_autonomy(tmp_path: Path):
     """An explicit table applies at every autonomy level; the function model issues no provider request."""
-    row = ModelGuidance('openai', replace={'misread': _MISREAD_CLASSIFY}, add=(_STRUCTURED_HANDOFF, _PURE_FUNCTIONS))
+    row = ModelGuidance(
+        'openai', replace={'misread': _MISREAD_CLASSIFY}, add=(_STRUCTURED_HANDOFF, _ENVIRONMENT_CONSTRAINTS)
+    )
     text = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='high', model_guidance=(row,))
     assert _MISREAD_CLASSIFY in text
     assert _STRUCTURED_HANDOFF in text
-    assert _PURE_FUNCTIONS in text
+    assert _ENVIRONMENT_CONSTRAINTS in text
     assert _MISREAD not in text
 
 
@@ -224,7 +225,7 @@ async def test_default_table_unwraps_wrapper_and_fallback_models(tmp_path: Path)
         name='gpt-6.2-sol',
         wrap=lambda model: WrapperModel(model),
     )
-    assert _PURE_FUNCTIONS in wrapped
+    assert _ENVIRONMENT_CONSTRAINTS in wrapped
 
     first = await _run_guidance(
         tmp_path,
@@ -232,7 +233,7 @@ async def test_default_table_unwraps_wrapper_and_fallback_models(tmp_path: Path)
         name='gpt-6.2-sol',
         wrap=lambda model: FallbackModel(model, _NamedFunction('anthropic', 'claude-opus-4', [])),
     )
-    assert _PURE_FUNCTIONS in first
+    assert _ENVIRONMENT_CONSTRAINTS in first
 
     second = await _run_guidance(
         tmp_path,
@@ -240,7 +241,7 @@ async def test_default_table_unwraps_wrapper_and_fallback_models(tmp_path: Path)
         name='claude-opus-4',
         wrap=lambda model: FallbackModel(model, _NamedFunction('openai', 'gpt-6.2-sol', [])),
     )
-    assert _PURE_FUNCTIONS not in second
+    assert _ENVIRONMENT_CONSTRAINTS not in second
 
 
 async def test_default_table_adjustments_reach_delegate_guidance(tmp_path: Path):
@@ -270,7 +271,7 @@ async def test_default_table_adjustments_reach_delegate_guidance(tmp_path: Path)
     delegate = next(text for text in seen if 'You are running a delegated task.' in text)
     assert _MISREAD_CLASSIFY in delegate
     assert _STRUCTURED_HANDOFF in delegate
-    assert _PURE_FUNCTIONS in delegate
+    assert _ENVIRONMENT_CONSTRAINTS in delegate
     assert _MISREAD_MAX not in delegate
 
 
