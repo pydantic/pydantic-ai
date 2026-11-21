@@ -20323,6 +20323,65 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
     )
 
 
+async def test_promoted_tool_search_replay_id_matrix() -> None:
+    """A promoted `tool_search_call` item only ever carries a `tsc_*` item ID.
+
+    `send_item_ids` resolves each part's item ID, so a persisted part holding a
+    function-call item ID (provider swap or hand-written history) would otherwise send
+    `fc_*` on a `tool_search_call` item, which the Responses API rejects. The ID is
+    omitted instead; real `tsc_*` IDs and the `openai_send_reasoning_ids` gate are
+    unchanged.
+    """
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+
+    async def replay_input(tool_call_id: str, item_id: str | None, *, send_item_ids: bool) -> dict[str, object]:
+        call_part = ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id=tool_call_id)
+        call_part.id = item_id
+        history = [
+            ModelResponse(parts=[call_part], provider_name='openai'),
+            ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='call_1')]),
+        ]
+        input_items = await _replay_input(
+            history,
+            group_function_calls=False,
+            model_request_parameters=model_request_parameters,
+            model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+        )
+        return input_items[0]
+
+    # A real `tsc_*` item ID is preserved on the item.
+    assert await replay_input('call_1', 'tsc_abc', send_item_ids=True) == snapshot(
+        {
+            'type': 'tool_search_call',
+            'execution': 'client',
+            'arguments': {'queries': ['weather']},
+            'call_id': 'call_1',
+            'id': 'tsc_abc',
+            'status': 'completed',
+        }
+    )
+    # A function-call item ID is incompatible with a `tool_search_call` item and omitted.
+    assert await replay_input('call_1', 'fc_123', send_item_ids=True) == snapshot(
+        {
+            'type': 'tool_search_call',
+            'execution': 'client',
+            'arguments': {'queries': ['weather']},
+            'call_id': 'call_1',
+            'status': 'completed',
+        }
+    )
+    # With the item-ID setting off, no item ID is sent - unchanged gate behavior.
+    assert await replay_input('call_1', 'tsc_abc', send_item_ids=False) == snapshot(
+        {
+            'type': 'tool_search_call',
+            'execution': 'client',
+            'arguments': {'queries': ['weather']},
+            'call_id': 'call_1',
+            'status': 'completed',
+        }
+    )
+
+
 async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
     """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
     history = [

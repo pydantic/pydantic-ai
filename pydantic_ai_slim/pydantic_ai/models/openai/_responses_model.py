@@ -2905,7 +2905,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 'call_id': call_id,
                 'status': 'completed',
             }
-            if id and should_send_item_id:  # pragma: no branch
+            # A `tool_search_call` item only accepts its own `tsc_*` item ID. A resolved
+            # function-call item ID (e.g. after a provider swap or in hand-written history)
+            # must be omitted rather than sent, or the Responses API rejects the request.
+            if id and should_send_item_id and id.startswith('tsc_'):
                 tool_search_call['id'] = id
             context.openai_messages.append(tool_search_call)
         else:
