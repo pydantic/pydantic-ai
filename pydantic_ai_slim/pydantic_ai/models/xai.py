@@ -1810,7 +1810,7 @@ def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:
     if content:
         try:
             return json.loads(content)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
             return content
     return None
 
@@ -1826,7 +1826,7 @@ def _parse_tool_args(arguments: str) -> dict[str, Any]:
     """
     try:
         return json.loads(arguments)
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
         return {}
 
 

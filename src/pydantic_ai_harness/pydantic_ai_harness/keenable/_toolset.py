@@ -204,7 +204,7 @@ class HttpKeenableClient:
                         await response.stream.aclose()
         try:
             return json.loads(content)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError) as error:
             # `json.loads` decodes bytes before parsing them, so a body in a
             # broken encoding fails as a decode error, not a JSON one.
             raise _MalformedResponse(str(error)) from error
