@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 
 import pytest
 from inline_snapshot import snapshot
@@ -44,6 +45,8 @@ class _Mailer:
         self.sent: list[str] = []
         self.seen: list[str] = []
         self.second_approval: set[str] = set()
+        self.fail_for: set[str] = set()
+        """Recipients whose next approved send fails."""
         """Recipients whose send asks for approval once more after it is approved."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -71,6 +74,9 @@ class _Mailer:
         def send_email(ctx: RunContext[object], to: str) -> str:
             if not ctx.tool_call_approved:
                 raise ApprovalRequired
+            if to in self.fail_for:
+                self.fail_for.discard(to)
+                raise RuntimeError('mail server down')
             if to in self.second_approval:
                 self.second_approval.discard(to)
                 raise ApprovalRequired({'reason': 'confirm again'})
@@ -367,10 +373,20 @@ class TestSubAgentsForwardDeferredCalls:
             ['ann@example.com', 'cc@example.com'],
         )
 
-    async def test_colliding_ids_are_rejected(self) -> None:
+    @pytest.mark.parametrize(
+        ('tasks', 'collide'),
+        [
+            # Delegate `a` with child call `b:c`, and delegate `a:b` with child call `c`.
+            pytest.param(('b:c', 'c'), True, id='collide'),
+            # `a:b` is a child call of `a` and also the ID of the other delegate call, whose entries are dropped.
+            pytest.param(('b', 'c'), False, id='nested-prefix'),
+        ],
+    )
+    async def test_prefixed_ids(self, tasks: tuple[str, str], collide: bool) -> None:
         def clash_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
-            return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='b:c' if prompt == 'one' else 'c')])
+            assert isinstance(prompt, str)
+            return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id=prompt)])
 
         clash = Agent(FunctionModel(clash_fn), name='clash', output_type=[str, DeferredToolRequests])
 
@@ -381,8 +397,8 @@ class TestSubAgentsForwardDeferredCalls:
         def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
                 parts=[
-                    ToolCallPart('delegate_task', {'agent_name': 'clash', 'task': 'one'}, tool_call_id='a'),
-                    ToolCallPart('delegate_task', {'agent_name': 'clash', 'task': 'two'}, tool_call_id='a:b'),
+                    ToolCallPart('delegate_task', {'agent_name': 'clash', 'task': tasks[0]}, tool_call_id='a'),
+                    ToolCallPart('delegate_task', {'agent_name': 'clash', 'task': tasks[1]}, tool_call_id='a:b'),
                 ]
             )
 
@@ -393,10 +409,53 @@ class TestSubAgentsForwardDeferredCalls:
         )
         result = await parent.run('go')
         assert isinstance(result.output, DeferredToolRequests)
-        with pytest.raises(ValueError, match='collide'):
-            delegated_requests(result.output)
-        with pytest.raises(ValueError, match='collide'):
-            delegated_results(result.output, DeferredToolResults(approvals={'a:b:c': True}))
+        if collide:
+            with pytest.raises(ValueError, match='collide'):
+                delegated_requests(result.output)
+            with pytest.raises(ValueError, match='collide'):
+                delegated_results(result.output, DeferredToolResults(approvals={'a:b:c': True}))
+        else:
+            flat = delegated_requests(result.output)
+            assert [call.tool_call_id for call in flat.approvals] == ['a:b', 'a:b:c']
+            assert sorted(flat.validated_args) == ['a:b', 'a:b:c']
+
+    async def test_a_failed_resume_can_be_retried(self) -> None:
+        mailer = _Mailer()
+        store = InMemoryDeferredStateStore()
+        parent = _parent(mailer.agent, store=store)
+        first = await parent.run('go')
+        assert isinstance(first.output, DeferredToolRequests)
+        routed = delegated_results(first.output, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
+
+        mailer.fail_for.add('ann@example.com')
+        with pytest.raises(RuntimeError, match='mail server down'):
+            await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
+
+        # The state was put back, so the same answers resume the sub-agent once the failure is gone.
+        second = await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
+        assert second.output == 'parent saw: mail handled'
+        assert mailer.sent.count('ann@example.com') == 1
+
+    async def test_a_crash_before_any_deferral_propagates(self) -> None:
+        def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model down')
+
+        crasher = Agent(FunctionModel(crash), name='crasher', output_type=[str, DeferredToolRequests])
+        with pytest.raises(RuntimeError, match='model down'):
+            await _parent(crasher).run('go')
+
+    async def test_the_in_memory_store_is_bounded(self) -> None:
+        store = InMemoryDeferredStateStore(max_states=1)
+        await store.save('a', {'n': 1})
+        await store.save('b', {'n': 2})
+        assert await store.take('a') is None
+        assert await store.take('b') == {'n': 2}
+        assert await store.take('b') is None
+
+        expiring = InMemoryDeferredStateStore(max_age=timedelta(0))
+        await expiring.save('a', {'n': 1})
+        await expiring.save('b', {'n': 2})
+        assert await expiring.take('b') is None
 
     async def test_the_history_stays_on_the_server(self) -> None:
         mailer = _Mailer()

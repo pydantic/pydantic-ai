@@ -12,8 +12,11 @@ the child from its stored history instead of running the task again.
 from __future__ import annotations
 
 import secrets
+import time
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any, Protocol, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
@@ -39,44 +42,59 @@ class DeferredStateStore(Protocol):
     """Holds the state of a sub-agent whose deferred tool calls `SubAgents(forward_deferred_calls=True)` passed on.
 
     The state, a JSON-compatible dict with the sub-agent's history and pending calls, is saved under a new random ID
-    when the delegation stops, loaded when the caller's answers arrive, and deleted once the resumed delegation
-    settles. It stays on the server: the caller only sees its ID.
+    when the delegation stops, and taken when the caller's answers arrive. It stays on the server: the caller only
+    sees its ID. A resume that fails, or that names a state saved for another delegation, saves it back.
     """
 
     async def save(self, state_id: str, state: dict[str, Any]) -> None:
         """Keep `state` under `state_id`."""
         ...
 
-    async def load(self, state_id: str) -> dict[str, Any] | None:
-        """The state saved under `state_id`, or `None` if there is none."""
-        ...
+    async def take(self, state_id: str) -> dict[str, Any] | None:
+        """Remove the state saved under `state_id` and return it, or `None` if there is none.
 
-    async def delete(self, state_id: str) -> None:
-        """Forget the state saved under `state_id`, if any."""
+        Make this atomic in a store shared by several processes, so two submissions of the same answers can't both
+        resume the sub-agent and run its approved calls twice.
+        """
         ...
 
 
 class InMemoryDeferredStateStore:
     """A `DeferredStateStore` in this process's memory, the default.
 
-    A resume must then reach the same store in the same process. A state whose calls are never answered stays until
-    the store is dropped.
+    A resume must then reach the same store in the same process. It keeps at most `max_states` states, each for at
+    most `max_age`, so the history of a delegation whose calls are never answered doesn't stay forever: a resume
+    after that raises an error instead.
     """
 
-    def __init__(self) -> None:
-        self._states: dict[str, dict[str, Any]] = {}
+    def __init__(self, *, max_states: int = 1000, max_age: timedelta = timedelta(days=1)) -> None:
+        self._max_states = max_states
+        self._max_age = max_age.total_seconds()
+        self._states: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
 
     async def save(self, state_id: str, state: dict[str, Any]) -> None:
-        """Keep `state` under `state_id`."""
-        self._states[state_id] = state
+        """Keep `state` under `state_id`, dropping expired states and then the oldest ones over `max_states`."""
+        now = time.monotonic()
+        while self._states and now - next(iter(self._states.values()))[0] >= self._max_age:
+            self._states.popitem(last=False)
+        self._states[state_id] = (now, state)
+        while len(self._states) > self._max_states:
+            self._states.popitem(last=False)
 
-    async def load(self, state_id: str) -> dict[str, Any] | None:
-        """The state saved under `state_id`, or `None` if there is none."""
-        return self._states.get(state_id)
+    async def take(self, state_id: str) -> dict[str, Any] | None:
+        """Remove the state saved under `state_id` and return it, or `None` if there is none or it expired."""
+        saved_at, state = self._states.pop(state_id, (0.0, None))
+        return state if time.monotonic() - saved_at < self._max_age else None
 
-    async def delete(self, state_id: str) -> None:
-        """Forget the state saved under `state_id`, if any."""
-        self._states.pop(state_id, None)
+
+@dataclass(frozen=True)
+class ResumedState:
+    """A stored sub-agent state taken for a resume, with the caller's answers to its calls."""
+
+    state_id: str
+    state: dict[str, Any]
+    messages: list[ModelMessage]
+    results: DeferredToolResults
 
 
 async def deferral_metadata(
@@ -148,6 +166,10 @@ def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict
     validated_args = dict(requests.validated_args)
     kinds = _kinds(requests)
     paths: dict[str, list[str]] = {}
+    # Drop the delegate calls' own entries first, so one's child call can't be dropped as another delegate call.
+    delegated = {call.tool_call_id for call in requests.approvals if _state(requests.metadata.get(call.tool_call_id))}
+    metadata = {key: value for key, value in metadata.items() if key not in delegated}
+    validated_args = {key: value for key, value in validated_args.items() if key not in delegated}
     for call in requests.approvals:
         state = _state(requests.metadata.get(call.tool_call_id))
         if state is None:
@@ -155,8 +177,6 @@ def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict
             continue
         agent_name, child = _child_requests(state)
         child, child_paths = _flatten(child)
-        del metadata[call.tool_call_id]
-        validated_args.pop(call.tool_call_id, None)
         prefix = f'{call.tool_call_id}:'
         approvals.extend(_prefixed_calls(prefix, child.approvals))
         calls.extend(_prefixed_calls(prefix, child.calls))
@@ -260,27 +280,42 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
 
 async def resume_state(
     store: DeferredStateStore, metadata: object, *, agent_name: str, task: str, tool_call_id: str | None
-) -> tuple[str, tuple[list[ModelMessage], DeferredToolResults]] | None:
-    """The stored state's ID, and the history and answers to resume a child with, for an approved delegate call.
+) -> ResumedState | None:
+    """Take the stored state an approved delegate call names, with the caller's answers, to resume its child.
 
     `None` when the call was approved without a child's state, such as by an approval gate on the delegate tool.
     The answers come from the caller, so the state they name must be in `store`, saved by this same delegate call,
-    and they may answer only the calls the child is waiting on.
+    and they may answer only the calls the child is waiting on. A state that doesn't match is saved back.
     """
     state = _state(metadata)
     if state is None:
         return None
     state_id = state.get('state_id')
-    if not isinstance(state_id, str) or (stored := await store.load(state_id)) is None:
+    if not isinstance(state_id, str) or (stored := await store.take(state_id)) is None:
         raise UserError(
             'The sub-agent state named in `deferred_tool_results` is not in this `SubAgents` store: it was already '
-            'resumed, or saved in another process or by another `SubAgents`. To resume in another process, give '
-            'both the same `deferred_state_store`.'
+            'resumed or expired, or was saved in another process or by another `SubAgents`. To resume in another '
+            'process, give both the same `deferred_state_store`.'
         )
+    try:
+        return _resumed(state_id, stored, state, agent_name=agent_name, task=task, tool_call_id=tool_call_id)
+    except UserError:
+        await store.save(state_id, stored)
+        raise
+
+
+def _resumed(
+    state_id: str,
+    stored: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    agent_name: str,
+    task: str,
+    tool_call_id: str | None,
+) -> ResumedState:
     if (stored.get('agent_name'), stored.get('task'), stored.get('tool_call_id')) != (agent_name, task, tool_call_id):
         raise UserError('The sub-agent state named in `deferred_tool_results` was saved for another delegation.')
     requests = _REQUESTS.validate_python(stored['requests'])
-    messages = ModelMessagesTypeAdapter.validate_python(stored['messages'])
     try:
         results = _RESULTS.validate_python(state['results'])
     except (KeyError, ValidationError) as error:
@@ -288,4 +323,4 @@ async def resume_state(
     for answered, asked in ((results.approvals, requests.approvals), (results.calls, requests.calls)):
         if unknown := sorted(set(answered) - {call.tool_call_id for call in asked}):
             raise UserError(f'The sub-agent was not waiting for these answers: {unknown}')
-    return state_id, (messages, results)
+    return ResumedState(state_id, stored, ModelMessagesTypeAdapter.validate_python(stored['messages']), results)

@@ -870,7 +870,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> _Ended:
         """Run a delegation outside an owner, resuming a child the caller answered with `forward_deferred_calls`."""
         forward = self._forward_deferred_calls
-        answered = (
+        # A call approved without a child's state, such as through an approval gate on the delegate tool, runs the
+        # task afresh: it approves none of the child's calls, which it passes on again.
+        resumed = (
             await resume_state(
                 self._deferred_state_store,
                 ctx.tool_call_metadata,
@@ -881,9 +883,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if forward and ctx.tool_call_approved
             else None
         )
-        # A call approved without a child's state, such as through an approval gate on the delegate tool, runs the
-        # task afresh: it approves none of the child's calls, which it passes on again.
-        state_id, resume = answered if answered is not None else (None, None)
         try:
             return await self._run_delegation(
                 ctx,
@@ -892,12 +891,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 task=task,
                 key=key,
                 workspace=workspace,
-                resume=resume,
+                resume=(resumed.messages, resumed.results) if resumed is not None else None,
                 forward_deferred=forward,
             )
-        finally:
-            if state_id is not None:
-                await self._deferred_state_store.delete(state_id)
+        except BaseException:
+            if resumed is not None:
+                # Taken before the child resumed, so a concurrent resume couldn't run it too; a retry can resume it.
+                with anyio.CancelScope(shield=True):
+                    await self._deferred_state_store.save(resumed.state_id, resumed.state)
+            raise
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject options that need the parent run when the delegate tool runs as a child workflow."""
