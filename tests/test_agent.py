@@ -5112,6 +5112,68 @@ def test_unknown_tool_per_tool_retries_exceeded():
         agent.run_sync('Hello')
 
 
+def test_deferred_tool_cutoff_raises_incomplete_tool_call():
+    requests = 0
+
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='needs_approval', args='{"value":', tool_call_id='call-1')],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def needs_approval(value: str) -> str:
+        return value
+
+    with pytest.raises(IncompleteToolCall) as exc_info:
+        agent.run_sync('test')
+
+    assert str(exc_info.value) == (
+        'Model token limit (provider default) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+    assert requests == 2
+
+
+def test_approved_deferred_tool_cutoff_raises_incomplete_tool_call():
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='needs_approval', args='{"value":', tool_call_id='call-1')],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def needs_approval(value: str) -> str:
+        return value
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='needs_approval', args='{"value":', tool_call_id='call-1')],
+            finish_reason='length',
+        ),
+    ]
+
+    with pytest.raises(IncompleteToolCall) as exc_info:
+        agent.run_sync(
+            deferred_tool_results=DeferredToolResults(approvals={'call-1': True}),
+            message_history=message_history,
+        )
+
+    assert str(exc_info.value) == (
+        'Model token limit (provider default) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
