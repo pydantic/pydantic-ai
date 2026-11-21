@@ -6,7 +6,8 @@
 //
 // - `<protocol>.submit` adds a user message and returns the request body the client sends to the server.
 //   Passing `messages` first replaces the client's state, the way an app hydrates it from storage.
-// - `<protocol>.regenerate` does the same for the client's retry of its last response, instead of a new message.
+// - `<protocol>.regenerate` does the same for the client's retry of its last response, instead of a new message,
+//   and takes `messages` the same way, for a retry from a client hydrated after a reload.
 // - `<protocol>.receive` feeds the server's stream to the pending request and returns the client's messages, and
 //   `data`: what it handed the app besides them, the transient data parts or custom events.
 //
@@ -103,7 +104,10 @@ class VercelSession {
     return await this.start(() => this.chat.sendMessage(message));
   }
 
-  async regenerate() {
+  async regenerate({ messages } = {}) {
+    if (messages !== undefined) {
+      this.chat = this.newChat(messages);
+    }
     return await this.start(() => this.chat.regenerate());
   }
 
@@ -146,7 +150,10 @@ class AGUISession {
   }
 
   // `@ag-ui/client` has no retry of its own: an app drops the last response and runs the agent again.
-  async regenerate() {
+  async regenerate({ messages } = {}) {
+    if (messages !== undefined) {
+      this.agent = new ReplayAgent({ threadId: this.threadId, initialMessages: messages });
+    }
     this.agent.setMessages(this.agent.messages.slice(0, -1));
     return await this.start();
   }
