@@ -1,15 +1,18 @@
 """Pass a sub-agent's deferred tool calls to the delegating run's caller, and route the caller's answers back.
 
 With `SubAgents(forward_deferred_calls=True)`, a child run that ends with `DeferredToolRequests` makes the delegate
-call raise `ApprovalRequired`, carrying the child's requests and history in the call's metadata. The caller sees one
-`DeferredToolRequests` for the whole tree through `delegated_requests()`, with each child call's ID prefixed by the
-delegate call's (`'<delegate call>:<child call>'`), and answers it in the usual way. `delegated_results()` turns those
-answers into an approval of the delegate call whose metadata holds the child's state and its own results, so the
-delegate resumes the child from its history instead of running the task again.
+call raise `ApprovalRequired`, carrying the child's requests and history in the call's metadata, signed with the
+capability's key. The caller sees one `DeferredToolRequests` for the whole tree through `delegated_requests()`, with
+each child call's ID prefixed by the delegate call's (`'<delegate call>:<child call>'`), and answers it in the usual
+way. `delegated_results()` turns those answers into an approval of the delegate call whose metadata holds the child's
+state and its own answers, so the delegate resumes the child from its history instead of running the task again.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, TypeVar
@@ -18,15 +21,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    ToolCallPart,
-    UserPromptPart,
-)
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ToolCallPart
+from pydantic_ai.tools import DeferredToolKind, DeferredToolRequests, DeferredToolResults, ToolApproved
 
 STATE_KEY = 'sub_agent_run'
 """The key of the delegate call's metadata holding the child run's state."""
@@ -34,23 +30,31 @@ STATE_KEY = 'sub_agent_run'
 AGENT_PATH_KEY = 'agent_path'
 """The key of a child call's metadata in `delegated_requests()` naming the delegates it was made under, outermost first."""
 
+_SIGNED_FIELDS = ('agent_name', 'task', 'requests', 'messages')
+
 _REQUESTS: TypeAdapter[DeferredToolRequests] = TypeAdapter(DeferredToolRequests)
 _RESULTS: TypeAdapter[DeferredToolResults] = TypeAdapter(DeferredToolResults)
 
 _V = TypeVar('_V')
 
 
+def _signature(key: bytes, state: dict[str, Any]) -> str:
+    signed = json.dumps([state.get(name) for name in _SIGNED_FIELDS], sort_keys=True, separators=(',', ':'))
+    return hmac.new(key, signed.encode(), hashlib.sha256).hexdigest()
+
+
 def deferral_metadata(
-    agent_name: str, requests: DeferredToolRequests, messages: Sequence[ModelMessage]
+    key: bytes, *, agent_name: str, task: str, requests: DeferredToolRequests, messages: Sequence[ModelMessage]
 ) -> dict[str, Any]:
-    """The metadata a delegate call raises `ApprovalRequired` with, in a form that survives JSON serialization."""
-    return {
-        STATE_KEY: {
-            'agent_name': agent_name,
-            'requests': _REQUESTS.dump_python(requests, mode='json'),
-            'messages': ModelMessagesTypeAdapter.dump_python(list(messages), mode='json'),
-        }
+    """The metadata a delegate call raises `ApprovalRequired` with, signed with `key`, in a JSON-serializable form."""
+    state: dict[str, Any] = {
+        'agent_name': agent_name,
+        'task': task,
+        'requests': _REQUESTS.dump_python(requests, mode='json'),
+        'messages': ModelMessagesTypeAdapter.dump_python(list(messages), mode='json'),
     }
+    state['signature'] = _signature(key, state)
+    return {STATE_KEY: state}
 
 
 def _state(metadata: object) -> dict[str, Any] | None:
@@ -73,12 +77,26 @@ def _child_requests(state: dict[str, Any]) -> tuple[str, DeferredToolRequests]:
         raise _invalid(error) from error
 
 
+def _kinds(requests: DeferredToolRequests) -> dict[str, DeferredToolKind]:
+    return {call.tool_call_id: requests.kind(call.tool_call_id) for call in requests.calls}
+
+
+def _flat_ids(requests: DeferredToolRequests) -> list[str]:
+    return [call.tool_call_id for call in (*requests.approvals, *requests.calls)]
+
+
 def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict[str, list[str]]]:
-    """`requests` with each delegate call replaced by its child's calls, and the delegate path of each of those."""
+    """`requests` with each delegate call replaced by its child's calls, and the delegate path of each of those.
+
+    Raises:
+        ValueError: Two calls end up with the same ID, such as delegate call `a` with child call `b:c` and delegate
+            call `a:b` with child call `c`.
+    """
     approvals: list[ToolCallPart] = []
     calls = list(requests.calls)
     metadata = dict(requests.metadata)
     validated_args = dict(requests.validated_args)
+    kinds = _kinds(requests)
     paths: dict[str, list[str]] = {}
     for call in requests.approvals:
         state = _state(requests.metadata.get(call.tool_call_id))
@@ -90,18 +108,32 @@ def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict
         del metadata[call.tool_call_id]
         validated_args.pop(call.tool_call_id, None)
         prefix = f'{call.tool_call_id}:'
-        approvals.extend(replace(part, tool_call_id=prefix + part.tool_call_id) for part in child.approvals)
-        calls.extend(replace(part, tool_call_id=prefix + part.tool_call_id) for part in child.calls)
-        metadata.update({prefix + key: value for key, value in child.metadata.items()})
-        validated_args.update({prefix + key: value for key, value in child.validated_args.items()})
-        paths.update(
-            {
-                prefix + part.tool_call_id: [agent_name, *child_paths.get(part.tool_call_id, [])]
-                for part in (*child.approvals, *child.calls)
-            }
-        )
+        approvals.extend(_prefixed_calls(prefix, child.approvals))
+        calls.extend(_prefixed_calls(prefix, child.calls))
+        metadata.update(_prefixed(prefix, child.metadata))
+        validated_args.update(_prefixed(prefix, child.validated_args))
+        kinds.update(_prefixed(prefix, _kinds(child)))
+        paths.update(_prefixed(prefix, {key: [agent_name, *child_paths.get(key, [])] for key in _flat_ids(child)}))
     flat = DeferredToolRequests(calls=calls, approvals=approvals, metadata=metadata, validated_args=validated_args)
-    return flat, paths
+    _require_unique(_flat_ids(flat))
+    # Questions keep their kind, so `kind()` reads it as on the requests they came from.
+    return replace(flat, _kinds={key: kind for key, kind in kinds.items() if kind == 'question'}), paths
+
+
+def _prefixed(prefix: str, mapping: Mapping[str, _V]) -> dict[str, _V]:
+    return {prefix + key: value for key, value in mapping.items()}
+
+
+def _prefixed_calls(prefix: str, calls: Sequence[ToolCallPart]) -> list[ToolCallPart]:
+    return [replace(call, tool_call_id=prefix + call.tool_call_id) for call in calls]
+
+
+def _require_unique(ids: Sequence[str]) -> None:
+    if len(set(ids)) != len(ids):
+        raise ValueError(
+            f'Delegated tool call IDs collide once prefixed with their delegate call ID: {sorted(ids)}. '
+            'Give the tool calls IDs without `:`.'
+        )
 
 
 def delegated_requests(requests: DeferredToolRequests) -> DeferredToolRequests:
@@ -114,15 +146,14 @@ def delegated_requests(requests: DeferredToolRequests) -> DeferredToolRequests:
 
     Answer the calls with `build_results()` on the returned requests, then pass the answers through
     `delegated_results()` to resume the run.
+
+    Raises:
+        ValueError: Two calls end up with the same ID.
     """
     flat, paths = _flatten(requests)
     for tool_call_id, path in paths.items():
         flat.metadata[tool_call_id] = {**flat.metadata.get(tool_call_id, {}), AGENT_PATH_KEY: path}
     return flat
-
-
-def _own(mapping: Mapping[str, _V], prefix: str) -> dict[str, _V]:
-    return {key.removeprefix(prefix): value for key, value in mapping.items() if key.startswith(prefix)}
 
 
 def delegated_results(requests: DeferredToolRequests, results: DeferredToolResults) -> DeferredToolResults:
@@ -134,8 +165,10 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
     other way runs it again, but approves none of its child's calls.
 
     Raises:
-        ValueError: A child call has no answer. A run resumes only once every call it waits on is answered.
+        ValueError: A child call has no answer, as a run resumes only once every call it waits on is answered, or
+            two calls end up with the same ID.
     """
+    _flatten(requests)
     routed = DeferredToolResults(
         approvals=dict(results.approvals),
         calls=dict(results.calls),
@@ -148,23 +181,22 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
             continue
         _, child = _child_requests(state)
         prefix = f'{call.tool_call_id}:'
+        child_ids = _flat_ids(_flatten(child)[0])
+        if missing := [prefix + key for key in child_ids if prefix + key not in {*results.approvals, *results.calls}]:
+            raise ValueError(f'`results` has no answer for the calls {missing}')
+        own = [(key, prefix + key) for key in child_ids]
         child_results = delegated_results(
             child,
             DeferredToolResults(
-                approvals=_own(results.approvals, prefix),
-                calls=_own(results.calls, prefix),
-                metadata=_own(results.metadata, prefix),
-                answered_by=_own(results.answered_by, prefix),
+                approvals={key: results.approvals[flat] for key, flat in own if flat in results.approvals},
+                calls={key: results.calls[flat] for key, flat in own if flat in results.calls},
+                metadata={key: results.metadata[flat] for key, flat in own if flat in results.metadata},
+                answered_by={key: results.answered_by[flat] for key, flat in own if flat in results.answered_by},
             ),
         )
-        for mapping in (routed.approvals, routed.calls, routed.metadata, routed.answered_by):
-            for key in [key for key in mapping if key.startswith(prefix)]:
-                del mapping[key]
-        answered = {*child_results.approvals, *child_results.calls}
-        if missing := [p.tool_call_id for p in (*child.approvals, *child.calls) if p.tool_call_id not in answered]:
-            raise ValueError(
-                f'`results` has no answer for the calls {[prefix + tool_call_id for tool_call_id in missing]}'
-            )
+        for _, flat in own:
+            for mapping in (routed.approvals, routed.calls, routed.metadata, routed.answered_by):
+                mapping.pop(flat, None)
         routed.approvals[call.tool_call_id] = ToolApproved()
         routed.metadata[call.tool_call_id] = {
             STATE_KEY: {**state, 'results': _RESULTS.dump_python(child_results, mode='json')}
@@ -172,66 +204,34 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
     return routed
 
 
-def _first_prompt(messages: Sequence[ModelMessage]) -> object:
-    return next(
-        (
-            part.content
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, UserPromptPart)
-        ),
-        None,
-    )
-
-
-def _check_answers(
-    requests: DeferredToolRequests, messages: Sequence[ModelMessage], results: DeferredToolResults
-) -> None:
-    """Refuse an answer that isn't for a call the child is waiting on, with the tool and arguments it was asked about."""
-    # A later call with a reused ID replaces the earlier one, and core refuses an answer for a call that already ran.
-    made = {
-        call.tool_call_id: call
-        for message in messages
-        if isinstance(message, ModelResponse)
-        for call in message.tool_calls
-    }
-    for answered, asked in ((results.approvals, requests.approvals), (results.calls, requests.calls)):
-        asked_by_id = {call.tool_call_id: call for call in asked}
-        for tool_call_id in answered:
-            call, pending = asked_by_id.get(tool_call_id), made.get(tool_call_id)
-            if (
-                call is None
-                or pending is None
-                or pending.tool_name != call.tool_name
-                or pending.args_as_dict() != call.args_as_dict()
-            ):
-                raise UserError(
-                    f'The answer for sub-agent tool call {tool_call_id!r} does not match the call it was asked about.'
-                )
-
-
 def resume_state(
-    metadata: object, *, agent_name: str, task: str
+    key: bytes, metadata: object, *, agent_name: str, task: str
 ) -> tuple[list[ModelMessage], DeferredToolResults] | None:
     """The history and answers to resume a child with, from the metadata of an approved delegate call.
 
     `None` when the call was approved without a child's state, such as by an approval gate on the delegate tool.
-    The state comes from the caller, so it must belong to this delegation, and each answer to a call the child is
-    waiting on, with the tool and arguments it asked about.
+    The state comes back from the caller, so it must carry this capability's signature, belong to this delegation,
+    and answer only the calls the child asked about, each the way it asked.
     """
     state = _state(metadata)
     if state is None:
         return None
-    name, requests = _child_requests(state)
+    if not hmac.compare_digest(str(state.get('signature')), _signature(key, state)):
+        raise UserError(
+            'The sub-agent state passed back with `deferred_tool_results` was not created by this `SubAgents`: '
+            'pass back the state from the `DeferredToolRequests` the run ended with, through `delegated_results()`.'
+        )
+    if state.get('agent_name') != agent_name or state.get('task') != task:
+        raise UserError(
+            'The sub-agent state passed back with `deferred_tool_results` was saved for another delegation.'
+        )
+    _, requests = _child_requests(state)
     try:
         messages = ModelMessagesTypeAdapter.validate_python(state['messages'])
         results = _RESULTS.validate_python(state['results'])
     except (KeyError, ValidationError) as error:
         raise _invalid(error) from error
-    if name != agent_name or _first_prompt(messages) != task:
-        raise UserError(
-            'The sub-agent state passed back with `deferred_tool_results` was saved for another delegation.'
-        )
-    _check_answers(requests, messages, results)
+    for answered, asked in ((results.approvals, requests.approvals), (results.calls, requests.calls)):
+        if unknown := sorted(set(answered) - {call.tool_call_id for call in asked}):
+            raise UserError(f'The sub-agent was not waiting for these answers: {unknown}')
     return messages, results

@@ -230,7 +230,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness import SubAgent, SubAgents
 from pydantic_ai_harness.sub_agents import delegated_requests, delegated_results
 
-mailer = Agent('anthropic:claude-opus-5-5', name='mailer', output_type=[str, DeferredToolRequests])
+mailer = Agent('{{ anthropic:large }}', name='mailer', output_type=[str, DeferredToolRequests])
 
 
 @mailer.tool_plain(requires_approval=True)
@@ -239,7 +239,7 @@ def send_email(to: str, body: str) -> str:
 
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[SubAgents(agents=[SubAgent(mailer)], forward_deferred_calls=True)],
 )
@@ -264,7 +264,7 @@ The next run resumes the sub-agent from its own history with those answers, so t
 
 - Every call the sub-agent waits on needs an answer: `delegated_results()` raises `ValueError` otherwise. Deny a call with `False` or `ToolDenied`.
 - Only the sub-agent decides which of its calls need approval. Approving the delegate call itself, for example with `build_results(approve_all=True)` on the parent's requests, approves none of them: the delegation runs the task again, and returns the steering message if it stops the same way.
-- The sub-agent's state, its message history (including its instructions) and pending calls, travels to the caller in the delegate call's metadata and back. The resumed delegate checks that the state belongs to this delegation, with the same sub-agent and task, and that each answer is for a call the sub-agent is waiting on, with the tool and arguments it asked about. Anything else raises `UserError`. Beyond that, the state is trusted like the parent's own message history, so keep it where you keep that history.
+- The sub-agent's state, its message history (with its instructions and tool results) and pending calls, travels to the caller in the delegate call's metadata and back, signed with `deferred_state_key`. The resumed delegate accepts only state this `SubAgents` signed, for this delegation's sub-agent and task, answering only the calls the sub-agent asked about. Anything else raises `UserError`. Without `deferred_state_key`, each `SubAgents` instance signs with a random key, so resume through the same instance; set the same secret in every process that may resume a run. The state is signed, not encrypted: `delegated_requests()` leaves it out, but an adapter that sends the raw `DeferredToolRequests.metadata` to a client, as the AG-UI adapter does for approvals, sends it the sub-agent's history too.
 - The delegation that stops emits a `DelegationFinishedEvent` with outcome `deferred`, and the sub-agent's usage up to that point counts like any delegation's. The resumed run is a new delegation, with its own events.
 - Only foreground delegations outside durable execution and task control forward their calls. Others return the steering message.
 
@@ -704,6 +704,7 @@ SubAgents(
     workspace=None,  # WorkspaceBackend to read agent_folders from instead of the run's workspace
     workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
     forward_deferred_calls=False,  # pass a sub-agent's deferred tool calls to the caller, and resume it
+    deferred_state_key=None,  # bytes: signs the state forward_deferred_calls sends; None makes a random key per instance
     include_self=False,  # also list the running agent itself as the delegate `self`
     max_depth=3,  # delegation levels, counting the top-level run
     task_control=None,  # TaskControl: background tasks, task-control tools, questions, and task events

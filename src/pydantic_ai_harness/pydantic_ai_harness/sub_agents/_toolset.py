@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Container, Coroutine, Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -570,6 +571,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] | None = None,
         workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
         forward_deferred_calls: bool = False,
+        deferred_state_key: bytes | None = None,
         _record_delegation: RecordDelegation | None = None,
     ) -> None:
         super().__init__(id=id)
@@ -602,6 +604,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._tool_name = tool_name
         self._contain_errors = contain_errors
         self._forward_deferred_calls = forward_deferred_calls
+        self._deferred_state_key = deferred_state_key if deferred_state_key is not None else secrets.token_bytes(32)
         self._workspace_resolver = workspace_resolver
         self._models: dict[str, ModelOption] = dict(models or {})
         self._include_self = include_self
@@ -854,7 +857,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Run a delegation outside an owner, resuming a child the caller answered with `forward_deferred_calls`."""
         forward = self._forward_deferred_calls and not ctx.in_durable_context
         answered = (
-            resume_state(ctx.tool_call_metadata, agent_name=agent_name, task=task)
+            resume_state(self._deferred_state_key, ctx.tool_call_metadata, agent_name=agent_name, task=task)
             if forward and ctx.tool_call_approved
             else None
         )
@@ -1502,7 +1505,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 own_budget=own_budget,
                 serving_model=serving_model,
                 messages=messages,
-                forward_deferred=forward_deferred,
+                forward_deferred=task if forward_deferred else None,
             )
         except BaseException as exc:
             outcome: DelegationOutcome = (
@@ -1716,15 +1719,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         own_budget: bool,
         serving_model: ServingModelRecorder,
         messages: Sequence[ModelMessage],
-        forward_deferred: bool = False,
+        forward_deferred: str | None = None,
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
         Soft outcomes (timeout, own usage budget, a child run that ended with
         `DeferredToolRequests` or `PendingModelResponse`) become a steering message the parent reads as a normal
         tool result; a child's soft failure or contained crash becomes a `ModelRetry`
-        the caller raises. With `forward_deferred`, a child's `DeferredToolRequests` instead become an
-        `ApprovalRequired` the caller raises. Everything else propagates and aborts the delegation.
+        the caller raises. With `forward_deferred`, the delegation's task, a child's `DeferredToolRequests` instead
+        become an `ApprovalRequired` the caller raises. Everything else propagates and aborts the delegation.
         """
         timeout = sub_agent.timeout_seconds
         try:
@@ -1759,11 +1762,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
-        if forward_deferred and isinstance(result.output, DeferredToolRequests):
+        if forward_deferred is not None and isinstance(result.output, DeferredToolRequests):
             return _Ended(
                 outcome='deferred',
                 output=f'Sub-agent {agent_name!r} is waiting for answers to its deferred tool calls.',
-                deferral=deferral_metadata(agent_name, result.output, result.all_messages()),
+                deferral=deferral_metadata(
+                    self._deferred_state_key,
+                    agent_name=agent_name,
+                    task=forward_deferred,
+                    requests=result.output,
+                    messages=result.all_messages(),
+                ),
             )
         if (reason := resumable_output_reason(result.output)) is not None:
             # The parent cannot resume the child run, and delegating the same task again would most

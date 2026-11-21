@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext, ToolDenied
@@ -72,8 +75,8 @@ class _Mailer:
             return f'sent to {to}'
 
 
-def _parent_model() -> FunctionModel:
-    """Delegates to `mailer` once, then reports what the delegation returned.
+def _parent_model(agent_name: str = 'mailer', task: str = 'email ann') -> FunctionModel:
+    """Delegates `task` to `agent_name` once, then reports what the delegation returned.
 
     Streams, because the `Listener` on the parent makes core stream the run.
     """
@@ -83,7 +86,7 @@ def _parent_model() -> FunctionModel:
             if isinstance(part, ToolReturnPart):
                 yield f'parent saw: {part.content}'
                 return
-        args = '{"agent_name": "mailer", "task": "email ann"}'
+        args = json.dumps({'agent_name': agent_name, 'task': task})
         yield {0: DeltaToolCall(name='delegate_task', json_args=args, tool_call_id='c1')}
 
     return FunctionModel(stream_function=stream)
@@ -100,12 +103,18 @@ class Listener(AbstractCapability[object]):
         self.ended.append(event)
 
 
-def _parent(mailer: _Mailer, listener: Listener | None = None) -> Agent[object, str | DeferredToolRequests]:
+def _parent(
+    child: Agent[object, Any],
+    listener: Listener | None = None,
+    *,
+    task: str = 'email ann',
+    key: bytes | None = None,
+) -> Agent[object, str | DeferredToolRequests]:
     return Agent(
-        _parent_model(),
+        _parent_model(child.name or '', task),
         output_type=[str, DeferredToolRequests],
         capabilities=[
-            SubAgents(agents=[SubAgent(mailer.agent)], forward_deferred_calls=True),
+            SubAgents(agents=[SubAgent(child)], forward_deferred_calls=True, deferred_state_key=key),
             listener or Listener(),
         ],
     )
@@ -115,7 +124,7 @@ class TestForwardDeferredCalls:
     async def test_child_approvals_reach_the_caller_and_the_child_resumes(self) -> None:
         mailer = _Mailer()
         listener = Listener()
-        parent = _parent(mailer, listener)
+        parent = _parent(mailer.agent, listener)
 
         first = await parent.run('go')
         requests = first.output
@@ -148,7 +157,7 @@ class TestForwardDeferredCalls:
 
     async def test_every_child_call_needs_an_answer(self) -> None:
         mailer = _Mailer()
-        first = await _parent(mailer).run('go')
+        first = await _parent(mailer.agent).run('go')
         assert isinstance(first.output, DeferredToolRequests)
 
         with pytest.raises(ValueError, match=r"no answer for the calls \['c1:e2'\]"):
@@ -156,7 +165,7 @@ class TestForwardDeferredCalls:
 
     async def test_a_resumed_child_can_defer_again(self) -> None:
         mailer = _Mailer()
-        parent = _parent(mailer)
+        parent = _parent(mailer.agent)
         first = await parent.run('go')
         assert isinstance(first.output, DeferredToolRequests)
         mailer.second_approval.add('ann@example.com')
@@ -180,7 +189,7 @@ class TestForwardDeferredCalls:
 
     async def test_approving_the_delegation_alone_does_not_approve_the_child_calls(self) -> None:
         mailer = _Mailer()
-        parent = _parent(mailer)
+        parent = _parent(mailer.agent)
         first = await parent.run('go')
         assert isinstance(first.output, DeferredToolRequests)
 
@@ -194,36 +203,164 @@ class TestForwardDeferredCalls:
         )
         assert mailer.sent == []
 
-    async def test_a_changed_child_call_is_rejected(self) -> None:
+    async def test_nested_delegations_reach_the_caller_and_resume_through_every_level(self) -> None:
         mailer = _Mailer()
-        parent = _parent(mailer)
+
+        def assistant_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for part in messages[-1].parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(f'assistant: {part.content}')])
+            args = {'agent_name': 'mailer', 'task': 'email ann'}
+            return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id='m1')])
+
+        assistant = Agent(
+            FunctionModel(assistant_fn),
+            name='assistant',
+            output_type=[str, DeferredToolRequests],
+            capabilities=[SubAgents(agents=[SubAgent(mailer.agent)], forward_deferred_calls=True)],
+        )
+        parent = _parent(assistant, task='handle the mail')
+
         first = await parent.run('go')
-        requests = first.output
-        assert isinstance(requests, DeferredToolRequests)
-        routed = delegated_results(requests, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
+        assert isinstance(first.output, DeferredToolRequests)
+        flat = delegated_requests(first.output)
+        assert [call.tool_call_id for call in flat.approvals] == ['c1:m1:e1', 'c1:m1:e2']
+        assert flat.metadata == snapshot(
+            {'c1:m1:e1': {'agent_path': ['assistant', 'mailer']}, 'c1:m1:e2': {'agent_path': ['assistant', 'mailer']}}
+        )
+
+        second = await parent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=delegated_results(first.output, flat.build_results(approve_all=True)),
+        )
+        assert second.output == 'parent saw: assistant: mail handled'
+        assert (mailer.model_calls, mailer.lookups, sorted(mailer.sent)) == (
+            2,
+            1,
+            ['ann@example.com', 'cc@example.com'],
+        )
+
+    async def test_external_calls_and_questions_keep_their_kind(self) -> None:
+        def fetcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+            if returns:
+                return ModelResponse(parts=[TextPart(', '.join(sorted(str(part.content) for part in returns)))])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('fetch', {'url': 'https://example.com'}, tool_call_id='f1'),
+                    ToolCallPart('ask', {'question': 'Proceed?'}, tool_call_id='q1'),
+                ]
+            )
+
+        fetcher = Agent(FunctionModel(fetcher_fn), name='fetcher', output_type=[str, DeferredToolRequests])
+
+        @fetcher.tool_plain
+        def fetch(url: str) -> str:
+            raise CallDeferred
+
+        @fetcher.tool_plain
+        def ask(question: str) -> str:
+            raise CallDeferred(kind='question')
+
+        parent = _parent(fetcher)
+        first = await parent.run('go')
+        assert isinstance(first.output, DeferredToolRequests)
+        flat = delegated_requests(first.output)
+        assert flat.approvals == []
+        assert [(call.tool_call_id, flat.kind(call.tool_call_id)) for call in flat.calls] == [
+            ('c1:f1', 'external'),
+            ('c1:q1', 'question'),
+        ]
+
+        results = flat.build_results(calls={'c1:f1': 'the page', 'c1:q1': 'yes'})
+        second = await parent.run(
+            message_history=first.all_messages(), deferred_tool_results=delegated_results(first.output, results)
+        )
+        assert second.output == 'parent saw: the page, yes'
+
+    async def test_colliding_ids_are_rejected(self) -> None:
+        def clash_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+            return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='b:c' if prompt == 'one' else 'c')])
+
+        clash = Agent(FunctionModel(clash_fn), name='clash', output_type=[str, DeferredToolRequests])
+
+        @clash.tool_plain(requires_approval=True)
+        def dangerous() -> str:
+            return 'done'  # pragma: no cover
+
+        def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('delegate_task', {'agent_name': 'clash', 'task': 'one'}, tool_call_id='a'),
+                    ToolCallPart('delegate_task', {'agent_name': 'clash', 'task': 'two'}, tool_call_id='a:b'),
+                ]
+            )
+
+        parent = Agent(
+            FunctionModel(parent_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[SubAgents(agents=[SubAgent(clash)], forward_deferred_calls=True)],
+        )
+        result = await parent.run('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        with pytest.raises(ValueError, match='collide'):
+            delegated_requests(result.output)
+        with pytest.raises(ValueError, match='collide'):
+            delegated_results(result.output, DeferredToolResults(approvals={'a:b:c': True}))
+
+    async def test_changed_state_is_rejected(self) -> None:
+        mailer = _Mailer()
+        parent = _parent(mailer.agent)
+        first = await parent.run('go')
+        assert isinstance(first.output, DeferredToolRequests)
+        routed = delegated_results(first.output, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
         state = routed.metadata['c1']['sub_agent_run']
+        # Changing a call consistently in the requests and the history still breaks the signature.
         response = next(m for m in reversed(state['messages']) if m['kind'] == 'response')
         response['parts'][1]['args'] = {'to': 'attacker@example.com'}
+        state['requests']['approvals'][0]['args'] = {'to': 'attacker@example.com'}
 
-        with pytest.raises(UserError, match='does not match the call it was asked about'):
+        with pytest.raises(UserError, match='was not created by this `SubAgents`'):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
         assert mailer.sent == []
 
-    async def test_state_for_another_delegation_is_rejected(self) -> None:
+    async def test_answers_the_child_did_not_ask_for_are_rejected(self) -> None:
         mailer = _Mailer()
-        parent = _parent(mailer)
+        parent = _parent(mailer.agent)
         first = await parent.run('go')
-        requests = first.output
-        assert isinstance(requests, DeferredToolRequests)
-        routed = delegated_results(requests, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
-        routed.metadata['c1']['sub_agent_run']['agent_name'] = 'other'
+        assert isinstance(first.output, DeferredToolRequests)
+        routed = delegated_results(first.output, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
+        routed.metadata['c1']['sub_agent_run']['results']['approvals']['l1'] = True
 
-        with pytest.raises(UserError, match='was saved for another delegation'):
+        with pytest.raises(UserError, match=r"was not waiting for these answers: \['l1'\]"):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
+
+    async def test_a_shared_key_resumes_in_another_instance(self) -> None:
+        mailer = _Mailer()
+        first = await _parent(mailer.agent, key=b'secret').run('go')
+        assert isinstance(first.output, DeferredToolRequests)
+        answers = DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True})
+        routed = delegated_results(first.output, answers)
+
+        with pytest.raises(UserError, match='was not created by this `SubAgents`'):
+            await _parent(mailer.agent).run(message_history=first.all_messages(), deferred_tool_results=routed)
+
+        # State signed with the same key, for another task, isn't accepted for this one.
+        other = await _parent(mailer.agent, task='email bob', key=b'secret').run('go')
+        with pytest.raises(UserError, match='was saved for another delegation'):
+            await _parent(mailer.agent, task='email bob', key=b'secret').run(
+                message_history=other.all_messages(), deferred_tool_results=routed
+            )
+
+        second = await _parent(mailer.agent, key=b'secret').run(
+            message_history=first.all_messages(), deferred_tool_results=routed
+        )
+        assert second.output == 'parent saw: mail handled'
 
     async def test_incomplete_state_is_rejected(self) -> None:
         mailer = _Mailer()
-        parent = _parent(mailer)
+        parent = _parent(mailer.agent)
         first = await parent.run('go')
         requests = first.output
         assert isinstance(requests, DeferredToolRequests)

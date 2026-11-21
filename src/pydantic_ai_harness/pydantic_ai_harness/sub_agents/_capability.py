@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import secrets
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -275,6 +276,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     delegation runs the task again and returns the steering message if it stops the same way. Foreground
     delegations outside durable execution and task control only."""
 
+    deferred_state_key: bytes | None = field(default=None, kw_only=True, repr=False)
+    """The secret that signs the sub-agent state `forward_deferred_calls` sends to the caller, so a resume accepts
+    only state this capability created. Unset, each `SubAgents` instance makes a random one, so the run that
+    resumes must use the same instance, in the same process. Set the same secret in every process that may
+    resume a run another one started."""
+
     include_self: bool = False
     """If `True`, the roster also lists the running agent itself, as `self`.
 
@@ -334,6 +341,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Insertion order matches `models` for a stable prompt listing and enum."""
 
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
+
+    _deferred_state_key: bytes = field(default=b'', init=False, repr=False, compare=False)
+    """`deferred_state_key`, or a random key made in `__post_init__`, shared with every per-run copy."""
     """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
     task_control: TaskControl | None = field(default=None, kw_only=True)
@@ -377,6 +387,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 stacklevel=3,
             )
         self._workspace = secondary_workspace(self.workspace, 'SubAgents')
+        self._deferred_state_key = (
+            self.deferred_state_key if self.deferred_state_key is not None else secrets.token_bytes(32)
+        )
         self._build_roster([])
 
     def _disk_agents(self, definitions: Sequence[DiskDefinition]) -> list[SubAgent[AgentDepsT]]:
@@ -809,6 +822,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             created=self._created,
             workspace_resolver=self.workspace_resolver,
             forward_deferred_calls=self.forward_deferred_calls,
+            deferred_state_key=self._deferred_state_key,
             _record_delegation=self._delegate
             if self.dynamic_agents is not None or self.task_control is not None
             else None,
