@@ -668,7 +668,7 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
 async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ctrl-C reaches CLAI as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
+    """Ctrl+C reaches CLAI as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
     import termios
 
     leader, follower = os.openpty()
@@ -686,7 +686,7 @@ async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, mon
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> CommandResult:
-            # While the command runs, the terminal cannot turn Ctrl-C into SIGINT. Press it, as a user would.
+            # While the command runs, the terminal cannot turn Ctrl+C into SIGINT. Press it, as a user would.
             assert not termios.tcgetattr(follower)[3] & termios.ISIG
             os.write(leader, b'\x03')
             await anyio.sleep_forever()

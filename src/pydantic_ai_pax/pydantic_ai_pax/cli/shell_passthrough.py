@@ -167,7 +167,7 @@ async def run_workspace_command(
     """Run in `place`, such as the conversation's sandbox, and return context for the next model request.
 
     The workspace returns the output once the command exits, so it shows then, not as it arrives.
-    Ctrl-C cancels the command, read as a key (`ctrl_c_as_key`) as for a local one. A `!!command` needs
+    Ctrl+C cancels the command, read as a key (`ctrl_c_as_key`) as for a local one. A `!!command` needs
     this terminal, so it is refused and `None` returned.
     """
     if command.startswith('!'):

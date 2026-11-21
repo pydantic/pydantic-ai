@@ -82,9 +82,9 @@ class TerminalText:
 
 @contextlib.contextmanager
 def ctrl_c_as_key(terminal: Terminal, interrupt: Callable[[], object]) -> Generator[None]:
-    """Read Ctrl-C as a key that calls `interrupt`, while a command that takes no input runs elsewhere.
+    """Read Ctrl+C as a key that calls `interrupt`, while a command that takes no input runs elsewhere.
 
-    The terminal stays in raw mode, so Ctrl-C never becomes SIGINT. Some SDK clients take SIGINT for
+    The terminal stays in raw mode, so Ctrl+C never becomes SIGINT. Some SDK clients take SIGINT for
     themselves: the Daytona SDK's socket.io client cancels every task and stops the loop. Other keys
     are dropped, as the command reads none.
     """

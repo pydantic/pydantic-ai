@@ -1555,7 +1555,7 @@ Done (0.8s)
 
 It runs with the sandbox's shell in the sandbox's copy of the checkout, with the keys the agent got there
 with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
-input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
+input from you. Ctrl+C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
 never runs on this machine instead. `!!` needs this terminal, so in a sandbox CLAI refuses it and saves
 nothing. The command, output, and status are saved for the next prompt as on this machine.
 
