@@ -74,7 +74,6 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_bytes,
     to_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import _safe_segment  # pyright: ignore[reportPrivateUsage]
 from tests.conftest import try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
@@ -296,12 +295,101 @@ class TestPayloadHelpers:
 
 
 class TestStore:
-    def test_safe_segment(self):
-        assert _safe_segment('a b!@#') == 'a_b_'
-        assert _safe_segment('') == '_'
-        assert _safe_segment('..') == '_'
-        assert _safe_segment('.') == '_'
-        assert _safe_segment('ok-1.2') == 'ok-1.2'
+    @pytest.mark.parametrize(
+        ('key', 'filename'),
+        [('a b!@#', 'a%20b%21%40%23'), ('', '_'), ('..', '_'), ('.', '_'), ('ok-1.2/run_3.0', 'ok-1.2/run_3.0')],
+    )
+    async def test_safe_key_paths(self, tmp_path: Path, key: str, filename: str):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        handle = await store.write(key, b'payload')
+        assert (tmp_path / filename).read_bytes() == b'payload'
+        assert await store.read(handle) == b'payload'
+
+    async def test_distinct_keys_do_not_overwrite_each_other(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        keys = [
+            'run/call:one.0',
+            'run/call?one.0',
+            'run/call_one.0',
+            'run/call%3Aone.0',
+            'run/call一one.0',
+            f'run/{"?" * 86}.0',
+            f'run/{"!" * 86}.0',
+            'run/call\udcff.0',
+            'run/' + '\udcff' * 30 + '.0',
+            f'run/{"~" * 256}.0',
+            '%hd0b5bb29766f52583f0c34b87952fcd73ccac686669cc4fe0da622695f710379',
+            '/'.join(['?' * 80] * 18),
+            '/'.join(['!' * 80] * 18),
+        ]
+        payloads = [f'payload {i}'.encode() for i in range(len(keys))]
+        handles = [await store.write(key, payload) for key, payload in zip(keys, payloads)]
+        assert handles == keys
+        assert [await store.read(handle) for handle in handles] == payloads
+        assert await store.write(keys[0], b'replaced') == handles[0]
+        assert await store.read(handles[0]) == b'replaced'
+        assert [await store.read(handle) for handle in handles[1:]] == payloads[1:]
+
+    @pytest.mark.parametrize(('key', 'filename'), [(f'run/{"?" * 86}.0', '_.0'), ('run/call\udcff.0', 'call_.0')])
+    async def test_legacy_handle_with_long_or_surrogate_segment(self, tmp_path: Path, key: str, filename: str):
+        (tmp_path / 'run').mkdir()
+        legacy = tmp_path / 'run' / filename
+        legacy.write_bytes(b'legacy')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        assert await store.read(key) == b'legacy'
+        handle = await store.write(key, b'new')
+        assert await store.read(handle) == b'new'
+        assert legacy.read_bytes() == b'legacy'
+
+    async def test_oversized_ordinary_key_keeps_its_existing_path(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        with pytest.raises(OSError):
+            await store.write('x' * 256, b'payload')
+
+    async def test_long_ordinary_path_is_not_renamed(self, tmp_path: Path):
+        key = '/'.join(['ordinary-0123456789'] * 18)
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        handle = await store.write(key, b'ordinary')
+        assert (tmp_path / key).read_bytes() == b'ordinary'
+        assert await store.read(handle) == b'ordinary'
+
+    async def test_legacy_handle_with_expanded_nested_path(self, tmp_path: Path):
+        key = '/'.join(['?' * 80] * 18)
+        legacy = tmp_path.joinpath(*(['_'] * 18))
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(b'legacy')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        assert await store.read(key) == b'legacy'
+        handle = await store.write(key, b'new')
+        assert await store.read(handle) == b'new'
+        assert legacy.read_bytes() == b'legacy'
+
+    async def test_legacy_handle_reads_and_streams_the_old_file(self, tmp_path: Path):
+        (tmp_path / 'run').mkdir()
+        (tmp_path / 'run' / 'call_one.0').write_bytes(b'legacy first\nlegacy second')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        assert await store.read('run/call:one.0') == b'legacy first\nlegacy second'
+        out = await query_spill(tmp_path, 'x' * 100, 'read_tool_result', {}, handle='run/call:one.0')
+        assert out == "[handle 'run/call:one.0': 2 matching line(s); showing 2]\nlegacy first\nlegacy second"
+
+    async def test_new_file_takes_precedence_over_legacy_file(self, tmp_path: Path):
+        (tmp_path / 'run').mkdir()
+        legacy = tmp_path / 'run' / 'call_one.0'
+        legacy.write_bytes(b'legacy')
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        handle = await store.write('run/call:one.0', b'new')
+        assert await store.read(handle) == b'new'
+        assert legacy.read_bytes() == b'legacy'
+
+    @pytest.mark.parametrize('filename', ['call%3Aone.0', 'call_one.0'])
+    async def test_encoded_and_legacy_paths_cannot_escape_root(self, tmp_path: Path, filename: str):
+        (tmp_path / 'secret').write_bytes(b'secret')
+        root = tmp_path / 'store'
+        root.mkdir()
+        (root / filename).symlink_to(tmp_path / 'secret')
+        store = LocalFileOverflowStore(base_dir=root)
+        with pytest.raises(PermissionError, match='outside the store root'):
+            await store.read('call:one.0')
 
     def test_default_root(self):
         store = LocalFileOverflowStore()

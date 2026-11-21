@@ -315,6 +315,11 @@ such as `FileSystem`'s `read_file` can open it too, and replaces the query tools
 on the agent ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
 `read_tool_result` only opens handles inside the store's directory.
 
+Both filesystem stores percent-encode special characters in keys, so `call:one.0` and
+`call?one.0` use separate files. Keys containing only letters, digits, `.`, `_`, `-`, and directory
+separators keep their existing paths. A key containing special characters uses a bounded digest
+filename if its encoded path would exceed 255 bytes.
+
 To keep spills in a different workspace than the run's, pass a backend:
 
 ```python
@@ -393,6 +398,10 @@ security does not come from per-instance isolation:
   `then` fallback. Handle segments are sanitized so a crafted handle cannot traverse out.
 
 Set `cleanup_after` to delete spills older than that age.
+
+The local store reads the encoded path first, then falls back to the old underscore-sanitized
+path if the file is missing. This preserves surviving legacy spills; payloads already overwritten
+by a key collision cannot be recovered.
 
 Any other backend (a blob store, a durable engine's storage) implements the `OverflowStore`
 protocol and is passed as `store=...`:

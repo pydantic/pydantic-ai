@@ -20,9 +20,11 @@ import warnings
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import timedelta
+from hashlib import sha256
 from io import BufferedReader
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+from urllib.parse import quote
 
 import anyio.lowlevel
 import anyio.to_thread
@@ -65,19 +67,23 @@ _UNSAFE_SEGMENT = re.compile(r'[^A-Za-z0-9._-]+')
 
 
 def _safe_segment(segment: str) -> str:
-    """Make one path segment filesystem-safe without collapsing distinct keys.
+    """Percent-encode filename characters in one path segment.
 
     Empty or dot-only segments are replaced so a handle can never escape the root via
     `.`/`..`; the resolve-within-root check in `read` and `write` is the second line of defense.
     """
-    cleaned = _UNSAFE_SEGMENT.sub('_', segment)
+    cleaned = quote(segment, safe='._-', errors='surrogatepass')
     if cleaned in ('', '.', '..'):
         return '_'
     return cleaned
 
 
 def _segments(key: str) -> list[str]:
-    return [_safe_segment(part) for part in key.split('/') if part] or ['_']
+    segments = [_safe_segment(part) for part in key.split('/') if part] or ['_']
+    if len('/'.join(segments)) > 255 and _UNSAFE_SEGMENT.search(key.replace('/', '')):
+        # `%h` cannot occur in a percent-encoded segment; bound expanded keys to a single filename.
+        return [f'%h{sha256(key.encode(errors="surrogatepass")).hexdigest()}']
+    return segments
 
 
 @dataclass
@@ -300,7 +306,12 @@ class LocalFileOverflowStore:
 
     def _open(self, handle: str) -> BufferedReader:
         self._check_root()
-        return self._confined_path(handle).open('rb')
+        try:
+            return self._confined_path(handle).open('rb')
+        except FileNotFoundError:
+            # Older spills replaced unsafe characters with underscores instead of encoding them.
+            legacy = '/'.join(_UNSAFE_SEGMENT.sub('_', part) for part in handle.split('/'))
+            return self._confined_path(legacy).open('rb')
 
     def _confined_path(self, handle: str) -> Path:
         """Return the file for `handle` with symlinks resolved, refusing one outside the root."""
