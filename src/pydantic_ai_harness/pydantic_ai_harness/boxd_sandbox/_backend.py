@@ -263,6 +263,10 @@ async def _mapped_errors(
         raise translated from error
 
 
+class _MachineStoppedError(WorkspaceUnavailableError):
+    """The machine was stopped; caused by `ConflictError` when boxd refused the operation before it started."""
+
+
 async def _probe(client: AsyncBoxd, machine_id: str) -> WorkspaceUnavailableError | None:
     """`WorkspaceUnavailableError` if boxd deleted or stopped the machine; an inconclusive lookup counts as running."""
     try:
@@ -275,8 +279,8 @@ async def _probe(client: AsyncBoxd, machine_id: str) -> WorkspaceUnavailableErro
     if machine.status in ('destroyed', 'failed'):
         return WorkspaceUnavailableError(_gone_message(machine_id))
     if machine.status == 'stopped':
-        return WorkspaceUnavailableError(
-            f'The boxd machine {machine_id!r} was stopped; a later run that attaches to it starts it again. '
+        return _MachineStoppedError(
+            f'The boxd machine {machine_id!r} was stopped; the next operation starts it again. '
             "Pass `workspace='new'` to start a fresh machine."
         )
     return None
@@ -682,6 +686,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._operations += 1
         try:
             yield
+        except WorkspaceUnavailableError:
+            # Attach again on the next operation, which starts a stopped machine.
+            self._ready, self._resolved_working_dir, self._agent_outdated = False, None, False
+            raise
         finally:
             self._operations -= 1
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
@@ -711,6 +719,27 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+    ) -> CommandResult:
+        try:
+            return await self._run(command, shell=shell, env=env, timeout=timeout)
+        except _MachineStoppedError as error:
+            if not isinstance(error.__cause__, boxd.ConflictError):
+                # The stop ended the command, which may have done part of its work: never run it twice.
+                assert self._ref is not None
+                raise WorkspaceUnavailableError(
+                    f'The boxd machine {self._ref.id!r} was stopped during the command, which may have partly run; '
+                    'the next operation starts it again.'
+                ) from error.__cause__
+        # boxd refused the command before it started: start the machine and run it once more.
+        return await self._run(command, shell=shell, env=env, timeout=timeout)
+
+    async def _run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool,
+        env: Mapping[str, str] | None,
+        timeout: float | None,
     ) -> CommandResult:
         async with self._operation():
             check_timeout(timeout)
@@ -822,7 +851,24 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         native: Callable[[AsyncBoxd, str], Awaitable[_T]],
         shell: Callable[[_ShellFilesystem], Awaitable[_T]],
     ) -> _T:
-        """Run a file operation with boxd's file API, or as shell commands on a machine whose agent predates it."""
+        """Run a file operation with boxd's file API, or as shell commands on a machine whose agent predates it.
+
+        When boxd refused the operation because the machine is stopped, the machine is started and the operation
+        tried once more. A stop that cut the operation off is not retried: it may have done its work already.
+        """
+        try:
+            return await self._files_once(native, shell, context)
+        except _MachineStoppedError as error:
+            if not isinstance(error.__cause__, boxd.ConflictError):
+                raise
+        return await self._files_once(native, shell, context)
+
+    async def _files_once(
+        self,
+        native: Callable[[AsyncBoxd, str], Awaitable[_T]],
+        shell: Callable[[_ShellFilesystem], Awaitable[_T]],
+        context: str,
+    ) -> _T:
         async with self._operation():
             client, machine_id = await self._acquire()
             if not self._agent_outdated:

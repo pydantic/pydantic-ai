@@ -180,7 +180,7 @@ async def test_a_new_machine_gets_its_working_dir(client: boxd.AsyncBoxd) -> Non
 
 async def test_a_stopped_machine_is_started_again_with_its_disk(client: boxd.AsyncBoxd) -> None:
     """Validates the fake-encoded assumptions that a command on a stopped machine is refused with
-    `ConflictError`, and that attaching starts it again and waits until it accepts commands."""
+    `ConflictError`, and that the next operation starts it and waits until it accepts commands."""
     path = f'/home/boxd/{_unique("kept")}.txt'
     async with _owned(client) as owner:
         await owner.run(['sh', '-c', 'printf kept > "$1"', 'sh', path], timeout=60)
@@ -188,10 +188,7 @@ async def test_a_stopped_machine_is_started_again_with_its_disk(client: boxd.Asy
         await client.machines.stop(owner.ref.id)
         await _wait_for_status(client, owner.ref.id, 'stopped')
 
-        with pytest.raises(WorkspaceUnavailableError, match='was stopped'):
-            await owner.run(['true'], timeout=30)
-        attached = BoxdSandboxBackend(client=client, ref=owner.ref)
-        assert (await attached.run(['cat', path], timeout=60)).stdout == 'kept'
+        assert (await owner.run(['cat', path], timeout=60)).stdout == 'kept'
 
 
 @pytest.mark.parametrize('sleep', ['pause', 'hibernate'])
@@ -277,7 +274,7 @@ async def test_a_machine_stopped_during_a_command_is_unavailable(client: boxd.As
 
         async with anyio.create_task_group() as group:
             group.start_soon(stop_soon)
-            with pytest.raises(WorkspaceUnavailableError, match='was stopped'):
+            with pytest.raises(WorkspaceUnavailableError, match='was stopped during the command'):
                 await backend.run(['sleep', '60'], timeout=90)
 
 

@@ -268,7 +268,7 @@ async def _messages(*messages: Any) -> AsyncIterator[Any]:
         yield message
 
 
-class _FakeFsTransport:
+class FakeFsTransport:
     """boxd's `Fs*` gRPC calls over the host's files, under the SDK's own `AsyncFs`."""
 
     def __init__(self, owner: FakeBoxd) -> None:
@@ -360,7 +360,7 @@ class FakeMachines:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
         self._transport = _FakeTransport(owner)
-        self.fs = AsyncFs(_FakeFsTransport(owner))
+        self.fs = AsyncFs(FakeFsTransport(owner))
 
     async def create(
         self,
