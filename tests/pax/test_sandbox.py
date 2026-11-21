@@ -2262,8 +2262,8 @@ class FakeSmolvm:
             self.machines[name] = 'stopped'
         elif name not in self.machines:
             return self.error(command, 'NOT_FOUND', f'machine not found: {name}')
-        elif action in ('start', 'stop'):
-            self.machines[name] = 'running' if action == 'start' else 'stopped'
+        elif action in ('start', 'resume', 'stop'):
+            self.machines[name] = 'stopped' if action == 'stop' else 'running'
         elif action == 'delete':
             del self.machines[name]
         elif self.machines[name] != 'running':
@@ -2466,13 +2466,17 @@ class TestLocalCli:
         assert 'sleep' in script
         await provider.delete(ref)
 
-    async def test_a_stopped_vm_is_started(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+    @pytest.mark.parametrize('state', ['stopped', 'created', 'paused'])
+    async def test_a_stopped_vm_is_started(self, windows: FakeSmolvm, tmp_path: Path, state: str) -> None:
         provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
         ref, _ = await provider.create(github=None)
         # As after this machine restarts.
-        windows.machines[ref.id] = 'stopped'
+        windows.machines[ref.id] = state
         assert (await provider.reopen(ref).run(['true'])).exit_code == 0
         assert windows.machines[ref.id] == 'running'
+        windows.machines[ref.id] = 'error'
+        with pytest.raises(WorkspaceUnavailableError, match=r'is error\.$'):
+            await provider.reopen(ref).run(['true'])
         await provider.delete(ref)
 
     async def test_a_vm_deleted_meanwhile(self, windows: FakeSmolvm, tmp_path: Path) -> None:

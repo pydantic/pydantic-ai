@@ -10,7 +10,8 @@ CLI behavior, from smolvm 1.36's `smolvm machine --help` and that transport:
 - `machine create` records a machine and `machine start` boots it; it keeps running after the CLI exits.
 - `machine exec` exits with the command's exit status and, with `--interactive`, passes its stdin to the command.
   Its `--timeout` kills the command in the VM.
-- `machine ls --json` lists machines as objects with `name` and `state`, bare or under `machines`.
+- `machine ls --json` lists machines as objects with `name` and `state`, bare or under `machines`. A `stopped` or
+  `created` machine is started, and a `paused` one resumed, as that transport does.
 - With `--error-format json`, smolvm reports its own failures as a last stderr line
   `{"error": {"code": ..., "message": ...}}`.
 
@@ -181,8 +182,12 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             state = await _state(self._executable, ref.id)
             if state is None:
                 raise WorkspaceUnavailableError(_gone_message(ref.id))
-            if state != 'running':
+            if state in ('stopped', 'created'):
                 await _check(self._executable, 'start', '--name', ref.id)
+            elif state == 'paused':
+                await _check(self._executable, 'resume', '--name', ref.id)
+            elif state != 'running':
+                raise WorkspaceUnavailableError(f'The smol VM {ref.id!r} is {state}.')
         result = await self._exec(
             ref.id, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT
         )
