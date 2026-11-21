@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from boxd import APIConnectionError, APIStatusError, NotFoundError
+from boxd import APIConnectionError, APIStatusError, AuthenticationError, NotFoundError
 
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
@@ -48,3 +48,17 @@ async def test_the_sweep_deletes_the_machines_a_cleanup_missed(
     assert {machine.status for machine in fake_boxd.machines.values()} == {'destroyed'}
     assert live.pending == set()
     assert fake_boxd.delete_errors == []
+
+
+async def test_the_sweep_stops_on_refused_credentials(fake_boxd: FakeBoxd, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A delete boxd refuses for the credentials fails the session instead of being retried until the sweep's bound."""
+    live = LiveMachines(poll=0)
+    live.watch(monkeypatch, FakeMachines)
+    backend = BoxdSandboxBackend()
+    await backend.get_sandbox()
+    assert backend.ref is not None
+
+    fake_boxd.reject_credentials = True
+    with pytest.RaisesGroup(AuthenticationError):
+        await live.sweep(fake_boxd.client().machines)
+    assert live.pending == {backend.ref.id}

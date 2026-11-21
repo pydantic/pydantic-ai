@@ -101,6 +101,9 @@ class LiveMachines:
             while True:
                 try:
                     return await machines.delete(machine_id)
+                except (boxd.AuthenticationError, boxd.PermissionDeniedError):
+                    # No retry gets past refused credentials, and the session should fail on them.
+                    raise
                 except boxd.BoxdError:
                     # Not listed yet, or boxd failed to delete it: `INTERNAL`, or a dropped connection.
                     await anyio.sleep(self.poll)
