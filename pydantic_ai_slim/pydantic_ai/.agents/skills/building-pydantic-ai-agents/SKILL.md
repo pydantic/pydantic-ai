@@ -400,6 +400,12 @@ Key facts for building realtime agents:
 - **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.
+- **Tools revealed mid-session**: on a model whose profile sets `supports_tool_updates` (OpenAI `gpt-realtime`,
+  GPT-Live, Azure, xAI), loading a `defer_loading=True` capability, a `search_tools` match, or `ToolReturn.tools`
+  sends the revealed tools ahead of the result (a `ToolAvailabilityDeltaPart` in history, as in a standard run).
+  Gemini Live, Eleven Realtime, and ElevenLabs Agents keep their opening tools, so a session there with a
+  `defer_loading=True` tool or tool-contributing deferred capability raises `UserError` before connecting, unless
+  `message_history` already revealed or loaded it. Deferred capabilities contributing native tools raise everywhere.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking and answering meanwhile is the profile's `async_tool_call_mode`:
   `'always'` (OpenAI, Azure, GPT-Live, xAI, `gemini-3.8-live-extended-thinking`), `'optional'`

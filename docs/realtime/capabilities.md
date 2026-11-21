@@ -159,14 +159,25 @@ catalog is part of the session's instructions, and the model calls the `load_cap
 session can't state the loaded capability's instructions in the system voice the way a regular run does,
 so the tool returns them as its result, which works on every provider. When a session is
 [seeded](history.md#seeding-a-session) with the history of a regular run that loaded a capability, the
-session's instructions include that capability's instructions instead. What a session
-cannot do yet is advertise *new tools* mid-conversation: Pydantic AI fixes the connection's tools
-when it opens (OpenAI and xAI accept a mid-session tool update;
-[#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with a
-`defer_loading=True` capability that contributes tools or native tools raises
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting it would silently
-provide less than requested. Loading those tools on providers that accept the update is tracked in
-[#7191](https://github.com/pydantic/pydantic-ai/issues/7191).
+session's instructions include that capability's instructions instead.
+
+A capability that contributes tools also has to give the model those tools mid-conversation. On a
+model whose [profile](overview.md#provider-support) sets
+[`supports_tool_updates`][pydantic_ai.realtime.RealtimeModelProfile.supports_tool_updates] (OpenAI
+`gpt-realtime`, GPT-Live, Azure OpenAI, and xAI), the session sends the provider the capability's tools
+ahead of the load's result, in the same send, so the model can call them from its next response.
+History records the reveal as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart],
+as a regular run does, so a regular run continuing the session's history has the same tools, and a
+reconnect sends them again. The same goes for a `defer_loading=True` tool that
+[tool search](tools.md#tools-revealed-mid-session) finds.
+
+Other models (Gemini Live, Eleven Realtime, and ElevenLabs Agents) keep the tools the session opened
+with, so opening a session there with a `defer_loading=True` capability that contributes tools raises
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting, since accepting it would silently
+provide less than requested. A capability the [seeded](history.md#seeding-a-session) history already
+loaded is exempt on every model: its tools are sent when the session opens. No model turns on a native
+tool mid-session, so a `defer_loading=True` capability that contributes native tools raises
+everywhere.
 
 Loading a capability from code with
 [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability] isn't supported in a

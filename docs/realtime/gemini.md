@@ -227,6 +227,7 @@ For a streaming model the built-in profile doesn't describe, correct the facts w
 | Input transcription | Full feature support | Native [transcription](audio.md#input-transcription), enabled by default; no separate model ID |
 | Native tools | Limited parameter support | Google Search grounding only; URL context and code execution fall back to a [`local=` tool](tools.md#native-tools) (see above) |
 | Usage | Full feature support | Token and modality breakdowns; function-call usage may arrive on a later turn |
+| Tools revealed mid-session | Unsupported | The tools are fixed at setup, so [hidden tools are rejected](tools.md#tools-revealed-mid-session) before connecting |
 | State-restoring reconnect | Full feature support | Requires [session resumption](#session-resumption) plus a reconnect policy |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
