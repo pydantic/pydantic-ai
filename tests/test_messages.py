@@ -88,6 +88,7 @@ from pydantic_ai.messages import (
     RealtimeSessionErrorEvent,
     ToolReturnContent,
     _file_digest,  # pyright: ignore[reportPrivateUsage]
+    _mime_types,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     narrow_message_parts,
     post_compaction_window,
@@ -551,6 +552,21 @@ if sys.version_info > (3, 11):  # pragma: no branch
 def test_document_url_formats(document_url: DocumentUrl, media_type: str, format: str):
     assert document_url.media_type == media_type
     assert document_url.format == format
+
+
+def test_csv_media_type_is_not_taken_from_the_windows_registry(tmp_path: Path):
+    """Unit test, not VCR: an Excel install registers `.csv` as `application/vnd.ms-excel` in the Windows registry.
+
+    That entry is read by `read_windows_registry()`, which would otherwise make a CSV a spreadsheet file
+    (`xls`) rather than the delimited text `text/csv` names, on the machines that have Excel.
+    """
+    csv_path = tmp_path / 'report.csv'
+    csv_path.write_text('a,b\n1,2\n')
+
+    assert _mime_types.guess_type('report.csv')[0] == 'text/csv'
+    assert DocumentUrl('report.csv').media_type == 'text/csv'
+    assert DocumentUrl('report.csv').format == 'csv'
+    assert BinaryContent.from_path(csv_path).media_type == 'text/csv'
 
 
 def test_document_url_invalid():

@@ -105,6 +105,9 @@ for file in mimetypes.knownfiles:
         _mime_types.read(file)  # pragma: lax no cover
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
+# Excel registers `.csv` as its own type in the Windows registry, which `read_windows_registry()` reads, so pin
+# the delimited-text type: the registry one makes a CSV a spreadsheet (`xls`) to every model adapter.
+_mime_types.add_type('text/csv', '.csv')
 # Office and OpenDocument types that Python's `mimetypes` only knows by default from 3.14
 _mime_types.add_type('application/vnd.oasis.opendocument.presentation', '.odp')
 _mime_types.add_type('application/vnd.oasis.opendocument.spreadsheet', '.ods')
