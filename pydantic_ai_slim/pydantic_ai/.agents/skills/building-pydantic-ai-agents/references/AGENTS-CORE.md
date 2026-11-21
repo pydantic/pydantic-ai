@@ -195,8 +195,12 @@ Build instruction text from operator-controlled state, never from tool arguments
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
 Use a durable operation for instruction callbacks that read external state during durable execution.
-Deferred capabilities and realtime sessions do not support this update policy.
-Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+Deferred capabilities do not support the `on_change` policy.
+Agent-backed realtime sessions re-evaluate dynamic instructions after each response and before sending a tool result.
+They append changes to dynamic instructions with a unique ID regardless of `on_change`.
+Use `@agent.instructions(name='state')` or a named `InstructionPart` to identify a changing instruction.
+For instructions from a capability or toolset, give the capability or toolset an explicit `id`.
+In a standard run, leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
 A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<pyai:context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
 So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust. The `MCP` capability includes them by default; pass `MCP(..., include_instructions=False)` for a server you don't trust, such as one your end users supply.
