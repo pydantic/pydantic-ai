@@ -93,6 +93,7 @@ async def _run_guidance(
 
 
 def test_resolve_prefers_model_glob_over_provider():
+    """Pure name/provider lookup; this issues no model-provider request to record."""
     provider_row = ModelGuidance('openai', add=('provider',))
     model_row = ModelGuidance('openai:gpt-6.2-*', add=('model',))
     table = (provider_row, model_row)
@@ -102,6 +103,7 @@ def test_resolve_prefers_model_glob_over_provider():
 
 
 def test_resolve_matches_openai_family_on_gateways():
+    """Pure name/provider lookup; this issues no model-provider request to record."""
     row = ModelGuidance('openai', add=('family',))
     table = (row,)
     assert resolve_model_guidance(table, _Named('openai', 'gpt-6.2-sol')) is row
@@ -114,12 +116,14 @@ def test_resolve_matches_openai_family_on_gateways():
 
 
 def test_resolve_model_glob_accepts_gateway_leaf_name():
+    """Pure name/provider lookup; this issues no model-provider request to record."""
     row = ModelGuidance('openai:gpt-6.2-*', add=('model',))
     assert resolve_model_guidance((row,), _Named('openrouter', 'openai/gpt-6.2-sol')) is row
     assert resolve_model_guidance((row,), _Named('openrouter', 'openai/gpt-5')) is None
 
 
 def test_openai_family_is_narrow():
+    """Pure name/provider lookup; this issues no model-provider request to record."""
     assert is_openai_family(_Named('openai', 'gpt-6.2-sol'))
     assert is_openai_family(_Named('openrouter', 'openai/gpt-6.2-sol'))
     assert is_openai_family(_Named('azure', 'gpt-4o'))
@@ -131,11 +135,13 @@ def test_openai_family_is_narrow():
 
 
 def test_resolve_unwraps_wrapper_models():
+    """Pure name/provider lookup; this issues no model-provider request to record."""
     row = ModelGuidance('openai')
     assert resolve_model_guidance((row,), WrapperModel(_Named('openai', 'gpt-6.2-sol'))) is row
 
 
 def test_resolve_unwraps_fallback_models():
+    """Pure name/provider lookup; this issues no model-provider request to record."""
     row = ModelGuidance('openai')
     model = FallbackModel(_Named('openai', 'gpt-6.2-sol'), _Named('anthropic', 'claude-opus-4'))
     assert resolve_model_guidance((row,), model) is row
