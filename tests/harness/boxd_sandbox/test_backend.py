@@ -149,6 +149,28 @@ class TestCreate:
         with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
             await BoxdSandboxBackend().run(['true'])
 
+    async def test_a_new_machine_deleted_once_listed_is_unavailable_at_once(self, host: FakeBoxd) -> None:
+        host.boot_polls = 1
+        host.delete_on_lookup = 2
+        with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
+            await BoxdSandboxBackend().run(['true'])
+        assert host.only.lookups == 2
+
+    async def test_after_a_cancelled_create_the_next_operation_waits_for_boxd_to_list_the_machine(
+        self, host: FakeBoxd
+    ) -> None:
+        host.unlisted_polls = 3
+        host.create_gate = asyncio.Event()
+        backend = BoxdSandboxBackend()
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['true'])
+            # The create is held at the gate, so cancelling now leaves the machine created but unlisted.
+            await anyio.wait_all_tasks_blocked()
+            group.cancel_scope.cancel()
+            host.create_gate.set()
+        assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+        assert len(host.create_names) == 1
+
     async def test_a_refused_create_whose_machine_never_appeared_is_unavailable(self, host: FakeBoxd) -> None:
         host.create_errors.append(boxd.ConflictError('a payment method is required', code='failed_precondition'))
         with pytest.raises(WorkspaceUnavailableError, match='boxd refused to create the machine: a payment method'):

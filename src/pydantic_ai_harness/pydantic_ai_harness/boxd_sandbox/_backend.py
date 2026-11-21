@@ -108,8 +108,8 @@ _SILENT_COMMAND_MESSAGE = (
 _NAME_PREFIX = 'pydantic-ai-'
 # Bound machine creation, attachment, and deletion so a wedged control plane cannot hang a run.
 _LIFECYCLE_TIMEOUT = 120.0
-# How long the operation that created a machine keeps looking it up while boxd does not list it yet;
-# boxd has taken longer than 37 s to list one. The rest of `_LIFECYCLE_TIMEOUT` is left for booting it.
+# How long after creating a machine the backend keeps looking it up while boxd does not list it yet; boxd
+# has taken longer than 37 s to list one. The rest of `_LIFECYCLE_TIMEOUT` is left for booting it.
 _UNLISTED_TIMEOUT = 90.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
@@ -473,6 +473,9 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._resolved_working_dir: str | None = None
         # A machine this backend created still needs its `working_dir` made.
         self._working_dir_pending = False
+        # Until this time, a machine this backend created that boxd does not list yet is looked up again.
+        # Cleared once a lookup finds it, so a later not-found means it is gone.
+        self._listed_by: float | None = None
         # Set once the machine's boxd agent turns out to predate the file API; files then go through the shell.
         self._agent_outdated = False
         self._lock = anyio.Lock()
@@ -542,13 +545,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             if self._client is None:
                 self._client = _new_client()
             client = self._client
-            created = False
             if (ref := self._ref) is None:
                 # Creation finishes even if the caller is cancelled, so a billed machine is never left unrecorded.
                 ref = await run_to_completion(lambda: self._create(client))
-                created = True
             if not self._ready:
-                machine_id = await self._wait_until_ready(client, ref.id, created=created)
+                machine_id = await self._wait_until_ready(client, ref.id)
                 if machine_id != ref.id:
                     # A ref may name the machine; names can be reused once it is deleted, ids cannot.
                     self._ref = ref = WorkspaceRef(provider='boxd', id=machine_id)
@@ -591,26 +592,27 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
     def _record_created(self, machine: Machine) -> WorkspaceRef:
         self._ref = ref = WorkspaceRef(provider='boxd', id=machine.id)
         self._working_dir_pending = self._working_dir is not None
+        self._listed_by = anyio.current_time() + _UNLISTED_TIMEOUT
         # Logged at creation, so the id can be found whatever ends the run before it is stored.
         logger.info('Created boxd machine %s (%s)', machine.id, machine.name)
         return ref
 
-    async def _wait_until_ready(self, client: AsyncBoxd, machine_id: str, *, created: bool = False) -> str:
+    async def _wait_until_ready(self, client: AsyncBoxd, machine_id: str) -> str:
         """Wait until the machine accepts commands, starting it if it is stopped, and return its id.
 
         A suspended or hibernated machine is woken by the probe command itself. A machine that is not
         isolated, or that is on a named network, is refused: other machines could reach it, and a ref
-        from tampered message history must not point the agent at one of them. A machine the caller
-        just `created` that boxd does not list yet is looked up again for up to `_UNLISTED_TIMEOUT`; any
-        other machine boxd does not find is unavailable at once.
+        from tampered message history must not point the agent at one of them. A machine this backend
+        created that boxd does not list yet is looked up again until `_UNLISTED_TIMEOUT` after its creation;
+        once a lookup has found it, and for any other machine, not found means it is unavailable at once.
         """
-        listed_by = anyio.current_time() + _UNLISTED_TIMEOUT if created else None
         with anyio.move_on_after(_LIFECYCLE_TIMEOUT):
             async with _mapped_errors(f'Could not attach to boxd machine {machine_id!r}'):
                 while True:
-                    if (machine := await _look_up_machine(client, machine_id, listed_by=listed_by)) is None:
+                    if (machine := await _look_up_machine(client, machine_id, listed_by=self._listed_by)) is None:
                         await anyio.sleep(_POLL_INTERVAL)
                         continue
+                    self._listed_by = None
                     _check_attachable(machine_id, machine)
                     try:
                         if machine.status == 'stopped':
