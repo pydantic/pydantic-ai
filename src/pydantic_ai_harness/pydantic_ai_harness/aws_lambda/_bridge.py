@@ -5,8 +5,9 @@ blocks until the step body returns. An agent run is async. The bridge connects t
 threads and a queue:
 
 - the handler thread runs `run_durable`, which drains a queue of step requests and calls
-  `context.step(...)` for each one (or creates a callback and waits for it), so every durable
-  operation is created on the handler's thread in one continuous sequence;
+  `context.step(...)` for each one (or creates a callback and waits for it, or waits with
+  `context.wait(...)`), so every durable operation is created on the handler's thread in one
+  continuous sequence;
 - a background thread runs a persistent event loop that hosts the agent run and the actual
   model and tool calls.
 
@@ -46,7 +47,7 @@ from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import CallbackConfig, ParallelConfig, StepConfig
+    from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, ParallelConfig, StepConfig
 
 T = TypeVar('T')
 
@@ -119,6 +120,9 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: CallbackConfig | None = None,
     ) -> DurableCallback: ...
+
+    # Structural declaration, never executed.
+    def wait(self, duration: Duration, name: str | None = None) -> None: ...  # pragma: no cover
 
 
 class _DurableParallelContext(DurableStepContext, Protocol):
@@ -283,6 +287,14 @@ class _CallbackRequest:
 
 
 @dataclass
+class _WaitRequest:
+    name: str
+    duration: Duration
+    reply: Callable[[bool, Any], None]
+    context: contextvars.Context
+
+
+@dataclass
 class _ParallelRequest:
     name: str
     branches: list[Callable[[Any], Any]]
@@ -291,7 +303,7 @@ class _ParallelRequest:
     context: contextvars.Context
 
 
-_Request = _StepRequest | _CallbackRequest | _ParallelRequest
+_Request = _StepRequest | _CallbackRequest | _WaitRequest | _ParallelRequest
 
 
 @dataclass
@@ -303,7 +315,8 @@ class _Finished(Generic[T]):
 def _record(item: _Request, *, executed: bool) -> None:
     """Report a completed step in the requesting task's context, so it counts for the spans it ran under.
 
-    A callback wait runs no work of its own, and a `parallel` operation's branches report their own steps.
+    A callback wait or a timed wait runs no work of its own, and a `parallel` operation's branches report their own
+    steps.
     """
     if isinstance(item, _StepRequest):
         item.context.run(record_durable_unit, executed=executed)
@@ -383,6 +396,17 @@ class StepBridge:
             )
         )
 
+    async def wait(self, name: str, duration: Duration) -> None:
+        """Wait `duration` with a durable Lambda wait. Runs on the agent loop.
+
+        A wait that isn't over raises `SuspendExecution`, which ends the invocation like a step retry
+        does, and no compute is billed until Lambda invokes the function again once it's over. The
+        replayed wait then returns straight away.
+        """
+        await self._submit(
+            lambda reply: _WaitRequest(name=name, duration=duration, reply=reply, context=contextvars.copy_context())
+        )
+
     async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _Request]) -> Any:
         """Queue a request for the handler thread and wait for its reply."""
         if _in_step_body.get():
@@ -459,6 +483,8 @@ class StepBridge:
     def _run(self, item: _Request, body: Callable[[Any], Any]) -> Any:
         if isinstance(item, _CallbackRequest):
             return item.context.run(self._wait_for_callback, item)
+        if isinstance(item, _WaitRequest):
+            return item.context.run(self._context.wait, item.duration, name=item.name)
         if isinstance(item, _ParallelRequest):
             # The real `DurableContext` has `parallel`. `DurableStepContext` declares only what every
             # stand-in implements.

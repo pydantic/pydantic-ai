@@ -49,7 +49,7 @@ from ._agent import DBOSParallelExecutionMode
 from ._function_toolset import ToolInstanceDefaultsGateToolset
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
 from ._operation_names import DBOSOperationNamer
-from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
+from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, sleep_in_workflow
 
 if TYPE_CHECKING:
     from dbos import StepReservation
@@ -260,6 +260,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return in_workflow_code()
+
+    async def durable_sleep(self, seconds: float) -> None:
+        """Wait with `DBOS.sleep_async`, a recorded step, so recovery skips a completed wait."""
+        await sleep_in_workflow(seconds)
 
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
@@ -494,7 +498,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode, and make agent-graph waits durable in workflows."""
+        """Apply the configured parallel-execution mode to every run, inside a workflow or not."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
@@ -511,7 +515,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         if reserve_events:
             self._event_step_reservations[key] = {}
         try:
-            with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
+            with agent.parallel_tool_call_execution_mode(mode):
                 return await super().wrap_run(ctx, handler=handler)
         finally:
             if reserve_events:

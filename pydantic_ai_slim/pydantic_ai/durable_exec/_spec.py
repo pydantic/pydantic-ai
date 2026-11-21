@@ -93,6 +93,14 @@ class DurabilityEngineSpec:
     [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can recover it.
     """
 
+    suspension_error_types: tuple[type[BaseException], ...] = ()
+    """Exceptions the capability's `durable_sleep` raises to suspend the durable container until its timer fires.
+
+    For an engine that waits by ending the container's current attempt and running it again once the wait is over,
+    replaying its journal up to the wait. When one of them ends a wait between polls of a model's server-side job, the
+    job is left running for the replayed run to continue, rather than cancelled as on another error.
+    """
+
     accepts_cancellation_token: bool = False
     """Whether a run inside the durable container may take a [`CancellationToken`][pydantic_ai.CancellationToken].
 
