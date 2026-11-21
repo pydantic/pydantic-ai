@@ -883,23 +883,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if forward and ctx.tool_call_approved
             else None
         )
-        try:
-            return await self._run_delegation(
-                ctx,
-                agent_name,
-                sub_agent,
-                task=task,
-                key=key,
-                workspace=workspace,
-                resume=(resumed.messages, resumed.results) if resumed is not None else None,
-                forward_deferred=forward,
-            )
-        except BaseException:
-            if resumed is not None:
-                # Taken before the child resumed, so a concurrent resume couldn't run it too; a retry can resume it.
-                with anyio.CancelScope(shield=True):
-                    await self._deferred_state_store.save(resumed.state_id, resumed.state)
-            raise
+        # The state was taken out of the store, so these answers resume the child at most once: if the delegation
+        # fails after an approved call ran, running it again on a retry would act twice on one approval.
+        return await self._run_delegation(
+            ctx,
+            agent_name,
+            sub_agent,
+            task=task,
+            key=key,
+            workspace=workspace,
+            resume=(resumed.messages, resumed.results) if resumed is not None else None,
+            forward_deferred=forward,
+        )
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject options that need the parent run when the delegate tool runs as a child workflow."""

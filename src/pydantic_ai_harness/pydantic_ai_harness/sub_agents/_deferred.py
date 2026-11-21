@@ -42,8 +42,8 @@ class DeferredStateStore(Protocol):
     """Holds the state of a sub-agent whose deferred tool calls `SubAgents(forward_deferred_calls=True)` passed on.
 
     The state, a JSON-compatible dict with the sub-agent's history and pending calls, is saved under a new random ID
-    when the delegation stops, and taken when the caller's answers arrive. It stays on the server: the caller only
-    sees its ID. A resume that fails, or that names a state saved for another delegation, saves it back.
+    when the delegation stops, and taken when the caller's answers arrive, so they resume it at most once. It stays
+    on the server: the caller only sees its ID. Answers that name a state saved for another delegation save it back.
     """
 
     async def save(self, state_id: str, state: dict[str, Any]) -> None:
@@ -68,6 +68,8 @@ class InMemoryDeferredStateStore:
     """
 
     def __init__(self, *, max_states: int = 1000, max_age: timedelta = timedelta(days=1)) -> None:
+        if max_states < 1:
+            raise ValueError(f'`max_states` must be at least 1; got {max_states}.')
         self._max_states = max_states
         self._max_age = max_age.total_seconds()
         self._states: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
@@ -92,7 +94,6 @@ class ResumedState:
     """A stored sub-agent state taken for a resume, with the caller's answers to its calls."""
 
     state_id: str
-    state: dict[str, Any]
     messages: list[ModelMessage]
     results: DeferredToolResults
 
@@ -151,7 +152,10 @@ def _child_requests(state: dict[str, Any]) -> tuple[str, DeferredToolRequests]:
     try:
         return str(state['agent_name']), _REQUESTS.validate_python(state['requests'])
     except (KeyError, ValidationError) as error:
-        raise _invalid(error) from error
+        raise UserError(
+            'A delegate call in these `DeferredToolRequests` has a forwarded sub-agent state that is not valid. Pass '
+            f'the `DeferredToolRequests` the run ended with: {error}'
+        ) from error
 
 
 def _kinds(requests: DeferredToolRequests) -> dict[str, DeferredToolKind]:
@@ -212,9 +216,9 @@ def _prefixed_calls(prefix: str, calls: Sequence[ToolCallPart]) -> list[ToolCall
 
 
 def _require_unique(ids: Sequence[str]) -> None:
-    if len(set(ids)) != len(ids):
+    if repeated := sorted({tool_call_id for tool_call_id in ids if ids.count(tool_call_id) > 1}):
         raise ValueError(
-            f'Delegated tool call IDs collide once prefixed with their delegate call ID: {sorted(ids)}. '
+            f'Delegated tool call IDs collide once prefixed with their delegate call ID: {repeated}. '
             'Give the tool calls IDs without `:`.'
         )
 
@@ -337,4 +341,4 @@ def _resumed(
     for answered, asked in ((results.approvals, requests.approvals), (results.calls, requests.calls)):
         if unknown := sorted(set(answered) - {call.tool_call_id for call in asked}):
             raise UserError(f'The sub-agent was not waiting for these answers: {unknown}')
-    return ResumedState(state_id, stored, ModelMessagesTypeAdapter.validate_python(stored['messages']), results)
+    return ResumedState(state_id, ModelMessagesTypeAdapter.validate_python(stored['messages']), results)

@@ -410,7 +410,7 @@ class TestSubAgentsForwardDeferredCalls:
         result = await parent.run('go')
         assert isinstance(result.output, DeferredToolRequests)
         if collide:
-            with pytest.raises(ValueError, match='collide'):
+            with pytest.raises(ValueError, match=r"collide once prefixed with their delegate call ID: \['a:b:c'\]"):
                 delegated_requests(result.output)
             with pytest.raises(ValueError, match='collide'):
                 delegated_results(result.output, DeferredToolResults(approvals={'a:b:c': True}))
@@ -419,7 +419,7 @@ class TestSubAgentsForwardDeferredCalls:
             assert [call.tool_call_id for call in flat.approvals] == ['a:b', 'a:b:c']
             assert sorted(flat.validated_args) == ['a:b', 'a:b:c']
 
-    async def test_a_failed_resume_can_be_retried(self) -> None:
+    async def test_a_failed_resume_is_not_retried(self) -> None:
         mailer = _Mailer()
         store = InMemoryDeferredStateStore()
         parent = _parent(mailer.agent, store=store)
@@ -430,11 +430,12 @@ class TestSubAgentsForwardDeferredCalls:
         mailer.fail_for.add('ann@example.com')
         with pytest.raises(RuntimeError, match='mail server down'):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
+        assert mailer.sent == ['cc@example.com']
 
-        # The state was put back, so the same answers resume the sub-agent once the failure is gone.
-        second = await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
-        assert second.output == 'parent saw: mail handled'
-        assert mailer.sent.count('ann@example.com') == 1
+        # The answers resume the sub-agent at most once, so the call that already ran doesn't run again.
+        with pytest.raises(UserError, match='it was already resumed'):
+            await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
+        assert mailer.sent == ['cc@example.com']
 
     async def test_a_crash_before_any_deferral_propagates(self) -> None:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -451,6 +452,9 @@ class TestSubAgentsForwardDeferredCalls:
         assert await store.take('a') is None
         assert await store.take('b') == {'n': 2}
         assert await store.take('b') is None
+
+        with pytest.raises(ValueError, match='at least 1'):
+            InMemoryDeferredStateStore(max_states=0)
 
         expiring = InMemoryDeferredStateStore(max_age=timedelta(0))
         await expiring.save('a', {'n': 1})
