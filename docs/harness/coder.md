@@ -290,8 +290,7 @@ handoff notes, and one for tasks that state constraints on where or how the code
 `'high'`, `'medium'`, and `'low'`, and for every other model, the prompt is unchanged.
 
 Pass `Coder(model_guidance=())` to disable the table. Pass an explicit sequence of `ModelGuidance`
-rows to replace it; an explicit table applies at every autonomy level. To extend the default table,
-use `(*MODEL_GUIDANCE, ModelGuidance(...))`.
+rows to replace it; an explicit table applies at every autonomy level.
 
 `ModelGuidance.match` is a provider name, as in `Model.system` (`'anthropic'`), optionally followed
 by `:` and a glob over `Model.model_name` (`'openai:gpt-6.2-*'`). A row with a model glob beats a

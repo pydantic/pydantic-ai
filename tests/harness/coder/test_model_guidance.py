@@ -291,8 +291,8 @@ async def test_default_table_adjustments_reach_delegate_guidance(tmp_path: Path)
     assert _MISREAD_MAX not in delegate
 
 
-def test_model_guidance_is_exported_for_extending_the_default_table():
-    """The public table is a sequence of ModelGuidance rows users can unpack; no provider request."""
+def test_model_guidance_default_table_is_exported():
+    """The public default table is a sequence of ModelGuidance rows; no provider request."""
     assert MODEL_GUIDANCE
     assert all(isinstance(row, ModelGuidance) for row in MODEL_GUIDANCE)
     assert MODEL_GUIDANCE[0].match == 'openai'
