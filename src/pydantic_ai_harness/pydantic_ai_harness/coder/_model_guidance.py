@@ -1,0 +1,126 @@
+"""Per-provider and per-model adjustments to `Coder`'s default guidance.
+
+Some models do worse with the shared default text than they could. Rather than tune the shared
+text for one model at another's expense, `Coder` looks the run's model up in a small table and,
+when a row matches, swaps named fragments of the default text or appends sentences to it.
+
+The default table applies only at `'max'` autonomy (headless), and only to the OpenAI family.
+At every other autonomy level, and for every other model, the prompt is unchanged.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
+from typing import Literal
+
+from pydantic_ai.models import AbstractModel
+from pydantic_ai.models.fallback import FallbackModel
+
+Fragment = Literal['misread']
+"""Default fragments a row may replace. An empty replacement drops the fragment."""
+
+_OPENAI_MODEL_GLOBS = ('gpt-*', 'chatgpt-*', 'o[1-9]*')
+"""Leaf model-name patterns that count as OpenAI family when the provider is not `openai`."""
+
+
+@dataclass(frozen=True)
+class ModelGuidance:
+    """One row of the lookup table.
+
+    `match` is a provider name, as in `Model.system` (`'openai'`), optionally followed by `:` and a
+    glob over `Model.model_name` (`'openai:gpt-6.2-*'`). A row with a model glob beats a provider-only row.
+
+    The `'openai'` provider key matches the OpenAI family: `Model.system == 'openai'`, a model name
+    with an `openai/` prefix (OpenRouter and similar gateways), or a leaf name matching `gpt-*`,
+    `chatgpt-*`, or `o[1-9]*` (Azure and other gateways that keep the OpenAI model name). A model
+    glob is tried against the full name and the last `/` segment.
+    """
+
+    match: str
+    replace: Mapping[Fragment, str] = field(default_factory=dict[Fragment, str])
+    add: Sequence[str] = ()
+
+
+MISREAD_CLASSIFY = (
+    'If inputs look inconsistent, first check whether the task or its rules classify them '
+    '(for example as malformed, conflicting, or rejected) and apply that rule. '
+    'Only when no rule covers them, assume you misread: re-read, and try other interpretations before settling.'
+)
+"""For models that otherwise reinterpret deliberately malformed inputs instead of flagging them."""
+
+STRUCTURED_HANDOFF = (
+    'When asked for notes or a handoff, use headed sections: each decision and why, '
+    'the exact verification commands with their observed results, the remaining risk, '
+    'and what was out of scope or not done.'
+)
+"""For models whose notes leave out the evidence a reviewer needs."""
+
+PURE_FUNCTIONS = (
+    'When a task says a function must derive its answer only from its arguments '
+    '(no files, commands, network, or mutation), write it as plain self-contained Python: dicts, lists, loops, '
+    'and helper functions. Import only the basic standard modules it needs (re, math, json, copy, heapq, '
+    'bisect, datetime); no typing, collections.abc, __future__, or dataclasses imports. '
+    "Don't define classes or generators (yield), and don't call iter(), id(), divmod(), hasattr(), or object()."
+)
+"""For models that otherwise write typed or class-based Python a restricted interpreter will reject."""
+
+MODEL_GUIDANCE: tuple[ModelGuidance, ...] = (
+    ModelGuidance('openai', replace={'misread': MISREAD_CLASSIFY}, add=(STRUCTURED_HANDOFF, PURE_FUNCTIONS)),
+)
+"""The table `Coder` uses by default, applied only at `'max'` autonomy."""
+
+
+def is_openai_family(model: AbstractModel) -> bool:
+    """True for OpenAI models, including the same models reached through a gateway.
+
+    Matches the `openai` provider, an `openai/` model-name prefix, and the leaf-name patterns in
+    `_OPENAI_MODEL_GLOBS`. This is deliberately narrow: an OpenRouter Anthropic route does not match.
+    """
+    model = _unwrap_model(model)
+    if model.system == 'openai':
+        return True
+    name = model.model_name
+    if name.startswith('openai/'):
+        return True
+    leaf = name.rsplit('/', 1)[-1]
+    return any(fnmatchcase(leaf, pat) for pat in _OPENAI_MODEL_GLOBS)
+
+
+def _unwrap_model(model: AbstractModel) -> AbstractModel:
+    if isinstance(model, FallbackModel):
+        return _unwrap_model(model.models[0])
+    return model
+
+
+def _provider_matches(provider: str, model: AbstractModel) -> bool:
+    if provider == 'openai':
+        return is_openai_family(model)
+    return provider == model.system
+
+
+def _model_name_matches(name: str, pattern: str) -> bool:
+    if fnmatchcase(name, pattern):
+        return True
+    leaf = name.rsplit('/', 1)[-1]
+    return leaf != name and fnmatchcase(leaf, pattern)
+
+
+def resolve_model_guidance(table: Sequence[ModelGuidance], model: AbstractModel) -> ModelGuidance | None:
+    """The most specific row matching `model`, or `None`.
+
+    Wrapper models already report the wrapped model's `system` and `model_name`. Fallback models
+    are resolved against their first constituent.
+    """
+    model = _unwrap_model(model)
+    best: ModelGuidance | None = None
+    for row in table:
+        provider, _, pattern = row.match.partition(':')
+        if not _provider_matches(provider, model):
+            continue
+        if pattern and not _model_name_matches(model.model_name, pattern):
+            continue
+        if best is None or (pattern and ':' not in best.match):
+            best = row
+    return best
