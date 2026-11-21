@@ -21,14 +21,17 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import RunContext, ToolDenied
+from pydantic_ai.tools import RunContext, ToolDefinition, ToolDenied
 from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     SubAgent,
     SubAgents,
+    TaskControl,
     delegated_requests,
     delegated_results,
 )
+
+from .._recording_durability import RecordingDurability
 
 
 class _Mailer:
@@ -92,6 +95,18 @@ def _parent_model(agent_name: str = 'mailer', task: str = 'email ann') -> Functi
 
 
 @dataclass
+class ApproveDelegations(AbstractCapability[object]):
+    """An approval gate on the delegate tool: each delegation waits for the caller's approval before it runs."""
+
+    async def before_tool_execute(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, object]
+    ) -> dict[str, object]:
+        if tool_def.name == 'delegate_task' and not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return args
+
+
+@dataclass
 class Listener(AbstractCapability[object]):
     """Records how each delegation ended."""
 
@@ -119,7 +134,7 @@ def _parent(
     )
 
 
-class TestForwardDeferredCalls:
+class TestSubAgentsForwardDeferredCalls:
     async def test_child_approvals_reach_the_caller_and_the_child_resumes(self) -> None:
         mailer = _Mailer()
         listener = Listener()
@@ -197,12 +212,62 @@ class TestForwardDeferredCalls:
         second = await parent.run(
             message_history=first.all_messages(), deferred_tool_results=first.output.build_results(approve_all=True)
         )
-        assert second.output == snapshot(
-            "parent saw: Sub-agent 'mailer' ended with `DeferredToolRequests` because it needs tool approval or "
-            'deferred tool results, which a delegating agent cannot provide. Do the task another way, or without '
-            'this sub-agent.'
+        # The task runs again, and its calls are asked about again.
+        assert isinstance(second.output, DeferredToolRequests)
+        assert [call.tool_call_id for call in delegated_requests(second.output).approvals] == ['c1:e1', 'c1:e2']
+        assert (mailer.lookups, mailer.sent) == (2, [])
+
+    async def test_an_approval_gate_on_the_delegate_tool_still_forwards(self) -> None:
+        mailer = _Mailer()
+        parent = Agent(
+            _parent_model(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                SubAgents(agents=[SubAgent(mailer.agent)], forward_deferred_calls=True),
+                Listener(),
+                ApproveDelegations(),
+            ],
         )
-        assert mailer.sent == []
+        first = await parent.run('go')
+        assert isinstance(first.output, DeferredToolRequests)
+        assert [call.tool_name for call in first.output.approvals] == ['delegate_task']
+        assert delegated_requests(first.output) == first.output
+        assert mailer.model_calls == 0
+
+        second = await parent.run(
+            message_history=first.all_messages(), deferred_tool_results=first.output.build_results(approve_all=True)
+        )
+        assert isinstance(second.output, DeferredToolRequests)
+        flat = delegated_requests(second.output)
+        assert [call.tool_call_id for call in flat.approvals] == ['c1:e1', 'c1:e2']
+
+        third = await parent.run(
+            message_history=second.all_messages(),
+            deferred_tool_results=delegated_results(second.output, flat.build_results(approve_all=True)),
+        )
+        assert third.output == 'parent saw: mail handled'
+        assert (mailer.model_calls, mailer.lookups, sorted(mailer.sent)) == (
+            2,
+            1,
+            ['ann@example.com', 'cc@example.com'],
+        )
+
+    def test_task_control_refuses_the_option(self) -> None:
+        with pytest.raises(ValueError, match='not supported with `task_control`'):
+            SubAgents(forward_deferred_calls=True, task_control=TaskControl())
+
+    async def test_durable_execution_refuses_the_option(self) -> None:
+        mailer = _Mailer()
+        agent = Agent(
+            _parent_model(),
+            name='durable',
+            capabilities=[
+                SubAgents(agents=[SubAgent(mailer.agent)], forward_deferred_calls=True),
+                RecordingDurability(),
+            ],
+        )
+        with pytest.raises(UserError, match='not supported under durable execution'):
+            await agent.run('go')
 
     async def test_nested_delegations_reach_the_caller_and_resume_through_every_level(self) -> None:
         mailer = _Mailer()

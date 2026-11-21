@@ -289,9 +289,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     it through these two functions).
     `delegated_requests()` lists the sub-agent's calls under IDs prefixed by the delegate call's, and
     `delegated_results()` routes the answers back, so the next run resumes the sub-agent from its history rather than
-    running the task again. Approving the delegate call itself approves none of the sub-agent's calls: the
-    delegation runs the task again and returns the steering message if it stops the same way. Foreground
-    delegations outside durable execution and task control only."""
+    running the task again. Approving the delegate call itself, such as through an approval gate on the delegate
+    tool, approves none of the sub-agent's calls: the delegation runs the task, and passes on the calls it stops on.
+    Not supported under durable execution or with `task_control`, which raise an error."""
 
     deferred_state_key: bytes | None = field(default=None, kw_only=True, repr=False)
     """The secret that signs the sub-agent state `forward_deferred_calls` sends to the caller, so a resume accepts
@@ -358,10 +358,10 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Insertion order matches `models` for a stable prompt listing and enum."""
 
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
+    """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
     _deferred_state_key: bytes = field(default=b'', init=False, repr=False, compare=False)
     """`deferred_state_key`, or a random key made in `__post_init__`, shared with every per-run copy."""
-    """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
     task_control: TaskControl | None = field(default=None, kw_only=True)
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
@@ -466,6 +466,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     def _validate_task_control(self) -> None:
         if (control := self.task_control) is not None:
+            if self.forward_deferred_calls:
+                raise ValueError('`forward_deferred_calls` is not supported with `task_control`.')
             if self.tool_name in CONTROL_TOOL_NAMES:
                 raise ValueError(f'`tool_name` {self.tool_name!r} is the name of one of the task-control tools.')
             for remote in control.remote_agents:
@@ -605,6 +607,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             self._created.pop(ctx.run_id or '', None)
 
     def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
+        if self.forward_deferred_calls:
+            raise UserError('`SubAgents(forward_deferred_calls=True)` is not supported under durable execution.')
         if self.task_control is None and self.dynamic_agents is None:
             return
         durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None

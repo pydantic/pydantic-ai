@@ -855,7 +855,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         workspace: Workspace,
     ) -> _Ended:
         """Run a delegation outside an owner, resuming a child the caller answered with `forward_deferred_calls`."""
-        forward = self._forward_deferred_calls and not ctx.in_durable_context
+        forward = self._forward_deferred_calls
         answered = (
             resume_state(self._deferred_state_key, ctx.tool_call_metadata, agent_name=agent_name, task=task)
             if forward and ctx.tool_call_approved
@@ -868,10 +868,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             task=task,
             key=key,
             workspace=workspace,
+            # A call approved without a child's state, such as through an approval gate on the delegate tool, runs the
+            # task afresh: it approves none of the child's calls, which it passes on again.
             resume=answered,
-            # A call approved without a child's state, such as by approving it wholesale, approves none of the
-            # child's calls, and asking again would repeat the same question.
-            forward_deferred=forward and (answered is not None or not ctx.tool_call_approved),
+            forward_deferred=forward,
         )
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
