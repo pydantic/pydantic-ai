@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from boxd import APIConnectionError, APIStatusError, AuthenticationError, NotFoundError
 
@@ -9,6 +11,9 @@ from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
 from .conftest import LiveMachines
 from .fake_boxd import FakeBoxd, FakeMachines
+
+# The fake runs a machine's commands under the host's `/bin/sh`.
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 async def test_the_sweep_deletes_the_machines_a_cleanup_missed(
