@@ -430,12 +430,14 @@ class TestSubAgentsForwardDeferredCalls:
         mailer.fail_for.add('ann@example.com')
         with pytest.raises(RuntimeError, match='mail server down'):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
-        assert mailer.sent == ['cc@example.com']
+        # The other approved call may have run alongside the one that failed.
+        sent = list(mailer.sent)
+        assert 'ann@example.com' not in sent
 
-        # The answers resume the sub-agent at most once, so the call that already ran doesn't run again.
+        # The answers resume the sub-agent at most once, so a call that already ran doesn't run again.
         with pytest.raises(UserError, match='it was already resumed'):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
-        assert mailer.sent == ['cc@example.com']
+        assert mailer.sent == sent
 
     async def test_a_crash_before_any_deferral_propagates(self) -> None:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
