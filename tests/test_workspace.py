@@ -68,6 +68,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WrapperWorkspace,
     _host as host_module,
+    lowest_authority_under,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 
@@ -1024,6 +1025,66 @@ async def test_path_authority_keys_resolve_through_links(authority_root: Path) -
 
     assert await ws.authority_of('vendor/AGENTS.md') == 'none'
     assert await reversed_ws.authority_of('vendor/AGENTS.md') == 'none'
+
+
+@pytest.mark.parametrize(
+    'authority,path_authority,directory,expected',
+    [
+        # Without entries, the directory's own level.
+        ('operator', {}, 'vendor', 'operator'),
+        ('user', {}, 'vendor', 'user'),
+        # A lower entry under the directory lowers it; one elsewhere doesn't.
+        ('operator', {'vendor/ours': 'none'}, 'vendor', 'none'),
+        ('operator', {'trusted': 'none'}, 'vendor', 'operator'),
+        # An entry containing the directory sets its own level, as `authority_of` does.
+        ('operator', {'vendor': 'user'}, 'vendor/ours', 'user'),
+        # A raising entry under the directory doesn't raise the rest of it.
+        ('none', {'vendor/ours': 'operator'}, 'vendor', 'none'),
+        # Entries match ignoring case.
+        ('operator', {'Vendor/Ours': 'none'}, 'vendor', 'none'),
+        # Outside the working directory, `'none'` unless an entry contains it.
+        ('operator', {}, '..', 'none'),
+    ],
+)
+async def test_lowest_authority_under_a_directory(
+    authority_root: Path,
+    authority: Authority,
+    path_authority: dict[str, Authority],
+    directory: str,
+    expected: Authority,
+) -> None:
+    ws = _authority_workspace(authority_root, authority, path_authority)
+    assert await lowest_authority_under(ws, directory) == expected
+
+
+@posix_only
+async def test_lowest_authority_under_counts_where_an_entry_leads(authority_root: Path) -> None:
+    # `third_party` is a lower entry outside `trusted`, but it's a link into it, so files under `trusted` are lower too.
+    root = authority_root
+    (root / 'trusted' / 'lib').mkdir()
+    (root / 'third_party').symlink_to(root / 'trusted' / 'lib')
+    ws = _authority_workspace(root, path_authority={'third_party': 'none'})
+
+    assert await lowest_authority_under(ws, 'trusted') == 'none'
+    assert await lowest_authority_under(ws, 'vendor') == 'operator'
+
+
+@posix_only
+@pytest.mark.parametrize('path_authority', [{}, {'trusted': 'operator'}])
+async def test_lowest_authority_under_a_directory_that_links_out(
+    tmp_path: Path, authority_root: Path, path_authority: dict[str, Authority]
+) -> None:
+    # The directory itself leads outside the working directory, so it's outside the workspace, as `authority_of` says.
+    (tmp_path / 'elsewhere').mkdir()
+    (authority_root / 'linked').symlink_to(tmp_path / 'elsewhere')
+    ws = _authority_workspace(authority_root, path_authority=path_authority)
+
+    assert await ws.authority_of('linked/AGENTS.md') == 'none'
+    assert await lowest_authority_under(ws, 'linked') == 'none'
+
+
+async def test_lowest_authority_under_a_plain_workspace(authority_root: Path) -> None:
+    assert await lowest_authority_under(Workspace(LocalWorkspaceBackend(authority_root)), 'vendor') == 'operator'
 
 
 @posix_only
