@@ -876,9 +876,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                     continue
                 mine, theirs = getattr(first, name), getattr(other, name)
                 if mine != theirs:
+                    # A field kept out of the repr, such as a signing key, stays out of the message too.
+                    values = f' ({mine!r} and {theirs!r})' if field_info.repr else ''
                     raise UserError(
                         f'Capability id {first.id!r} is used by multiple SubAgents capabilities that disagree '
-                        f'on {name!r} ({mine!r} and {theirs!r}). Only the roster is composed; everything else '
+                        f'on {name!r}{values}. Only the roster is composed; everything else '
                         "decides how the delegates run, so merging it would apply one set of delegates' "
                         f'configuration to the other. Give them distinct `id`s to keep both, or make {name!r} '
                         'agree.'

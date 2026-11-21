@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -104,7 +103,7 @@ class Listener(AbstractCapability[object]):
 
 
 def _parent(
-    child: Agent[object, Any],
+    child: Agent[object, str | DeferredToolRequests],
     listener: Listener | None = None,
     *,
     task: str = 'email ann',
@@ -381,6 +380,11 @@ class TestForwardDeferredCalls:
         assert delegated_requests(requests) == requests
         results = DeferredToolResults(approvals={'p1': True}, calls={'x1': 'done'}, metadata={'p1': {'k': 'v'}})
         assert delegated_results(requests, results) == results
+
+    def test_merging_keeps_differing_keys_out_of_the_error(self) -> None:
+        with pytest.raises(UserError, match=r"disagree on 'deferred_state_key'\. Only") as error:
+            SubAgents.combine([SubAgents(deferred_state_key=b'one'), SubAgents(deferred_state_key=b'two')])
+        assert "b'one'" not in str(error.value)
 
     async def test_off_by_default(self) -> None:
         mailer = _Mailer()
