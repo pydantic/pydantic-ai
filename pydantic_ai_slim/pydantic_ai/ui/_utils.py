@@ -23,6 +23,14 @@ type. Vercel AI reuses it so both protocols send the same event.
 """
 
 
+def load_provider_details(value: object) -> dict[str, Any] | None:
+    """A part's `provider_details` from client-sent metadata, or `None` if it isn't a dict.
+
+    Models read `provider_details` as a dict, so anything else would fail the run.
+    """
+    return value if is_str_dict(value) else None
+
+
 def set_ui_message_id(message: ModelMessage, ui_message_id: str) -> None:
     """Keep the UI message id that `message` was loaded from, for `get_ui_message_id` to restore.
 
