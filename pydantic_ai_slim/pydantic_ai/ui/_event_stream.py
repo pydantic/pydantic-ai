@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
@@ -8,12 +9,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
+import anyio
 from opentelemetry.trace import get_current_span
 
 from pydantic_ai import _utils
 
 from .._instrumentation import record_exception
-from ..exceptions import RunCancelled
+from ..exceptions import RunCancelled, UserError
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
@@ -69,6 +71,9 @@ if TYPE_CHECKING:
 
 SSE_CONTENT_TYPE = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
+
+DEFAULT_KEEPALIVE_INTERVAL = 15
+"""Default seconds of silence before a UI event stream sends a `: keepalive` SSE comment."""
 
 
 class _PendingToolCall(NamedTuple):
@@ -146,6 +151,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
+
+    keepalive_interval: float | None = field(default=DEFAULT_KEEPALIVE_INTERVAL, kw_only=True)
+    """Seconds without an event after which the SSE stream sends a `: keepalive` comment, so proxies and load balancers
+    don't close a quiet connection. `None` sends none. Only applies when
+    [`content_type`][pydantic_ai.ui.UIEventStream.content_type] is SSE."""
 
     message_id: str = field(default_factory=lambda: str(uuid4()))
     """The message ID to use for the next event."""
@@ -233,10 +243,68 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """Encode a protocol-specific event as a string."""
         raise NotImplementedError
 
-    async def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
-        """Encode a stream of protocol-specific events as strings according to the `Accept` header value."""
-        async for event in stream:
-            yield self.encode_event(event)
+    def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
+        """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
+
+        While the stream is quiet, an SSE stream also yields a `: keepalive` comment every
+        [`keepalive_interval`][pydantic_ai.ui.UIEventStream.keepalive_interval] seconds.
+        """
+        keepalive_interval = self.keepalive_interval
+        if keepalive_interval is not None and keepalive_interval <= 0:
+            raise UserError(f'`keepalive_interval` must be positive or `None`, got {keepalive_interval!r}.')
+        if keepalive_interval is None or self.content_type != SSE_CONTENT_TYPE:
+            return (self.encode_event(event) async for event in stream)
+        return self._encode_with_keepalive(stream, keepalive_interval)
+
+    async def _encode_with_keepalive(self, stream: AsyncIterator[EventT], interval: float) -> AsyncIterator[str]:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Not on asyncio (e.g. Trio): the pump below needs an asyncio task, so encode without keepalives.
+            async for event in stream:
+                yield self.encode_event(event)
+            return
+        # One task pulls `stream` for its whole life, so the idle timeout never cancels a pull halfway, and the
+        # source's cancel scopes are always entered and exited by the same task. This assumes the source wasn't
+        # started before it was passed here. A cancelled `Queue.get()` leaves its item queued, so a timeout racing a
+        # new event doesn't lose it.
+        queue: asyncio.Queue[EventT | None] = asyncio.Queue()
+
+        async def pump() -> None:
+            try:
+                async for event in stream:
+                    queue.put_nowait(event)
+                    await queue.join()  # pull the next event only when the consumer asks, as a plain `async for` does
+            finally:
+                try:
+                    # A cancel can land in `join()`, outside `stream`, so close it here to run its cleanup.
+                    await _utils.aclose_if_supported(stream)
+                finally:
+                    queue.put_nowait(None)  # end of stream
+
+        pump_task = _utils.ScopedTask(pump())
+        pump_task.task.set_name('pydantic-ai-ui-keepalive-pump')
+        try:
+            while True:
+                event: EventT | None = None
+                with anyio.move_on_after(interval) as idle:
+                    event = await queue.get()
+                # Yield outside the cancel scope, which must not span a `yield`.
+                if idle.cancelled_caught:
+                    yield ': keepalive\n\n'
+                    continue
+                if event is None:
+                    break
+                yield self.encode_event(event)
+                queue.task_done()
+        finally:
+            # In a cancelled `anyio` scope (a client disconnect), `wait()` passes that cancellation on as a cancel of the
+            # pump's own scope, so shielded cleanup in the run finishes as it did when the run was iterated in this
+            # task. Every other exit cancels the pump natively, once.
+            if not _utils.in_cancelled_anyio_scope():
+                pump_task.task.cancel()
+            await pump_task.wait()
+        pump_task.task.result()  # re-raise an error from `stream`
 
     def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
         """Generate a streaming response from a stream of protocol-specific events."""
