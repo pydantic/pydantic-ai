@@ -285,7 +285,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     are answered. Off by default: a sub-agent run that ends with `DeferredToolRequests` returns a steering message.
 
     When on, such a run makes the delegate call raise `ApprovalRequired`, so the parent run ends with
-    `DeferredToolRequests` too (its `output_type` must include it, or a `HandleDeferredToolCalls` must answer it).
+    `DeferredToolRequests` too (its `output_type` must include it, or a `HandleDeferredToolCalls` handler must answer
+    it through these two functions).
     `delegated_requests()` lists the sub-agent's calls under IDs prefixed by the delegate call's, and
     `delegated_results()` routes the answers back, so the next run resumes the sub-agent from its history rather than
     running the task again. Approving the delegate call itself approves none of the sub-agent's calls: the

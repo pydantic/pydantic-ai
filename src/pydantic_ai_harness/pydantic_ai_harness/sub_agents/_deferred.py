@@ -116,8 +116,12 @@ def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict
         paths.update(_prefixed(prefix, {key: [agent_name, *child_paths.get(key, [])] for key in _flat_ids(child)}))
     flat = DeferredToolRequests(calls=calls, approvals=approvals, metadata=metadata, validated_args=validated_args)
     _require_unique(_flat_ids(flat))
-    # Questions keep their kind, so `kind()` reads it as on the requests they came from.
-    return replace(flat, _kinds={key: kind for key, kind in kinds.items() if kind == 'question'}), paths
+    questions = {key: kind for key, kind in kinds.items() if kind == 'question'}
+    if not questions:
+        return flat, paths
+    # Questions keep their kind, so `kind()` reads it as on the requests they came from. `DeferredToolRequests` takes a
+    # call's kind only through its serialized form, which stored requests rely on to keep their questions.
+    return _REQUESTS.validate_python({**_REQUESTS.dump_python(flat), '_kinds': questions}), paths
 
 
 def _prefixed(prefix: str, mapping: Mapping[str, _V]) -> dict[str, _V]:

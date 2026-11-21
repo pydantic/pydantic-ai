@@ -10,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
-from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, on_event
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -278,6 +278,28 @@ class TestForwardDeferredCalls:
             message_history=first.all_messages(), deferred_tool_results=delegated_results(first.output, results)
         )
         assert second.output == 'parent saw: the page, yes'
+
+    async def test_a_handler_on_the_parent_answers_through_the_helpers(self) -> None:
+        mailer = _Mailer()
+
+        def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+            return delegated_results(requests, delegated_requests(requests).build_results(approve_all=True))
+
+        parent = Agent(
+            _parent_model(),
+            capabilities=[
+                SubAgents(agents=[SubAgent(mailer.agent)], forward_deferred_calls=True),
+                HandleDeferredToolCalls(handler=approve_all),
+                Listener(),
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'parent saw: mail handled'
+        assert (mailer.model_calls, mailer.lookups, sorted(mailer.sent)) == (
+            2,
+            1,
+            ['ann@example.com', 'cc@example.com'],
+        )
 
     async def test_colliding_ids_are_rejected(self) -> None:
         def clash_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
