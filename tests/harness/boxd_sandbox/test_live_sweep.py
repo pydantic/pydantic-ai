@@ -51,7 +51,7 @@ async def test_the_sweep_deletes_the_machines_a_cleanup_missed(
 
 
 async def test_the_sweep_stops_on_refused_credentials(fake_boxd: FakeBoxd, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A delete boxd refuses for the credentials fails the session instead of being retried until the sweep's bound."""
+    """A delete refused for its credentials fails the session at once instead of retrying until `timeout`."""
     live = LiveMachines(poll=0)
     live.watch(monkeypatch, FakeMachines)
     backend = BoxdSandboxBackend()

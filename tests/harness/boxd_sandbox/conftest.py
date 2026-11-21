@@ -101,7 +101,7 @@ class LiveMachines:
             while True:
                 try:
                     return await machines.delete(machine_id)
-                except (boxd.AuthenticationError, boxd.PermissionDeniedError):
+                except boxd.AuthenticationError:
                     # No retry gets past refused credentials, and the session should fail on them.
                     raise
                 except boxd.BoxdError:
@@ -131,14 +131,16 @@ def _sweep_live_machines(pytestconfig: pytest.Config) -> Iterator[None]:
                 finally:
                     await client.close()
 
-            # A thread of its own, like `run_block`'s cleanup: the session's event loop may still be set.
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(anyio.run, sweep).result()
-        deleted = [machine_id for machine_id in missed if machine_id not in live.pending]
-        pytestconfig.stash[_SWEEP_REPORT] = (
-            f'boxd live sweep: deleted {len(deleted)} machine(s) the tests left: {deleted}; '
-            f'could not delete {len(live.pending)}: {sorted(live.pending)}'
-        )
+            try:
+                # A thread of its own, like `run_block`'s cleanup: the session's event loop may still be set.
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(anyio.run, sweep).result()
+            finally:
+                deleted = [machine_id for machine_id in missed if machine_id not in live.pending]
+                pytestconfig.stash[_SWEEP_REPORT] = (
+                    f'boxd live sweep: deleted {len(deleted)} machine(s) the tests left: {deleted}; '
+                    f'could not delete {len(live.pending)}: {sorted(live.pending)}'
+                )
     else:
         yield
 
