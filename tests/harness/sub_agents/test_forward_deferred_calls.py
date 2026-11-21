@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext, ToolDefinition, ToolDenied
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
     InMemoryDeferredStateStore,
@@ -34,6 +35,7 @@ from pydantic_ai_harness.sub_agents import (
 )
 
 from .._recording_durability import RecordingDurability
+from ..conftest import CountingModel
 
 
 class _Mailer:
@@ -469,6 +471,26 @@ class TestSubAgentsForwardDeferredCalls:
         with pytest.raises(UserError, match='it was already resumed'):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
         assert mailer.sent == sent
+
+    async def test_inherited_token_counting_does_not_rerun_approved_calls(self) -> None:
+        # The child's model can't count tokens. A resumed child runs its approved calls before its first model
+        # request, so starting it again without the flag would run them twice.
+        mailer = _Mailer()
+        parent = Agent(
+            CountingModel(_parent_model()),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[SubAgents(agents=[SubAgent(mailer.agent)], forward_deferred_calls=True), Listener()],
+        )
+        limits = UsageLimits(count_tokens_before_request=True)
+        first = await parent.run('go', usage_limits=limits)
+        assert isinstance(first.output, DeferredToolRequests)
+        routed = delegated_results(first.output, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
+
+        second = await parent.run(
+            message_history=first.all_messages(), deferred_tool_results=routed, usage_limits=limits
+        )
+        assert second.output == 'parent saw: mail handled'
+        assert sorted(mailer.sent) == ['ann@example.com', 'cc@example.com']
 
     async def test_a_crash_before_any_deferral_propagates(self) -> None:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

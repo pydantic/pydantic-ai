@@ -1697,9 +1697,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     if record is not None and captured:
                         record.messages = captured
 
-        if sub_agent.usage_limits is not None and sub_agent.usage_limits.count_tokens_before_request:
-            return start(usage_limits)
-        return run_with_count_tokens_fallback(start, usage_limits, usage)
+        return _start_child(start, sub_agent, usage_limits, usage, resumed=resume is not None)
 
     async def _stream_child(
         self,
@@ -1860,6 +1858,24 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _start_child(
+    start: Callable[[UsageLimits | None], Coroutine[Any, Any, AgentRunResult[Any]]],
+    sub_agent: SubAgent[AgentDepsT],
+    usage_limits: UsageLimits | None,
+    usage: RunUsage,
+    *,
+    resumed: bool,
+) -> Coroutine[Any, Any, AgentRunResult[Any]]:
+    """Start a child run, dropping token counting inherited from the parent if the child's model can't count."""
+    if sub_agent.usage_limits is not None and sub_agent.usage_limits.count_tokens_before_request:
+        return start(usage_limits)
+    if resumed and usage_limits is not None:
+        # A resumed child runs its approved calls before its first model request, so the fallback, which starts the
+        # run again when counting fails before a request, would run them twice: drop inherited counting instead.
+        return start(replace(usage_limits, count_tokens_before_request=False))
+    return run_with_count_tokens_fallback(start, usage_limits, usage)
 
 
 def _child_inputs(
