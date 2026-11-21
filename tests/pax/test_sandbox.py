@@ -2244,14 +2244,9 @@ class LocalHost:
 @pytest.fixture
 def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'FakeSmolvm':
     """The harness's fake `smolvm` CLI, in an absolute `PATH` directory, as its own tests set it up."""
-    from tests.harness.smol_sandbox.fake_smolvm import FakeSmolvm, put_smolvm_in
+    from tests.harness.smol_sandbox.fake_smolvm import install_fake_smolvm
 
-    scratch = tmp_path / 'smolvm-scripts'
-    scratch.mkdir()
-    fake = FakeSmolvm(scratch)
-    monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.open_process', fake.open_process)
-    monkeypatch.setenv('PATH', f'{put_smolvm_in(tmp_path / "smolvm-bin")}{os.pathsep}{os.environ["PATH"]}')
-    return fake
+    return install_fake_smolvm(monkeypatch, tmp_path)
 
 
 @pytest.fixture(
@@ -2272,7 +2267,8 @@ def local_host(
     platform, engine = cast('tuple[str, LocalEngine]', request.param)
     monkeypatch.setattr(local_provider.sys, 'platform', platform)
     if engine == 'smolmachines':
-        if find_spec('smol') is None:  # pragma: no cover - smolmachines has wheels for macOS and Linux only
+        # smolmachines has wheels for macOS and Linux only.
+        if find_spec('smol') is None:  # pragma: no cover
             pytest.skip('smolmachines not installed')
         from tests.harness.smol_sandbox.fake_smol import FakeSmol
 

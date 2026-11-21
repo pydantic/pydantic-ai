@@ -379,10 +379,10 @@ async def _state(name: str) -> str | None:
 
 
 def _failure(stderr: bytes) -> _Failure | None:
-    """The failure smolvm reported, from the last line of its stderr."""
-    lines = stderr.strip().splitlines()
+    """The failure smolvm reported, from the last line of its stderr, which up to 10 MiB of a command's precede."""
+    last = stderr.rstrip().rpartition(b'\n')[2]
     try:
-        return _REPORT.validate_json(lines[-1])['error'] if lines else None
+        return _REPORT.validate_json(last)['error'] if last else None
     except ValidationError:
         return None
 

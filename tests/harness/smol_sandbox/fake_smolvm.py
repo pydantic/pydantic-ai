@@ -18,6 +18,7 @@ from pathlib import Path
 
 import anyio
 import anyio.abc
+import pytest
 
 _EXEC = (
     # `sh -s`, keeping what it read. A machine deleted meanwhile is reported as smolvm reports it.
@@ -131,6 +132,16 @@ class FakeSmolvm:
     async def _error(self, stdin: int, code: str, message: str) -> FakeProcess:
         report = json.dumps({'error': {'code': code, 'message': message}})
         return await self._reply(stdin, 1, stderr=f'Error: failed\n{report}')
+
+
+def install_fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeSmolvm:
+    """Make `SmolvmCliBackend` run the fake, found in an absolute `PATH` directory, and return its control surface."""
+    scratch = tmp_path / 'smolvm-scripts'
+    scratch.mkdir()
+    control = FakeSmolvm(scratch)
+    monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.open_process', control.open_process)
+    monkeypatch.setenv('PATH', f'{put_smolvm_in(tmp_path / "smolvm-bin")}{os.pathsep}{os.environ["PATH"]}')
+    return control
 
 
 def put_smolvm_in(directory: Path) -> Path:
