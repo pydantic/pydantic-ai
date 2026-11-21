@@ -102,6 +102,10 @@ class FakeMachine:
     create_kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
     # Lookups that report the machine as `starting` before it runs, after a create or a start.
     boot_polls: int = 0
+    # Lookups that raise `NotFoundError` for the machine before they find it, as boxd's can just after a create.
+    unlisted_polls: int = 0
+    # Lookups of the machine so far, whatever they answered.
+    lookups: int = 0
     processes: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
     starts: int = 0
     org: str | None = None
@@ -396,6 +400,7 @@ class FakeMachines:
         machine = owner.add(
             name=name, isolated=isolated, networks=networks, create_kwargs=kwargs, boot_polls=owner.boot_polls, org=org
         )
+        machine.unlisted_polls = owner.unlisted_polls
         if owner.create_gate is not None and owner.create_then_hang:
             await owner.create_gate.wait()
         if owner.lose_create_reply:
@@ -433,7 +438,13 @@ class FakeMachines:
         if owner.get_errors:
             raise owner.get_errors.pop(0)
         machine = owner.find(machine_id)
+        machine.lookups += 1
+        if machine.lookups == owner.delete_on_lookup:
+            machine.status = 'destroyed'
         if machine.status == 'destroyed':
+            raise _not_found(machine_id)
+        if machine.unlisted_polls:
+            machine.unlisted_polls -= 1
             raise _not_found(machine_id)
         if machine.boot_polls:
             machine.boot_polls -= 1
@@ -527,6 +538,10 @@ class FakeBoxd:
         # Every command stream's pipe readers, which `reap` finishes before it reads the pipes itself.
         self.readers: list[asyncio.Task[None]] = []
         self.boot_polls = 0
+        # `unlisted_polls` for each machine `create` makes.
+        self.unlisted_polls = 0
+        # The lookup of a machine on which boxd deletes it, as a delete from elsewhere while it boots.
+        self.delete_on_lookup: int | None = None
         self.reject_credentials = False
         self.lose_create_reply = False
         self.lose_fork_reply = False
