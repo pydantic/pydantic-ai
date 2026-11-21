@@ -141,7 +141,7 @@ The serialized `part_kind` wire values and the old field names' validation alias
 | `stream.get()` | `stream.response` |
 | `StreamedRunResult.stream` | [`stream_output`][pydantic_ai.result.StreamedRunResult.stream_output] |
 | `StreamedRunResult.stream_structured` | [`stream_response`][pydantic_ai.result.StreamedRunResult.stream_response] |
-| `StreamedRunResult.stream_responses()` (plural, yielding `(response, is_last)`) | `stream_response()` (singular, yielding a bare `ModelResponse`; read the old `is_last` as `response.state != 'incomplete'`) |
+| `StreamedRunResult.stream_responses()` (plural, yielding `(response, is_last)`) | `stream_response()` (singular, yielding a bare `ModelResponse`; the old `is_last` response is the last one it yields, whose `state` can still be `'incomplete'` if the stream ended before the provider's terminal event) |
 | `StreamedRunResult.validate_structured_output` | [`validate_response_output`][pydantic_ai.result.StreamedRunResult.validate_response_output] |
 | `async for event in agent.run_stream_events(...)` | `async with agent.run_stream_events(...) as events:` then iterate — it is an async context manager only |
 
