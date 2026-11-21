@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from types import NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_args, get_origin, overload
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
@@ -109,13 +109,16 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]`, `Literal[...]` and `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
     type_ = _utils.unwrap_annotated(type_)
+    if get_origin(type_) is Literal:
+        # `isinstance` can't check a `Literal`, nor its origin; a value matches it if it's one of its values.
+        return value in get_args(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
