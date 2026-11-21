@@ -17,7 +17,8 @@ changing acquisition, command, file, or error handling:
   the writes it had not flushed.
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
   raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine for a
-  moment.
+  moment. Conversely, `get` can raise `NotFoundError` for a machine `create` just returned (seen in two live test
+  runs in November 2026, not reproduced on demand).
 - An isolated machine's metadata endpoint refuses token requests (403), and boxd's env vars and integrations
   are not installed in it. A machine created from a snapshot keeps the named `networks` of the machine the
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
@@ -107,6 +108,8 @@ _SILENT_COMMAND_MESSAGE = (
 _NAME_PREFIX = 'pydantic-ai-'
 # Bound machine creation, attachment, and deletion so a wedged control plane cannot hang a run.
 _LIFECYCLE_TIMEOUT = 120.0
+# How long the operation that created a machine keeps looking it up while boxd does not list it yet.
+_UNLISTED_TIMEOUT = 30.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.25
@@ -290,6 +293,22 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
         return next((m for m in await client.machines.list(org=org) if m.name == name), None)
     except boxd.BoxdError:
         return None
+
+
+async def _look_up_machine(client: AsyncBoxd, machine_id: str, *, listed_by: float | None) -> Machine | None:
+    """The machine's record; `None` if boxd does not list it yet and the clock has not reached `listed_by`.
+
+    Otherwise a machine boxd does not find raises `WorkspaceUnavailableError`.
+    """
+    try:
+        return await client.machines.get(machine_id)
+    except boxd.NotFoundError as error:
+        if listed_by is not None and anyio.current_time() < listed_by:
+            return None
+        raise WorkspaceUnavailableError(
+            f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
+            "for these credentials). Pass `workspace='new'` to start a fresh machine."
+        ) from error
 
 
 async def _launch(
@@ -522,11 +541,13 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             if self._client is None:
                 self._client = _new_client()
             client = self._client
+            created = False
             if (ref := self._ref) is None:
                 # Creation finishes even if the caller is cancelled, so a billed machine is never left unrecorded.
                 ref = await run_to_completion(lambda: self._create(client))
+                created = True
             if not self._ready:
-                machine_id = await self._wait_until_ready(client, ref.id)
+                machine_id = await self._wait_until_ready(client, ref.id, created=created)
                 if machine_id != ref.id:
                     # A ref may name the machine; names can be reused once it is deleted, ids cannot.
                     self._ref = ref = WorkspaceRef(provider='boxd', id=machine_id)
@@ -573,23 +594,22 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         logger.info('Created boxd machine %s (%s)', machine.id, machine.name)
         return ref
 
-    async def _wait_until_ready(self, client: AsyncBoxd, machine_id: str) -> str:
+    async def _wait_until_ready(self, client: AsyncBoxd, machine_id: str, *, created: bool = False) -> str:
         """Wait until the machine accepts commands, starting it if it is stopped, and return its id.
 
         A suspended or hibernated machine is woken by the probe command itself. A machine that is not
         isolated, or that is on a named network, is refused: other machines could reach it, and a ref
-        from tampered message history must not point the agent at one of them.
+        from tampered message history must not point the agent at one of them. A machine the caller
+        just `created` that boxd does not list yet is looked up again for up to `_UNLISTED_TIMEOUT`; any
+        other machine boxd does not find is unavailable at once.
         """
+        listed_by = anyio.current_time() + _UNLISTED_TIMEOUT if created else None
         with anyio.move_on_after(_LIFECYCLE_TIMEOUT):
             async with _mapped_errors(f'Could not attach to boxd machine {machine_id!r}'):
                 while True:
-                    try:
-                        machine = await client.machines.get(machine_id)
-                    except boxd.NotFoundError as error:
-                        raise WorkspaceUnavailableError(
-                            f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
-                            "for these credentials). Pass `workspace='new'` to start a fresh machine."
-                        ) from error
+                    if (machine := await _look_up_machine(client, machine_id, listed_by=listed_by)) is None:
+                        await anyio.sleep(_POLL_INTERVAL)
+                        continue
                     _check_attachable(machine_id, machine)
                     try:
                         if machine.status == 'stopped':

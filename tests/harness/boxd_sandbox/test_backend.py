@@ -134,6 +134,21 @@ class TestCreate:
         assert first == second == host.only.name
         assert backend.ref == _ref(host.only.id)
 
+    async def test_a_new_machine_boxd_does_not_list_yet_is_waited_for(self, host: FakeBoxd) -> None:
+        host.unlisted_polls = 3
+        backend = BoxdSandboxBackend()
+        assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+        assert backend.ref == _ref(host.only.id)
+        assert len(host.create_names) == 1
+
+    async def test_a_new_machine_boxd_never_lists_is_unavailable(
+        self, host: FakeBoxd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f'{_MODULE}._UNLISTED_TIMEOUT', 0.05)
+        host.unlisted_polls = 10**9
+        with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
+            await BoxdSandboxBackend().run(['true'])
+
     async def test_a_refused_create_whose_machine_never_appeared_is_unavailable(self, host: FakeBoxd) -> None:
         host.create_errors.append(boxd.ConflictError('a payment method is required', code='failed_precondition'))
         with pytest.raises(WorkspaceUnavailableError, match='boxd refused to create the machine: a payment method'):
@@ -275,6 +290,17 @@ class TestAttach:
         with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-404' was not found"):
             await BoxdSandboxBackend(ref=_ref('machine-404')).run(['true'])
         assert not host.create_names
+
+    async def test_an_attach_does_not_wait_for_boxd_to_list_the_machine(self, host: FakeBoxd) -> None:
+        # Only the operation that created the machine waits for boxd to list it.
+        creator = BoxdSandboxBackend()
+        await creator.run(['true'])
+        await creator.aclose()
+        machine = host.only
+        for backend in (BoxdSandboxBackend(ref=creator.ref), creator):
+            machine.unlisted_polls = 1
+            with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
+                await backend.run(['true'])
 
     async def test_a_machine_that_is_not_isolated_is_refused(self, host: FakeBoxd) -> None:
         machine = host.add(name='dev-box', isolated=False)
