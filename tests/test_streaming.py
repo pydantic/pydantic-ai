@@ -5211,6 +5211,27 @@ async def test_stream_structured_output():
         assert result.is_complete
 
 
+async def test_stream_structured_output_in_markdown_fence():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    m = TestModel(custom_output_text='```json\n{"city": "Mexico City", "country": "Mexico"}\n```')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            [
+                CityLocation(city='Mexico '),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City', country='Mexico'),
+                CityLocation(city='Mexico City', country='Mexico'),
+            ]
+        )
+
+
 async def test_iter_stream_structured_output():
     class CityLocation(BaseModel):
         city: str

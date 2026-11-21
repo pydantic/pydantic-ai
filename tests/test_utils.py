@@ -1421,6 +1421,9 @@ def test_strip_markdown_fences():
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
+    # A fenced object that is still being streamed is stripped too, so it can be validated as partial JSON
+    assert strip_markdown_fences('```json\n{"a": 1, "b": "x') == '{"a": 1, "b": "x'
+    assert strip_markdown_fences('```json\n') == '```json\n'
 
 
 class _AmbiguousBool:

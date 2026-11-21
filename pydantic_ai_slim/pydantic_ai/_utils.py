@@ -1222,13 +1222,15 @@ def _rename_shared_defs_with_renamed_refs(
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
+# A fence whose JSON object is still being streamed, so neither its closing brace nor its closing fence has arrived.
+_PARTIAL_MARKDOWN_FENCE_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*)\Z', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
+    match = re.search(_MARKDOWN_FENCES_PATTERN, text) or re.search(_PARTIAL_MARKDOWN_FENCE_PATTERN, text)
     if match:
         return match.group(1)
 
