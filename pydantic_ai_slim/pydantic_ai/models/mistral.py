@@ -11,7 +11,7 @@ import httpx2
 import pydantic_core
 from pydantic import JsonValue
 
-from .. import UnexpectedModelBehavior, _model_errors, _utils
+from .. import _model_errors, _utils
 from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import HTTPTimeout
 from .._run_context import RunContext
@@ -25,6 +25,7 @@ from .._utils import (
 from ..exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
 )
 from ..messages import (
@@ -526,11 +527,16 @@ class MistralModel(Model[Mistral]):
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        assert response.choices, 'Unexpected empty response choice.'
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name, f'Empty response from {self.system}: no choices', body=response.model_dump()
+            )
 
         choice = response.choices[0]
-        if choice.message is None:  # pragma: no cover
-            raise UnexpectedModelBehavior('Unexpected empty response message from Mistral')
+        if choice.message is None:
+            raise ModelEmptyResponseError(
+                self.model_name, 'Unexpected empty response message from Mistral', body=response.model_dump()
+            )
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 
@@ -575,9 +581,7 @@ class MistralModel(Model[Mistral]):
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         return MistralStreamedResponse(
             model_request_parameters=model_request_parameters,

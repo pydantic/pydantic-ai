@@ -9,11 +9,11 @@ from typing import Any, Literal, assert_never, cast, overload
 
 from typing_extensions import TypedDict
 
-from .. import ModelAPIError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .. import ModelAPIError, _model_errors, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..exceptions import ModelHTTPError, ModelOverloadedError
+from ..exceptions import ModelEmptyResponseError, ModelHTTPError, ModelOverloadedError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -347,6 +347,11 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        if not response.choices:
+            # `huggingface_hub`'s inference types subclass `dict`, so the response serves as the body as is.
+            raise ModelEmptyResponseError(
+                self.model_name, f'Empty response from {self.system}: no choices', body=response
+            )
         choice = response.choices[0]
         content = choice.message.content
         tool_calls = choice.message.tool_calls
@@ -392,9 +397,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         # huggingface_hub types streaming responses as AsyncIterable, but the stream=True
         # response is an async generator at runtime.
