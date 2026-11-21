@@ -440,9 +440,9 @@ class TestSubAgentsForwardDeferredCalls:
         def crash(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model down')
 
-        crasher = Agent(FunctionModel(crash), name='crasher', output_type=[str, DeferredToolRequests])
+        broken = Agent(FunctionModel(crash), name='broken', output_type=[str, DeferredToolRequests])
         with pytest.raises(RuntimeError, match='model down'):
-            await _parent(crasher).run('go')
+            await _parent(broken).run('go')
 
     async def test_the_in_memory_store_is_bounded(self) -> None:
         store = InMemoryDeferredStateStore(max_states=1)
