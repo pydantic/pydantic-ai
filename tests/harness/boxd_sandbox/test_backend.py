@@ -314,7 +314,7 @@ class TestAttach:
         assert not host.create_names
 
     async def test_an_attach_does_not_wait_for_boxd_to_list_the_machine(self, host: FakeBoxd) -> None:
-        # Only the operation that created the machine waits for boxd to list it.
+        # Only the backend that created the machine waits for boxd to list it, and only until a lookup has found it.
         creator = BoxdSandboxBackend()
         await creator.run(['true'])
         await creator.aclose()
