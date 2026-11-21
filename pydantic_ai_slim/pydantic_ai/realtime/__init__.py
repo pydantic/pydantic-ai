@@ -35,6 +35,7 @@ from .codec import RealtimeSessionInput
 from .model import (
     KnownRealtimeModelName,
     RealtimeClientSecret,
+    RealtimeConnectContext,
     RealtimeError,
     RealtimeModel,
     RealtimeProviderSession,
@@ -71,6 +72,7 @@ __all__ = (
     'KnownRealtimeModelName',
     'RealtimeEvent',
     'RealtimeClientSecret',
+    'RealtimeConnectContext',
     'RealtimeError',
     'RealtimeModel',
     'RealtimeModelProfile',

@@ -133,6 +133,7 @@ Important hook families:
 - run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
 - node-level hooks (`before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error`)
 - model-request hooks (`before_model_request`, `prepare_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
+- the realtime session hook `before_realtime_connect`, called once before a realtime session connects (which never calls model-request hooks) to change the history it's seeded with
 - tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - event-stream hooks
