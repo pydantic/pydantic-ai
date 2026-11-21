@@ -57,8 +57,8 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
 | `/SKILL-NAME [ARGS]` | Send an Agent Skill as your next prompt |
-| `!COMMAND` | Run a shell command; the command and output are saved for the next prompt |
-| `!!COMMAND` | Give an interactive program the whole terminal; only its exit status is saved |
+| `!COMMAND` | Run a shell command, in the sandbox in a `/sandbox` conversation; the command and output are saved for the next prompt |
+| `!!COMMAND` | Give an interactive program the whole terminal, on this machine only; only its exit status is saved |
 
 Plugins add their own commands, such as `/notion login` or `/google_workspace`. `/help` lists them.
 
@@ -110,7 +110,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
-| `sessions.naming` | `false` | Name saved sessions in the background using a model, at extra cost. |
+| `sessions.naming` | `true` | Name saved sessions in the background using a model, at extra cost. By default only sessions held with the current model are named; once saved, even as true, every session from any workspace is. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
@@ -1540,6 +1540,25 @@ status are saved. On Windows, the command shares CLAI's console in the same way.
 Without `!!`, a full-screen program on Windows cannot draw, because its output
 is a pipe.
 
+#### In a sandbox
+
+In a [`/sandbox`](#cloud-sandboxes-sandbox) conversation, a `!` line runs in the sandbox, where the
+agent's commands run, not on this machine:
+
+```text
+> !git status
+$ git status
+Runs in the Daytona sandbox; command and output saved for the next prompt
+...
+Done (0.8s)
+```
+
+It runs with the sandbox's shell in the sandbox's copy of the checkout, with the keys the agent got there
+with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
+input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
+never runs on this machine instead. `!!` needs this terminal, so in a sandbox CLAI refuses it and saves
+nothing. The command, output, and status are saved for the next prompt as on this machine.
+
 A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
 run in order with other queued input. `/help` lists the syntax.
 
@@ -2588,7 +2607,7 @@ a new session; `--session-id` then names it. `--continue` works with `-p` and
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
-or execute pending tools. Background naming, when turned on, may make a separate,
+or execute pending tools. Background naming, unless turned off, may make a separate,
 tool-free model request. Your current model, working directory, credentials, and
 approved plugins remain in effect. The saved model name is shown for reference.
 
@@ -2715,9 +2734,9 @@ later turns in Claude Code or Codex are not merged into it.
 
 #### Background names
 
-A saved session immediately gets a fallback title from its first prompt. With
-`sessions.naming` on, a single background worker can replace it with a short
-title, subtitle, and up to four topic tags. The browser refreshes names while
+A saved session immediately gets a fallback title from its first prompt. A
+single background worker can replace it with a short title, subtitle, and up to
+four topic tags. The browser refreshes names while
 idle without moving selection.
 
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
@@ -2731,19 +2750,28 @@ in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
 the browser backfills up to ten eligible sessions. Queue length, request count,
-output size, and a 60-second deadline bound the work. Exiting cancels and joins
-the worker.
+output size, and a 60-second deadline bound the work. Each naming request asks
+for no reasoning, or the least the model accepts, and at most 4,096 output
+tokens, so a reasoning model has room to answer. Exiting cancels and joins the
+worker.
 
 ```text
-/set sessions.naming true
+/set sessions.naming false
 /set sessions.naming_model openai:gpt-5-mini
 /set sessions.naming_model null
 ```
 
-Naming is off by default, so no model request is made without your opt-in, and
-sessions keep their fallback titles. Once on, it uses the current model unless
+Naming is on by default. Turn it off to make no naming requests, and sessions
+keep their fallback titles. It uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider and incurs additional usage. It has no tools and does not
+that model's provider and incurs additional usage. While naming is on only by
+default, it names only sessions held with the current model, and lists only
+their titles: a session held with another model, such as a local one or another
+model of the same provider, or imported from another agent, keeps its fallback
+title, and neither its text nor its title is sent. Switching models therefore leaves older sessions unnamed.
+Saving `sessions.naming true`, or choosing `sessions.naming_model`, names every
+untitled or stale session, from any workspace, sending it and its siblings'
+titles to the naming model. It has no tools and does not
 inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
 results leave the existing name usable and do not interrupt foreground work.
 `/usage` and the browser preview show persisted naming token counts separately;
@@ -2961,7 +2989,7 @@ no agent telemetry spans.
 Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
 conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
 uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
-there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If CLAI stops
