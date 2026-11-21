@@ -1071,6 +1071,47 @@ def test_merge_json_schema_defs_non_renamed_def_refs_renamed_def():
     )
 
 
+def test_merge_json_schema_defs_pointer_ref_into_renamed_def():
+    """A `$ref` pointing inside a renamed def keeps its pointer, so it still names that def's own field."""
+    schema_a = {
+        '$defs': {'Item': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+        'properties': {'item': {'$ref': '#/$defs/Item'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {'Item': {'type': 'object', 'properties': {'b': {'type': 'integer'}}}},
+        'properties': {'kind': {'$ref': '#/$defs/Item/properties/b'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's `Item` is renamed, so a ref into it has to name the renamed def: left as `Item`, the
+    # pointer would reach SchemaA's definition, which has no `properties/b`.
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'item': {'$ref': '#/$defs/Item'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'kind': {'$ref': '#/$defs/SchemaB_Item_1/properties/b'}},
+                'type': 'object',
+                'title': 'SchemaB',
+            },
+        ]
+    )
+    assert all_defs == snapshot(
+        {
+            'Item': {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+            'SchemaB_Item_1': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        }
+    )
+
+
 def test_merge_json_schema_defs_additional_properties_allof_not():
     """$refs under additionalProperties, allOf, and not must be rewritten during merge."""
     schema_a = {

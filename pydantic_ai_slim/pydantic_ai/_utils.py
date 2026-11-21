@@ -1128,9 +1128,12 @@ def _update_mapped_json_schema_refs(s: dict[str, Any] | bool, name_mapping: dict
     if '$ref' in s:
         ref = s['$ref']
         if ref.startswith('#/$defs/'):  # pragma: no branch
-            original_name = ref[8:]  # Remove '#/$defs/'
+            # A ref can point inside a definition, as `#/$defs/Name/properties/field` does: only the
+            # segment before the first slash names the definition to rename, and the pointer into it
+            # stays as written.
+            original_name, separator, pointer = ref[8:].partition('/')
             new_name = name_mapping.get(original_name, original_name)
-            s['$ref'] = f'#/$defs/{new_name}'
+            s['$ref'] = f'#/$defs/{new_name}{separator}{pointer}'
 
     for subschema in iter_subschemas(s):
         _update_mapped_json_schema_refs(subschema, name_mapping)
