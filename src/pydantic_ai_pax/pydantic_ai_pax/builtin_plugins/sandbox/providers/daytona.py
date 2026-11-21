@@ -30,6 +30,9 @@ if TYPE_CHECKING:
 
 KEY_NAME = 'DAYTONA_API_KEY'
 
+_REQUEST_TIMEOUT = 30
+"""Seconds `keep_alive` waits for each Daytona request, as the harness backend does for its own."""
+
 SECRET_LABEL = 'clai-github-secret'
 """The sandbox label naming its GitHub secret, so `delete` deletes the secret too."""
 
@@ -130,9 +133,9 @@ class DaytonaProvider:
         import daytona
 
         assert backend.ref is not None  # Both `create` and `reopen` give backends that name their sandbox.
-        sandbox = await self._clients[backend].get(backend.ref.id)
+        sandbox = await self._clients[backend].get(backend.ref.id, request_timeout=_REQUEST_TIMEOUT)
         if sandbox.state == daytona.SandboxState.STARTED:
-            await sandbox.refresh_activity()
+            await sandbox.refresh_activity(request_timeout=_REQUEST_TIMEOUT)
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

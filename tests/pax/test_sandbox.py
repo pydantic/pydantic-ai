@@ -82,7 +82,6 @@ from pydantic_ai_pax.plugins import (
     PluginHost,
     SessionEnd,
     Transcript,
-    TurnEnd,
     load_plugin,
 )
 from pydantic_ai_pax.runtime.imported_history import imported_kind
@@ -744,37 +743,6 @@ class TestLifecycle:
         restarted = plugin_of(load(checkout, Transcript(messages=session.messages)))
         assert (current := restarted.current()) is not None and current.ref == WorkspaceRef(provider='fake', id='sbx-1')
 
-    async def test_a_turn_that_finds_the_sandbox_stopped_reopens_it(
-        self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        model, returns = steps(('run_command', {'command': 'true'}), ('run_command', {'command': 'echo back'}), 'done')
-        loaded = load(checkout)
-        plugin = plugin_of(loaded)
-        session = on_screen(loaded, checkout, model=model, shell=True)
-        await plugin.command(['fake'])
-        held = plugin.current()
-        assert held is not None and held.backend is not None
-        stale = held.backend
-        # Any other failure leaves it open.
-        await loaded.dispatch(TurnEnd(text='go', outcome='failed', error=RuntimeError('the model is down')))
-        assert provider.closed == []
-
-        async def stopped(*args: object, **kwargs: object) -> CommandResult:
-            raise WorkspaceUnavailableError('The sandbox was stopped while idle.')
-
-        # The provider stopped it while idle: the backend's handle fails every operation from then on.
-        monkeypatch.setattr(stale, 'run', stopped)
-        with pytest.raises(WorkspaceUnavailableError) as failed:
-            await session.prompt('go')
-        # What the shell gives plugins for that turn.
-        await loaded.dispatch(TurnEnd(text='go', outcome='failed', error=failed.value))
-        assert provider.closed == [held.ref]
-        await session.prompt('again')
-        # A fresh backend for the same sandbox, which the provider starts again as it attaches.
-        assert provider.reopened == [held.ref]
-        assert held.backend is not stale
-        assert returns == ['[stdout]\nback\n']
-
     async def test_history_in_an_unknown_workspace_runs_here(self, checkout: Path, provider: FakeProvider) -> None:
         loaded = load(checkout, Transcript(messages=worked_in(WorkspaceRef(provider='retired', id='sb-1'))))
         assert plugin_of(loaded).current() is None
@@ -791,38 +759,130 @@ class TestLifecycle:
             current.open()
 
 
-@pytest.mark.parametrize('stop', ['delete', 'end'])
-async def test_a_held_sandbox_is_kept_alive_until_closed(
-    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, stop: str
+class Commands(AbstractCapability[None]):
+    """Works in the run's workspace before each run, as the file and shell tools do: a failure fails the turn."""
+
+    def __init__(self) -> None:
+        self.failures: list[WorkspaceUnavailableError] = []
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        workspace = ctx.workspace
+        await workspace.write_bytes('note.txt', b'hi')
+        assert await workspace.read_bytes('note.txt') == b'hi'
+        assert (await workspace.stat('note.txt')).size == 2
+        assert 'note.txt' in [entry.name for entry in await workspace.list_dir('.')]
+        await workspace.remove('note.txt')
+        # Two operations, as a turn makes many: once the sandbox is found stopped, the next fails the same way.
+        for _ in range(2):
+            try:
+                await ctx.workspace.run(['true'])
+            except WorkspaceUnavailableError as error:
+                self.failures.append(error)
+        if self.failures:
+            raise self.failures[-1]
+
+
+async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
+    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(sandbox, 'KEEP_ALIVE_EVERY', 0)
     kept: list[WorkspaceRef | None] = []
-    again = anyio.Event()
+    pinged = anyio.Event()
 
     async def keep_alive(backend: SandboxBackend) -> None:
         kept.append(backend.ref)
         if len(kept) == 1:
             raise OSError('the provider is down')
-        again.set()
+        pinged.set()
 
     provider.keep_alive = keep_alive
     loaded = load(checkout)
     plugin = plugin_of(loaded)
-    with caplog.at_level(logging.DEBUG, logger=sandbox.__name__):
-        await plugin.command(['fake'])
-        with anyio.fail_after(5):
-            await again.wait()
-    # A failed call is only logged, and the next one comes as usual.
+    [capability] = loaded.capabilities
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
+    session = Session(agent, deps=None, plugins=[capability, Commands()], workspace=checkout)
+    loaded.host.conversation = session
+    await plugin.command(['fake'])
+    held = plugin.current()
+    assert held is not None and held.backend is not None
+    run = held.backend.run
+    fails = False
+
+    async def long_command(*args: object, **kwargs: object) -> CommandResult:
+        # Ends only once `keep_alive` was called while it ran.
+        await pinged.wait()
+        if fails:
+            raise OSError('the command failed')
+        return await run(['true'])
+
+    monkeypatch.setattr(held.backend, 'run', long_command)
+    with caplog.at_level(logging.DEBUG, logger=sandbox.__name__), anyio.fail_after(5):
+        await session.prompt('go')
+    # A failed call is only logged: the command goes on, and the next call comes as usual.
     assert 'Could not keep the sandbox alive' in caplog.text
     assert set(kept) == {WorkspaceRef(provider='fake', id='sbx-1')}
-    if stop == 'delete':
-        await plugin.command(['delete'])
-    else:
-        await loaded.dispatch(SessionEnd(reason='exit'))
-    stopped = len(kept)
-    for _ in range(10):
-        await anyio.lowlevel.checkpoint()
-    assert len(kept) == stopped
+
+    async def no_more_calls() -> None:
+        stopped = len(kept)
+        for _ in range(10):
+            await anyio.lowlevel.checkpoint()
+        assert len(kept) == stopped
+
+    # Between commands nothing calls it, so the provider stops an idle sandbox as usual.
+    await no_more_calls()
+    fails = True
+    # The command's own error, not wrapped, and the calls stop with it.
+    with pytest.raises(OSError, match=r'^the command failed$'), anyio.fail_after(5):
+        await session.prompt('again')
+    await no_more_calls()
+
+
+async def test_a_sandbox_found_stopped_is_reopened_by_the_next_turn(
+    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stopped_ref, other_ref = WorkspaceRef(provider='fake', id='stopped'), WorkspaceRef(provider='fake', id='other')
+    provider.folder(stopped_ref).mkdir()
+    provider.folder(other_ref).mkdir()
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    [capability] = loaded.capabilities
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
+    commands = Commands()
+
+    def conversation(ref: WorkspaceRef) -> Session[None, str]:
+        return Session(
+            agent, deps=None, plugins=[capability, commands], workspace=checkout, message_history=worked_in(ref)
+        )
+
+    stopped, other = conversation(stopped_ref), conversation(other_ref)
+    await stopped.prompt('go')
+    await other.prompt('go')
+    stale, untouched = plugin.sandbox(stopped_ref), plugin.sandbox(other_ref)
+    assert stale.backend is not None and untouched.backend is not None
+    stale_backend, untouched_backend = stale.backend, untouched.backend
+
+    async def unavailable(*args: object, **kwargs: object) -> CommandResult:
+        raise WorkspaceUnavailableError('The sandbox was stopped while idle.')
+
+    # The provider stopped it while idle: the backend's handle fails every operation from then on.
+    monkeypatch.setattr(stale_backend, 'run', unavailable)
+    with pytest.raises(WorkspaceUnavailableError):
+        await stopped.prompt('go')
+    assert len(commands.failures) == 2
+    # Nothing is closed under a run that may still hold the backend, such as a `/fork`'s in the other sandbox.
+    assert provider.closed == []
+    assert untouched.backend is untouched_backend
+    commands.failures.clear()
+    await stopped.prompt('again')
+    # A fresh backend for the same sandbox, which the provider starts again as it attaches.
+    assert provider.reopened == [stopped_ref, other_ref, stopped_ref]
+    assert stale.backend is not stale_backend
+    await other.prompt('again')
+    assert untouched.backend is untouched_backend
+    await loaded.dispatch(SessionEnd(reason='exit'))
+    # The retired backend is closed with the rest.
+    assert provider.closed == [stopped_ref, stopped_ref, other_ref]
+    assert stale.backend is None and stale.retired == []
 
 
 async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> None:
@@ -1627,7 +1687,8 @@ class TestDaytona:
         fake, _ = fake_daytona
         refreshed: list[str] = []
 
-        async def refresh_activity(self: 'FakeDaytonaSandbox') -> None:
+        async def refresh_activity(self: 'FakeDaytonaSandbox', *, request_timeout: float | None = None) -> None:
+            assert request_timeout == 30
             refreshed.append(self.id)
 
         monkeypatch.setattr(FakeSandbox, 'refresh_activity', refresh_activity, raising=False)
