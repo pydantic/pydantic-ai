@@ -259,7 +259,7 @@ The next run resumes the sub-agent from its own history with those answers, so t
 
 - Every call the sub-agent waits on needs an answer: `delegated_results()` raises `ValueError` otherwise. Deny a call with `False` or `ToolDenied`.
 - Only the sub-agent decides which of its calls need approval. Approving the delegate call itself, for example with `build_results(approve_all=True)` on the parent's requests or through an approval gate on the delegate tool, approves none of them: the delegation runs the task again, and passes on the calls it stops on.
-- The sub-agent's state, its message history (with its instructions and tool results) and pending calls, travels to the caller in the delegate call's metadata and back, signed with `deferred_state_key`. The resumed delegate accepts only state this `SubAgents` signed, for this delegation's sub-agent and task, answering only the calls the sub-agent asked about. Anything else raises `UserError`. Without `deferred_state_key`, each `SubAgents` instance signs with a random key, so resume through the same instance; set the same secret in every process that may resume a run. The state is signed, not encrypted: `delegated_requests()` leaves it out, but an adapter that sends the raw `DeferredToolRequests.metadata` to a client, as the AG-UI adapter does for approvals, sends it the sub-agent's history too.
+- The sub-agent's history waits on the server, in `deferred_state_store`, until the answers arrive, and is deleted once the resumed delegation settles. The delegate call's metadata carries only its ID, the sub-agent's name and its pending calls, the ones the caller is asked about. A resume accepts only a state in that store, saved by the same delegate call for the same sub-agent and task, with answers only to the calls the sub-agent asked about. Anything else raises `UserError`. Unset, each `SubAgents` keeps the states in memory (`InMemoryDeferredStateStore`), so resume through the same instance, in the same process; pass a `DeferredStateStore` of your own, such as one backed by your database, to resume in another.
 - The delegation that stops emits a `DelegationFinishedEvent` with outcome `failed`, whose `output` says the sub-agent is waiting for answers, and the sub-agent's usage up to that point counts like any delegation's. The resumed run is a new delegation, with its own events.
 - Durable execution and `task_control` don't support it: `forward_deferred_calls=True` with either raises an error.
 
@@ -698,7 +698,7 @@ SubAgents(
     workspace=None,  # WorkspaceBackend to read agent_folders from instead of the run's workspace
     workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
     forward_deferred_calls=False,  # pass a sub-agent's deferred tool calls to the caller, and resume it
-    deferred_state_key=None,  # bytes: signs the state forward_deferred_calls sends; None makes a random key per instance
+    deferred_state_store=None,  # DeferredStateStore holding a waiting sub-agent's history; None keeps it in memory
     include_self=False,  # also list the running agent itself as the delegate `self`
     max_depth=3,  # delegation levels, counting the top-level run
     task_control=None,  # TaskControl: background tasks, task-control tools, questions, and task events

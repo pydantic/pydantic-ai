@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Container, Coroutine, Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -84,7 +83,12 @@ from pydantic_ai_harness.sub_agents._control import (
     task_group,
     validate_agent_name,
 )
-from pydantic_ai_harness.sub_agents._deferred import deferral_metadata, resume_state
+from pydantic_ai_harness.sub_agents._deferred import (
+    DeferredStateStore,
+    InMemoryDeferredStateStore,
+    deferral_metadata,
+    resume_state,
+)
 from pydantic_ai_harness.sub_agents._events import (
     AgentCreatedEvent,
     DelegationFinishedEvent,
@@ -336,6 +340,14 @@ RecordDelegation = Callable[
 delegating run's level in its delegation tree, and whether it is a task, under an owner's usage rules."""
 
 
+@dataclass(frozen=True)
+class _Forwarding:
+    """The delegation a child's deferred tool calls are saved for when they go to the parent run's caller."""
+
+    task: str
+    tool_call_id: str | None
+
+
 @dataclass(frozen=True, kw_only=True)
 class _Ended:
     """How one delegation settled, before the parent hears about it."""
@@ -571,7 +583,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] | None = None,
         workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
         forward_deferred_calls: bool = False,
-        deferred_state_key: bytes | None = None,
+        deferred_state_store: DeferredStateStore | None = None,
         _record_delegation: RecordDelegation | None = None,
     ) -> None:
         super().__init__(id=id)
@@ -604,7 +616,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._tool_name = tool_name
         self._contain_errors = contain_errors
         self._forward_deferred_calls = forward_deferred_calls
-        self._deferred_state_key = deferred_state_key if deferred_state_key is not None else secrets.token_bytes(32)
+        self._deferred_state_store: DeferredStateStore = (
+            deferred_state_store if deferred_state_store is not None else InMemoryDeferredStateStore()
+        )
         self._workspace_resolver = workspace_resolver
         self._models: dict[str, ModelOption] = dict(models or {})
         self._include_self = include_self
@@ -857,22 +871,33 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Run a delegation outside an owner, resuming a child the caller answered with `forward_deferred_calls`."""
         forward = self._forward_deferred_calls
         answered = (
-            resume_state(self._deferred_state_key, ctx.tool_call_metadata, agent_name=agent_name, task=task)
+            await resume_state(
+                self._deferred_state_store,
+                ctx.tool_call_metadata,
+                agent_name=agent_name,
+                task=task,
+                tool_call_id=ctx.tool_call_id,
+            )
             if forward and ctx.tool_call_approved
             else None
         )
-        return await self._run_delegation(
-            ctx,
-            agent_name,
-            sub_agent,
-            task=task,
-            key=key,
-            workspace=workspace,
-            # A call approved without a child's state, such as through an approval gate on the delegate tool, runs the
-            # task afresh: it approves none of the child's calls, which it passes on again.
-            resume=answered,
-            forward_deferred=forward,
-        )
+        # A call approved without a child's state, such as through an approval gate on the delegate tool, runs the
+        # task afresh: it approves none of the child's calls, which it passes on again.
+        state_id, resume = answered if answered is not None else (None, None)
+        try:
+            return await self._run_delegation(
+                ctx,
+                agent_name,
+                sub_agent,
+                task=task,
+                key=key,
+                workspace=workspace,
+                resume=resume,
+                forward_deferred=forward,
+            )
+        finally:
+            if state_id is not None:
+                await self._deferred_state_store.delete(state_id)
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject options that need the parent run when the delegate tool runs as a child workflow."""
@@ -1505,7 +1530,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 own_budget=own_budget,
                 serving_model=serving_model,
                 messages=messages,
-                forward_deferred=task if forward_deferred else None,
+                forwarding=_Forwarding(task, ctx.tool_call_id) if forward_deferred else None,
             )
         except BaseException as exc:
             outcome: DelegationOutcome = (
@@ -1719,15 +1744,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         own_budget: bool,
         serving_model: ServingModelRecorder,
         messages: Sequence[ModelMessage],
-        forward_deferred: str | None = None,
+        forwarding: _Forwarding | None = None,
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
         Soft outcomes (timeout, own usage budget, a child run that ended with
         `DeferredToolRequests` or `PendingModelResponse`) become a steering message the parent reads as a normal
         tool result; a child's soft failure or contained crash becomes a `ModelRetry`
-        the caller raises. With `forward_deferred`, the delegation's task, a child's `DeferredToolRequests` instead
-        become an `ApprovalRequired` the caller raises. Everything else propagates and aborts the delegation.
+        the caller raises. With `forwarding`, a child's `DeferredToolRequests` instead become an `ApprovalRequired`
+        the caller raises. Everything else propagates and aborts the delegation.
         """
         timeout = sub_agent.timeout_seconds
         try:
@@ -1762,14 +1787,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
-        if forward_deferred is not None and isinstance(result.output, DeferredToolRequests):
+        if forwarding is not None and isinstance(result.output, DeferredToolRequests):
             return _Ended(
                 outcome='failed',
                 output=f'Sub-agent {agent_name!r} is waiting for answers to its deferred tool calls.',
-                deferral=deferral_metadata(
-                    self._deferred_state_key,
+                deferral=await deferral_metadata(
+                    self._deferred_state_store,
                     agent_name=agent_name,
-                    task=forward_deferred,
+                    task=forwarding.task,
+                    tool_call_id=forwarding.tool_call_id,
                     requests=result.output,
                     messages=result.all_messages(),
                 ),

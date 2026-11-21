@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import secrets
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -34,6 +33,7 @@ from pydantic_ai_harness.sub_agents._control import (
     TaskControl,
     run_owned,
 )
+from pydantic_ai_harness.sub_agents._deferred import DeferredStateStore, InMemoryDeferredStateStore
 from pydantic_ai_harness.sub_agents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.sub_agents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.sub_agents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
@@ -91,22 +91,6 @@ the delegates run rather than *who* they are -- so merging them applies one harn
 other's sub-agents. Enumerating those instead would mean a field added
 later merges silently by default, which is the wrong way round for a decision nobody made.
 """
-
-
-def _disagreement(
-    capability_id: str | None, field_info: dataclasses.Field[Any], mine: object, theirs: object
-) -> UserError:
-    """The error for two same-`id` `SubAgents` whose `field_info` differs, which a merge can't settle."""
-    name = field_info.name
-    # A field kept out of the repr, such as a signing key, stays out of the message too.
-    values = f' ({mine!r} and {theirs!r})' if field_info.repr else ''
-    return UserError(
-        f'Capability id {capability_id!r} is used by multiple SubAgents capabilities that disagree '
-        f'on {name!r}{values}. Only the roster is composed; everything else '
-        "decides how the delegates run, so merging it would apply one set of delegates' "
-        f'configuration to the other. Give them distinct `id`s to keep both, or make {name!r} '
-        'agree.'
-    )
 
 
 def _durably_unsupported(capability: SubAgents[Any], spec: DurabilityEngineSpec) -> list[str]:
@@ -293,11 +277,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     tool, approves none of the sub-agent's calls: the delegation runs the task, and passes on the calls it stops on.
     Not supported under durable execution or with `task_control`, which raise an error."""
 
-    deferred_state_key: bytes | None = field(default=None, kw_only=True, repr=False)
-    """The secret that signs the sub-agent state `forward_deferred_calls` sends to the caller, so a resume accepts
-    only state this capability created. Unset, each `SubAgents` instance makes a random one, so the run that
-    resumes must use the same instance, in the same process. Set the same secret in every process that may
-    resume a run another one started."""
+    deferred_state_store: DeferredStateStore | None = field(default=None, kw_only=True)
+    """Where a sub-agent's history waits while the caller answers the calls `forward_deferred_calls` passed on.
+
+    It stays on the server, and the caller only gets its ID. Unset, each `SubAgents` keeps it in memory, so the run
+    that resumes must use the same instance, in the same process. Pass the same `DeferredStateStore` to every
+    process that may resume a run another one started."""
 
     include_self: bool = False
     """If `True`, the roster also lists the running agent itself, as `self`.
@@ -360,8 +345,10 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
     """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
-    _deferred_state_key: bytes = field(default=b'', init=False, repr=False, compare=False)
-    """`deferred_state_key`, or a random key made in `__post_init__`, shared with every per-run copy."""
+    _deferred_state_store: DeferredStateStore = field(
+        default_factory=InMemoryDeferredStateStore, init=False, repr=False, compare=False
+    )
+    """`deferred_state_store`, or an in-memory store made in `__post_init__`, shared with every per-run copy."""
 
     task_control: TaskControl | None = field(default=None, kw_only=True)
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
@@ -404,9 +391,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 stacklevel=3,
             )
         self._workspace = secondary_workspace(self.workspace, 'SubAgents')
-        self._deferred_state_key = (
-            self.deferred_state_key if self.deferred_state_key is not None else secrets.token_bytes(32)
-        )
+        if self.deferred_state_store is not None:
+            self._deferred_state_store = self.deferred_state_store
         self._build_roster([])
 
     def _disk_agents(self, definitions: Sequence[DiskDefinition]) -> list[SubAgent[AgentDepsT]]:
@@ -843,7 +829,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             created=self._created,
             workspace_resolver=self.workspace_resolver,
             forward_deferred_calls=self.forward_deferred_calls,
-            deferred_state_key=self._deferred_state_key,
+            deferred_state_store=self._deferred_state_store,
             _record_delegation=self._delegate
             if self.dynamic_agents is not None or self.task_control is not None
             else None,
@@ -897,7 +883,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                     continue
                 mine, theirs = getattr(first, name), getattr(other, name)
                 if mine != theirs:
-                    raise _disagreement(first.id, field_info, mine, theirs)
+                    raise UserError(
+                        f'Capability id {first.id!r} is used by multiple SubAgents capabilities that disagree '
+                        f'on {name!r} ({mine!r} and {theirs!r}). Only the roster is composed; everything else '
+                        "decides how the delegates run, so merging it would apply one set of delegates' "
+                        f'configuration to the other. Give them distinct `id`s to keep both, or make {name!r} '
+                        'agree.'
+                    )
             merged_agents.extend(other.agents)
             merged_models.update(other.models)
             include_self = include_self or other.include_self

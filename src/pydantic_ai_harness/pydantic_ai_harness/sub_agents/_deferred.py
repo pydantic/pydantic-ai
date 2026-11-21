@@ -1,21 +1,20 @@
 """Pass a sub-agent's deferred tool calls to the delegating run's caller, and route the caller's answers back.
 
 With `SubAgents(forward_deferred_calls=True)`, a child run that ends with `DeferredToolRequests` makes the delegate
-call raise `ApprovalRequired`, carrying the child's requests and history in the call's metadata, signed with the
-capability's key. The caller sees one `DeferredToolRequests` for the whole tree through `delegated_requests()`, with
-each child call's ID prefixed by the delegate call's (`'<delegate call>:<child call>'`), and answers it in the usual
-way. `delegated_results()` turns those answers into an approval of the delegate call whose metadata holds the child's
-state and its own answers, so the delegate resumes the child from its history instead of running the task again.
+call raise `ApprovalRequired`. Its history waits in the capability's `DeferredStateStore`, and the call's metadata
+carries only the store's ID for it, the sub-agent's name and its pending calls. The caller sees one
+`DeferredToolRequests` for the whole tree through `delegated_requests()`, with each child call's ID prefixed by the
+delegate call's (`'<delegate call>:<child call>'`), and answers it in the usual way. `delegated_results()` turns those
+answers into an approval of the delegate call whose metadata holds the child's own answers, so the delegate resumes
+the child from its stored history instead of running the task again.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
+import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -30,31 +29,82 @@ STATE_KEY = 'sub_agent_run'
 AGENT_PATH_KEY = 'agent_path'
 """The key of a child call's metadata in `delegated_requests()` naming the delegates it was made under, outermost first."""
 
-_SIGNED_FIELDS = ('agent_name', 'task', 'requests', 'messages')
-
 _REQUESTS: TypeAdapter[DeferredToolRequests] = TypeAdapter(DeferredToolRequests)
 _RESULTS: TypeAdapter[DeferredToolResults] = TypeAdapter(DeferredToolResults)
 
 _V = TypeVar('_V')
 
 
-def _signature(key: bytes, state: dict[str, Any]) -> str:
-    signed = json.dumps([state.get(name) for name in _SIGNED_FIELDS], sort_keys=True, separators=(',', ':'))
-    return hmac.new(key, signed.encode(), hashlib.sha256).hexdigest()
+class DeferredStateStore(Protocol):
+    """Holds the state of a sub-agent whose deferred tool calls `SubAgents(forward_deferred_calls=True)` passed on.
+
+    The state, a JSON-compatible dict with the sub-agent's history and pending calls, is saved under a new random ID
+    when the delegation stops, loaded when the caller's answers arrive, and deleted once the resumed delegation
+    settles. It stays on the server: the caller only sees its ID.
+    """
+
+    async def save(self, state_id: str, state: dict[str, Any]) -> None:
+        """Keep `state` under `state_id`."""
+        ...
+
+    async def load(self, state_id: str) -> dict[str, Any] | None:
+        """The state saved under `state_id`, or `None` if there is none."""
+        ...
+
+    async def delete(self, state_id: str) -> None:
+        """Forget the state saved under `state_id`, if any."""
+        ...
 
 
-def deferral_metadata(
-    key: bytes, *, agent_name: str, task: str, requests: DeferredToolRequests, messages: Sequence[ModelMessage]
+class InMemoryDeferredStateStore:
+    """A `DeferredStateStore` in this process's memory, the default.
+
+    A resume must then reach the same store in the same process. A state whose calls are never answered stays until
+    the store is dropped.
+    """
+
+    def __init__(self) -> None:
+        self._states: dict[str, dict[str, Any]] = {}
+
+    async def save(self, state_id: str, state: dict[str, Any]) -> None:
+        """Keep `state` under `state_id`."""
+        self._states[state_id] = state
+
+    async def load(self, state_id: str) -> dict[str, Any] | None:
+        """The state saved under `state_id`, or `None` if there is none."""
+        return self._states.get(state_id)
+
+    async def delete(self, state_id: str) -> None:
+        """Forget the state saved under `state_id`, if any."""
+        self._states.pop(state_id, None)
+
+
+async def deferral_metadata(
+    store: DeferredStateStore,
+    *,
+    agent_name: str,
+    task: str,
+    tool_call_id: str | None,
+    requests: DeferredToolRequests,
+    messages: Sequence[ModelMessage],
 ) -> dict[str, Any]:
-    """The metadata a delegate call raises `ApprovalRequired` with, signed with `key`, in a JSON-serializable form."""
-    state: dict[str, Any] = {
-        'agent_name': agent_name,
-        'task': task,
-        'requests': _REQUESTS.dump_python(requests, mode='json'),
-        'messages': ModelMessagesTypeAdapter.dump_python(list(messages), mode='json'),
-    }
-    state['signature'] = _signature(key, state)
-    return {STATE_KEY: state}
+    """Save a stopped child's state in `store`, and return the metadata its delegate call raises `ApprovalRequired` with.
+
+    The metadata goes to the caller, so it holds only what the caller is asked about: the sub-agent's pending calls.
+    """
+    state_id = secrets.token_urlsafe(16)
+    pending = _REQUESTS.dump_python(requests, mode='json')
+    await store.save(
+        state_id,
+        {
+            'agent_name': agent_name,
+            'task': task,
+            'tool_call_id': tool_call_id,
+            'requests': pending,
+            'messages': ModelMessagesTypeAdapter.dump_python(list(messages), mode='json'),
+        },
+    )
+    return {STATE_KEY: {'state_id': state_id, 'agent_name': agent_name, 'requests': pending}}
 
 
 def _state(metadata: object) -> dict[str, Any] | None:
@@ -208,34 +258,34 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
     return routed
 
 
-def resume_state(
-    key: bytes, metadata: object, *, agent_name: str, task: str
-) -> tuple[list[ModelMessage], DeferredToolResults] | None:
-    """The history and answers to resume a child with, from the metadata of an approved delegate call.
+async def resume_state(
+    store: DeferredStateStore, metadata: object, *, agent_name: str, task: str, tool_call_id: str | None
+) -> tuple[str, tuple[list[ModelMessage], DeferredToolResults]] | None:
+    """The stored state's ID, and the history and answers to resume a child with, for an approved delegate call.
 
     `None` when the call was approved without a child's state, such as by an approval gate on the delegate tool.
-    The state comes back from the caller, so it must carry this capability's signature, belong to this delegation,
-    and answer only the calls the child asked about, each the way it asked.
+    The answers come from the caller, so the state they name must be in `store`, saved by this same delegate call,
+    and they may answer only the calls the child is waiting on.
     """
     state = _state(metadata)
     if state is None:
         return None
-    if not hmac.compare_digest(str(state.get('signature')), _signature(key, state)):
+    state_id = state.get('state_id')
+    if not isinstance(state_id, str) or (stored := await store.load(state_id)) is None:
         raise UserError(
-            'The sub-agent state passed back with `deferred_tool_results` was not created by this `SubAgents`: '
-            'pass back the state from the `DeferredToolRequests` the run ended with, through `delegated_results()`.'
+            'The sub-agent state named in `deferred_tool_results` is not in this `SubAgents` store: it was already '
+            'resumed, or saved in another process or by another `SubAgents`. To resume in another process, give '
+            'both the same `deferred_state_store`.'
         )
-    if state.get('agent_name') != agent_name or state.get('task') != task:
-        raise UserError(
-            'The sub-agent state passed back with `deferred_tool_results` was saved for another delegation.'
-        )
-    _, requests = _child_requests(state)
+    if (stored.get('agent_name'), stored.get('task'), stored.get('tool_call_id')) != (agent_name, task, tool_call_id):
+        raise UserError('The sub-agent state named in `deferred_tool_results` was saved for another delegation.')
+    requests = _REQUESTS.validate_python(stored['requests'])
+    messages = ModelMessagesTypeAdapter.validate_python(stored['messages'])
     try:
-        messages = ModelMessagesTypeAdapter.validate_python(state['messages'])
         results = _RESULTS.validate_python(state['results'])
     except (KeyError, ValidationError) as error:
         raise _invalid(error) from error
     for answered, asked in ((results.approvals, requests.approvals), (results.calls, requests.calls)):
         if unknown := sorted(set(answered) - {call.tool_call_id for call in asked}):
             raise UserError(f'The sub-agent was not waiting for these answers: {unknown}')
-    return messages, results
+    return state_id, (messages, results)

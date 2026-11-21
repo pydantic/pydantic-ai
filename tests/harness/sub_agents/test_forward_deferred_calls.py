@@ -24,6 +24,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import RunContext, ToolDefinition, ToolDenied
 from pydantic_ai_harness.sub_agents import (
     DelegationFinishedEvent,
+    InMemoryDeferredStateStore,
     SubAgent,
     SubAgents,
     TaskControl,
@@ -122,13 +123,13 @@ def _parent(
     listener: Listener | None = None,
     *,
     task: str = 'email ann',
-    key: bytes | None = None,
+    store: InMemoryDeferredStateStore | None = None,
 ) -> Agent[object, str | DeferredToolRequests]:
     return Agent(
         _parent_model(child.name or '', task),
         output_type=[str, DeferredToolRequests],
         capabilities=[
-            SubAgents(agents=[SubAgent(child)], forward_deferred_calls=True, deferred_state_key=key),
+            SubAgents(agents=[SubAgent(child)], forward_deferred_calls=True, deferred_state_store=store),
             listener or Listener(),
         ],
     )
@@ -397,19 +398,18 @@ class TestSubAgentsForwardDeferredCalls:
         with pytest.raises(ValueError, match='collide'):
             delegated_results(result.output, DeferredToolResults(approvals={'a:b:c': True}))
 
-    async def test_changed_state_is_rejected(self) -> None:
+    async def test_the_history_stays_on_the_server(self) -> None:
         mailer = _Mailer()
         parent = _parent(mailer.agent)
         first = await parent.run('go')
         assert isinstance(first.output, DeferredToolRequests)
-        routed = delegated_results(first.output, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
-        state = routed.metadata['c1']['sub_agent_run']
-        # Changing a call consistently in the requests and the history still breaks the signature.
-        response = next(m for m in reversed(state['messages']) if m['kind'] == 'response')
-        response['parts'][1]['args'] = {'to': 'attacker@example.com'}
-        state['requests']['approvals'][0]['args'] = {'to': 'attacker@example.com'}
+        state = first.output.metadata['c1']['sub_agent_run']
+        # Only what the caller is asked about goes to it.
+        assert sorted(state) == ['agent_name', 'requests', 'state_id']
 
-        with pytest.raises(UserError, match='was not created by this `SubAgents`'):
+        routed = delegated_results(first.output, DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True}))
+        routed.metadata['c1']['sub_agent_run']['state_id'] = 'made-up'
+        with pytest.raises(UserError, match='is not in this `SubAgents` store'):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
         assert mailer.sent == []
 
@@ -424,27 +424,33 @@ class TestSubAgentsForwardDeferredCalls:
         with pytest.raises(UserError, match=r"was not waiting for these answers: \['l1'\]"):
             await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
 
-    async def test_a_shared_key_resumes_in_another_instance(self) -> None:
+    async def test_a_shared_store_resumes_in_another_instance(self) -> None:
         mailer = _Mailer()
-        first = await _parent(mailer.agent, key=b'secret').run('go')
+        store = InMemoryDeferredStateStore()
+        first = await _parent(mailer.agent, store=store).run('go')
         assert isinstance(first.output, DeferredToolRequests)
         answers = DeferredToolResults(approvals={'c1:e1': True, 'c1:e2': True})
         routed = delegated_results(first.output, answers)
 
-        with pytest.raises(UserError, match='was not created by this `SubAgents`'):
+        with pytest.raises(UserError, match='is not in this `SubAgents` store'):
             await _parent(mailer.agent).run(message_history=first.all_messages(), deferred_tool_results=routed)
 
-        # State signed with the same key, for another task, isn't accepted for this one.
-        other = await _parent(mailer.agent, task='email bob', key=b'secret').run('go')
+        # A state in the same store, saved for another task, isn't accepted for this one.
+        other = await _parent(mailer.agent, task='email bob', store=store).run('go')
         with pytest.raises(UserError, match='was saved for another delegation'):
-            await _parent(mailer.agent, task='email bob', key=b'secret').run(
+            await _parent(mailer.agent, task='email bob', store=store).run(
                 message_history=other.all_messages(), deferred_tool_results=routed
             )
 
-        second = await _parent(mailer.agent, key=b'secret').run(
+        second = await _parent(mailer.agent, store=store).run(
             message_history=first.all_messages(), deferred_tool_results=routed
         )
         assert second.output == 'parent saw: mail handled'
+        # The resumed state is deleted, so the same answers can't resume it twice.
+        with pytest.raises(UserError, match='it was already resumed'):
+            await _parent(mailer.agent, store=store).run(
+                message_history=first.all_messages(), deferred_tool_results=routed
+            )
 
     async def test_incomplete_state_is_rejected(self) -> None:
         mailer = _Mailer()
@@ -467,11 +473,6 @@ class TestSubAgentsForwardDeferredCalls:
         assert delegated_requests(requests) == requests
         results = DeferredToolResults(approvals={'p1': True}, calls={'x1': 'done'}, metadata={'p1': {'k': 'v'}})
         assert delegated_results(requests, results) == results
-
-    def test_merging_keeps_differing_keys_out_of_the_error(self) -> None:
-        with pytest.raises(UserError, match=r"disagree on 'deferred_state_key'\. Only") as error:
-            SubAgents.combine([SubAgents(deferred_state_key=b'one'), SubAgents(deferred_state_key=b'two')])
-        assert "b'one'" not in str(error.value)
 
     async def test_off_by_default(self) -> None:
         mailer = _Mailer()
