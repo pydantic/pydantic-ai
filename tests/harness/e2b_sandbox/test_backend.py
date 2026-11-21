@@ -269,6 +269,37 @@ class TestConnect:
         assert not fake_e2b.create_calls
         assert not fake_e2b.sandboxes
 
+    @pytest.mark.parametrize('attach', [False, True], ids=['created', 'attached'])
+    async def test_a_paused_sandbox_is_reconnected_on_the_next_operation(self, fake_e2b: FakeE2B, attach: bool) -> None:
+        # A paused sandbox answers nothing; only `connect` wakes it, with the lifetime given.
+        ref = WorkspaceRef(provider='e2b', id='sbx-1') if attach else None
+        backend = await started(ref=ref, sandbox_timeout=15)
+        fake_e2b.run_error = TimeoutException('The sandbox was not found')
+        fake_e2b.sandbox_is_running = False
+        with pytest.raises(
+            WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*using it again resumes it"
+        ):
+            await backend.run(['true'])
+        fake_e2b.run_error = None
+        fake_e2b.sandbox_is_running = True
+        assert (await backend.run(['echo', 'hi'])).exit_code == 0
+        assert fake_e2b.connect_calls == [('sbx-1', 15)] * (2 if attach else 1)
+        assert len(fake_e2b.sandboxes) == 1
+
+    async def test_a_paused_sandbox_the_caller_passed_is_not_reconnected(self, fake_e2b: FakeE2B) -> None:
+        # A sandbox the caller passed in is theirs to resume.
+        sandbox = fake_e2b.new_sandbox('sbx-mine')
+        backend = E2BSandboxBackend(sandbox=sandbox)  # pyright: ignore[reportArgumentType]
+        fake_e2b.run_error = TimeoutException('The sandbox was not found')
+        fake_e2b.sandbox_is_running = False
+        with pytest.raises(
+            WorkspaceUnavailableError,
+            match=r"'sbx-mine' is no longer running: .*a later run that attaches to it resumes it",
+        ):
+            await backend.run(['true'])
+        assert await backend.get_sandbox() is sandbox
+        assert not fake_e2b.connect_calls
+
 
 class TestRun:
     @pytest.mark.parametrize('mode', ['deadline', 'cancel', 'double-cancel', 'before-ack'])
@@ -679,6 +710,10 @@ class TestKilledSandbox:
         await (await backend.get_sandbox()).kill()
         with pytest.raises(WorkspaceUnavailableError, match='it was killed'):
             await backend.run(['true'])
+        # The dropped handle reconnects to the killed sandbox, which stays unavailable: no replacement is made.
+        with pytest.raises(WorkspaceUnavailableError, match='it was killed'):
+            await backend.run(['true'])
+        assert len(fake_e2b.create_calls) == 1
 
     async def test_a_filesystem_call_on_a_killed_sandbox_is_unavailable(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
