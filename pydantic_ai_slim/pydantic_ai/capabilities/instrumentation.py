@@ -32,6 +32,7 @@ from pydantic_ai._instrumentation import (
     redact_binary_content,
     safe_to_json,
     serialize_any,
+    tool_result_otel_value,
 )
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._utils import UNSET, Unset
@@ -760,7 +761,7 @@ class Instrumentation(AbstractCapability[Any]):
             attributes=attributes,
             action=lambda: handler(args),
             serialize_result=lambda value: tool_return_ta.dump_json(
-                redact_binary_content(value, self.settings)
+                tool_result_otel_value(value, self.settings)
             ).decode(),
             run_context=ctx,
             handle_tool_control_flow=True,
@@ -831,7 +832,7 @@ class Instrumentation(AbstractCapability[Any]):
             attributes=attributes,
             action=lambda: handler(output),
             serialize_result=lambda value: safe_to_json(
-                serialize_any(redact_binary_content(value, self.settings))
+                serialize_any(tool_result_otel_value(value, self.settings))
             ).decode(),
             run_context=ctx,
         )
