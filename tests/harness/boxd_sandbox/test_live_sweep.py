@@ -7,9 +7,10 @@ import os
 import pytest
 from boxd import APIConnectionError, APIStatusError, AuthenticationError, NotFoundError
 
+from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
-from .conftest import LiveMachines
+from .conftest import LiveMachines, delete_live_machine
 from .fake_boxd import FakeBoxd, FakeMachines
 
 # The fake runs a machine's commands under the host's `/bin/sh`.
@@ -67,3 +68,28 @@ async def test_the_sweep_stops_on_refused_credentials(fake_boxd: FakeBoxd, monke
     with pytest.RaisesGroup(AuthenticationError):
         await live.sweep(fake_boxd.client().machines)
     assert live.pending == {backend.ref.id}
+
+
+async def test_a_cleanup_whose_delete_boxd_fails_leaves_the_machine_to_the_sweep(
+    fake_boxd: FakeBoxd, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A live test's cleanup whose delete boxd fails with `INTERNAL` logs the machine instead of failing the test;
+    the machine stays recorded, and the sweep deletes it. Refused credentials still fail the cleanup."""
+    live = LiveMachines(poll=0)
+    live.watch(monkeypatch, FakeMachines)
+    backend = BoxdSandboxBackend()
+    await backend.get_sandbox()
+    assert backend.ref is not None
+
+    fake_boxd.delete_errors.append(APIStatusError("couldn't destroy that machine", code='internal', grpc_code=13))
+    await delete_live_machine(backend.ref)
+    assert (fake_boxd.only.status, live.pending) == ('running', {backend.ref.id})
+    assert f'boxd did not delete machine {backend.ref.id}' in caplog.text
+
+    fake_boxd.reject_credentials = True
+    with pytest.raises(WorkspaceUnavailableError):
+        await delete_live_machine(backend.ref)
+    fake_boxd.reject_credentials = False
+
+    await live.sweep(fake_boxd.client().machines)
+    assert (fake_boxd.only.status, live.pending) == ('destroyed', set())

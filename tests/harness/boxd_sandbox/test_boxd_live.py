@@ -38,7 +38,7 @@ from pydantic_ai_harness.coder import Coder
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
+from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 
 pytestmark = pytest.mark.boxd_live
 
@@ -76,7 +76,7 @@ async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> Asyn
         yield backend
     finally:
         if backend.ref is not None:
-            await BoxdSandbox(client=client).destroy(backend.ref)
+            await delete_live_machine(backend.ref, client)
 
 
 async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str) -> None:

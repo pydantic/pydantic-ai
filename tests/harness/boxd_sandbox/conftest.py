@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import types
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -30,6 +31,9 @@ LIVE_AUTO_SUSPEND_TIMEOUT = 60
 if TYPE_CHECKING or _HAS_BOXD:  # pragma: no branch - the SDK-installed and slim jobs take opposite branches
     import boxd
     from boxd.resources.machines import AsyncMachines
+
+    from pydantic_ai.workspaces import WorkspaceRef
+    from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
 
     from .fake_boxd import FakeBoxd, FakeMachines
 
@@ -153,6 +157,20 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
     """Print what `_sweep_live_machines` did after the test results, so a live run's log shows it."""
     if (report := config.stash.get(_SWEEP_REPORT, None)) is not None:  # pragma: no cover - live job
         terminalreporter.write_line(report)
+
+
+async def delete_live_machine(ref: WorkspaceRef, client: boxd.AsyncBoxd | None = None) -> None:
+    """Delete a live test's machine, or leave it to `_sweep_live_machines` when boxd fails the delete.
+
+    The sweep retries what is left, so boxd's own failure, such as `INTERNAL` ("couldn't destroy that machine"),
+    doesn't fail the test. Refused credentials raise `WorkspaceUnavailableError` and still do.
+    """
+    try:
+        await BoxdSandbox(client=client).destroy(ref)
+    except boxd.BoxdError as error:
+        logging.getLogger(__name__).warning(
+            'boxd did not delete machine %s, so the session sweep retries it: %r', ref.id, error
+        )
 
 
 class _PoisonedBoxd(types.ModuleType):
