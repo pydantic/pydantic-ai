@@ -256,7 +256,7 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 | `'low'` | Proposes a plan and waits for approval before editing. |
 | `'medium'` | Works until done, asking when a choice really matters. |
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
-| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
+| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. OpenAI-family models also get the default [model-guidance](#model-guidance) adjustments. |
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
 or running commands if it ignores the sentence. To require approval before writes or commands, add
@@ -270,6 +270,35 @@ Tool descriptions supply tool usage; `RepoContext` supplies repository instructi
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.
+
+
+### Model guidance
+
+Some models do worse with the shared default text than they could. `Coder` looks the run's model up
+in a small table and, when a row matches, replaces named fragments of the default text or appends
+sentences.
+
+The default table, `MODEL_GUIDANCE`, applies only at `'max'` autonomy and only to the OpenAI family:
+the `openai` provider (`Model.system == 'openai'`, including OpenAI-compatible servers that use
+`OpenAIProvider`), a model name with an `openai/` prefix (OpenRouter and similar gateways), or a leaf
+name matching `gpt-*`, `chatgpt-*`, or `o[1-9]*` (Azure and other gateways that keep the OpenAI
+model name), except `gpt-oss-*`.
+
+At `'max'`, a matching run replaces the default misread sentence with one that first checks whether
+the task or its rules classify inconsistent inputs, and appends two sentences: one for structured
+handoff notes, and one for functions that must derive their answer only from their arguments. At
+`'high'`, `'medium'`, and `'low'`, and for every other model, the prompt is unchanged.
+
+Pass `Coder(model_guidance=())` to disable the table. Pass an explicit sequence of `ModelGuidance`
+rows to replace it; an explicit table applies at every autonomy level. To extend the default table,
+use `(*MODEL_GUIDANCE, ModelGuidance(...))`.
+
+`ModelGuidance.match` is a provider name, as in `Model.system` (`'anthropic'`), optionally followed
+by `:` and a glob over `Model.model_name` (`'openai:gpt-6.2-*'`). A row with a model glob beats a
+provider-only row. If several rows have the same specificity, the first one wins. The `'openai'`
+match key means the OpenAI family above, not only the `openai` provider; every other provider key
+compares exactly against `Model.system`. A model glob is tried against the full name and the last
+`/` segment.
 
 ## Tool argument repair
 
@@ -395,3 +424,9 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 ::: pydantic_ai_harness.coder.Coder
 
 ::: pydantic_ai_harness.coder.BenchmarkInstructions
+
+::: pydantic_ai_harness.coder.ModelGuidance
+
+::: pydantic_ai_harness.coder.MODEL_GUIDANCE
+
+::: pydantic_ai_harness.coder.Fragment

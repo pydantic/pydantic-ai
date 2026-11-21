@@ -4,11 +4,21 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, BenchmarkInstructions, Coder
 from pydantic_ai_harness.coder._instructions import Autonomy
+from pydantic_ai_harness.coder._model_guidance import MODEL_GUIDANCE, Fragment, ModelGuidance
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.coder._agent import coder_agent
 
-__all__ = ['FILE_TOOL_NAMES', 'Autonomy', 'BenchmarkInstructions', 'Coder', 'coder_agent']
+__all__ = [
+    'FILE_TOOL_NAMES',
+    'MODEL_GUIDANCE',
+    'Autonomy',
+    'BenchmarkInstructions',
+    'Coder',
+    'Fragment',
+    'ModelGuidance',
+    'coder_agent',
+]
 
 
 def __getattr__(name: str) -> object:

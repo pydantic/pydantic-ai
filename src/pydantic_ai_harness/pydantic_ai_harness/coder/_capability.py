@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models import AbstractModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -20,6 +22,7 @@ from pydantic_ai_harness.coder._instructions import (
     coder_instructions,
     project_instructions,
 )
+from pydantic_ai_harness.coder._model_guidance import MODEL_GUIDANCE, ModelGuidance, resolve_model_guidance
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -141,6 +144,8 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     delegated_guidance: str
     project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
     delegate: bool = False
+    per_model: Callable[[AbstractModel], tuple[str, str] | None] | None = None
+    """Texts for the run's model when its lookup-table row changes them; resolved once per run, so they stay strings."""
 
     def __post_init__(self) -> None:
         self.id = 'coder_instructions'
@@ -149,9 +154,14 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
         return [self.delegated_guidance if self.delegate else self.guidance, *self.project]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        run = self
+        if self.per_model is not None:
+            texts = self.per_model(ctx.model)
+            if texts is not None:
+                run = replace(run, guidance=texts[0], delegated_guidance=texts[1])
         if delegation_depth() <= 1:
-            return self
-        return replace(self, delegate=True)
+            return run
+        return replace(run, delegate=True)
 
 
 @dataclass
@@ -181,6 +191,43 @@ def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
         # `/` is the filesystem root, or on Windows the working directory's drive.
         return replace(file_system, root_dir='/', read_only_patterns=[])
     return file_system
+
+
+def _coder_guidance_texts(
+    *,
+    autonomy: Autonomy,
+    delegate_tool: str | None,
+    extra: str | None,
+    repo_files: Sequence[str] | None,
+    nested_instructions: bool,
+    model_guidance: Sequence[ModelGuidance] | None,
+) -> tuple[str, str, Callable[[AbstractModel], tuple[str, str] | None] | None]:
+    """Default instruction texts, and a per-run adjustment for the model when a table row matches."""
+    build = partial(
+        coder_instructions,
+        autonomy=autonomy,
+        delegate_tool=delegate_tool,
+        extra=extra,
+        repo_files=repo_files,
+        nested_instructions=nested_instructions,
+    )
+    table = MODEL_GUIDANCE if model_guidance is None else tuple(model_guidance)
+    guidance, delegated = build()
+    if table and (model_guidance is not None or autonomy == 'max'):
+        return guidance, delegated, partial(_apply_model_guidance, build=build, table=table)
+    return guidance, delegated, None
+
+
+def _apply_model_guidance(
+    model: AbstractModel,
+    *,
+    build: Callable[..., tuple[str, str]],
+    table: tuple[ModelGuidance, ...],
+) -> tuple[str, str] | None:
+    row = resolve_model_guidance(table, model)
+    if row is None:
+        return None
+    return build(model_guidance=row)
 
 
 @dataclass(init=False)
@@ -231,6 +278,11 @@ class Coder(CombinedCapability[AgentDepsT]):
             which OpenAI and Gemini 2.5+ would otherwise turn on, and relies on the
             bundled `RepairToolArguments` instead. `None` leaves the choice to the
             provider. Tools bound next to `Coder` keep their own value.
+        model_guidance: Lookup table of per-model prompt adjustments. `None` uses
+            the default table, which applies only at `'max'` autonomy and only to
+            the OpenAI family (the `openai` provider, plus OpenAI models served
+            through a gateway such as OpenRouter or Azure). Pass `()` to disable
+            adjustments. An explicit table is applied at every autonomy level.
     """
 
     def __init__(
@@ -246,6 +298,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         task_control: TaskControl | None = None,
         caching: bool = True,
         strict: bool | None = False,
+        model_guidance: Sequence[ModelGuidance] | None = None,
     ) -> None:
         if autonomy not in get_args(Autonomy):
             raise ValueError(f'`autonomy` must be one of {", ".join(map(repr, get_args(Autonomy)))}, not {autonomy!r}.')
@@ -271,7 +324,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             if sub_agents
             else None
         )
-        guidance, delegated_guidance = coder_instructions(
+        guidance, delegated_guidance, per_model = _coder_guidance_texts(
             autonomy=autonomy,
             delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
@@ -281,7 +334,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             nested_instructions=bundled_repo_context is not None
             and bundled_repo_context.nested_traversal
             and bundled_repo_context.nested_inject == 'contents',
+            model_guidance=model_guidance,
         )
+
         # Naming the directory creates a lazily created sandbox, so it comes only with
         # `RepoContext`, which reads the workspace at run start anyway.
         project = (
@@ -289,7 +344,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
+            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project), per_model=per_model),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
                 denied_commands=[],

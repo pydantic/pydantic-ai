@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness.coder._model_guidance import ModelGuidance
 
 Autonomy = Literal['low', 'medium', 'high', 'max']
 """How far `Coder` works on its own before it checks in with the user."""
@@ -84,12 +85,14 @@ _FINISHING = (
 )
 
 
-def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
+def _checks(*, measure: bool, cleanup: bool, misread_max: bool, misread: str | None = None) -> str:
+    if misread is None:
+        misread = _MISREAD_MAX if misread_max else _MISREAD
     return ' '.join(
         [
             *([_TARGETS] if measure else []),
             _CONFIRM,
-            _MISREAD_MAX if misread_max else _MISREAD,
+            *([misread] if misread else []),
             _EXACT,
             _HEREDOC,
             *([_CLEANUP] if cleanup else []),
@@ -97,8 +100,10 @@ def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
     )
 
 
-def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], suffix: str) -> str:
-    return '\n\n'.join([_INTRO, lead, *context, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
+def _compose(
+    lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], added: Sequence[str], suffix: str
+) -> str:
+    return '\n\n'.join([_INTRO, lead, *context, _READING, *delegation, checks, *added, _FINISHING]) + '\n' + suffix
 
 
 def coder_instructions(
@@ -108,6 +113,7 @@ def coder_instructions(
     extra: str | None = None,
     repo_files: Sequence[str] | None = None,
     nested_instructions: bool = False,
+    model_guidance: ModelGuidance | None = None,
 ) -> tuple[str, str]:
     """The top-level guidance and the delegate guidance.
 
@@ -115,10 +121,13 @@ def coder_instructions(
     own when the work is good enough. Non-empty `extra` is appended after a blank line.
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads, lists, writes or edits there.
+    `model_guidance` is the lookup-table row for the run's model: it replaces named fragments and adds sentences.
     """
     is_max = autonomy == 'max'
-    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max)
-    delegate_checks = _checks(measure=True, cleanup=is_max, misread_max=is_max)
+    misread = model_guidance.replace.get('misread') if model_guidance is not None else None
+    added = tuple(model_guidance.add) if model_guidance is not None else ()
+    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max, misread=misread)
+    delegate_checks = _checks(measure=True, cleanup=is_max, misread_max=is_max, misread=misread)
     delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
@@ -126,8 +135,17 @@ def coder_instructions(
     ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
-        _compose(_DELEGATED, context=context, checks=delegate_checks, delegation=delegation, suffix=suffix),
+        _compose(
+            _AUTONOMY[autonomy],
+            context=context,
+            checks=parent_checks,
+            delegation=delegation,
+            added=added,
+            suffix=suffix,
+        ),
+        _compose(
+            _DELEGATED, context=context, checks=delegate_checks, delegation=delegation, added=added, suffix=suffix
+        ),
     )
 
 
