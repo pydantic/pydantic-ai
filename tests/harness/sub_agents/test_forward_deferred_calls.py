@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -500,7 +501,7 @@ class TestSubAgentsForwardDeferredCalls:
         with pytest.raises(RuntimeError, match='model down'):
             await _parent(broken).run('go')
 
-    async def test_the_in_memory_store_is_bounded(self) -> None:
+    async def test_the_in_memory_store_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         store = InMemoryDeferredStateStore(max_states=1)
         await store.save('a', b'1')
         await store.save('b', b'2')
@@ -510,11 +511,22 @@ class TestSubAgentsForwardDeferredCalls:
 
         with pytest.raises(ValueError, match='at least 1'):
             InMemoryDeferredStateStore(max_states=0)
+        with pytest.raises(ValueError, match='must be positive'):
+            InMemoryDeferredStateStore(max_age=timedelta(0))
 
-        expiring = InMemoryDeferredStateStore(max_age=timedelta(0))
+        # The store's methods don't yield to the event loop, so the clock can be moved for them alone.
+        now = [1000.0]
+        monkeypatch.setattr(time, 'monotonic', lambda: now[0])
+        expiring = InMemoryDeferredStateStore(max_age=timedelta(seconds=60))
         await expiring.save('a', b'1')
         await expiring.save('b', b'2')
-        assert await expiring.take('b') is None
+        now[0] += 60
+        await expiring.save('c', b'3')
+        assert [await expiring.take('a'), await expiring.take('b'), await expiring.take('c')] == [None, None, b'3']
+        await expiring.save('d', b'4')
+        now[0] += 60
+        assert await expiring.take('d') is None
+        monkeypatch.undo()
 
     async def test_the_history_stays_on_the_server(self) -> None:
         mailer = _Mailer()

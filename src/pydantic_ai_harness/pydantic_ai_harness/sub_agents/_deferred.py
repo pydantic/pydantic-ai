@@ -70,6 +70,8 @@ class InMemoryDeferredStateStore:
     def __init__(self, *, max_states: int = 1000, max_age: timedelta = timedelta(days=1)) -> None:
         if max_states < 1:
             raise ValueError(f'`max_states` must be at least 1; got {max_states}.')
+        if max_age <= timedelta(0):
+            raise ValueError(f'`max_age` must be positive; got {max_age}.')
         self._max_states = max_states
         self._max_age = max_age.total_seconds()
         self._states: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
