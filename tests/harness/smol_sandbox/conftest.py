@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .fake_smolvm import FakeSmolvm, put_smolvm_in
+
 # smolmachines only has wheels for macOS on Apple silicon and Linux x86_64/aarch64.
 _HAS_SMOL = importlib.util.find_spec('smol') is not None
 collect_ignore = [] if _HAS_SMOL else ['test_conformance.py', 'test_smol_sandbox.py']
@@ -48,8 +50,9 @@ class _PoisonedSmol(types.ModuleType):
 
 @pytest.fixture(autouse=True)
 def _no_real_smol(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Poison `smol` for every test here except the opt-in live tier."""
-    if 'smol_live' in request.keywords:  # pragma: no cover - live tier runs without coverage
+    """Poison `smol` for every test here except the opt-in live tier, where smolmachines is installed."""
+    # Without smolmachines, only the `smolvm` CLI's tests run, and there is no `smol` to poison.
+    if 'smol_live' in request.keywords or not _HAS_SMOL:  # pragma: lax no cover - live tier and SDK-less jobs
         yield
         return
     poisoned = _PoisonedSmol('smol')
@@ -68,3 +71,14 @@ if _HAS_SMOL:  # pragma: no branch - the fixture cannot be defined without its S
         for module in _SMOL_MODULES:
             monkeypatch.setattr(f'{module}.smol', control.module)
         yield control
+
+
+@pytest.fixture
+def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeSmolvm:
+    """Inject the fake `smolvm` CLI, in an absolute `PATH` directory, and return its control surface."""
+    scratch = tmp_path / 'smolvm-scripts'
+    scratch.mkdir()
+    control = FakeSmolvm(scratch)
+    monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.open_process', control.open_process)
+    monkeypatch.setenv('PATH', f'{put_smolvm_in(tmp_path / "smolvm-bin")}{os.pathsep}{os.environ["PATH"]}')
+    return control

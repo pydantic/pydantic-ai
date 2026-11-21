@@ -745,6 +745,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
 )
 
 
