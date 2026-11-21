@@ -2231,6 +2231,16 @@ class TestKubernetes:
 LocalEngine = Literal['smolmachines', 'smolvm CLI']
 
 
+@dataclass
+class LocalHost:
+    """A host `/sandbox local` runs on, and its VMs' states, by name, under the engine it has."""
+
+    engine: LocalEngine
+    states: Callable[[], dict[str, str]]
+    stop: Callable[[str], None]
+    """Stop a VM, as it is after this machine restarts."""
+
+
 @pytest.fixture
 def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'FakeSmolvm':
     """The harness's fake `smolvm` CLI, in an absolute `PATH` directory, as its own tests set it up."""
@@ -2254,7 +2264,7 @@ def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'FakeSmolvm'
 )
 def local_host(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_smolvm: 'FakeSmolvm'
-) -> LocalEngine:
+) -> LocalHost:
     """A host of each OS `/sandbox local` runs on, with the engine it has: smolmachines has no Windows wheel.
 
     smolmachines' VMs are the harness's fake, whose commands run here; the `smolvm` CLI is `fake_smolvm`.
@@ -2269,11 +2279,19 @@ def local_host(
         control = FakeSmol(tmp_path.resolve())
         for module in ('_backend', '_capability'):
             monkeypatch.setattr(f'pydantic_ai_harness.smol_sandbox.{module}.smol', control.module)
+
+        def stop(name: str) -> None:
+            control.vms[name].state = 'stopped'
+
+        host = LocalHost(engine, lambda: {name: vm.state for name, vm in control.vms.items()}, stop)
     else:
         monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+        host = LocalHost(
+            engine, lambda: dict(fake_smolvm.machines), lambda name: fake_smolvm.machines.update({name: 'stopped'})
+        )
     # The fakes' commands get only the environment they are sent; a real VM has a home of its own.
     monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
-    return engine
+    return host
 
 
 VM_NAME = r'pydantic-ai-[0-9a-f]{32}'
@@ -2327,9 +2345,7 @@ class TestLocal:
             else "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
         )
 
-    async def test_create_reopen_delete(
-        self, local_host: LocalEngine, fake_smolvm: 'FakeSmolvm', tmp_path: Path
-    ) -> None:
+    async def test_create_reopen_delete(self, local_host: LocalHost, fake_smolvm: 'FakeSmolvm', tmp_path: Path) -> None:
         provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
         assert provider.missing() is None
         ref, backend = await provider.create(github=GITHUB)
@@ -2337,7 +2353,7 @@ class TestLocal:
         assert ref.provider == 'local-vm'
         assert re.fullmatch(VM_NAME, ref.id)
         assert (tmp_path / 'workspace').is_dir()
-        if local_host == 'smolvm CLI':
+        if local_host.engine == 'smolvm CLI':
             # The VM pulls an image with bash and git, which the copy of the checkout needs, and reaches GitHub.
             assert fake_smolvm.created == [['--name', ref.id, '--net', '--image', local_provider.IMAGE]]
         else:
@@ -2359,8 +2375,18 @@ class TestLocal:
         # Closing a deleted VM's workspace, as `/sandbox delete` does, has nothing left to write back.
         await provider.close(reopened)
 
+    async def test_closing_boots_no_vm(self, local_host: LocalHost, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=None)
+        await provider.close(backend)
+        # As after CLAI restarts: a conversation reopened and closed without a command leaves its VM stopped.
+        local_host.stop(ref.id)
+        await provider.close(provider.reopen(ref))
+        assert local_host.states() == {ref.id: 'stopped'}
+        await provider.delete(ref)
+
     async def test_a_conversation_runs_in_the_vm(
-        self, local_host: LocalEngine, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, local_host: LocalHost, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         git(checkout, 'remote', 'remove', 'origin')
         Path(os.environ['HOME']).mkdir()
@@ -2428,6 +2454,15 @@ class TestLocalCli:
         with pytest.raises(WorkspaceUnavailableError, match='smolvm was not found on PATH'):
             await provider.create(github=None)
         assert windows.commands == []
+
+    async def test_a_failed_create_leaves_nothing_behind(self, windows: 'FakeSmolvm', tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        windows.failures['start'] = ('HYPERVISOR_UNAVAILABLE', 'the Windows Hypervisor Platform is not enabled')
+        with pytest.raises(WorkspaceUnavailableError, match=r'cannot run a local smol VM \(HYPERVISOR_UNAVAILABLE\)'):
+            await provider.create(github=GITHUB)
+        # smolvm made the machine before it failed to start it.
+        assert len(windows.created) == 1
+        assert windows.machines == {}
 
     def test_only_its_own_vms(self, windows: 'FakeSmolvm') -> None:
         # A conversation's history could otherwise open any VM of this user, such as one with this machine's folders.

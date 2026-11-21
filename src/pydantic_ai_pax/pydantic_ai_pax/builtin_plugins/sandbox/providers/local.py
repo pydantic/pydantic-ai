@@ -12,13 +12,21 @@ next command starts the VM again, and a conversation resumed later finds its fil
 """
 
 import sys
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib.util import find_spec
 
 import anyio
 
-from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai.workspaces import (
+    CommandResult,
+    SupportsCommands,
+    WorkspaceBackend,
+    WorkspaceCommand,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 
@@ -63,9 +71,11 @@ class LocalProvider:
 
             if ref is not None:
                 # Checks the name, so a history cannot open a VM of another tool's, such as one with folders mounted.
-                return SmolSandbox[None](working_dir=self.working_dir, env=SANDBOX_ENV).backend(ref)
-            return SmolSandboxBackend(
-                image=IMAGE, allow_internet_access=True, working_dir=self.working_dir, env=SANDBOX_ENV
+                return _Reached(SmolSandbox[None](working_dir=self.working_dir, env=SANDBOX_ENV).backend(ref))
+            return _Reached(
+                SmolSandboxBackend(
+                    image=IMAGE, allow_internet_access=True, working_dir=self.working_dir, env=SANDBOX_ENV
+                )
             )
         from pydantic_ai_harness._smolvm_cli import SmolvmCliBackend
 
@@ -97,7 +107,10 @@ class LocalProvider:
             if isinstance(backend, SmolvmCliBackend):
                 await backend.stop()
             else:
-                await backend.run(['sync'], timeout=_SYNC_TIMEOUT)
+                assert isinstance(backend, _Reached)
+                # Not one that never reached its VM, which `sync` would boot for nothing.
+                if backend.reached:
+                    await backend.run(['sync'], timeout=_SYNC_TIMEOUT)
 
     async def delete(self, ref: WorkspaceRef) -> None:
         await self._delete(_vm(ref))
@@ -111,6 +124,33 @@ class LocalProvider:
             from pydantic_ai_harness._smolvm_cli import delete_machine
 
             await delete_machine(vm.id)
+
+
+class _Reached(WorkspaceBackend, SupportsCommands):
+    """A smolmachines backend that records whether it reached its VM, which its first operation boots."""
+
+    def __init__(self, backend: SandboxBackend) -> None:
+        self._backend = backend
+        self.reached = False
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return self._backend.ref
+
+    async def working_dir(self) -> str:
+        self.reached = True
+        return await self._backend.working_dir()
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        self.reached = True
+        return await self._backend.run(command, shell=shell, env=env, timeout=timeout)
 
 
 def _vm(ref: WorkspaceRef) -> WorkspaceRef:
