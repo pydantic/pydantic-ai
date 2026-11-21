@@ -838,25 +838,38 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             )
         ended = await self._delegate_recorded(ctx, agent_name, task, key)
         if ended is None:
-            forward = self._forward_deferred_calls and not ctx.in_durable_context
-            answered = (
-                resume_state(ctx.tool_call_metadata, agent_name=agent_name, task=task)
-                if forward and ctx.tool_call_approved
-                else None
-            )
-            ended = await self._run_delegation(
-                ctx,
-                agent_name,
-                sub_agent,
-                task=task,
-                key=key,
-                workspace=workspace,
-                resume=answered,
-                # A call approved without a child's state, such as by approving it wholesale, approves none of the
-                # child's calls, and asking again would repeat the same question.
-                forward_deferred=forward and (answered is not None or not ctx.tool_call_approved),
-            )
+            ended = await self._run_foreground(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
         return ended.result()
+
+    async def _run_foreground(
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        sub_agent: SubAgent[AgentDepsT],
+        *,
+        task: str,
+        key: str | None,
+        workspace: Workspace,
+    ) -> _Ended:
+        """Run a delegation outside an owner, resuming a child the caller answered with `forward_deferred_calls`."""
+        forward = self._forward_deferred_calls and not ctx.in_durable_context
+        answered = (
+            resume_state(ctx.tool_call_metadata, agent_name=agent_name, task=task)
+            if forward and ctx.tool_call_approved
+            else None
+        )
+        return await self._run_delegation(
+            ctx,
+            agent_name,
+            sub_agent,
+            task=task,
+            key=key,
+            workspace=workspace,
+            resume=answered,
+            # A call approved without a child's state, such as by approving it wholesale, approves none of the
+            # child's calls, and asking again would repeat the same question.
+            forward_deferred=forward and (answered is not None or not ctx.tool_call_approved),
+        )
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject options that need the parent run when the delegate tool runs as a child workflow."""
@@ -1623,14 +1636,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         `messages` receives the messages the run that counts added, also when it raises or is cancelled.
         `resume` continues the child from its history with answers to the deferred calls it stopped on.
         """
-        # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
-        # the resumed run adds a new prompt, so close them out as interrupted first.
-        message_history = repair_messages(record.messages) if record is not None else None
-        deferred_tool_results: DeferredToolResults | None = None
-        prompt: str | None = task
-        if resume is not None:
-            message_history, deferred_tool_results = resume
-            prompt = None
+        prompt, message_history, deferred_tool_results = _child_inputs(task, record, resume)
         attempted = False
 
         async def start(limits: UsageLimits | None) -> AgentRunResult[Any]:
@@ -1822,6 +1828,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _child_inputs(
+    task: str, record: DelegationTask | None, resume: tuple[list[ModelMessage], DeferredToolResults] | None
+) -> tuple[str | None, list[ModelMessage] | None, DeferredToolResults | None]:
+    """The prompt, history and deferred tool results a child run starts with."""
+    if resume is not None:
+        # Answers to the deferred calls the child stopped on continue its run, without a new prompt.
+        messages, results = resume
+        return None, messages, results
+    # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
+    # the resumed run adds a new prompt, so close them out as interrupted first.
+    return task, repair_messages(record.messages) if record is not None else None, None
 
 
 def _last_text(messages: Sequence[ModelMessage], output_tools: Container[str]) -> str | None:
