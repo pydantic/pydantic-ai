@@ -20,13 +20,13 @@ Pydantic Evals helps you:
 ## Installation
 
 ```bash
-pip install pydantic-evals
+pip/uv-add pydantic-evals
 ```
 
 For OpenTelemetry tracing and Logfire integration:
 
 ```bash
-pip install 'pydantic-evals[logfire]'
+pip/uv-add "pydantic-evals[logfire]"
 ```
 
 ## Quick Start
