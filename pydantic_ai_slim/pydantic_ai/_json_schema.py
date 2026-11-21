@@ -208,6 +208,15 @@ def definition_name(ref: str) -> str:
     return ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
 
 
+def definition_ref(name: str) -> str:
+    """The `$ref` that points at the `$defs` definition called `name`.
+
+    A definition name is a JSON pointer token (RFC 6901), so `~` and `/` in it are escaped: a name like `In/Out`
+    points nowhere unless it is written `#/$defs/In~1Out`.
+    """
+    return '#/$defs/' + name.replace('~', '~0').replace('/', '~1')
+
+
 def definition_refs(schema: Subschema) -> Iterator[str]:
     """Each `$ref` into `$defs` in `schema` or a subschema under it, skipping a `$ref` in data like `examples`."""
     pending: list[Subschema] = [schema]
@@ -413,7 +422,7 @@ class JsonSchemaTransformer(ABC):
         # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
         root_ref, root_key = self._root_ref_and_key(defs)
         defs[root_key] = handled
-        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+        return {'$defs': defs, '$ref': root_ref or definition_ref(root_key)}
 
     def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
         """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.

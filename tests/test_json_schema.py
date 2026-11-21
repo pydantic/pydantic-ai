@@ -14,7 +14,12 @@ from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    resolve_json_pointer,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
@@ -624,6 +629,43 @@ def test_inline_defs_preserves_ref_sibling_keywords():
     # ...and the sibling keywords are preserved rather than dropped.
     assert field['description'] == 'field-level description'
     assert field['default'] is None
+
+
+@pytest.mark.parametrize(
+    ('title', 'expected_ref'),
+    [
+        ('Plain', '#/$defs/Plain'),
+        ('In/Out', '#/$defs/In~1Out'),
+        ('a~1b', '#/$defs/a~01b'),
+    ],
+)
+def test_inline_defs_escapes_root_ref_from_title(title: str, expected_ref: str):
+    """The root `$ref` taken from a `title` is a JSON pointer token, so `~` and `/` in the title are escaped.
+
+    Not a VCR test: the root `$ref` is only written when the walk keeps `$defs`, which needs a schema with no root
+    `$ref`, as an MCP server's own schemas commonly have.
+    """
+    schema = {
+        'title': title,
+        'type': 'object',
+        'properties': {
+            'home': {'$ref': '#/$defs/Address'},
+            'node': {'$ref': '#/$defs/Node'},
+        },
+        '$defs': {
+            'Address': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            'Node': {
+                'type': 'object',
+                'properties': {'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}}},
+            },
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result['$ref'] == expected_ref
+    assert title in result['$defs']
+    assert resolve_json_pointer(result, expected_ref) is not None
 
 
 # The schema pydantic emits for `Pet = TypeAliasType('Pet', Union[Cat, Dog])` used as two fields of one
