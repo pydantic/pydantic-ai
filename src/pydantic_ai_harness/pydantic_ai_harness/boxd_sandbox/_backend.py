@@ -18,7 +18,7 @@ changing acquisition, command, file, or error handling:
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
   raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine for a
   moment. Conversely, `get` can raise `NotFoundError` for a machine `create` just returned (seen in two live test
-  runs in November 2026, not reproduced on demand).
+  runs, not reproduced on demand).
 - An isolated machine's metadata endpoint refuses token requests (403), and boxd's env vars and integrations
   are not installed in it. A machine created from a snapshot keeps the named `networks` of the machine the
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
