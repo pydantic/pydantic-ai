@@ -18,6 +18,7 @@ from .common import (
     LLMJudge,
     MaxDuration,
     OutputConfig,
+    StructuredJudge,
 )
 from .context import EvaluatorContext
 from .evaluator import (
@@ -46,6 +47,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'StructuredJudge',
     'GEval',
     'HasMatchingSpan',
     'OutputConfig',

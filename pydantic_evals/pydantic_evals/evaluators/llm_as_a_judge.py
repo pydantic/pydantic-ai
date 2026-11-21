@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from textwrap import dedent
 from typing import Any
@@ -24,6 +24,7 @@ __all__ = (
     'judge_input_output_expected',
     'judge_output',
     'judge_output_expected',
+    'judge_questions',
     'set_default_judge_model',
 )
 
@@ -408,7 +409,7 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
 
 def _build_prompt(
     output: Any,
-    rubric: str,
+    rubric: str | None = None,
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> tuple[str | Sequence[str | UserContent], Sequence[str]]:
@@ -419,6 +420,9 @@ def _build_prompt(
     `judge_input_output_expected` naming — so the runtime prompt matches the format the
     model was primed with and the rubric (the instruction) comes last, after all the
     context it applies to.
+
+    A judge whose questions live on its output type rather than in the prompt passes no `rubric`,
+    so the prompt carries only the material to judge.
 
     Returns the prompt along with the optional context sections it carries, so that a judge
     which has to put its question in a field description can name what it was actually given.
@@ -435,10 +439,106 @@ def _build_prompt(
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
         context.append('<ExpectedOutput>')
 
-    sections.extend(_make_section(rubric, 'Rubric'))
+    if rubric is not None:
+        sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections), context  # type: ignore[arg-type]
     return sections, context
+
+
+_judge_questions_agent = Agent(name='judge_questions')
+
+
+def _rubrics_output_type(rubrics: Mapping[str, str]) -> type[JsonSchemaValue]:
+    """One yes/no question per rubric, answered together in a single request.
+
+    The rubrics live in the field descriptions rather than in a `<Rubric>` section of the prompt,
+    because that is the only place a judge can tell them apart: a judge that takes its questions
+    from the output type, like [TypeSafe's Jev](https://pydantic.dev/docs/ai/models/typesafe/),
+    reads everything in the prompt as material to judge instead.
+    """
+    return StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                name: {'type': 'boolean', 'description': f'Is this statement true? {rubric}'}
+                for name, rubric in rubrics.items()
+            },
+            'required': list(rubrics),
+            'additionalProperties': False,
+        },
+        name='Grading',
+        description='Judge an output against each rubric.',
+    )
+
+
+async def judge_questions(
+    output: Any,
+    questions: type[BaseModel] | Mapping[str, str],
+    inputs: Any | None = None,
+    expected_output: Any | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> dict[str, Any]:
+    """Answer several questions about one output in a single model request.
+
+    The questions go on the output type rather than into the prompt, which carries only the material to
+    judge, so that a judge which takes its questions from the type can tell them apart. See
+    [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] for the evaluator built on this.
+
+    Args:
+        output: The output being judged.
+        questions: A Pydantic model whose fields are the questions, or a mapping of question name to a
+            rubric answered with a yes or a no.
+        inputs: Optional inputs to show alongside the output.
+        expected_output: Optional expected output to show alongside the output.
+        model: The model to use. If not specified, the default judge model is used.
+        model_settings: Optional model settings.
+
+    Returns:
+        The answers keyed by question name, in the order the questions were declared. A model's fields
+        come back as the values they validated to, so an `Enum` field is an `Enum` member.
+    """
+    user_prompt, context = _build_prompt(output=output, inputs=inputs, expected_output=expected_output)
+    considering = f', taking {" and ".join(context)} into account' if context else ''
+    # The framing that applies to every question goes in the instructions rather than the prompt,
+    # which carries only what is being judged.
+    instructions = f'Answer each question about <Output>{considering}.'
+    resolved_model = _resolve_judge_model(model)
+    if isinstance(questions, Mapping):
+        answers = (
+            await _judge_questions_agent.run(
+                user_prompt,
+                model=resolved_model,
+                model_settings=model_settings,
+                instructions=instructions,
+                output_type=_rubrics_output_type(questions),
+            )
+        ).output
+        verdicts: dict[str, Any] = {}
+        for name in questions:
+            # A rubric is a yes-or-no question, and not every model is held to the schema it was given.
+            # A `'false'` that got through would be recorded as a label rather than as the assertion the
+            # rubric asked for, so it is refused here instead.
+            verdict = answers.get(name)
+            if not isinstance(verdict, bool):
+                raise ValueError(f'Judge returned an invalid verdict for {name!r}: {verdict!r}')
+            verdicts[name] = verdict
+        return verdicts
+    answer = (
+        await _judge_questions_agent.run(
+            user_prompt,
+            model=resolved_model,
+            model_settings=model_settings,
+            instructions=instructions,
+            output_type=questions,
+        )
+    ).output
+    # Read the validated instance field by field rather than dumping it: the dump is the model's
+    # serialization, which a computed field, an alias or a custom `@model_serializer` can add to,
+    # rename or replace, and none of that is what the judge was asked. The field names are the
+    # user's, so they are not statically known here.
+    return {name: getattr(answer, name) for name in questions.model_fields}
 
 
 class GEvalOutput(BaseModel):

@@ -1,0 +1,77 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '975'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        asks_for_secret:
+          instructions:
+            field: asks_for_secret
+            goal: Judge a support reply against the support policy.
+            instructions: Answer each question about <Output>.
+            question: Does the reply ask for a password or a login code?
+          type: noul
+        completeness:
+          instructions:
+            field: completeness
+            goal: Judge a support reply against the support policy.
+            instructions: Answer each question about <Output>.
+            question: How completely does the reply address the request?
+          type: noul
+        policy:
+          criteria:
+            compliant: null
+            violation: null
+          instructions:
+            field: policy
+            goal: Judge a support reply against the support policy.
+            instructions: Answer each question about <Output>.
+            question: Does the reply comply with the support policy?
+          type: choice
+      state: |-
+        <Output>
+        I cannot reset your password, but you can do it yourself from the account page.
+        </Output>
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '317'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        asks_for_secret:
+          noul: 0.03
+          type: noul
+        completeness:
+          noul: 0.6
+          type: noul
+        policy:
+          choice: compliant
+          confidence: 0.96
+          probabilities:
+            compliant: 0.98
+            violation: 0.02
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 490
+        output_tokens: 74
+    status:
+      code: 200
+      message: OK
+version: 1

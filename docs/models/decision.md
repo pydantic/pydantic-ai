@@ -274,6 +274,8 @@ Dependencies and anything else on the run context are not sent, unless a prompt,
 
 Prefer an output type with fields to a bare output with its question in `instructions`: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
 
+The same split is what [`StructuredJudge`](../evals/evaluators/llm-judge.md#several-measures-in-one-request) gives a Pydantic Evals suite: the case's output is the prompt, the measures are the fields, and a decision model answers all of them in one request.
+
 Unless the schema describes an option, the model sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
 
 In short:
