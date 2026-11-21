@@ -11,7 +11,13 @@ from openai.types.responses.response_create_params import ContextManagement
 from ..._run_context import RunContext
 from ...capabilities.abstract import AbstractCapability
 from ...exceptions import UserError
-from ...messages import ModelMessage
+from ...messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    ToolReturnPart,
+)
 from ...settings import ModelSettings
 from ...tools import AgentDepsT
 from .. import ModelRequestContext
@@ -185,17 +191,34 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if len(request_context.messages) < 2:  # pragma: no cover
             return request_context
 
-        # Compact all messages except the last (current) request
+        # When the current request carries tool returns, its matching `ModelResponse`
+        # (and its tool calls) must remain in the uncompacted tail so neither the
+        # `/responses/compact` window nor the next `/responses` request splits a pair.
+        tail_start = len(request_context.messages) - 1
+        last_message = request_context.messages[-1]
+        if isinstance(last_message, ModelRequest) and any(
+            isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)  # pyright: ignore[reportDeprecated]
+            for part in last_message.parts
+        ):
+            preceding_response = next(
+                (i for i in range(tail_start - 1, -1, -1) if isinstance(request_context.messages[i], ModelResponse)),
+                None,
+            )
+            if preceding_response is None or preceding_response == 0:
+                return request_context
+            tail_start = preceding_response
+
+        # Compact all messages before the uncompacted tail
         compact_ctx = ModelRequestContext(
             model=request_context.model,
-            messages=request_context.messages[:-1],
+            messages=request_context.messages[:tail_start],
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
         compacted_response = await request_context.model.compact_messages(compact_ctx)
 
-        # Replace message history with compaction + last request
-        messages = [compacted_response, request_context.messages[-1]]
+        # Replace message history with compaction + uncompacted tail
+        messages = [compacted_response, *request_context.messages[tail_start:]]
         request_context.messages = messages.copy()
         ctx.messages[:] = messages
         return request_context

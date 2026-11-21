@@ -139,6 +139,7 @@ with try_import() as imports_successful:
     from openai.types.responses import (
         CompactedResponse,
         ResponseCreatedEvent,
+        ResponseFunctionToolCall,
         ResponseFunctionWebSearch,
         ResponseQueuedEvent,
     )
@@ -165,6 +166,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
+        OpenAICompaction,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
@@ -21505,3 +21507,156 @@ async def test_openai_service_tier_fast_and_ultrafast(
     model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
     result = await Agent(model).run('Say hi.', model_settings=OpenAIResponsesModelSettings(openai_service_tier=tier))
     assert (result.response.provider_details or {}).get('service_tier') == tier
+
+
+@pytest.mark.parametrize(
+    'capability_factory',
+    [
+        lambda: OpenAICompaction(message_count_threshold=5),
+        lambda: OpenAICompaction(trigger=lambda msgs: len(msgs) > 5),
+    ],
+    ids=['message_count_threshold', 'custom_trigger'],
+)
+async def test_openai_compaction_stateless_preserves_unanswered_tool_call(
+    allow_model_requests: None,
+    capability_factory: Callable[[], OpenAICompaction[Any]],
+) -> None:
+    """Stateless compaction triggered on a tool-return step must keep the matching `ModelResponse` uncompacted.
+
+    Unit/mock test: simulates `/responses/compact` rejecting an unanswered `function_call` with 400 and asserts
+    both the compact window and the following `/responses` request payload have paired call/output items.
+    """
+    tool_calls = [
+        response_message(
+            [
+                ResponseFunctionToolCall(
+                    id=f'fc_{i}',
+                    call_id=f'call_{i}',
+                    name='lookup_code',
+                    arguments=json.dumps({'city': city}),
+                    type='function_call',
+                    status='completed',
+                )
+            ]
+        )
+        for i, city in enumerate(('paris', 'lima', 'oslo'), start=1)
+    ]
+    final_response = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_final',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([*tool_calls, final_response])
+
+    compact_inputs: list[list[dict[str, Any]]] = []
+
+    async def fake_compact(**kwargs: Any) -> CompactedResponse:
+        compact_input = cast(list[dict[str, Any]], kwargs['input'])
+        compact_inputs.append(compact_input)
+        call_ids = {item['call_id'] for item in compact_input if item.get('type') == 'function_call'}
+        output_ids = {item['call_id'] for item in compact_input if item.get('type') == 'function_call_output'}
+        assert call_ids == output_ids, f'unpaired tool call/output in compact input: {compact_input}'
+        return CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp_1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    model.client.responses.compact = fake_compact
+
+    agent = Agent(model, capabilities=[capability_factory()])
+
+    @agent.tool_plain
+    def lookup_code(city: str) -> str:
+        return {'paris': '7741', 'lima': '3302', 'oslo': '5869'}[city]
+
+    result = await agent.run('Look up Paris, Lima, then Oslo.')
+    assert result.output == 'done'
+    assert len(compact_inputs) == 1
+
+    create_calls = get_mock_responses_kwargs(mock_client)
+    post_compaction_input = create_calls[-1]['input']
+    assert [(item.get('type'), item.get('call_id')) for item in post_compaction_input] == [
+        ('compaction', None),
+        ('function_call', 'call_3'),
+        ('function_call_output', 'call_3'),
+    ]
+
+
+async def test_openai_compaction_stateless_tool_return_boundary_guards(allow_model_requests: None) -> None:
+    """Covers `before_model_request` boundary cases for tool-return tails that cannot be compacted directly."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    compact_calls = 0
+
+    async def fake_compact(**kwargs: Any) -> CompactedResponse:
+        nonlocal compact_calls
+        compact_calls += 1
+        return CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp_1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    model.client.responses.compact = fake_compact
+    cap: OpenAICompaction[None] = OpenAICompaction(trigger=lambda _msgs: True)
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+
+    # 1. History starting directly with the answering response leaves zero messages before it -> skip compaction.
+    short_history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('lookup', {'city': 'paris'}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', '7741', tool_call_id='c1')]),
+    ]
+    short_req = ModelRequestContext(
+        model=model,
+        messages=short_history.copy(),
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert await cap.before_model_request(ctx, short_req) is short_req
+    assert compact_calls == 0
+
+    # 2. Tool return with no preceding ModelResponse -> skip compaction.
+    orphan_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hi')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', '7741', tool_call_id='c1')]),
+    ]
+    orphan_req = ModelRequestContext(
+        model=model,
+        messages=orphan_history.copy(),
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert await cap.before_model_request(ctx, orphan_req) is orphan_req
+    assert compact_calls == 0
+
+    # 3. Legacy RetryPromptPart bound to a tool call keeps its answering ModelResponse in the tail.
+    retry_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')]),
+        ModelResponse(parts=[TextPart('ok')]),
+        ModelResponse(parts=[ToolCallPart('lookup', {'city': 'bad'}, tool_call_id='c2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('invalid city', tool_name='lookup', tool_call_id='c2')]),
+    ]
+    ctx.messages = retry_history.copy()
+    retry_req = ModelRequestContext(
+        model=model,
+        messages=retry_history.copy(),
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    updated = await cap.before_model_request(ctx, retry_req)
+    assert compact_calls == 1
+    assert len(updated.messages) == 3
+    assert isinstance(updated.messages[0], ModelResponse) and isinstance(updated.messages[0].parts[0], CompactionPart)
+    assert updated.messages[1:] == retry_history[-2:]
