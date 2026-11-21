@@ -72,7 +72,8 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     'slack_app_token': r'\bxapp-\d-[A-Za-z0-9-]{10,}',
     'stripe_key': r'\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}',
     'stripe_webhook_secret': r'\bwhsec_[A-Za-z0-9]{20,}',
-    'google_api_key': r'\bAIza[A-Za-z0-9_-]{35}',
+    # Legacy AIza and new AQ. Gemini API keys.
+    'google_api_key': r'\b(?:AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_-]{45,})',
     'google_oauth_secret': r'\bGOCSPX-[A-Za-z0-9_-]{20,}',
     # A `-` directly before `eyJ` ends the header segment, so a failed match does
     # not rescan the rest of the token from each `eyJ` in it. A header segment

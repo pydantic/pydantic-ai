@@ -91,6 +91,23 @@ class TestSecretRedaction:
         """Project keys carry hyphens, which an alphanumeric-only class stops at."""
         assert redact_secrets(f'k={key}').replacement == 'k=[redacted:openai_key]'
 
+    @pytest.mark.parametrize(
+        'key',
+        [
+            'AIza' + 'a' * 35,  # legacy AIza key
+            'AQ.' + 'a' * 45,  # new AQ. key (shortest)
+            'AQ.Ab8RN6I-7xK9pL2mQ0vW5yZ1uX3tS4rE8qD7cB6aN5mP4oI3uY2',  # realistic key
+            'AQ.' + 'a' * 55,  # new AQ. key (longest)
+        ],
+    )
+    def test_both_shapes_of_google_api_key_match(self, key: str):
+        """Google AI Studio now issues `AQ.` keys alongside legacy `AIza` keys."""
+        assert redact_secrets(f'k={key}').replacement == 'k=[redacted:google_api_key]'
+
+    def test_a_long_aq_key_is_redacted_whole(self):
+        """A capped length would redact the first 55 characters and leave the tail of the key in the text."""
+        assert redact_secrets('k=AQ.' + 'a' * 60 + ' done').replacement == 'k=[redacted:google_api_key] done'
+
     def test_an_anthropic_key_keeps_its_own_label(self):
         """Allowing hyphens makes the OpenAI shape a prefix of this one, so it is excluded explicitly."""
         result = redact_secrets('k=sk-ant-abcdefghijklmnopqrstuvwx')
