@@ -2462,10 +2462,11 @@ class TestLocalCli:
         assert windows.machines[ref.id] == 'stopped'
         assert (await backend.run(['true'])).exit_code == 0
         assert windows.machines[ref.id] == 'running'
-        # As by another session closing the same VM.
-        await provider.close(provider_backend := provider.reopen(ref))
-        await provider_backend.run(['true'])
-        await provider.close(provider_backend)
+        # As by another session closing the same VM: the command fails without running again, and the next one starts it.
+        await (other := provider.reopen(ref)).run(['true'])
+        await provider.close(other)
+        with pytest.raises(WorkspaceError, match='was stopped before the command ended; run it again'):
+            await backend.run(['true'])
         assert (await backend.run(['true'])).exit_code == 0
         windows.failures['stop'] = ('SMOLVM_ERROR', 'stuck')
         with pytest.raises(WorkspaceError, match='smolvm machine stop failed: stuck'):

@@ -83,14 +83,8 @@ _HOST_UNAVAILABLE = frozenset(
 )
 """Codes for a host that can't run a local VM at all, so no retry can succeed."""
 
-
-_PAUSED = 'paused'
-_STARTABLE = frozenset({'stopped', 'created', _PAUSED})
+_STARTABLE = frozenset({'stopped', 'created', 'paused'})
 """States of a VM that `machine start`, or `machine resume` when paused, brings back, as the Rust SDK's transport does."""
-
-
-class _Stopped(WorkspaceUnavailableError):
-    """The VM stopped since the backend reached it; `run` starts it again once."""
 
 
 class _Failure(TypedDict):
@@ -194,10 +188,8 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             state = await _state(self._executable, ref.id)
             if state is None:
                 raise WorkspaceUnavailableError(_gone_message(ref.id))
-            if state in ('stopped', 'created'):
-                await _check(self._executable, 'start', '--name', ref.id)
-            elif state == _PAUSED:
-                await _check(self._executable, 'resume', '--name', ref.id)
+            if state in _STARTABLE:
+                await _check(self._executable, 'resume' if state == 'paused' else 'start', '--name', ref.id)
             elif state != 'running':
                 raise WorkspaceUnavailableError(f'The smol VM {ref.id!r} is {state}.')
         result = await self._exec(
@@ -234,13 +226,10 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
-        env = {**self._env, **(env or {})}
-        try:
-            return await self._exec(await self._vm(), argv, env=env, working_dir=self._working_dir, timeout=timeout)
-        except _Stopped:
-            # Stopped since this backend reached it, as by `stop` on another backend: start it again, as a first use does.
-            self._ready = False
-            return await self._exec(await self._vm(), argv, env=env, working_dir=self._working_dir, timeout=timeout)
+        name = await self._vm()
+        return await self._exec(
+            name, argv, env={**self._env, **(env or {})}, working_dir=self._working_dir, timeout=timeout
+        )
 
     async def stop(self) -> None:
         """Stop the VM, writing its disk back, if this backend reached it; its next command starts it again."""
@@ -274,7 +263,10 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             if state is None:
                 raise WorkspaceUnavailableError(_gone_message(name))
             if state in _STARTABLE:
-                raise _Stopped(f'The smol VM {name!r} is {state}.')
+                # Stopped by something else, such as another CLAI closing it, maybe during the command, so it is not
+                # run again here; the next command starts the VM.
+                self._ready = False
+                raise WorkspaceError(f'The smol VM {name!r} was {state} before the command ended; run it again.')
             if state != 'running':
                 raise WorkspaceUnavailableError(f'The smol VM {name!r} is {state}.')
         return CommandResult(
