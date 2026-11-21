@@ -2550,6 +2550,116 @@ async def test_bedrock_media_kind_delivered_in_tool_result(
         assert 'See file' not in json.dumps(request_json(request))
 
 
+@pytest.mark.parametrize('via_gateway', [False, True], ids=['bedrock', 'gateway'])
+async def test_bedrock_openai_converse_file_inputs(allow_model_requests: None, via_gateway: bool):
+    """GPT-5.6, GPT-6 and GPT-6.1 on Converse get a tool's image after the `toolResult`, and a tool's document as a note.
+
+    Their AWS model cards say Converse rejects `document` blocks and an `image` inside a `toolResult` for these models
+    (https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html). A document in the user
+    prompt is still sent, as for any model that can't read a file the user chose.
+
+    Not a VCR test until a live recording is made: the serialized request is captured at `before-send`, which answers
+    it instead of sending it.
+    """
+    provider = (
+        gateway_provider('bedrock', api_key='test-api-key', base_url='https://gateway.pydantic.info/proxy')
+        if via_gateway
+        else BedrockProvider(
+            region_name='us-east-1',
+            aws_access_key_id='AKIA6666666666666666',
+            aws_secret_access_key='6666666666666666666666666666666666666666',
+        )
+    )
+    model = BedrockConverseModel('us.openai.gpt-6.1-terra', provider=provider)
+    agent = Agent(model)
+    image = BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png', identifier='chart')
+    document = BinaryContent(data=b'%PDF-1.4', media_type='application/pdf', identifier='report')
+
+    @agent.tool_plain
+    def get_files() -> list[BinaryContent]:
+        return [image, document]
+
+    usage = {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2}
+    tool_use: dict[str, Any] = {'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}
+    responses: Iterator[dict[str, Any]] = iter(
+        [
+            {
+                'output': {'message': {'role': 'assistant', 'content': [tool_use]}},
+                'stopReason': 'tool_use',
+                'usage': usage,
+            },
+            {
+                'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+                'stopReason': 'end_turn',
+                'usage': usage,
+            },
+            {
+                'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+                'stopReason': 'end_turn',
+                'usage': usage,
+            },
+        ]
+    )
+    sent: list[dict[str, Any]] = []
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        assert isinstance(request.body, bytes)
+        sent.append(json.loads(request.body))
+        body = io.BytesIO(json.dumps(next(responses)).encode())
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=body, preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime.Converse', respond)  # pyright: ignore[reportArgumentType]
+
+    # The prompt document gets its own run: Converse rejects any request that carries it.
+    await agent.run('Summarize the files.')
+
+    assert sent[-1]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Summarize the files.'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'tooluse_1', 'name': 'get_files', 'input': {}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'tooluse_1',
+                            'content': [
+                                {'text': 'See file chart.'},
+                                {
+                                    'text': 'File report (application/pdf, 8 bytes) was not sent: this model cannot read documents.'
+                                },
+                            ],
+                            'status': 'success',
+                        }
+                    },
+                    {'text': '<pyai:tool_result tool_name="get_files" tool_call_id="tooluse_1" file_id="chart">'},
+                    {'image': {'format': 'png', 'source': {'bytes': 'iVBORw0KGgo='}}},
+                    {'text': '</pyai:tool_result>'},
+                ],
+            },
+        ]
+    )
+
+    await agent.run(['Summarize this report.', document])
+
+    assert sent[-1]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Summarize this report.'},
+                    {'document': {'name': 'Document 1', 'format': 'pdf', 'source': {'bytes': 'JVBERi0xLjQ='}}},
+                ],
+            }
+        ]
+    )
+
+
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
     agent = Agent(m)

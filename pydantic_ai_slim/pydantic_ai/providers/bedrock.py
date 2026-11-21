@@ -743,6 +743,10 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_thinking_variant='openai_responses',
             supports_thinking=True,
             thinking_always_enabled=openai_model_profile(model_name).get('thinking_always_enabled', False),
+            # Their model cards say Converse rejects `document` blocks and an `image` inside a `toolResult` for these,
+            # so a tool's image goes in the following user content and a tool's document becomes a note.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
+            supports_document_input=False,
         )
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
