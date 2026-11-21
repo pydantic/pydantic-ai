@@ -129,6 +129,20 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
+def test_vercel_provider_spacexai_gets_the_grok_profile():
+    """The Gateway lists Grok models under `spacexai/`, which has to reach the Grok profile as `xai/` does.
+
+    Not a VCR test: it pins which profile a model id routes to, which no request body shows, and the ids it
+    covers (`spacexai/grok-4.3`) are the ones the Gateway serves.
+    """
+    spacexai_profile = VercelProvider.model_profile('spacexai/grok-4.3')
+
+    assert spacexai_profile == VercelProvider.model_profile('xai/grok-4.3')
+    assert spacexai_profile is not None
+    assert spacexai_profile.get('supports_thinking') is True
+    assert spacexai_profile.get('supports_json_schema_output') is True
+
+
 def test_vercel_with_http_client():
     http_client = httpx2.AsyncClient()
     provider = VercelProvider(api_key='test-key', http_client=http_client)

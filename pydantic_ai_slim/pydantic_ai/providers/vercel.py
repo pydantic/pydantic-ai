@@ -59,6 +59,9 @@ class VercelProvider(_OpenAISDKProvider):
             'mistral': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
             'openai': openai_model_profile,
+            # The Gateway lists xAI's Grok models under `spacexai/`, and the `xai/` ids it used to list are gone, so
+            # both prefixes have to reach the Grok profile: otherwise `thinking` is dropped without a word.
+            'spacexai': grok_model_profile,
             'vertex': google_cloud_model_profile,
             'xai': grok_model_profile,
             'zai': _glm_5_3_schema_profile,
