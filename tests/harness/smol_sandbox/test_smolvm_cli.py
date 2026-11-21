@@ -138,8 +138,11 @@ class TestSmolvmCliBackend:
         fake_smolvm.failures['stop'] = ('SMOLVM_ERROR', 'stuck')
         with pytest.raises(WorkspaceError, match='smolvm machine stop failed: stuck'):
             await backend.stop()
-        # A VM deleted already has nothing to stop.
+        # A failed stop can be tried again.
         del fake_smolvm.failures['stop']
+        await backend.stop()
+        assert fake_smolvm.machines[backend.ref.id] == 'stopped'
+        # A VM deleted already has nothing to stop.
         assert (await backend.run(['true'])).exit_code == 0
         await delete_machine(backend.ref.id)
         await backend.stop()

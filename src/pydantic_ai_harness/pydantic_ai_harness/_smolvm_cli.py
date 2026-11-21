@@ -245,10 +245,11 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         async with self._lock:
             if self._ready:
                 assert self._ref is not None
-                self._ready = False
                 result = await _cli('stop', '--name', self._ref.id)
                 if result.returncode != 0 and not _is_gone(result.stderr):
+                    # Still reached, so a retry stops it.
                     raise _error('stop', result.stderr)
+                self._ready = False
 
     async def _exec(
         self, name: str, argv: list[str], *, env: dict[str, str], working_dir: str | None, timeout: float | None

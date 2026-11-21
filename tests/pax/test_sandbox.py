@@ -2384,6 +2384,14 @@ class TestLocal:
         await provider.close(provider.reopen(ref))
         assert local_host.states() == {ref.id: 'stopped'}
         await provider.delete(ref)
+        # Nor one whose operations could not reach the VM, deleted since.
+        gone = provider.reopen(ref)
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await gone.working_dir()
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await gone.run(['true'])
+        await provider.close(gone)
+        assert local_host.states() == {}
 
     async def test_a_conversation_runs_in_the_vm(
         self, local_host: LocalHost, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

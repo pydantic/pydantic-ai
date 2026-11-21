@@ -138,8 +138,15 @@ class _Reached(WorkspaceBackend, SupportsCommands):
         return self._backend.ref
 
     async def working_dir(self) -> str:
-        self.reached = True
-        return await self._backend.working_dir()
+        reached = True
+        try:
+            return await self._backend.working_dir()
+        except WorkspaceUnavailableError:
+            # It could not boot or attach to the VM, such as one deleted since.
+            reached = False
+            raise
+        finally:
+            self.reached = self.reached or reached
 
     async def run(
         self,
@@ -149,8 +156,14 @@ class _Reached(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        self.reached = True
-        return await self._backend.run(command, shell=shell, env=env, timeout=timeout)
+        reached = True
+        try:
+            return await self._backend.run(command, shell=shell, env=env, timeout=timeout)
+        except WorkspaceUnavailableError:
+            reached = False
+            raise
+        finally:
+            self.reached = self.reached or reached
 
 
 def _vm(ref: WorkspaceRef) -> WorkspaceRef:
