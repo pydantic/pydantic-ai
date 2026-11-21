@@ -344,8 +344,8 @@ async def _cli(action: str, *args: str, stdin: bytes | None = None) -> subproces
 
 async def _feed(stream: ByteSendStream | None, data: bytes) -> None:
     assert stream is not None
-    # The CLI may exit, or be killed, before it reads everything.
-    with suppress(anyio.BrokenResourceError, anyio.ClosedResourceError):
+    # The CLI may exit, or be killed, before it reads everything, which asyncio can report as `ConnectionResetError`.
+    with suppress(anyio.BrokenResourceError, anyio.ClosedResourceError, OSError):
         await stream.send(data)
         await stream.aclose()
 
