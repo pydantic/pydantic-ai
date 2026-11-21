@@ -42,7 +42,7 @@ async def test_the_sweep_deletes_the_machines_a_cleanup_missed(
         missed.ref.id: 'running',
         copy.id: 'running',
     }
-    assert live.pending == {missed.ref.id, copy.id}
+    assert (live.recorded, live.pending) == (3, {missed.ref.id, copy.id})
 
     fake_boxd.delete_errors += [
         NotFoundError('VM not found', code='not_found', grpc_code=5),

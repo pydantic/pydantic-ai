@@ -72,6 +72,8 @@ class LiveMachines:
     timeout: float = 120.0
     """How long `sweep` retries a machine; the tests ran first, so this comes on top of their run time."""
     pending: set[str] = field(default_factory=set[str])
+    recorded: int = 0
+    """How many machines `create` and `fork` returned, so a live run's report shows the watch saw them."""
 
     def watch(self, monkeypatch: pytest.MonkeyPatch, machines: type[_Machines]) -> None:
         """Record what `create` and `fork` on `machines` return, and forget each machine its `delete` deletes."""
@@ -89,6 +91,7 @@ class LiveMachines:
         async def made(*args: object, **kwargs: object) -> boxd.Machine:
             machine = await make(*args, **kwargs)
             self.pending.add(machine.id)
+            self.recorded += 1
             return machine
 
         return made
@@ -138,7 +141,8 @@ def _sweep_live_machines(pytestconfig: pytest.Config) -> Iterator[None]:
             finally:
                 deleted = [machine_id for machine_id in missed if machine_id not in live.pending]
                 pytestconfig.stash[_SWEEP_REPORT] = (
-                    f'boxd live sweep: deleted {len(deleted)} machine(s) the tests left: {deleted}; '
+                    f'boxd live sweep: the session made {live.recorded} machine(s); '
+                    f'deleted {len(deleted)} the tests left: {deleted}; '
                     f'could not delete {len(live.pending)}: {sorted(live.pending)}'
                 )
     else:
