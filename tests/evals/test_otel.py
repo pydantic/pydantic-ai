@@ -255,6 +255,23 @@ async def test_span_node_find_descendants(span_tree: SpanTree):
     assert not root_node.matches({'max_descendant_count': 0})
 
 
+async def test_span_node_descendants_are_in_depth_first_order(span_tree: SpanTree):
+    """`descendants` walks each node's children in start order, so `first_descendant` is the earliest match."""
+    root_node = span_tree.roots[0]
+
+    assert [node.name for node in root_node.descendants] == [
+        'child1',
+        'grandchild1',
+        'grandchild2',
+        'child2',
+        'grandchild3',
+    ]
+
+    first = root_node.first_descendant(lambda node: True)
+    assert first is not None
+    assert first.name == 'child1'
+
+
 async def test_span_node_matches(span_tree: SpanTree):
     """Test the matches method of SpanNode."""
     root_node = span_tree.roots[0]
