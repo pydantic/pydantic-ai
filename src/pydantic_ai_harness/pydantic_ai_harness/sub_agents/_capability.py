@@ -93,6 +93,22 @@ later merges silently by default, which is the wrong way round for a decision no
 """
 
 
+def _disagreement(
+    capability_id: str | None, field_info: dataclasses.Field[Any], mine: object, theirs: object
+) -> UserError:
+    """The error for two same-`id` `SubAgents` whose `field_info` differs, which a merge can't settle."""
+    name = field_info.name
+    # A field kept out of the repr, such as a signing key, stays out of the message too.
+    values = f' ({mine!r} and {theirs!r})' if field_info.repr else ''
+    return UserError(
+        f'Capability id {capability_id!r} is used by multiple SubAgents capabilities that disagree '
+        f'on {name!r}{values}. Only the roster is composed; everything else '
+        "decides how the delegates run, so merging it would apply one set of delegates' "
+        f'configuration to the other. Give them distinct `id`s to keep both, or make {name!r} '
+        'agree.'
+    )
+
+
 def _durably_unsupported(capability: SubAgents[Any], spec: DurabilityEngineSpec) -> list[str]:
     """The task-control settings set on `capability` that durable execution on `spec`'s engine can't replay."""
     control = capability.task_control
@@ -876,15 +892,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                     continue
                 mine, theirs = getattr(first, name), getattr(other, name)
                 if mine != theirs:
-                    # A field kept out of the repr, such as a signing key, stays out of the message too.
-                    values = f' ({mine!r} and {theirs!r})' if field_info.repr else ''
-                    raise UserError(
-                        f'Capability id {first.id!r} is used by multiple SubAgents capabilities that disagree '
-                        f'on {name!r}{values}. Only the roster is composed; everything else '
-                        "decides how the delegates run, so merging it would apply one set of delegates' "
-                        f'configuration to the other. Give them distinct `id`s to keep both, or make {name!r} '
-                        'agree.'
-                    )
+                    raise _disagreement(first.id, field_info, mine, theirs)
             merged_agents.extend(other.agents)
             merged_models.update(other.models)
             include_self = include_self or other.include_self
