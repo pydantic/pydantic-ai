@@ -210,6 +210,8 @@ For the same reason, an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] attached to t
 
 [Capabilities](../capabilities/overview.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to the server URL's hostname when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 
+A [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] isn't one of the types above, so its own `get_tools()` and `call_tool()` run in workflow code rather than in an activity. That's fine if they perform no I/O and are deterministic. If they do perform I/O, move that I/O into function tools on a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], whose tool calls Temporal runs in activities, or return the toolset from a dynamic toolset or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], whose tool listing and tool calls both run inside activities. For a `FunctionToolset` subclass, only the tool calls are wrapped, so an overridden `call_tool()` is covered here, but I/O in an overridden `get_tools()` still runs in workflow code. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
 All other agents and toolsets are supported.
 
 ### Tool Argument Validation
