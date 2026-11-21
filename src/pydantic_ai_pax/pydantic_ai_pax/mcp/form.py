@@ -339,6 +339,8 @@ def _json_problem(text: str) -> str | None:
         json.loads(text)
     except json.JSONDecodeError as exc:
         return f'Invalid JSON: {exc.msg}'
+    except (ValueError, RecursionError):
+        return 'Invalid JSON'
     return None
 
 
@@ -438,7 +440,7 @@ async def _edit_json(form: ServerForm, dialogs: Dialogs, editor: Editor | None) 
 def _one_line(config: str) -> str:
     try:
         return json.dumps(json.loads(config))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError, RecursionError):
         return config
 
 

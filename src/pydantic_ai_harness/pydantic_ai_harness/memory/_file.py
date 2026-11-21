@@ -205,7 +205,7 @@ class FileMemoryStore:
             return []
         try:
             return [_Receipt(**item) for item in json.loads(raw)]
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
             # Invalid receipts cannot establish idempotency; start a fresh journal.
             logger.warning('Invalid FileMemoryStore operation receipts; starting with an empty journal')
             return []

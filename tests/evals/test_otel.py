@@ -1639,3 +1639,15 @@ async def test_span_query_has_status():
     assert parent_node is not None
     assert parent_node.matches({'some_child_has': {'has_status': 'error'}})
     assert not parent_node.matches({'no_child_has': {'has_status': 'error'}})
+
+
+def test_span_node_attribute_match_rejects_unparseable_json() -> None:
+    oversized = '{"value": ' + '9' * 5000 + '}'
+    deeply_nested = '[' * 20000 + ']' * 20000
+    with context_subtree() as tree:
+        with logfire.span('json_attribute', structured=oversized, deeply_nested=deeply_nested):
+            pass
+    node = tree.first({'name_equals': 'json_attribute'})
+    assert node is not None
+    assert not node._attribute_matches('structured', {'value': 0})
+    assert not node._attribute_matches('deeply_nested', [])
