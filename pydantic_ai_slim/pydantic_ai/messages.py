@@ -788,6 +788,7 @@ class StructuredContent(TextContent):
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryContent:
@@ -961,6 +962,7 @@ class BinaryContent:
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryImage(BinaryContent):
@@ -990,6 +992,7 @@ class BinaryImage(BinaryContent):
     config=pydantic.ConfigDict(
         ser_json_bytes='base64',
         val_json_bytes='base64',
+        validate_by_name=True,
     ),
 )
 class BinaryAudio(BinaryContent):
