@@ -1222,6 +1222,7 @@ def _rename_shared_defs_with_renamed_refs(
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
+_MARKDOWN_FENCES_PARTIAL_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*)', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -1229,6 +1230,8 @@ def strip_markdown_fences(text: str) -> str:
         return text
 
     match = re.search(_MARKDOWN_FENCES_PATTERN, text)
+    if not match:
+        match = re.search(_MARKDOWN_FENCES_PARTIAL_PATTERN, text)
     if match:
         return match.group(1)
 
