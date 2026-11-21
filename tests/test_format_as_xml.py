@@ -8,7 +8,7 @@ from typing import Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, RootModel, computed_field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai import format_as_xml
@@ -716,4 +716,54 @@ def test_model_with_non_primitive_types():
 <name>John</name>
 <age>123.45</age>
 <uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
+""")
+
+
+def test_root_model_scalar_root():
+    class ScalarRoot(RootModel[int]):
+        pass
+
+    scalar_root = ScalarRoot(root=42)
+    assert format_as_xml(scalar_root) == snapshot('<ScalarRoot>42</ScalarRoot>')
+    assert format_as_xml([scalar_root]) == snapshot('<ScalarRoot>42</ScalarRoot>')
+
+
+def test_root_model_list_root():
+    class ListRoot(RootModel[list[int]]):
+        pass
+
+    list_root = ListRoot(root=[1, 2])
+    assert format_as_xml(list_root) == snapshot('<item>1</item>\n<item>2</item>')
+    assert format_as_xml([list_root]) == snapshot("""\
+<ListRoot>
+  <item>1</item>
+  <item>2</item>
+</ListRoot>\
+""")
+
+
+def test_root_model_dict_root_in_list_keeps_class_tag():
+    class DictRoot(RootModel[dict[str, int]]):
+        pass
+
+    assert format_as_xml([DictRoot(root={'value': 42})]) == snapshot("""\
+<DictRoot>
+  <value>42</value>
+</DictRoot>\
+""")
+
+
+def test_root_model_nested_in_parent_uses_field_name():
+    class ListRoot(RootModel[list[int]]):
+        pass
+
+    class Parent(BaseModel):
+        values: ListRoot
+
+    parent = Parent(values=ListRoot(root=[1, 2]))
+    assert format_as_xml(parent) == snapshot("""\
+<values>
+  <item>1</item>
+  <item>2</item>
+</values>\
 """)
