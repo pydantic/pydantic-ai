@@ -18,12 +18,16 @@ from pathlib import Path
 
 import anyio
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import pydantic_ai_harness
 import pydantic_ai_harness.bubblewrap_sandbox as bubblewrap_sandbox
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -699,6 +703,39 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
     assert workspace_layers(result.workspace) == [BubblewrapWorkspace, ReadOnlyWorkspace, LocalWorkspaceBackend]
     with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
+
+
+async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
+    tools: FakeRemoteTools, tmp_path: Path
+) -> None:
+    """The wrapped workspace only sees the `bwrap` launcher, whose arguments carry the call's `env` values."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    agent = Agent(
+        TestModel(call_tools=['greet']),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=provider))],
+    )
+
+    @agent.tool
+    async def greet(ctx: RunContext[object]) -> str:
+        result = await ctx.workspace.run(['printf', '%s', 'hi'], env={'TOKEN': 'SENTINEL-env'})
+        await ctx.workspace.write_text('notes.txt', 'hello')
+        return result.stdout
+
+    await agent.run('go', workspace=BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))))
+
+    spans = exporter.get_finished_spans()
+    runs = [
+        span for span in spans if span.name == 'workspace run' and 'process.command_args' in (span.attributes or {})
+    ]
+    assert [(span.attributes or {})['process.command_args'] for span in runs] == [('printf', '%s', 'hi')]
+    # A file operation runs as sandboxed shell commands: one span each, inside the operation's.
+    assert {span.name for span in spans if span.name.startswith('workspace ')} == {
+        'workspace run',
+        'workspace write_bytes',
+    }
+    assert not any('SENTINEL-env' in str(span.attributes) for span in spans)
 
 
 async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Path) -> None:

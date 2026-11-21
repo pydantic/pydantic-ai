@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
-from opentelemetry.trace import NoOpTracer
+from opentelemetry.trace import NoOpTracer, get_current_span
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
+from pydantic_ai._telemetry import publish_run_telemetry
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
 from pydantic_ai.exceptions import UserError
@@ -16,6 +17,7 @@ from ._spec import TEMPORAL_ENGINE_SPEC
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.models.instrumented import InstrumentationSettings
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
@@ -75,18 +77,26 @@ def deserialize_run_context(
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
 ) -> RunContext[Any]:
-    """Deserialize a run context inside a Temporal activity and attach the agent instance.
+    """Deserialize a run context inside a Temporal activity, attach the agent instance, and trace its workspace calls.
 
     See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore]; in
     addition, `tracer` is resolved from the worker's agent so custom subclasses don't need to
     know about the agent.
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
-    _restore_tracer(ctx, agent)
+    settings = agent_instrumentation_settings(agent) if agent is not None else None
+    _restore_tracer(ctx, settings)
+    if settings is not None and get_current_span().is_recording():
+        # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them,
+        # on the tool's own tracer (a subclass may have restored its own).
+        # They capture content only if both the run and this worker do; a context that didn't carry the
+        # run's flag counts as no content.
+        run_content = 'trace_include_content' in ctx.__dict__ and ctx.trace_include_content
+        publish_run_telemetry(ctx.tracer, include_content=run_content and settings.include_content)
     return ctx
 
 
-def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None) -> None:
+def _restore_tracer(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:
     """Give `ctx.tracer` the tracer the worker's agent would trace a run with.
 
     A run always has a tracer, a no-op one when it isn't instrumented, so tools open spans without checking
@@ -96,7 +106,6 @@ def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None)
     """
     if 'tracer' in ctx.__dict__:
         return
-    settings = agent_instrumentation_settings(agent) if agent is not None else None
     ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
     assert isinstance(ctx, DurableRunContext)
     ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]

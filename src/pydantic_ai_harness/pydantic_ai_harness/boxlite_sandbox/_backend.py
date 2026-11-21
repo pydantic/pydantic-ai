@@ -52,6 +52,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -488,37 +489,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _acquire(self, boxes: _Runtime, name: str, *, create: bool) -> _Box:
         with _marking(_acquiring, name):
-            if create:
-                try:
-                    box = await _finish(boxes.create(self._options, name=name), f'creating box {name!r}')
-                    await _boot(box)
-                except BaseException:
-                    # A box that never booted, cancelled while booting included, is no use: delete it, and a
-                    # retry creates another under a new name. If the deletion fails, the ref stays so its
-                    # holder can delete the box later.
-                    try:
-                        await _remove(boxes, name)
-                    except boxlite.BoxliteError:
-                        logger.warning('Could not delete BoxLite box %s after it failed to start', name, exc_info=True)
-                    else:
-                        self._ref = None
-                    raise
-            elif (box := self._given) is not None:
-                # Later lookups by `ref`, such as after a stop invalidates this handle, go through this
-                # process's default runtime, which can't see a box of another BoxLite home.
-                if await boxes.get_info(box.id) is None:
-                    raise UserError(
-                        f"The BoxLite box {name!r} passed as `sandbox` is not in this process's default BoxLite "
-                        'runtime. Create it with `boxlite.Boxlite.default()`, after `boxlite.Boxlite.init_default(...)` '
-                        'to use another home directory.'
-                    )
-                self._given = None
-                await _boot(box)
-            else:
-                box = await boxes.get(name)
-                if box is None:
-                    raise WorkspaceUnavailableError(_gone_message(name))
-                await _boot(box)
+            with acquire_span('create' if create else 'attach', self):
+                box = await self._open_box(boxes, name, create=create)
             if self._working_dir is not None:
                 try:
                     result = await self._exec(
@@ -529,6 +501,41 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 _check_working_dir_created(result, self._working_dir, name)
             self._box = box
             return box
+
+    async def _open_box(self, boxes: _Runtime, name: str, *, create: bool) -> _Box:
+        """Create and boot the box, or boot the one passed in or named by the ref."""
+        if create:
+            try:
+                box = await _finish(boxes.create(self._options, name=name), f'creating box {name!r}')
+                await _boot(box)
+            except BaseException:
+                # A box that never booted, cancelled while booting included, is no use: delete it, and a
+                # retry creates another under a new name. If the deletion fails, the ref stays so its
+                # holder can delete the box later.
+                try:
+                    await _remove(boxes, name)
+                except boxlite.BoxliteError:
+                    logger.warning('Could not delete BoxLite box %s after it failed to start', name, exc_info=True)
+                else:
+                    self._ref = None
+                raise
+        elif (box := self._given) is not None:
+            # Later lookups by `ref`, such as after a stop invalidates this handle, go through this
+            # process's default runtime, which can't see a box of another BoxLite home.
+            if await boxes.get_info(box.id) is None:
+                raise UserError(
+                    f"The BoxLite box {name!r} passed as `sandbox` is not in this process's default BoxLite "
+                    'runtime. Create it with `boxlite.Boxlite.default()`, after `boxlite.Boxlite.init_default(...)` '
+                    'to use another home directory.'
+                )
+            self._given = None
+            await _boot(box)
+        else:
+            box = await boxes.get(name)
+            if box is None:
+                raise WorkspaceUnavailableError(_gone_message(name))
+            await _boot(box)
+        return box
 
     async def working_dir(self) -> str:
         """The canonical absolute directory commands start in."""
