@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -200,3 +200,34 @@ async def test_empty_replacement_drops_max_misread_fragment(tmp_path: Path):
     )
     assert 'assume you misread' not in text
     assert _MISREAD_MAX not in text
+
+
+async def test_default_table_adjustments_reach_delegate_guidance(tmp_path: Path):
+    """A matching OpenAI max-autonomy run also applies the row to the delegate prompt."""
+    seen: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.instructions or '')
+        first = messages[0].parts[-1]
+        prompt = first.content if isinstance(first, UserPromptPart) else None
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart(content='done')])
+        if prompt == 'go':
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Run it'})])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    class _DelegateModel(FunctionModel):
+        def __init__(self) -> None:
+            super().__init__(respond, model_name='gpt-6.2-sol')
+            self._system = 'openai'
+
+    agent = Agent[object](
+        _DelegateModel(),
+        capabilities=[LocalWorkspace(tmp_path), Coder[object](autonomy='max', repo_context=False)],
+    )
+    await agent.run('go')
+    delegate = next(text for text in seen if 'You are running a delegated task.' in text)
+    assert _MISREAD_CLASSIFY in delegate
+    assert _STRUCTURED_HANDOFF in delegate
+    assert _PURE_FUNCTIONS in delegate
+    assert _MISREAD_MAX not in delegate
