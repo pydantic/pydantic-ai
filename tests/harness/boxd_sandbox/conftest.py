@@ -101,8 +101,8 @@ class LiveMachines:
             while True:
                 try:
                     return await machines.delete(machine_id)
-                except (boxd.NotFoundError, boxd.APIStatusError):
-                    # Not listed yet, or boxd failed to delete it.
+                except boxd.BoxdError:
+                    # Not listed yet, or boxd failed to delete it: `INTERNAL`, or a dropped connection.
                     await anyio.sleep(self.poll)
 
         with anyio.move_on_after(self.timeout):
