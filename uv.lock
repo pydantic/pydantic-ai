@@ -7942,6 +7942,9 @@ e2b = [
 kubernetes = [
     { name = "pydantic-ai-pax", extra = ["kubernetes"] },
 ]
+local = [
+    { name = "pydantic-ai-pax", extra = ["local"] },
+]
 modal = [
     { name = "pydantic-ai-pax", extra = ["modal"] },
 ]
@@ -7965,13 +7968,14 @@ requires-dist = [
     { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["local"], marker = "extra == 'local'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "src/pydantic_ai_pax" },
 ]
-provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites", "typesafe"]
+provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "local", "modal", "opensandbox", "render", "sprites", "typesafe"]
 
 [[package]]
 name = "pydantic-core"

@@ -2374,8 +2374,8 @@ class TestLocal:
         provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
         assert provider.missing() is None
         ref, backend = await provider.create(github=GITHUB)
-        # Not `local`, which names this machine's own folder.
-        assert ref.provider == 'smol'
+        # Not `local`, which names this machine's own folder, nor `smol`, which a `SmolSandbox` of the user's makes.
+        assert ref.provider == 'local-vm'
         assert re.fullmatch(VM_NAME, ref.id)
         assert (tmp_path / 'workspace').is_dir()
         if local_host == 'smolvm CLI':
@@ -2412,12 +2412,14 @@ class TestLocal:
         session = on_screen(loaded, checkout, shell=True)
         message = await plugin_of(loaded).command(['local'])
         ref = history_sandbox(session.messages)
-        assert ref is not None and ref.provider == 'smol'
+        assert ref is not None and ref.provider == 'local-vm'
         assert message.startswith(f'This conversation now runs in SmolVM sandbox {ref.id}. ')
         copy = tmp_path / 'workspace'
         assert git(copy, 'rev-parse', 'HEAD') == git(checkout, 'rev-parse', 'HEAD')
         result = await session.prompt('where?')
         assert result.response.workspace_ref == ref
+        # A `smol` VM of the user's own `SmolSandbox` is not a `/sandbox` sandbox.
+        assert history_sandbox(worked_in(WorkspaceRef(provider='smol', id=ref.id))) is None
         assert await plugin_of(loaded).command(['delete']) == (
             f'Deleted SmolVM sandbox {ref.id}. Run /new to start another conversation.'
         )
@@ -2453,7 +2455,21 @@ class TestLocalCli:
         assert (await backend.run(['no-such-program'])).exit_code == 127
         assert (await backend.run('exit 3', shell=True)).exit_code == 3
         assert await backend.working_dir() == str(tmp_path.resolve() / 'workspace')
+        # Closing stops the VM, which would otherwise outlive CLAI; its next command starts it again.
+        await provider.close(provider.reopen(ref))
+        assert windows.machines[ref.id] == 'running'
         await provider.close(backend)
+        assert windows.machines[ref.id] == 'stopped'
+        assert (await backend.run(['true'])).exit_code == 0
+        assert windows.machines[ref.id] == 'running'
+        # As by another session closing the same VM.
+        await provider.close(provider_backend := provider.reopen(ref))
+        await provider_backend.run(['true'])
+        await provider.close(provider_backend)
+        assert (await backend.run(['true'])).exit_code == 0
+        windows.failures['stop'] = ('SMOLVM_ERROR', 'stuck')
+        with pytest.raises(WorkspaceError, match='smolvm machine stop failed: stuck'):
+            await provider.close(backend)
         await provider.delete(ref)
 
     async def test_timeout(self, windows: FakeSmolvm, tmp_path: Path) -> None:
@@ -2486,8 +2502,8 @@ class TestLocalCli:
         report = json.dumps({'error': {'code': 'NOT_FOUND', 'message': 'no such thing'}})
         result = await backend.run(['sh', '-c', f"echo '{report}' >&2; exit 1"])
         assert (result.exit_code, result.stderr) == (1, f'{report}\n')
-        windows.machines[ref.id] = 'stopped'
-        with pytest.raises(WorkspaceUnavailableError, match='is stopped'):
+        windows.machines[ref.id] = 'error'
+        with pytest.raises(WorkspaceUnavailableError, match='is error'):
             await backend.run(['true'])
         del windows.machines[ref.id]
         with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
@@ -2535,7 +2551,7 @@ class TestLocalCli:
     def test_only_its_own_vms(self, windows: FakeSmolvm) -> None:
         # A conversation's history could otherwise open any VM of this user, such as one with this machine's folders.
         with pytest.raises(ValueError, match='only uses VMs it created'):
-            local_provider.LocalProvider().reopen(WorkspaceRef(provider='smol', id='dev'))
+            local_provider.LocalProvider().reopen(WorkspaceRef(provider='local-vm', id='dev'))
 
 
 class TestCompaction:

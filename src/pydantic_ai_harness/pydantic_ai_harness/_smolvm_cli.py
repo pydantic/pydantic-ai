@@ -57,16 +57,19 @@ if TYPE_CHECKING:
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
-__all__ = ('SmolvmCliBackend', 'delete_machine')
+__all__ = ('NAME', 'NAME_PREFIX', 'SmolvmCliBackend', 'delete_machine')
 
 logger = logging.getLogger(__name__)
 
-_NAME_PREFIX = 'pydantic-ai-'
-_NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
-"""The names `SmolSandboxBackend` gives its VMs too, and so the only machines this backend attaches to or deletes.
+NAME_PREFIX = 'pydantic-ai-'
+NAME = re.compile(rf'{NAME_PREFIX}[0-9a-f]{{32}}')
+"""The names this backend and `SmolSandboxBackend` give their VMs, and so the only refs either attaches to or deletes.
 
-`machine exec` reaches any machine of this OS user by name, such as one another tool made with this machine's
-folders mounted, so a name from message history must be one this backend could have made.
+A local VM's id is its name, and smolvm opens any VM of this OS user by name, so without this check a ref
+from message history could reach a VM made by another tool, with host mounts or network. The name is
+a namespace, not proof of origin: any process of this OS user could use it, and smolvm can't report
+an existing VM's mounts or network, so a ref is still trusted input. Defined here, as `SmolSandboxBackend`'s
+module needs smolmachines, which Windows lacks.
 """
 
 _SETUP_TIMEOUT = 60.0
@@ -79,6 +82,15 @@ _HOST_UNAVAILABLE = frozenset(
     {'UNSUPPORTED_PLATFORM', 'RUNTIME_NOT_INSTALLED', 'KVM_UNAVAILABLE', 'HYPERVISOR_UNAVAILABLE'}
 )
 """Codes for a host that can't run a local VM at all, so no retry can succeed."""
+
+
+_PAUSED = 'paused'
+_STARTABLE = frozenset({'stopped', 'created', _PAUSED})
+"""States of a VM that `machine start`, or `machine resume` when paused, brings back, as the Rust SDK's transport does."""
+
+
+class _Stopped(WorkspaceUnavailableError):
+    """The VM stopped since the backend reached it; `run` starts it again once."""
 
 
 class _Failure(TypedDict):
@@ -105,9 +117,9 @@ _LISTING = TypeAdapter(list[_Machine] | _Listing)
 
 def check_name(name: str) -> None:
     """Raise `ValueError` unless `name` is one `SmolvmCliBackend` or `SmolSandboxBackend` gives its VMs."""
-    if _NAME.fullmatch(name) is None:
+    if NAME.fullmatch(name) is None:
         raise ValueError(
-            f'SmolvmCliBackend only uses VMs it created, named {_NAME_PREFIX!r} and 32 hex digits, got {name!r}.'
+            f'SmolvmCliBackend only uses VMs it created, named {NAME_PREFIX!r} and 32 hex digits, got {name!r}.'
         )
 
 
@@ -168,7 +180,7 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
 
     async def _boot(self) -> None:
         if (ref := self._ref) is None:
-            ref = self._ref = WorkspaceRef(provider='smol', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
+            ref = self._ref = WorkspaceRef(provider='smol', id=f'{NAME_PREFIX}{uuid.uuid4().hex}')
             logger.info('Creating smol VM %s', ref.id)
             options = [*(['--net'] if self._network else []), *(['--image', self._image] if self._image else [])]
             try:
@@ -184,7 +196,7 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
                 raise WorkspaceUnavailableError(_gone_message(ref.id))
             if state in ('stopped', 'created'):
                 await _check(self._executable, 'start', '--name', ref.id)
-            elif state == 'paused':
+            elif state == _PAUSED:
                 await _check(self._executable, 'resume', '--name', ref.id)
             elif state != 'running':
                 raise WorkspaceUnavailableError(f'The smol VM {ref.id!r} is {state}.')
@@ -201,7 +213,8 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         if self._resolved_working_dir is None:
             result = await self.run(['pwd', '-P'], timeout=_SETUP_TIMEOUT)
             printed = result.stdout.removesuffix('\n')
-            if result.exit_code != 0 or not printed.startswith('/'):  # pragma: no cover - a VM without `pwd`
+            # Only a VM without `pwd` fails here.
+            if result.exit_code != 0 or not printed.startswith('/'):  # pragma: no cover
                 raise WorkspaceError(
                     'Could not determine the working directory of the smol VM: '
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
@@ -221,10 +234,23 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
-        name = await self._vm()
-        return await self._exec(
-            name, argv, env={**self._env, **(env or {})}, working_dir=self._working_dir, timeout=timeout
-        )
+        env = {**self._env, **(env or {})}
+        try:
+            return await self._exec(await self._vm(), argv, env=env, working_dir=self._working_dir, timeout=timeout)
+        except _Stopped:
+            # Stopped since this backend reached it, as by `stop` on another backend: start it again, as a first use does.
+            self._ready = False
+            return await self._exec(await self._vm(), argv, env=env, working_dir=self._working_dir, timeout=timeout)
+
+    async def stop(self) -> None:
+        """Stop the VM, writing its disk back, if this backend reached it; its next command starts it again."""
+        async with self._lock:
+            if self._ready:
+                assert self._ref is not None
+                self._ready = False
+                result = await _cli(self._executable, 'stop', '--name', self._ref.id)
+                if result.returncode != 0 and not _is_gone(result.stderr):
+                    raise _error('stop', result.stderr)
 
     async def _exec(
         self, name: str, argv: list[str], *, env: dict[str, str], working_dir: str | None, timeout: float | None
@@ -244,10 +270,13 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds')
         if result.returncode != 0 and _failure(result.stderr) is not None:
             # smolvm's own failure, or the command's output looking like one: only a VM that is gone tells them apart.
-            if (state := await _state(self._executable, name)) != 'running':
-                raise WorkspaceUnavailableError(
-                    _gone_message(name) if state is None else f'The smol VM {name!r} is {state}.'
-                )
+            state = await _state(self._executable, name)
+            if state is None:
+                raise WorkspaceUnavailableError(_gone_message(name))
+            if state in _STARTABLE:
+                raise _Stopped(f'The smol VM {name!r} is {state}.')
+            if state != 'running':
+                raise WorkspaceUnavailableError(f'The smol VM {name!r} is {state}.')
         return CommandResult(
             exit_code=result.returncode,
             stdout=result.stdout.decode(errors='replace'),
@@ -259,8 +288,12 @@ async def delete_machine(name: str, *, executable: str = 'smolvm') -> None:
     """Delete a VM `SmolvmCliBackend` created, and its disk; one already gone returns quietly."""
     check_name(name)
     result = await _cli(executable, 'delete', '--name', name, '--force')
-    if result.returncode != 0 and ((failure := _failure(result.stderr)) is None or failure['code'] != 'NOT_FOUND'):
+    if result.returncode != 0 and not _is_gone(result.stderr):
         raise _error('delete', result.stderr)
+
+
+def _is_gone(stderr: bytes) -> bool:
+    return (failure := _failure(stderr)) is not None and failure['code'] == 'NOT_FOUND'
 
 
 async def _cli(executable: str, action: str, *args: str, stdin: bytes | None = None) -> CompletedProcess[bytes]:

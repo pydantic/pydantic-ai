@@ -62,7 +62,7 @@ def _owned(ref: WorkspaceRef | None) -> WorkspaceRef | None:
 
 
 def _owner(ref: WorkspaceRef) -> SandboxProvider | None:
-    """The provider whose sandbox `ref` names: the one named `ref.provider`, but `local` for a VM's `smol` ref.
+    """The provider whose sandbox `ref` names: the one named `ref.provider`, but `local` for a `local-vm` ref.
 
     A `local` ref names this machine's own folder, the workspace of a conversation outside any sandbox.
     """
@@ -193,16 +193,25 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         """The sandbox `ref` names, with the variables `request_env` gave it; agent runs and `!` lines both use it."""
         sandbox = self.plugin.sandbox(ref)
         # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
-        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env)
+        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env, ref=sandbox.ref)
 
 
 class _EnvWorkspace(WrapperWorkspace):
-    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts."""
+    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts.
 
-    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str]) -> None:
+    It reports the sandbox's ref as `/sandbox` recorded it, which responses carry, so `/sandbox local`'s VMs stay
+    apart from the harness's `smol` ones.
+    """
+
+    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str], ref: WorkspaceRef) -> None:
         super().__init__(wrapped)
         self._env = env
         """The sandbox's own `env`, not a copy, so a grant mid-run reaches the run's later commands."""
+        self._ref = ref
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return self._ref
 
     async def run(
         self,

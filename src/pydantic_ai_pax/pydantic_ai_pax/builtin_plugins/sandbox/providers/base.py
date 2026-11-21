@@ -46,7 +46,7 @@ class SandboxProvider(Protocol):
 
     @property
     def name(self) -> str:
-        """The name `/sandbox` takes and `WorkspaceRef.provider` holds, such as `e2b`; `local`'s VMs' refs hold `smol`."""
+        """The name `/sandbox` takes and `WorkspaceRef.provider` holds, such as `e2b`; `local`'s hold `local-vm`."""
         ...
 
     @property

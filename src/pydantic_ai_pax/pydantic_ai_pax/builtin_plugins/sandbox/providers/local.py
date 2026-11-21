@@ -6,9 +6,9 @@ checkout, and it has network access, from this machine's network, to clone and p
 
 SmolVM runs on macOS (Apple silicon), Linux, and Windows. Where smolmachines is installed, which has wheels for
 macOS and Linux only, the VM runs through it in CLAI's process (harness `SmolSandboxBackend`), and it ends with
-that process. Elsewhere, Windows included, CLAI drives the `smolvm` CLI on `PATH`, whose VM keeps running until
-`/sandbox delete`. Both write a VM's disk back only on `sync` or a stop, so `close` runs `sync`, and a conversation
-resumed later finds its files.
+that process, so `close` runs `sync`: smolmachines writes a VM's disk back only then or on a stop. Elsewhere, Windows
+included, CLAI drives the `smolvm` CLI on `PATH`, whose VM would outlive CLAI, so `close` stops it. Either way the
+next command starts the VM again, and a conversation resumed later finds its files.
 """
 
 import shutil
@@ -23,9 +23,12 @@ from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 
-REF_PROVIDER = 'smol'
-"""What `WorkspaceRef.provider` holds for this provider's VMs: the harness's name for them, as `local` names this
-machine's own folder."""
+REF_PROVIDER = 'local-vm'
+"""What `WorkspaceRef.provider` holds for this provider's VMs.
+
+Not `local`, which names this machine's own folder, nor the harness's `smol`, which a `SmolSandbox` of the user's
+own makes too: `/sandbox` must not take that VM for one of its sandboxes.
+"""
 
 IMAGE = 'python:3.13'
 """Debian with bash and git, which the copy of the checkout needs; smolvm pulls it the first time."""
@@ -53,6 +56,7 @@ class LocalProvider:
         return "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
 
     def _backend(self, ref: WorkspaceRef | None) -> SandboxBackend:
+        ref = None if ref is None else _vm(ref)
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
@@ -76,25 +80,38 @@ class LocalProvider:
         except BaseException:
             with anyio.CancelScope(shield=True):
                 if backend.ref is not None:
-                    await self.delete(backend.ref)
+                    await self._delete(backend.ref)
             raise
         assert backend.ref is not None
-        return backend.ref, backend
+        return WorkspaceRef(provider=REF_PROVIDER, id=backend.ref.id), backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         return self._backend(ref)
 
     async def close(self, backend: SandboxBackend) -> None:
+        from pydantic_ai_harness._smolvm_cli import SmolvmCliBackend
+
         # One deleted already, as by `/sandbox delete`, has nothing to write back.
         with suppress(WorkspaceUnavailableError):
-            await backend.run(['sync'], timeout=_SYNC_TIMEOUT)
+            if isinstance(backend, SmolvmCliBackend):
+                await backend.stop()
+            else:
+                await backend.run(['sync'], timeout=_SYNC_TIMEOUT)
 
     async def delete(self, ref: WorkspaceRef) -> None:
+        await self._delete(_vm(ref))
+
+    async def _delete(self, vm: WorkspaceRef) -> None:
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-            await SmolSandbox[None]().destroy(ref)
+            await SmolSandbox[None]().destroy(vm)
         else:
             from pydantic_ai_harness._smolvm_cli import delete_machine
 
-            await delete_machine(ref.id)
+            await delete_machine(vm.id)
+
+
+def _vm(ref: WorkspaceRef) -> WorkspaceRef:
+    """The harness's ref for the VM `ref` names."""
+    return WorkspaceRef(provider='smol', id=ref.id)

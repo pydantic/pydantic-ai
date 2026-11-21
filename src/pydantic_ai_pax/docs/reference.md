@@ -3062,8 +3062,8 @@ into a folder on `PATH`, with the Windows Hypervisor Platform turned on; CLAI th
 which macOS and Linux do too when the extra is not installed. The VM runs the `python:3.13` image, which
 smolvm downloads the first time.
 
-How long a sandbox lasts differs. A `local` VM keeps its files until `/sandbox delete`; run through
-smolmachines, it stops when CLAI does and starts again when the conversation is reopened. An `e2b` sandbox that times out is paused, and Daytona stops an idle
+How long a sandbox lasts differs. A `local` VM keeps its files until `/sandbox delete`; it stops when CLAI
+does, and starts again when the conversation is reopened. An `e2b` sandbox that times out is paused, and Daytona stops an idle
 one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
