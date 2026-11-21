@@ -17,20 +17,27 @@ CLI behavior, from smolvm 1.36's `smolvm machine --help` and that transport:
 
 Each command reaches the VM as a script on `machine exec`'s stdin, so neither its arguments nor its environment
 are on a command line of this machine, which other processes can read and Windows caps at 32,767 characters.
+A command whose output passes 10 MiB is killed, as `SmolSandboxBackend` stops one. The CLI is found only in
+absolute `PATH` directories: Windows would otherwise run a `smolvm.exe` in the current
+directory, such as one a checkout holds.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import shlex
+import subprocess
+import sys
 import uuid
 from collections.abc import Mapping
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 import anyio
-from anyio import run_process
+from anyio import open_process
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
@@ -39,6 +46,7 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -53,11 +61,11 @@ from pydantic_ai_harness._workspace_provider import (
 )
 
 if TYPE_CHECKING:
-    from subprocess import CompletedProcess
+    from anyio.abc import ByteReceiveStream, ByteSendStream
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
-__all__ = ('NAME', 'NAME_PREFIX', 'SmolvmCliBackend', 'delete_machine')
+__all__ = ('NAME', 'NAME_PREFIX', 'SmolvmCliBackend', 'delete_machine', 'find_cli')
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +85,10 @@ _SETUP_TIMEOUT = 60.0
 
 _ENGINE_TIMEOUT_GRACE = 5.0
 """Seconds past a command's timeout before smolvm kills it itself, in case killing the CLI here does not."""
+
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+"""What a command's stdout and stderr may hold together before it is killed, as `SmolSandboxBackend` caps them."""
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 
 _HOST_UNAVAILABLE = frozenset(
     {'UNSUPPORTED_PLATFORM', 'RUNTIME_NOT_INSTALLED', 'KVM_UNAVAILABLE', 'HYPERVISOR_UNAVAILABLE'}
@@ -130,7 +142,6 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         working_dir: Absolute directory commands start in, created if missing when the backend first reaches the
             VM.
         env: Environment variables every command gets; per-command `env` is layered on top.
-        executable: The `smolvm` CLI to run, found on `PATH` when not a path.
     """
 
     def __init__(
@@ -141,7 +152,6 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = False,
         working_dir: str = '/workspace',
         env: Mapping[str, str] | None = None,
-        executable: str = 'smolvm',
     ) -> None:
         if ref is not None:
             check_provider(ref, 'smol')
@@ -153,7 +163,6 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         absolute_path('working_dir', working_dir)
         self._working_dir = working_dir
         self._env = dict(env or {})
-        self._executable = executable
         self._lock = anyio.Lock()
         self._ready = False
         self._resolved_working_dir: str | None = None
@@ -178,18 +187,18 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             logger.info('Creating smol VM %s', ref.id)
             options = [*(['--net'] if self._network else []), *(['--image', self._image] if self._image else [])]
             try:
-                await _check(self._executable, 'create', '--name', ref.id, *options)
+                await _check('create', '--name', ref.id, *options)
             except WorkspaceError:
                 # smolvm reported it made no machine, so a retry creates one under a new name.
                 self._ref = None
                 raise
-            await _check(self._executable, 'start', '--name', ref.id)
+            await _check('start', '--name', ref.id)
         else:
-            state = await _state(self._executable, ref.id)
+            state = await _state(ref.id)
             if state is None:
                 raise WorkspaceUnavailableError(_gone_message(ref.id))
             if state in _STARTABLE:
-                await _check(self._executable, 'resume' if state == 'paused' else 'start', '--name', ref.id)
+                await _check('resume' if state == 'paused' else 'start', '--name', ref.id)
             elif state != 'running':
                 raise WorkspaceUnavailableError(f'The smol VM {ref.id!r} is {state}.')
         result = await self._exec(
@@ -237,7 +246,7 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             if self._ready:
                 assert self._ref is not None
                 self._ready = False
-                result = await _cli(self._executable, 'stop', '--name', self._ref.id)
+                result = await _cli('stop', '--name', self._ref.id)
                 if result.returncode != 0 and not _is_gone(result.stderr):
                     raise _error('stop', result.stderr)
 
@@ -252,14 +261,14 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             options += ['--workdir', working_dir]
         if timeout is not None:
             options += ['--timeout', f'{math.ceil((timeout + _ENGINE_TIMEOUT_GRACE) * 1000)}ms']
-        result: CompletedProcess[bytes] | None = None
+        result: subprocess.CompletedProcess[bytes] | None = None
         with anyio.move_on_after(timeout):
-            result = await _cli(self._executable, 'exec', *options, '--', '/bin/sh', '-s', stdin=script.encode())
+            result = await _cli('exec', *options, '--', '/bin/sh', '-s', stdin=script.encode())
         if result is None:
             raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds')
         if result.returncode != 0 and _failure(result.stderr) is not None:
             # smolvm's own failure, or the command's output looking like one: only a VM that is gone tells them apart.
-            state = await _state(self._executable, name)
+            state = await _state(name)
             if state is None:
                 raise WorkspaceUnavailableError(_gone_message(name))
             if state in _STARTABLE:
@@ -276,10 +285,10 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         )
 
 
-async def delete_machine(name: str, *, executable: str = 'smolvm') -> None:
+async def delete_machine(name: str) -> None:
     """Delete a VM `SmolvmCliBackend` created, and its disk; one already gone returns quietly."""
     check_name(name)
-    result = await _cli(executable, 'delete', '--name', name, '--force')
+    result = await _cli('delete', '--name', name, '--force')
     if result.returncode != 0 and not _is_gone(result.stderr):
         raise _error('delete', result.stderr)
 
@@ -288,26 +297,82 @@ def _is_gone(stderr: bytes) -> bool:
     return (failure := _failure(stderr)) is not None and failure['code'] == 'NOT_FOUND'
 
 
-async def _cli(executable: str, action: str, *args: str, stdin: bytes | None = None) -> CompletedProcess[bytes]:
-    command = [executable, 'machine', action, '--error-format', 'json', *args]
-    try:
-        return await run_process(command, input=stdin, check=False)
-    except FileNotFoundError as error:
+async def _cli(action: str, *args: str, stdin: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
+    """Run `smolvm machine ACTION`, killing it on cancellation or once its output passes `_MAX_OUTPUT_BYTES`."""
+    if (path := await anyio.to_thread.run_sync(find_cli)) is None:
         raise WorkspaceUnavailableError(
-            f'{executable} was not found: install smolvm from https://github.com/smol-machines/smolvm/releases.'
-        ) from error
+            'smolvm was not found on PATH: install it from https://github.com/smol-machines/smolvm/releases.'
+        )
+    command = [path, 'machine', action, '--error-format', 'json', *args]
+    process = await open_process(command, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL)
+    stdout: list[bytes] = []
+    stderr: list[bytes] = []
+    size = 0
+
+    async def drain(stream: ByteReceiveStream | None, chunks: list[bytes]) -> None:
+        nonlocal size
+        assert stream is not None
+        async for chunk in stream:
+            size += len(chunk)
+            chunks.append(chunk)
+            if size > _MAX_OUTPUT_BYTES:
+                process.kill()
+                return
+
+    try:
+        async with anyio.create_task_group() as tasks:
+            if stdin is not None:
+                tasks.start_soon(_feed, process.stdin, stdin)
+            tasks.start_soon(drain, process.stdout, stdout)
+            tasks.start_soon(drain, process.stderr, stderr)
+        returncode = await process.wait()
+    except BaseException:
+        process.kill()
+        with anyio.CancelScope(shield=True):
+            await process.aclose()
+        raise
+    await process.aclose()
+    if size > _MAX_OUTPUT_BYTES:
+        raise WorkspaceOutputLimitError(
+            'smol command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+            limit=_MAX_OUTPUT_BYTES,
+            stdout=b''.join(stdout)[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+            stderr=b''.join(stderr)[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+        )
+    return subprocess.CompletedProcess(command, returncode, b''.join(stdout), b''.join(stderr))
 
 
-async def _check(executable: str, action: str, *args: str) -> bytes:
-    result = await _cli(executable, action, *args)
+async def _feed(stream: ByteSendStream | None, data: bytes) -> None:
+    assert stream is not None
+    # The CLI may exit, or be killed, before it reads everything.
+    with suppress(anyio.BrokenResourceError, anyio.ClosedResourceError):
+        await stream.send(data)
+        await stream.aclose()
+
+
+def find_cli() -> str | None:
+    """The `smolvm` CLI in an absolute `PATH` directory, never the current directory as `shutil.which` on Windows."""
+    # Never a batch file, which Windows runs through `cmd.exe`.
+    extensions = ['.exe', '.com'] if sys.platform == 'win32' else ['']
+    for directory in os.environ.get('PATH', '').split(os.pathsep):
+        if os.path.isabs(directory):
+            for extension in extensions:
+                candidate = os.path.join(directory, 'smolvm' + extension)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    return candidate
+    return None
+
+
+async def _check(action: str, *args: str) -> bytes:
+    result = await _cli(action, *args)
     if result.returncode != 0:
         raise _error(action, result.stderr)
     return result.stdout
 
 
-async def _state(executable: str, name: str) -> str | None:
+async def _state(name: str) -> str | None:
     """The VM's state, such as `running` or `stopped`; `None` when there is no VM of that name."""
-    listing = _LISTING.validate_json(await _check(executable, 'ls', '--json'))
+    listing = _LISTING.validate_json(await _check('ls', '--json'))
     machines = listing if isinstance(listing, list) else listing['machines']
     return next((machine['state'] for machine in machines if machine['name'] == name), None)
 

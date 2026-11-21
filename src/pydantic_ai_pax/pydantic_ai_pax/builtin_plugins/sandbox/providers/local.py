@@ -11,7 +11,6 @@ included, CLAI drives the `smolvm` CLI on `PATH`, whose VM would outlive CLAI, s
 next command starts the VM again, and a conversation resumed later finds its files.
 """
 
-import shutil
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
@@ -46,7 +45,9 @@ class LocalProvider:
     token_in_sandbox: bool = True
 
     def missing(self) -> str | None:
-        if find_spec('smol') is not None or shutil.which('smolvm') is not None:
+        from pydantic_ai_harness._smolvm_cli import find_cli
+
+        if find_spec('smol') is not None or find_cli() is not None:
             return None
         if sys.platform == 'win32':
             return (

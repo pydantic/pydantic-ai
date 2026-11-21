@@ -556,6 +556,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         'pydantic_ai_harness/_monty_exec.py',
         ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
     ),
+    # `/sandbox local` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_container/{module}', constructor)

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 import anyio
+import anyio.abc
 import pytest
 from anyio import to_thread
 from rich.console import Console
@@ -47,6 +48,7 @@ from pydantic_ai.workspaces import (
     SupportsFilesystem,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -2233,64 +2235,86 @@ class TestKubernetes:
 class FakeSmolvm:
     """The `smolvm` CLI, answering as smolvm 1.36 does, whose machines run each command here in `sh`."""
 
+    scratch: Path
+    """Where each `machine exec` leaves the script it read on its stdin."""
     machines: dict[str, str] = field(default_factory=dict[str, str])
     """Each machine's state, by name."""
     created: list[list[str]] = field(default_factory=list[list[str]])
     """The arguments of each `machine create`."""
     commands: list[list[str]] = field(default_factory=list[list[str]])
     """Every command line this machine ran."""
-    scripts: list[str] = field(default_factory=list[str])
-    """What each `machine exec` read on its stdin."""
     failures: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
     """The code and message each action named here fails with, such as `start` on a host that cannot run VMs."""
 
-    async def run_process(
-        self, command: list[str], *, input: bytes | None = None, check: bool = True
-    ) -> subprocess.CompletedProcess[bytes]:
+    @property
+    def scripts(self) -> list[str]:
+        """What each `machine exec` read on its stdin."""
+        return [path.read_text() for path in sorted(self.scratch.glob('*.sh'))]
+
+    async def open_process(self, command: list[str], *, stdin: int) -> 'anyio.abc.Process':
         self.commands.append(command)
         executable, group, action, *args = command
-        assert (executable, group, args[:2], check) == ('smolvm', 'machine', ['--error-format', 'json'], False)
+        # Found on `PATH`, never in the current directory.
+        assert Path(executable).is_absolute() and Path(executable).stem == 'smolvm'
+        assert (group, args[:2]) == ('machine', ['--error-format', 'json'])
         args = args[2:]
         if action == 'ls':
             listing = {'machines': [{'name': name, 'state': state} for name, state in self.machines.items()]}
-            return subprocess.CompletedProcess(command, 0, json.dumps(listing).encode(), b'')
+            return await self.reply(stdin, 0, json.dumps(listing))
         name = args[args.index('--name') + 1]
         if action in self.failures:
-            return self.error(command, *self.failures[action])
+            return await self.error(stdin, *self.failures[action])
         if action == 'create':
             self.created.append(args)
             self.machines[name] = 'stopped'
         elif name not in self.machines:
-            return self.error(command, 'NOT_FOUND', f'machine not found: {name}')
+            return await self.error(stdin, 'NOT_FOUND', f'machine not found: {name}')
         elif action in ('start', 'resume', 'stop'):
             self.machines[name] = 'stopped' if action == 'stop' else 'running'
         elif action == 'delete':
             del self.machines[name]
         elif self.machines[name] != 'running':
-            return self.error(command, 'SMOLVM_ERROR', f'machine {name} is not running')
+            return await self.error(stdin, 'SMOLVM_ERROR', f'machine {name} is not running')
         else:
-            assert action == 'exec' and input is not None
-            self.scripts.append(input.decode())
-            program = args[args.index('--') + 1 :]
+            assert action == 'exec' and stdin == subprocess.PIPE
+            assert args[args.index('--') + 1 :] == ['/bin/sh', '-s']
             workdir = args[args.index('--workdir') + 1] if '--workdir' in args else None
+            script = self.scratch / f'{len(self.commands):04}.sh'
             # A VM's commands get only what smolvm gives them, not this machine's environment.
             env = {'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']}
-            return await anyio.run_process(program, input=input, cwd=workdir, env=env, check=False)
-        return subprocess.CompletedProcess(command, 0, b'', b'')
+            # `sh -s`, keeping what it read; `exec` keeps one process, which a timeout kills with the command.
+            run = ['sh', '-c', 'cat > "$1"; exec sh "$1"', 'sh', str(script)]
+            return await anyio.open_process(run, stdin=stdin, cwd=workdir, env=env)
+        return await self.reply(stdin, 0)
 
-    def error(self, command: list[str], code: str, message: str) -> subprocess.CompletedProcess[bytes]:
-        report = json.dumps({'error': {'code': code, 'message': message}}).encode()
-        return subprocess.CompletedProcess(command, 1, b'', b'Error: failed\n' + report + b'\n')
+    async def reply(self, stdin: int, code: int, stdout: str = '', stderr: str = '') -> 'anyio.abc.Process':
+        emit = ['sh', '-c', 'printf %s "$1"; printf %s "$2" >&2; exit "$3"', 'sh', stdout, stderr, str(code)]
+        return await anyio.open_process(emit, stdin=stdin)
+
+    async def error(self, stdin: int, code: str, message: str) -> 'anyio.abc.Process':
+        report = json.dumps({'error': {'code': code, 'message': message}})
+        return await self.reply(stdin, 1, stderr=f'Error: failed\n{report}')
 
 
 LocalEngine = Literal['smolmachines', 'smolvm CLI']
 
 
 @pytest.fixture
-def fake_smolvm(monkeypatch: pytest.MonkeyPatch) -> FakeSmolvm:
-    fake = FakeSmolvm()
-    monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.run_process', fake.run_process)
+def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeSmolvm:
+    """The fake `smolvm`, in an absolute `PATH` directory as `smolvm` and, for a Windows host, `smolvm.exe`."""
+    scratch = tmp_path / 'smolvm-scripts'
+    scratch.mkdir()
+    fake = FakeSmolvm(scratch)
+    monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.open_process', fake.open_process)
+    monkeypatch.setenv('PATH', f'{put_smolvm_in(tmp_path / "smolvm-bin")}{os.pathsep}{os.environ["PATH"]}')
     return fake
+
+
+def put_smolvm_in(directory: Path) -> Path:
+    directory.mkdir()
+    for name in ('smolvm', 'smolvm.exe'):
+        (directory / name).touch(mode=0o755)
+    return directory
 
 
 @pytest.fixture(
@@ -2318,10 +2342,8 @@ def local_host(
         control = FakeSmol(tmp_path.resolve())
         for module in ('_backend', '_capability'):
             monkeypatch.setattr(f'pydantic_ai_harness.smol_sandbox.{module}.smol', control.module)
-        monkeypatch.setattr(local_provider.shutil, 'which', not_installed)
     else:
         monkeypatch.setattr(local_provider, 'find_spec', not_installed)
-        monkeypatch.setattr(local_provider.shutil, 'which', installed)
     # The fakes' commands get only the environment they are sent; a real VM has a home of its own.
     monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
     return engine
@@ -2352,17 +2374,21 @@ class TestLocal:
             await plugin.command(['smolvm'])
 
     @pytest.mark.parametrize('platform', ['linux', 'darwin', 'win32'])
-    def test_missing(self, platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing(self, platform: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(local_provider.sys, 'platform', platform)
         provider = local_provider.LocalProvider()
+        empty = tmp_path / 'empty'
+        empty.mkdir()
+        monkeypatch.setenv('PATH', str(empty))
         # Either engine will do, and neither needs a key.
         monkeypatch.setattr(local_provider, 'find_spec', installed)
-        monkeypatch.setattr(local_provider.shutil, 'which', not_installed)
         assert provider.missing() is None
         monkeypatch.setattr(local_provider, 'find_spec', not_installed)
-        monkeypatch.setattr(local_provider.shutil, 'which', installed)
+        monkeypatch.setenv('PATH', f'{empty}{os.pathsep}{put_smolvm_in(tmp_path / "bin")}')
         assert provider.missing() is None
-        monkeypatch.setattr(local_provider.shutil, 'which', not_installed)
+        # Never one in the current directory, such as a checkout's, nor on a relative `PATH` entry.
+        monkeypatch.chdir(tmp_path / 'bin')
+        monkeypatch.setenv('PATH', f'.{os.pathsep}{empty}')
         assert provider.missing() == (
             'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
             'into a folder on PATH. It needs the Windows Hypervisor Platform.'
@@ -2430,7 +2456,6 @@ def windows(monkeypatch: pytest.MonkeyPatch, fake_smolvm: FakeSmolvm) -> FakeSmo
     """A Windows host, where `/sandbox local` drives the `smolvm` CLI."""
     monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
     monkeypatch.setattr(local_provider, 'find_spec', not_installed)
-    monkeypatch.setattr(local_provider.shutil, 'which', installed)
     monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
     return fake_smolvm
 
@@ -2541,13 +2566,23 @@ class TestLocalCli:
         assert ref.id in windows.machines
 
     async def test_without_smolvm(self, windows: FakeSmolvm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def missing(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-            raise FileNotFoundError(command[0])
-
-        monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.run_process', missing)
+        # Never one in the current directory, such as a checkout's, nor on a relative `PATH` entry: Windows would run it.
+        monkeypatch.chdir(put_smolvm_in(tmp_path / 'checkout-bin'))
+        monkeypatch.setenv('PATH', f'.{os.pathsep}{tmp_path / "nowhere"}')
         provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
-        with pytest.raises(WorkspaceUnavailableError, match='smolvm was not found'):
+        with pytest.raises(WorkspaceUnavailableError, match='smolvm was not found on PATH'):
             await provider.create(github=None)
+        assert windows.commands == []
+
+    async def test_output_limit(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=None)
+        # Killed once its output passes 10 MiB, rather than held in memory however much it prints.
+        with pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as raised:
+            await backend.run(['yes'])
+        assert raised.value.stdout.startswith('y\ny\n')
+        assert (await backend.run(['true'])).exit_code == 0
+        await provider.delete(ref)
 
     def test_only_its_own_vms(self, windows: FakeSmolvm) -> None:
         # A conversation's history could otherwise open any VM of this user, such as one with this machine's folders.
