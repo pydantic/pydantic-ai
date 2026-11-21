@@ -142,6 +142,7 @@ from .. import (
 )
 from .._decode_errors import check_json_response, map_decode_errors
 from .._history_digest import Hasher, continuation_digest, history_hasher
+from .._prompt_cache import instruction_cache_boundaries
 from .._sdk_retries import with_max_retries
 from .._tool_call_ids import stored_tool_call_id
 from .._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -1511,7 +1512,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-        if self._should_relocate_cached_instructions(
+        if self._should_relocate_instructions(
             model_settings,
             profile,
             system_prompt_role,
@@ -1519,11 +1520,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             openai_messages,
             uses_server_side_state=uses_server_side_state,
         ):
-            instructions = self._relocate_cached_instructions(
+            instructions = self._relocate_instructions(
                 instructions,
                 openai_messages,
                 self._get_instruction_parts(messages, wire_request_parameters) or [],
                 system_prompt_role,
+                add_breakpoint=self._adds_instruction_breakpoint(model_settings, profile),
+                stable_only=profile.get('openai_responses_stable_instructions_as_input', False),
             )
 
         text, instructions = self._responses_text_config(
@@ -1620,7 +1623,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return model_request_parameters
 
     @staticmethod
-    def _should_relocate_cached_instructions(
+    def _adds_instruction_breakpoint(model_settings: OpenAIResponsesModelSettings, profile: OpenAIModelProfile) -> bool:
+        """Whether `openai_cache_instructions` asks for a cache breakpoint after the instructions this model accepts."""
+        return bool(
+            model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+        )
+
+    def _should_relocate_instructions(
+        self,
         model_settings: OpenAIResponsesModelSettings,
         profile: OpenAIModelProfile,
         system_prompt_role: OpenAISystemPromptRole,
@@ -1629,10 +1640,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         uses_server_side_state: bool,
     ) -> bool:
-        """Whether `openai_cache_instructions` can move the instructions into the input to mark a cache breakpoint."""
+        """Whether the instructions move into the input, to be cached or to carry a cache breakpoint after them."""
         return bool(
-            model_settings.get('openai_cache_instructions')
-            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            (
+                self._adds_instruction_breakpoint(model_settings, profile)
+                or profile.get('openai_responses_stable_instructions_as_input', False)
+            )
             # A `'user'` system prompt role can't be told apart from a real user turn.
             and system_prompt_role != 'user'
             # Instructions relocated into a stored response's input would be replayed to any request
@@ -1670,7 +1683,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
-            # `openai_cache_instructions` may already have moved them into the input messages.
+            # `_relocate_instructions` may already have moved them into the input messages.
             if isinstance(instructions, str):
                 system_prompt_count = leading_system_message_count(openai_messages, system_prompt_role)
                 openai_messages.insert(
@@ -1685,16 +1698,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return text, instructions
 
     @staticmethod
-    def _relocate_cached_instructions(
+    def _relocate_instructions(
         instructions: str | Omit,
         openai_messages: list[responses.ResponseInputItemParam],
         instruction_parts: list[InstructionPart],
         system_prompt_role: OpenAISystemPromptRole,
+        *,
+        add_breakpoint: bool,
+        stable_only: bool,
     ) -> str | Omit:
-        """Move the instructions into leading input messages and mark a cache breakpoint after the last static one.
+        """Move the instructions into leading input messages, and mark a cache breakpoint after the last static one.
 
-        The top-level `instructions` field cannot carry a breakpoint. Mutates `openai_messages` and
-        returns what's left of the top-level `instructions`.
+        The top-level `instructions` field cannot carry a breakpoint. With `stable_only`, the parts that rewrite the
+        prefix when they change stay in the top-level field, which the model reads after the input. Mutates
+        `openai_messages` and returns what's left of the top-level `instructions`.
         """
         # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
         # apart from `leading_system_message_count`: checking `type` there would also move where
@@ -1707,15 +1724,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ),
             len(openai_messages),
         )
-        breakpoint_index = system_prompt_count + cacheable_instruction_count(instruction_parts) - 1
-        # With nothing static to cache, the instructions stay in the top-level field.
-        if breakpoint_index >= 0:
-            if instruction_parts:
-                openai_messages[system_prompt_count:system_prompt_count] = [
-                    responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
-                    for part in instruction_parts
-                ]
-                instructions = OMIT
+        if stable_only:
+            ordered = InstructionPart.sorted(instruction_parts)
+            _, stable_count = instruction_cache_boundaries(ordered)
+            moved, kept = ordered[:stable_count], ordered[stable_count:]
+        else:
+            moved, kept = instruction_parts, []
+        breakpoint_index = system_prompt_count + cacheable_instruction_count(moved) - 1
+        # For the breakpoint alone, they move only when there's a static instruction or a system prompt to put it on.
+        if moved and (stable_only or breakpoint_index >= 0):
+            openai_messages[system_prompt_count:system_prompt_count] = [
+                responses.EasyInputMessageParam(role=system_prompt_role, content=part.content) for part in moved
+            ]
+            instructions = InstructionPart.join(kept) or OMIT
+        # With nothing static to cache, there's no breakpoint.
+        if add_breakpoint and breakpoint_index >= 0:
             target = cast(responses.EasyInputMessageParam, openai_messages[breakpoint_index])
             # A system prompt's content is already a list when a leading `CachePoint` attached its breakpoint there.
             content: str | responses.ResponseInputMessageContentListParam = target['content']

@@ -26,7 +26,7 @@ import pytest
 from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
-from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
+from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -1703,6 +1703,200 @@ async def test_openai_responses_cache_instructions_relocated_once_per_request_in
     )
 
 
+# ===== GPT-6.2: stable instructions as leading input messages =====
+
+
+def _support_agent(model: OpenAIResponsesModel, settings: OpenAIResponsesModelSettings | None = None) -> Agent[str]:
+    """Static instructions, an `on_change='append'` block and a dynamic instruction that rewrites the prefix."""
+    agent = Agent(model, instructions='Support policies.', deps_type=str, model_settings=settings)
+
+    @agent.instructions(name='queue', on_change='append')
+    def queue(ctx: RunContext[str]) -> str:
+        return f'Queue: {ctx.deps}.'
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    return agent
+
+
+@pytest.mark.parametrize(
+    'model_name, expected',
+    [
+        pytest.param(
+            'gpt-6.2-sol',
+            snapshot(
+                {
+                    'instructions': 'Today is 2026-08-18.',
+                    'input': [
+                        {'role': 'system', 'content': 'Support policies.'},
+                        {
+                            'role': 'system',
+                            'content': """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                        },
+                        {'role': 'user', 'content': 'Where is order 1234?'},
+                    ],
+                }
+            ),
+            id='gpt-6.2-sol',
+        ),
+        pytest.param(
+            'gpt-6.1-sol',
+            snapshot(
+                {
+                    'instructions': """\
+Support policies.
+
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Today is 2026-08-18.\
+""",
+                    'input': [{'role': 'user', 'content': 'Where is order 1234?'}],
+                }
+            ),
+            id='gpt-6.1-sol',
+        ),
+    ],
+)
+async def test_openai_responses_stable_instructions_as_input(
+    allow_model_requests: None, model_name: str, expected: dict[str, Any]
+):
+    """GPT-6.2 puts the top-level `instructions` after `input` and never caches them, so the static instructions
+    and the append blocks lead the input instead, and the instruction that rewrites the prefix stays in the field.
+    Earlier models keep all of them in the field, ahead of the input."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await _support_agent(model).run('Where is order 1234?', deps='open')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert {'instructions': request.get('instructions'), 'input': request['input']} == expected
+
+
+async def test_openai_responses_stable_instructions_as_input_with_cache_instructions(allow_model_requests: None):
+    """With `openai_cache_instructions` on GPT-6.2, the breakpoint goes after the static instructions as usual, and
+    the instruction that rewrites the prefix still stays in the top-level field, where its changes leave the cached
+    conversation intact."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    await _support_agent(model, settings).run('Where is order 1234?', deps='open')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert {'instructions': request.get('instructions'), 'input': request['input']} == snapshot(
+        {
+            'instructions': 'Today is 2026-08-18.',
+            'input': [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {
+                    'role': 'system',
+                    'content': """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+            ],
+        }
+    )
+
+
+async def test_openai_responses_stable_instructions_as_input_without_stable_instructions(allow_model_requests: None):
+    """With only an instruction that rewrites the prefix, there's nothing to move, so it stays in the field."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Today is 2026-08-18.'
+    assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_stable_instructions_as_input_append_block_without_breakpoint(
+    allow_model_requests: None,
+):
+    """An append block moves on GPT-6.2 even when `openai_cache_instructions` has no static instruction or system
+    prompt to put its breakpoint on."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, deps_type=str, model_settings=settings)
+
+    @agent.instructions(name='queue', on_change='append')
+    def queue(ctx: RunContext[str]) -> str:
+        return f'Queue: {ctx.deps}.'
+
+    await agent.run('Where is order 1234?', deps='open')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param(OpenAIResponsesModelSettings(openai_previous_response_id='auto'), id='previous_response_id'),
+        pytest.param(OpenAIResponsesModelSettings(openai_conversation_id='conv_123'), id='conversation_id'),
+    ],
+)
+async def test_openai_responses_stable_instructions_stay_top_level_with_server_side_state(
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings
+):
+    """A stored response keeps its input and a continuing request inherits it, so with server-side state the
+    instructions stay in the top-level field, which isn't carried over."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert [request['instructions'] for request in requests] == ['Support policies.', 'Support policies.']
+    assert [item for request in requests for item in request['input'] if item.get('role') == 'system'] == []
+
+
 async def test_openai_chat_cache_instructions_with_cache_point(allow_model_requests: None):
     """Both breakpoints are sent; OpenAI writes the last four, so the instruction one is dropped first."""
     mock_client = MockOpenAI.create_mock(chat_completion())
@@ -2310,6 +2504,47 @@ async def test_openai_responses_cache_instructions_e2e(
         assert body['input'][0]['role'] == system_prompt_role
         assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
     _assert_instruction_prefix_shared(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('stable_instructions_as_input', [True, False], ids=['leading-input', 'top-level'])
+async def test_openai_responses_stable_instructions_as_input_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, stable_instructions_as_input: bool
+):
+    """On GPT-6.2, static instructions leading the input are cached with the conversation, also while a dynamic
+    instruction in the top-level field changes. In the top-level field, OpenAI puts them after the input and the next
+    request reads none of them from the cache."""
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol',
+        provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client),
+        profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=stable_instructions_as_input),
+    )
+    agent = Agent(model, instructions=_STABLE_PREFIX)
+    positions = iter(['Queue position: 17.', 'Queue position: 12.'])
+
+    @agent.instructions
+    def queue_position() -> str:
+        return next(positions)
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.')
+    second = await agent.run(
+        'Which aisle holds entry 0101? Reply with just the number.', message_history=first.all_messages()
+    )
+
+    first_body, second_body = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert [first_body['instructions'], second_body['instructions']] == (
+        ['Queue position: 17.', 'Queue position: 12.']
+        if stable_instructions_as_input
+        else [f'{_STABLE_PREFIX}\n\nQueue position: 17.', f'{_STABLE_PREFIX}\n\nQueue position: 12.']
+    )
+    assert second_body['input'][: len(first_body['input'])] == first_body['input']
+    if stable_instructions_as_input:
+        assert first_body['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
+        # The second request reads back everything the first wrote: its whole input, ahead of the top-level field.
+        assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
+        assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
+    else:
+        assert second.usage.cache_read_tokens == 0
 
 
 # ===== Prompt cache diagnostics =====
