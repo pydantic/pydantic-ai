@@ -1,29 +1,50 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any, cast
+from collections.abc import Sequence
+from pathlib import Path
 
-import pytest
-
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.coder._capability import _CoderGuidance  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness.coder._instructions import coder_instructions
-from pydantic_ai_harness.coder._model_guidance import (
-    MISREAD_CLASSIFY,
-    PURE_FUNCTIONS,
-    STRUCTURED_HANDOFF,
+from pydantic_ai_harness.coder import (
+    Autonomy,
+    Coder,
     ModelGuidance,
     is_openai_family,
     resolve_model_guidance,
 )
 
-pytestmark = pytest.mark.anyio
-
-_MISREAD = 'If inputs seem inconsistent or goals impossible, assume you misread.'
-_MISREAD_MAX_MARKER = 'A result that leaves a stated criterion unmet means your interpretation is likely wrong'
+_MISREAD = (
+    'If inputs seem inconsistent or goals impossible, assume you misread. '
+    'Re-read, and try other interpretations before settling.'
+)
+_MISREAD_MAX = (
+    'If inputs seem inconsistent or a criterion impossible (no feasible plan, matching item, or reachable target), '
+    'assume you misread. Re-read the task and inputs, and try interpretations meeting every stated criterion '
+    'before settling for a partial answer. A result that leaves a stated criterion unmet means your '
+    'interpretation is likely wrong, not that the answer is "none".'
+)
+_MISREAD_CLASSIFY = (
+    'If inputs look inconsistent, first check whether the task or its rules classify them '
+    '(for example as malformed, conflicting, or rejected) and apply that rule. '
+    'Only when no rule covers them, assume you misread: re-read, and try other interpretations before settling.'
+)
+_STRUCTURED_HANDOFF = (
+    'When asked for notes or a handoff, use headed sections: each decision and why, '
+    'the exact verification commands with their observed results, the remaining risk, '
+    'and what was out of scope or not done.'
+)
+_PURE_FUNCTIONS = (
+    'When a task says a function must derive its answer only from its arguments '
+    '(no files, commands, network, or mutation), write it as plain self-contained Python: dicts, lists, loops, '
+    'and helper functions. Import only the basic standard modules it needs (re, math, json, copy, heapq, '
+    'bisect, datetime); no typing, collections.abc, __future__, or dataclasses imports. '
+    "Don't define classes or generators (yield), and don't call iter(), id(), divmod(), hasattr(), or object()."
+)
 
 
 class _Named(TestModel):
@@ -41,13 +62,34 @@ class _Named(TestModel):
         return self._name
 
 
-def _guidance(coder: Coder[Any]) -> _CoderGuidance[Any]:
-    return next(c for c in coder.capabilities if isinstance(c, _CoderGuidance))
+class _NamedFunction(FunctionModel):
+    def __init__(self, system: str, name: str, seen: list[str]) -> None:
+        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.instructions or '')
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        super().__init__(respond, model_name=name)
+        self._system = system
 
 
-async def _run_guidance(coder: Coder[Any], system: str, name: str) -> str:
-    run = cast(Any, await _guidance(coder).for_run(cast(Any, SimpleNamespace(model=_Named(system, name)))))
-    return run.guidance
+async def _run_guidance(
+    tmp_path: Path,
+    *,
+    system: str,
+    name: str,
+    autonomy: Autonomy = 'max',
+    model_guidance: Sequence[ModelGuidance] | None = None,
+) -> str:
+    seen: list[str] = []
+    agent = Agent[object](
+        _NamedFunction(system, name, seen),
+        capabilities=[
+            LocalWorkspace(tmp_path),
+            Coder[object](autonomy=autonomy, repo_context=False, model_guidance=model_guidance),
+        ],
+    )
+    await agent.run('go')
+    return seen[0]
 
 
 def test_resolve_prefers_model_glob_over_provider():
@@ -66,6 +108,7 @@ def test_resolve_matches_openai_family_on_gateways():
     assert resolve_model_guidance(table, _Named('openrouter', 'openai/gpt-6.2-sol')) is row
     assert resolve_model_guidance(table, _Named('azure', 'gpt-4o')) is row
     assert resolve_model_guidance(table, _Named('azure', 'o3-mini')) is row
+    assert resolve_model_guidance(table, _Named('azure', 'chatgpt-4o-latest')) is row
     assert resolve_model_guidance(table, _Named('openrouter', 'anthropic/claude-opus-4')) is None
     assert resolve_model_guidance(table, _Named('anthropic', 'claude-opus-4')) is None
 
@@ -80,6 +123,8 @@ def test_openai_family_is_narrow():
     assert is_openai_family(_Named('openai', 'gpt-6.2-sol'))
     assert is_openai_family(_Named('openrouter', 'openai/gpt-6.2-sol'))
     assert is_openai_family(_Named('azure', 'gpt-4o'))
+    assert is_openai_family(_Named('azure', 'chatgpt-4o-latest'))
+    assert is_openai_family(_Named('azure', 'o3-mini'))
     assert not is_openai_family(_Named('openrouter', 'anthropic/claude-opus-4'))
     assert not is_openai_family(_Named('groq', 'llama-3.1-70b'))
     assert not is_openai_family(_Named('ollama', 'olmo2'))
@@ -98,56 +143,54 @@ def test_resolve_unwraps_fallback_models():
     assert resolve_model_guidance((row,), other) is None
 
 
-def test_row_replaces_max_misread_and_adds_sentences():
-    base, base_delegate = coder_instructions(autonomy='max', delegate_tool=None)
-    row = ModelGuidance('openai', replace={'misread': MISREAD_CLASSIFY}, add=(STRUCTURED_HANDOFF, PURE_FUNCTIONS))
-    text, delegate = coder_instructions(autonomy='max', delegate_tool=None, model_guidance=row)
-    for before, after in ((base, text), (base_delegate, delegate)):
-        assert _MISREAD_MAX_MARKER in before and _MISREAD_MAX_MARKER not in after
-        assert MISREAD_CLASSIFY in after and STRUCTURED_HANDOFF in after and PURE_FUNCTIONS in after
-        assert after.endswith(before.rsplit('\n\n', 1)[-1])
+async def test_default_table_applies_only_for_openai_family_at_max(tmp_path: Path):
+    openai_high = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='high')
+    assert _MISREAD in openai_high
+    assert _MISREAD_CLASSIFY not in openai_high
+    assert _STRUCTURED_HANDOFF not in openai_high
+    assert _PURE_FUNCTIONS not in openai_high
+
+    openai_max = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='max')
+    assert _MISREAD_CLASSIFY in openai_max
+    assert _STRUCTURED_HANDOFF in openai_max
+    assert _PURE_FUNCTIONS in openai_max
+    assert _MISREAD_MAX not in openai_max
+
+    anthropic_max = await _run_guidance(tmp_path, system='anthropic', name='claude-opus-4', autonomy='max')
+    assert anthropic_max != openai_max
+    assert _PURE_FUNCTIONS not in anthropic_max
+    assert _MISREAD_MAX in anthropic_max
+
+    gateway_max = await _run_guidance(tmp_path, system='openrouter', name='openai/gpt-6.2-sol', autonomy='max')
+    assert _PURE_FUNCTIONS in gateway_max
+    routed_other = await _run_guidance(tmp_path, system='openrouter', name='anthropic/claude-opus-4', autonomy='max')
+    assert _PURE_FUNCTIONS not in routed_other
+    assert _MISREAD_MAX in routed_other
 
 
-def test_empty_replacement_drops_fragment():
-    text, _ = coder_instructions(
-        autonomy='max', delegate_tool=None, model_guidance=ModelGuidance('openai', replace={'misread': ''})
+async def test_empty_table_disables_default_guidance(tmp_path: Path):
+    text = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='max', model_guidance=())
+    assert _MISREAD_CLASSIFY not in text
+    assert _PURE_FUNCTIONS not in text
+    assert _MISREAD_MAX in text
+
+
+async def test_explicit_table_applies_at_high_autonomy(tmp_path: Path):
+    row = ModelGuidance('openai', replace={'misread': _MISREAD_CLASSIFY}, add=(_STRUCTURED_HANDOFF, _PURE_FUNCTIONS))
+    text = await _run_guidance(tmp_path, system='openai', name='gpt-6.2-sol', autonomy='high', model_guidance=(row,))
+    assert _MISREAD_CLASSIFY in text
+    assert _STRUCTURED_HANDOFF in text
+    assert _PURE_FUNCTIONS in text
+    assert _MISREAD not in text
+
+
+async def test_empty_replacement_drops_max_misread_fragment(tmp_path: Path):
+    text = await _run_guidance(
+        tmp_path,
+        system='openai',
+        name='gpt-6.2-sol',
+        autonomy='max',
+        model_guidance=(ModelGuidance('openai', replace={'misread': ''}),),
     )
     assert 'assume you misread' not in text
-    assert _MISREAD_MAX_MARKER not in text
-
-
-async def test_default_table_applies_only_for_openai_family_at_max():
-    high = _guidance(Coder[Any](autonomy='high'))
-    openai_high = await _run_guidance(Coder[Any](autonomy='high'), 'openai', 'gpt-6.2-sol')
-    assert openai_high == high.guidance
-    assert MISREAD_CLASSIFY not in openai_high
-    assert STRUCTURED_HANDOFF not in openai_high
-    assert PURE_FUNCTIONS not in openai_high
-    assert _MISREAD in openai_high
-
-    max_coder = Coder[Any](autonomy='max')
-    openai_max = await _run_guidance(max_coder, 'openai', 'gpt-6.2-sol')
-    assert openai_max != _guidance(max_coder).guidance
-    assert MISREAD_CLASSIFY in openai_max
-    assert STRUCTURED_HANDOFF in openai_max
-    assert PURE_FUNCTIONS in openai_max
-    assert _MISREAD_MAX_MARKER not in openai_max
-
-    anthropic_max = await _run_guidance(max_coder, 'anthropic', 'claude-opus-4')
-    assert anthropic_max == _guidance(max_coder).guidance
-    assert PURE_FUNCTIONS not in anthropic_max
-    assert _MISREAD_MAX_MARKER in anthropic_max
-
-    gateway_max = await _run_guidance(max_coder, 'openrouter', 'openai/gpt-6.2-sol')
-    assert PURE_FUNCTIONS in gateway_max
-    routed_other = await _run_guidance(max_coder, 'openrouter', 'anthropic/claude-opus-4')
-    assert routed_other == _guidance(max_coder).guidance
-
-
-async def test_empty_table_disables_default_guidance():
-    off = Coder[Any](autonomy='max', model_guidance=())
-    text = await _run_guidance(off, 'openai', 'gpt-6.2-sol')
-    assert text == _guidance(off).guidance
-    assert MISREAD_CLASSIFY not in text
-    assert PURE_FUNCTIONS not in text
-    assert _MISREAD_MAX_MARKER in text
+    assert _MISREAD_MAX not in text
