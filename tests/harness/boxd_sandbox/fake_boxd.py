@@ -453,6 +453,8 @@ class FakeMachines:
     async def delete(self, machine_id: str) -> None:
         owner = self._owner
         owner.check_call()
+        if owner.delete_errors:
+            raise owner.delete_errors.pop(0)
         machine = owner.find(machine_id)
         machine.status = 'destroyed'
         for process in machine.processes:
@@ -536,6 +538,7 @@ class FakeBoxd:
         self.create_errors: list[BoxdError] = []
         self.fork_errors: list[BoxdError] = []
         self.get_errors: list[BaseException] = []
+        self.delete_errors: list[BoxdError] = []
         self.probe_errors: list[BoxdError] = []
         self.start_errors: list[BoxdError] = []
         self.stream_error: BoxdError | None = None
