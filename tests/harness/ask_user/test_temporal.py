@@ -38,6 +38,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import TOOL_NAME, AskUserAnswer, AskUserRequest, AskUserResponse
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
@@ -107,7 +108,7 @@ async def test_a_question_waits_for_the_answer_and_its_answerer_is_not_asked_aga
         handle = await client.start_workflow(
             AskUserWorkflow.run, args=['tidy up'], id=f'ask-user-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
-        with anyio.fail_after(30):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await _handed_on[-1].wait()
         [token] = _tokens
 

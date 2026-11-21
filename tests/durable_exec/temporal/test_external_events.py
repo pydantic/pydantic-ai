@@ -25,6 +25,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 try:
@@ -211,7 +212,7 @@ async def _start(client: Client, task_queue: str) -> WorkflowHandle[Any, str]:
 
 async def _until_asked(handle: WorkflowHandle[Any, str], records: Records) -> str:
     """Wait until `ask` handed the token on and the history recorded it, and return the token."""
-    with anyio.fail_after(30):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         token = await records.receive_token.receive()
     # Temporal answers a query once the workflow task in progress, which ran `ask`, has completed.
     await handle.query('__stack_trace')
@@ -266,7 +267,7 @@ async def test_a_denial_reaches_the_model_without_running_the_tool(
     runner = SandboxedWorkflowRunner(restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__))
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent, runner):
         handle = await _start(client, task_queue)
-        with anyio.fail_after(30):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             token = await records.receive_token.receive()
         await resolve_external_event(client, token, DeferredToolResults(approvals={'call-1': ToolDenied('Not today.')}))
         assert await handle.result() == 'denied: Not today.'
