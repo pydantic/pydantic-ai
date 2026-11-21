@@ -9,6 +9,7 @@ from .agentic import (
     TrajectoryOrder,
 )
 from .common import (
+    Classifier,
     Contains,
     Equals,
     EqualsExpected,
@@ -47,6 +48,7 @@ __all__ = (
     'MaxDuration',
     'LLMJudge',
     'GEval',
+    'Classifier',
     'HasMatchingSpan',
     'OutputConfig',
     # agentic
