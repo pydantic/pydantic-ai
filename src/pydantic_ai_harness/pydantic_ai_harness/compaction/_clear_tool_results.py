@@ -136,19 +136,19 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         pairs = iter_tool_pairs(messages)
         clearable = pairs[: max(0, len(pairs) - self.keep_pairs)]
 
-        clear_return_ids: set[str] = set()
-        clear_input_ids: set[str] = set()
+        clear_return_positions: set[tuple[int, int]] = set()
+        clear_input_positions: set[tuple[int, int]] = set()
         for pair in clearable:
             if pair.tool_name in self.exclude_tools:
                 continue
-            clear_return_ids.add(pair.tool_call_id)
+            clear_return_positions.add(pair.return_position)
             if self.clear_tool_inputs:
-                clear_input_ids.add(pair.tool_call_id)
+                clear_input_positions.add(pair.call_position)
 
-        if not clear_return_ids:
+        if not clear_return_positions:
             return messages
 
-        cleared = rebuild_with_cleared(messages, clear_return_ids, clear_input_ids, self.placeholder)
+        cleared = rebuild_with_cleared(messages, clear_return_positions, clear_input_positions, self.placeholder)
         if self.min_clear_tokens is not None:
             reclaimed = estimate_token_count(messages, self.tokenizer) - estimate_token_count(cleared, self.tokenizer)
             if reclaimed < self.min_clear_tokens:
