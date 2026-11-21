@@ -193,6 +193,45 @@ def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     return file_system
 
 
+def _coder_guidance_texts(
+    *,
+    autonomy: Autonomy,
+    delegate_tool: str | None,
+    extra: str | None,
+    repo_files: Sequence[str] | None,
+    nested_instructions: bool,
+    model_guidance: Sequence[ModelGuidance] | None,
+) -> tuple[str, str, Callable[[AbstractModel], tuple[str, str] | None]]:
+    """Default instruction texts, and a per-run adjustment for the model when a table row matches."""
+    build = partial(
+        coder_instructions,
+        autonomy=autonomy,
+        delegate_tool=delegate_tool,
+        extra=extra,
+        repo_files=repo_files,
+        nested_instructions=nested_instructions,
+    )
+    table = MODEL_GUIDANCE if model_guidance is None else tuple(model_guidance)
+    apply = model_guidance is not None or autonomy == 'max'
+    guidance, delegated = build()
+    return guidance, delegated, partial(_apply_model_guidance, build=build, table=table, apply=apply)
+
+
+def _apply_model_guidance(
+    model: AbstractModel,
+    *,
+    build: Callable[..., tuple[str, str]],
+    table: tuple[ModelGuidance, ...],
+    apply: bool,
+) -> tuple[str, str] | None:
+    if not apply:
+        return None
+    row = resolve_model_guidance(table, model)
+    if row is None:
+        return None
+    return build(model_guidance=row)
+
+
 @dataclass(init=False)
 class Coder(CombinedCapability[AgentDepsT]):
     """Autonomous coding with six tools, delegation, and context management, in the run's workspace.
@@ -287,8 +326,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             if sub_agents
             else None
         )
-        build_instructions = partial(
-            coder_instructions,
+        guidance, delegated_guidance, per_model = _coder_guidance_texts(
             autonomy=autonomy,
             delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
@@ -298,16 +336,8 @@ class Coder(CombinedCapability[AgentDepsT]):
             nested_instructions=bundled_repo_context is not None
             and bundled_repo_context.nested_traversal
             and bundled_repo_context.nested_inject == 'contents',
+            model_guidance=model_guidance,
         )
-        guidance, delegated_guidance = build_instructions()
-        default_table = model_guidance is None
-        table = MODEL_GUIDANCE if default_table else tuple(model_guidance)
-
-        def per_model(model: AbstractModel) -> tuple[str, str] | None:
-            if default_table and autonomy != 'max':
-                return None
-            row = resolve_model_guidance(table, model)
-            return None if row is None else build_instructions(model_guidance=row)
 
         # Naming the directory creates a lazily created sandbox, so it comes only with
         # `RepoContext`, which reads the workspace at run start anyway.
