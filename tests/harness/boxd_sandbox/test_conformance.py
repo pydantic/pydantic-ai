@@ -64,7 +64,7 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         finally:
             try:
                 if backend.ref is not None:
-                    await BoxdSandbox().destroy(backend.ref)
+                    await delete_live_machine(backend.ref)
             finally:
                 await backend.aclose()
 
