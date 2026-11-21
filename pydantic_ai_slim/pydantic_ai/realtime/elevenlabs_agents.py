@@ -1094,7 +1094,7 @@ async def _expect_handshake(ws: ClientConnection, *, timeout: float) -> _Convers
     deadline = time.monotonic() + timeout
     while True:
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
+            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             raise _HandshakeError("timed out waiting for a 'conversation_initiation_metadata' event") from None
         if not isinstance(raw, str):

@@ -473,6 +473,8 @@ print(result.output)
 
 When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response. OpenAI keeps the conversation itself, so it can't be rewritten from the client: changes to the messages before that response, by a [history processor](../message-history.md#processing-message-history) or [compaction](../capabilities/compaction.md) for instance, don't reach the model. Unlike [`openai_previous_response_id`](#referencing-earlier-responses), which falls back to sending the full history, there is no conversation to fall back to without duplicating its items.
 
+OpenAI adds a response to its conversation only once the response completes. If a response's stream drops or is cancelled before then, the next request first lists the conversation's items to check whether OpenAI completed that response anyway, provided the response has output items to look for. If it did, only the input after it is sent. If it didn't, or the response has no output items, the response is sent again, with the messages since the last response the conversation holds, so a tool call it made reaches the conversation together with its result.
+
 When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
 
 ```python {test="skip"}
