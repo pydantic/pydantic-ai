@@ -916,6 +916,30 @@ async def test_steering_returns_the_transcript_to_the_newest_output(key: str) ->
     assert steered == ['steer the draft', 'steer the queue']
 
 
+async def test_ctrl_n_steers_the_oldest_queued_prompt_and_preserves_the_draft() -> None:
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, pipe, _):
+        live.steer = steer
+        for prompt in ('first follow-up', 'second follow-up'):
+            live.buffer.replace(prompt)
+            live.feed('enter')
+        live.buffer.replace('unfinished draft')
+
+        pipe.send_text('\x0e')
+        with anyio.fail_after(2):
+            while not steered:
+                await anyio.sleep(0.01)
+
+        assert steered == ['first follow-up']
+        assert live.queued_messages == ('second follow-up',)
+        assert live.buffer.text == 'unfinished draft'
+
+
 async def test_ctrl_enter_enters_outside_windows() -> None:
     steered: list[str] = []
 

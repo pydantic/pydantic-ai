@@ -246,7 +246,10 @@ class LivePrompt:
         if key != 'escape':
             self._last_escape = None
         if not self._chord(key):
-            self._route(key, data)
+            if key == 'ctrl-n':
+                self.steer_queued()
+            else:
+                self._route(key, data)
         self.paint()
 
     def _route(self, key: str, data: str) -> None:
@@ -587,7 +590,12 @@ class LivePrompt:
             head, glyph = '─ Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
             chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
-            hints = f'| Enter: queue | {chord}: steer ' if self.queued_messages or self.buffer.text.strip() else ''
+            hints = ''
+            if self.queued_messages or self.buffer.text.strip():
+                actions = ['Enter: queue', f'{chord}: steer']
+                if self.queued_messages:
+                    actions.append('Ctrl+N: steer queued')
+                hints = f'| {" | ".join(actions)} '
             title = truncate(f'{head}{glyph} {hints}', width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'

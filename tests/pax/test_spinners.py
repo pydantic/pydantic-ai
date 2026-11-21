@@ -427,9 +427,10 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             live.submit('follow up')
             follow_up, plain = (Text.from_ansi(row).plain for row in live.frame()[:2])
             assert follow_up == 'Follow-up: follow up'
-            assert plain.startswith(hint)
+            queued_hint = hint + '| Ctrl+N: steer queued '
+            assert plain.startswith(queued_hint)
             live.ctrl_enter_steers = True
-            assert Text.from_ansi(live.frame()[1]).plain.startswith(hint.replace('Alt+', 'Ctrl+'))
+            assert Text.from_ansi(live.frame()[1]).plain.startswith(queued_hint.replace('Alt+', 'Ctrl+'))
         else:
             # Too narrow to show the whole frame: nothing is highlighted rather than half a frame.
             assert plain.startswith('─ Working') and accent not in title
