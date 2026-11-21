@@ -4012,6 +4012,40 @@ async def test_prefect_durability_allows_overridden_toolsets_outside_flow() -> N
     assert result.output == 'Echo: Hello outside'
 
 
+async def test_prefect_durability_override_capabilities_follow_the_per_run_rules() -> None:
+    """Stacking keeps the bound `PrefectDurability`, and a flow treats what the override adds like a per-run capability.
+
+    A hook-only capability runs inside the flow, and one that contributes an executing toolset is rejected there. A list
+    without the bound `PrefectDurability` is refused wherever the override is entered, as Prefect carries an override
+    entered outside a flow into it.
+    """
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            events.append('before_run')
+
+    agent = Agent(_durability_fn_model, name='durability_override_capabilities', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, RecordingCapability()]):
+        assert await run_agent() == snapshot('Echo: Hello')
+    assert events == ['before_run']
+
+    with agent.override(
+        capabilities=[*agent.root_capability.capabilities, Toolset(FunctionToolset(id='override_added'))]
+    ):
+        with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime'):
+            await run_agent()
+
+    with pytest.raises(UserError, match='holds the bound `PrefectDurability`'):
+        with agent.override(capabilities=[RecordingCapability()]):
+            pass
+
+
 async def test_prefect_durability_rejects_runtime_toolset_reusing_registered_id() -> None:
     agent = Agent(
         _durability_fn_model,
