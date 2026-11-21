@@ -314,11 +314,12 @@ async def _cli(action: str, *args: str, stdin: bytes | None = None) -> subproces
         nonlocal size
         assert stream is not None
         async for chunk in stream:
-            size += len(chunk)
-            chunks.append(chunk)
-            if size > _MAX_OUTPUT_BYTES:
-                process.kill()
-                return
+            # Past the cap the CLI is killed, and the rest read and dropped: a pipe left unread is never closed.
+            if size <= _MAX_OUTPUT_BYTES:
+                size += len(chunk)
+                chunks.append(chunk)
+                if size > _MAX_OUTPUT_BYTES:
+                    process.kill()
 
     try:
         async with anyio.create_task_group() as tasks:
