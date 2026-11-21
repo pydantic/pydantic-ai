@@ -1,7 +1,7 @@
 # Coder
 
 `Coder` gives a Pydantic AI agent tools and guidance for investigating, editing, and testing a codebase.
-It works in the run's workspace, on this machine or in a sandbox. It is a regular combined capability made from [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/), [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/), [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/), and the [context management](https://pydantic.dev/docs/ai/harness/compaction/) capabilities, so you can use it whole or take it apart.
+It works in the run's workspace, on this machine or in a sandbox. It is a regular combined capability made from [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/), [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/), [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/), and the [context management](https://pydantic.dev/docs/ai/harness/compaction/) capabilities, so you can use it whole or take it apart. [Build your own coding agent in Python](https://pydantic.dev/docs/ai/guides/build-your-own-coding-agent/) takes it apart step by step and runs the result in a terminal, an editor, a web UI, and CI.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
