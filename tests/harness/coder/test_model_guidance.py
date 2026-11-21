@@ -243,6 +243,22 @@ async def test_default_table_unwraps_wrapper_and_fallback_models(tmp_path: Path)
     )
     assert _ENVIRONMENT_CONSTRAINTS not in second
 
+    wrapped_first = await _run_guidance(
+        tmp_path,
+        system='openai',
+        name='gpt-6.2-sol',
+        wrap=lambda model: WrapperModel(FallbackModel(model, _NamedFunction('anthropic', 'claude-opus-4', []))),
+    )
+    assert _ENVIRONMENT_CONSTRAINTS in wrapped_first
+
+    wrapped_second = await _run_guidance(
+        tmp_path,
+        system='anthropic',
+        name='claude-opus-4',
+        wrap=lambda model: WrapperModel(FallbackModel(model, _NamedFunction('openai', 'gpt-6.2-sol', []))),
+    )
+    assert _ENVIRONMENT_CONSTRAINTS not in wrapped_second
+
 
 async def test_default_table_adjustments_reach_delegate_guidance(tmp_path: Path):
     """A matching OpenAI max-autonomy run also applies the row to the delegate prompt; no provider request."""

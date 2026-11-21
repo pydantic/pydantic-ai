@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.wrapper import WrapperModel
 
 Fragment = Literal['misread']
 """Default fragments a row may replace. An empty replacement drops the fragment."""
@@ -90,6 +91,8 @@ def is_openai_family(model: AbstractModel) -> bool:
 
 
 def _unwrap_model(model: AbstractModel) -> AbstractModel:
+    if isinstance(model, WrapperModel):
+        return _unwrap_model(model.wrapped)
     if isinstance(model, FallbackModel):
         return _unwrap_model(model.models[0])
     return model
@@ -112,8 +115,8 @@ def resolve_model_guidance(table: Sequence[ModelGuidance], model: AbstractModel)
     """The most specific row matching `model`, or `None`.
 
     A row with a model glob beats a provider-only row. If several rows have the same specificity,
-    the first one wins. Wrapper models already report the wrapped model's `system` and `model_name`.
-    Fallback models are resolved against their first constituent.
+    the first one wins. Wrapper models are unwrapped before lookup. Fallback models are resolved
+    against their first constituent, including when a wrapper sits around the fallback.
     """
     model = _unwrap_model(model)
     best: ModelGuidance | None = None

@@ -256,7 +256,7 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 | `'low'` | Proposes a plan and waits for approval before editing. |
 | `'medium'` | Works until done, asking when a choice really matters. |
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
-| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. OpenAI-family models also get the default [model-guidance](#model-guidance) adjustments. |
+| `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. For OpenAI-family models, the default [model-guidance](#model-guidance) adjustments replace the misread behavior described here and add two sentences. |
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
 or running commands if it ignores the sentence. To require approval before writes or commands, add
@@ -298,7 +298,8 @@ by `:` and a glob over `Model.model_name` (`'openai:gpt-6.2-*'`). A row with a m
 provider-only row. If several rows have the same specificity, the first one wins. The `'openai'`
 match key means the OpenAI family above, not only the `openai` provider; every other provider key
 compares exactly against `Model.system`. A model glob is tried against the full name and the last
-`/` segment.
+`/` segment. A `FallbackModel` is resolved against its first constituent, so an OpenAI-first
+fallback gets the OpenAI-family row for the whole run, and an Anthropic-first fallback never does.
 
 ## Tool argument repair
 
