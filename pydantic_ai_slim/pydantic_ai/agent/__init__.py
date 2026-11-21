@@ -961,6 +961,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
+        output_type: None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -987,6 +988,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
+        output_type: None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1065,7 +1067,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
+        output_type: OutputSpec[Any] | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1097,7 +1099,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
             model: Override the model from the spec.
-            output_type: The type of the output data, defaults to `str`.
+            output_type: The type of the output data, overrides spec `output_schema` if provided.
+                Without either, the output is `str`.
             instructions: Instructions for the agent.
             system_prompt: Static system prompts.
             name: The agent name, overrides spec `name` if provided.
@@ -1123,7 +1126,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validated_spec, template_context = _validate_spec(spec, deps_type)
 
         effective_output_type: OutputSpec[Any]
-        if output_type is not str:
+        if output_type is not None:
             effective_output_type = output_type
         elif validated_spec.output_schema is not None:
             effective_output_type = StructuredDict(validated_spec.output_schema)
@@ -1176,6 +1179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
+        output_type: None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1203,6 +1207,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
+        output_type: None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1284,7 +1289,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
+        output_type: OutputSpec[Any] | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1314,10 +1319,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec = AgentSpec.from_file(path, fmt=fmt)
         agent = cls.from_spec(
             spec,
+            output_type=output_type,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
             model=model,
-            output_type=output_type,
             instructions=instructions,
             system_prompt=system_prompt,
             name=name,
