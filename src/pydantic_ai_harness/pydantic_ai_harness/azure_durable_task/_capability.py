@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -26,7 +26,7 @@ from pydantic_ai.durable_exec import (
     conversation_id_from_run_id,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
@@ -85,6 +85,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         event_options: RetryPolicy | None = None,
         capability_options: RetryPolicy | None = None,
         resolve_tool_options: ToolOptionsResolver | None = None,
+        continue_as_new: Callable[[RunContext[AgentDepsT]], Awaitable[None] | None] | None = None,
     ) -> None:
         """Configure worker-side models, event handling and native activity retry policies.
 
@@ -102,6 +103,10 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
                 `False` runs a function tool inline. Inline tools must be deterministic and I/O-free.
                 Function tools can also opt out with `metadata={'azure_durable_task': False}`.
                 Keep native policies out of JSON-serialized tool metadata.
+            continue_as_new: Sync or async callback before each model request in an orchestration.
+                Return to defer, or raise `ContinueAsNew(input)` so the user orchestrator can call
+                the SDK's `continue_as_new`. Choose a deterministic threshold; this SDK has no
+                server-suggestion API. `None` disables the callback.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
 
@@ -112,6 +117,7 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
             capability=capability_options,
             resolve_tool=partial(_resolve_options, tool_options, resolve_tool_options),
         )
+        self.continue_as_new = continue_as_new
         self._backend: AzureDurableTaskOperationBackend | None = None
         # AbstractAgent.deps_type erases its generic parameter; the runtime schema validates it in activities.
         self._deps_adapter: TypeAdapter[Any] | None = None
@@ -149,6 +155,20 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         Register your orchestrators directly with the SDK worker.
         """
         return self.get_durable_operation_backend().worker_scope(worker)
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # Continuation only acts inside an orchestration, like the base hooks it extends.
+        return self._realtime_uncalled_hooks_overriding(AzureDurableTaskDurability)
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Offer the application a settled continuation boundary, as Temporal does."""
+        if self.in_durable_context and self.continue_as_new is not None:
+            pending = self.continue_as_new(ctx)
+            if pending is not None:
+                await pending
+        return await super().before_model_request(ctx, request_context)
 
     @asynccontextmanager
     async def _activity_scope(self, deps_input: JsonValue) -> AsyncGenerator[None]:
