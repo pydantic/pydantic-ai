@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from collections.abc import Generator, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import date, time, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -111,6 +112,15 @@ class _ToXml:
     _element_names: dict[str, str] = field(default_factory=dict[str, str])
     # flag for parsing dataclasses and Pydantic models once
     _is_info_extracted: bool = False
+    # ids of container objects currently being traversed, so a cyclic reference in the data
+    # doesn't recurse forever when collecting metadata (`model_dump` already rejects cycles,
+    # but the metadata walk reads the live object graph and so must guard itself)
+    _visited: set[int] = field(default_factory=set[int])
+    # ids of containers on the current value-walk path. Unlike the metadata walk (which skips a
+    # repeated container), the value walk cannot skip a cycle silently — that would emit a
+    # truncated XML tree and hide the error — so a repeated id here raises the same `ValueError`
+    # that `model_dump(mode='json')` produces for a cyclic BaseModel.
+    _visited_values: set[int] = field(default_factory=set[int])
     _FIELD_ATTRIBUTES = ('title', 'description')
 
     def to_xml(self, tag: str | None = None) -> ElementTree.Element:
@@ -143,7 +153,16 @@ class _ToXml:
         self._init_structure_info()
         if tag is None:
             element.tag = value.__class__.__name__
-        self._mapping_to_xml(element, asdict(value), path)
+        # Convert shallowly (rather than via `asdict`, which recurses to full depth in a
+        # single call) so each nested value flows back through `_to_xml`, where the value
+        # walk's own cycle guard can detect a cyclic dataclass. `asdict` raises a bare
+        # `RecursionError` on a cycle; here we raise the same `ValueError` that
+        # `model_dump(mode='json')` produces for a cyclic BaseModel, keeping both
+        # container kinds consistent.
+        with self._enter_value_container(value):
+            self._mapping_to_xml(
+                element, {f.name: getattr(value, f.name) for f in fields(value)}, path
+            )
 
     def _model_to_xml(self, element: ElementTree.Element, value: BaseModel, path: str, tag: str | None) -> None:
         self._init_structure_info()
@@ -213,7 +232,7 @@ class _ToXml:
                 child.set('key', key)
             element.append(child)
 
-    def _parse_data_structures(
+    def _parse_data_structures(  # noqa: C901
         self,
         value: Any,
         path: str = '',
@@ -222,40 +241,89 @@ class _ToXml:
         if value is None or isinstance(value, (str | int | float | date | time | timedelta | bytearray | bytes | bool)):
             return
         elif isinstance(value, Mapping):
-            for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
-                self._parse_data_structures(v, self._child_path(path, f'{k}'))
+            with self._enter_container(value) as should_traverse:
+                if should_traverse:
+                    for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
+                        self._parse_data_structures(v, self._child_path(path, f'{k}'))
         elif is_dataclass(value) and not isinstance(value, type):
             self._parse_dataclass(value, path)
         elif isinstance(value, BaseModel):
             self._parse_model(value, path)
         elif isinstance(value, Iterable):
-            for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-                self._parse_data_structures(item, self._child_path(path, f'[{n}]'))
+            with self._enter_container(value) as should_traverse:
+                if should_traverse:
+                    for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+                        self._parse_data_structures(item, self._child_path(path, f'[{n}]'))
 
     def _parse_dataclass(self, value: DataclassInstance, path: str) -> None:
-        self._element_names[path] = value.__class__.__name__
-        for dataclass_field in fields(value):
-            new_path = self._child_path(path, dataclass_field.name)
-            if self.include_field_info and dataclass_field.metadata:
-                attributes = {k: v for k, v in dataclass_field.metadata.items() if k in self._FIELD_ATTRIBUTES}
-                if attributes:
-                    field_repr = f'{value.__class__.__name__}.{dataclass_field.name}'
-                    self._fields_info[new_path] = (field_repr, FieldInfo(**attributes))
-            self._parse_data_structures(getattr(value, dataclass_field.name), new_path)
+        with self._enter_container(value) as should_traverse:
+            if should_traverse:
+                self._element_names[path] = value.__class__.__name__
+                for dataclass_field in fields(value):
+                    new_path = self._child_path(path, dataclass_field.name)
+                    if self.include_field_info and dataclass_field.metadata:
+                        attributes = {k: v for k, v in dataclass_field.metadata.items() if k in self._FIELD_ATTRIBUTES}
+                        if attributes:
+                            field_repr = f'{value.__class__.__name__}.{dataclass_field.name}'
+                            self._fields_info[new_path] = (field_repr, FieldInfo(**attributes))
+                    self._parse_data_structures(getattr(value, dataclass_field.name), new_path)
 
     def _parse_model(self, value: BaseModel, path: str) -> None:
-        self._element_names[path] = value.__class__.__name__
-        for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
-            for name, info in model_fields.items():
-                new_path = self._child_path(path, name)
-                if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
-                    field_repr = f'{value.__class__.__name__}.{name}'
-                    self._fields_info[new_path] = (field_repr, info)
-                self._parse_data_structures(getattr(value, name), new_path)
+        with self._enter_container(value) as should_traverse:
+            if should_traverse:
+                self._element_names[path] = value.__class__.__name__
+                for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
+                    for name, info in model_fields.items():
+                        new_path = self._child_path(path, name)
+                        if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
+                            field_repr = f'{value.__class__.__name__}.{name}'
+                            self._fields_info[new_path] = (field_repr, info)
+                        self._parse_data_structures(getattr(value, name), new_path)
 
     @staticmethod
     def _child_path(path: str, key: str) -> str:
         return f'{path}.{key}' if path else key
+
+    @contextmanager
+    def _enter_container(self, value: Any) -> Generator[bool]:
+        """Mark `value` as being traversed, reporting whether to descend into it.
+
+        The metadata walk reads the live object graph, which can contain cycles that `model_dump`
+        rejects. Tracking the containers on the current path (by `id`) stops a cyclic reference from
+        recursing forever: a repeated container yields `False` so the caller skips it, since its
+        metadata was already collected on the first visit. The `id` is removed on exit, so the same
+        object reachable by two *separate* paths (a shared child, not a cycle) is still traversed
+        both times.
+        """
+        container_id = id(value)
+        if container_id in self._visited:
+            yield False
+            return
+        self._visited.add(container_id)
+        try:
+            yield True
+        finally:
+            self._visited.remove(container_id)
+
+    @contextmanager
+    def _enter_value_container(self, value: Any) -> Generator[None]:
+        """Guard the value walk against a cyclic dataclass, mirroring `model_dump`'s error.
+
+        The metadata walk skips a repeated container because its metadata was already collected.
+        The value walk cannot skip: it builds the actual XML, so a cycle must be surfaced as an
+        error rather than silently emitting a truncated tree. Raise the same `ValueError` that
+        `model_dump(mode='json')` raises for a cyclic BaseModel, so dataclass and BaseModel cycles
+        fail identically. A legitimately shared (non-cyclic) child reachable through two separate
+        paths is still emitted both times because the id is removed on exit.
+        """
+        container_id = id(value)
+        if container_id in self._visited_values:
+            raise ValueError('Circular reference detected')
+        self._visited_values.add(container_id)
+        try:
+            yield
+        finally:
+            self._visited_values.remove(container_id)
 
     @classmethod
     def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:
