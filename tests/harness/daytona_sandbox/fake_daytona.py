@@ -30,6 +30,7 @@ from typing import Protocol
 import anyio
 import anyio.lowlevel
 from daytona import (
+    DaytonaBadGatewayError,
     DaytonaBadRequestError,
     DaytonaConnectionError,
     DaytonaError,
@@ -49,6 +50,9 @@ class CreateParams(Protocol):
     labels: dict[str, str] | None
 
 
+_NOT_RUNNING = 'failed to resolve container IP after 3 attempts: no IP address found. Is the Sandbox started?'
+
+
 class FakeProcess:
     def __init__(self, owner: FakeSandbox) -> None:
         self.owner = owner
@@ -61,6 +65,7 @@ class FakeProcess:
         timeout: int | None = None,
     ) -> SimpleNamespace:
         self.owner.check_alive()
+        self.owner.check_running('execute command')
         self.owner.exec_commands.append(command)
         if command == 'pwd -P':
             self.owner.workdir_calls += 1
@@ -99,8 +104,10 @@ class FakeProcess:
 
     async def create_session(self, session_id: str, request_timeout: float | None = None) -> None:
         self.owner.check_alive()
-        if self.owner.state in (SandboxState.STOPPED, SandboxState.PAUSED):
-            raise DaytonaError('sandbox stopped')
+        self.owner.check_running('create session')
+        if self.owner.state == SandboxState.STOPPING:
+            # What the toolbox answered live while Daytona stopped an idle sandbox.
+            raise DaytonaBadGatewayError('Failed to create session: ', status_code=502)
         if self.owner.process_create_gate is not None:
             await self.owner.process_create_gate.wait()
         self.owner.process_sessions.add(session_id)
@@ -139,6 +146,7 @@ class FakeProcess:
         if self.owner.process_status_gate is not None:
             await self.owner.process_status_gate.wait()
         self.owner.process_status_polled.set()
+        self.owner.check_running('get session command')
         if self.owner.process_status_error is not None:
             raise self.owner.process_status_error
         return SimpleNamespace(exit_code=None if self.owner.process_hangs else self.owner.process_exit_code)
@@ -148,6 +156,7 @@ class FakeProcess:
         await anyio.lowlevel.checkpoint()
         self.owner.process_delete_calls += 1
         self.owner.check_alive()
+        self.owner.check_running('delete session')
         if (error := next(self.owner.process_delete_errors, None)) is not None:
             raise error
         self.owner.process_sessions.discard(session_id)
@@ -178,6 +187,13 @@ class FakeFileSystem:
         return data
 
     async def upload_file(self, data: bytes, path: str, timeout: int = 1800) -> None:
+        if self.owner.state in (SandboxState.STOPPED, SandboxState.PAUSED):
+            # Live, the upload's error is untyped; Daytona's own code is in the message.
+            raise DaytonaError(
+                f'Failed to upload files: 400: {{"statusCode":400,"message":"bad request: {_NOT_RUNNING}",'
+                '"code":"SANDBOX_NOT_RUNNING"}',
+                status_code=400,
+            )
         self._raise_if_needed()
         self.owner.files[path] = data
 
@@ -221,6 +237,7 @@ class FakeFileSystem:
 
     def _raise_if_needed(self) -> None:
         self.owner.check_alive()
+        self.owner.check_running('access file')
         if self.owner.fs_error is not None:
             raise self.owner.fs_error
 
@@ -383,6 +400,9 @@ class FakeSandbox:
         self.state = SandboxState.STARTED
         self.purged = False
         self.refresh_error: Exception | None = None
+        self.activity_refreshes = 0
+        self.start_error: Exception | None = None
+        self.activity_error: Exception | None = None
         # What a toolbox call to a deleted sandbox raises, when not the default 404.
         self.gone_error: Exception | None = None
         self.download_error: Exception | None = None
@@ -427,10 +447,17 @@ class FakeSandbox:
 
     async def start(self, timeout: float | None = 60) -> None:
         self.start_calls.append(timeout)
+        if self.start_error is not None:
+            raise self.start_error
         self.state = SandboxState.STARTED
 
     async def wait_for_sandbox_start(self, timeout: float | None = 60) -> None:
         self.state = SandboxState.STARTED
+
+    async def refresh_activity(self, request_timeout: float | None = None) -> None:
+        self.activity_refreshes += 1
+        if self.activity_error is not None:
+            raise self.activity_error
 
     async def refresh_data(self, request_timeout: float | None = None) -> None:
         if self.refresh_error is not None:
@@ -447,6 +474,11 @@ class FakeSandbox:
                 if process.poll() is None:  # pragma: no branch - a finished command's session is deleted before this
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+
+    def check_running(self, action: str) -> None:
+        """Raise what the toolbox answered live for a call to a stopped sandbox."""
+        if self.state in (SandboxState.STOPPED, SandboxState.PAUSED):
+            raise DaytonaBadRequestError(f'Failed to {action}: bad request: {_NOT_RUNNING}', status_code=400)
 
     def check_alive(self) -> None:
         if self.state in (SandboxState.DESTROYING, SandboxState.DESTROYED):

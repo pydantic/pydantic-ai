@@ -12,9 +12,9 @@ import logging
 import posixpath
 import shlex
 import uuid
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import anyio
 import anyio.lowlevel
@@ -74,6 +74,10 @@ _CREATE_TIMEOUT = 120
 # For create, start, and delete.
 _LIFECYCLE_TIMEOUT = 60.0
 _TEARDOWN_TIMEOUT = 30.0
+# How often a running command resets Daytona's idle timer. Daytona stops a sandbox even while a
+# command runs, and polling the command does not count as activity: with a one-minute idle stop,
+# a sandbox polled five times a second was stopped 76s into a `sleep 240` (live, 2026-11-20).
+_ACTIVITY_REFRESH_INTERVAL = 30.0
 # Between attempts to delete a command session.
 _RETRY_DELAY = 1.0
 # The most partial output a timeout reports per stream.
@@ -83,6 +87,8 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar('_T')
 
 
 _ASYNCIO_ONLY = 'Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks.'
@@ -141,6 +147,17 @@ def secrets_error(secrets: Mapping[str, str] | None, env: Mapping[str, str] | No
         # `env` is set on every command, so it would hide the placeholder the proxy replaces.
         return ValueError(f'{", ".join(shadowed)} cannot be in both `env` and `secrets`')
     return None
+
+
+# Includes the states on the way to stopped: the toolbox already refuses requests then, as a 502.
+_STOPPED_STATES = (
+    daytona.SandboxState.STOPPING,
+    daytona.SandboxState.STOPPED,
+    daytona.SandboxState.ARCHIVING,
+    daytona.SandboxState.ARCHIVED,
+    daytona.SandboxState.PAUSING,
+    daytona.SandboxState.PAUSED,
+)
 
 
 def _in_deleted_state(sandbox: AsyncSandbox) -> bool:
@@ -204,6 +221,17 @@ def _path_error(error: daytona.DaytonaError, path: str) -> OSError | None:
     return None
 
 
+class _SandboxStopped(WorkspaceUnavailableError):
+    """Daytona stopped the sandbox, so its processes ended; attaching again starts it."""
+
+
+def _interrupted(sandbox: AsyncSandbox) -> WorkspaceUnavailableError:
+    return WorkspaceUnavailableError(
+        f'The Daytona sandbox {sandbox.id!r} stopped while the command ran, so the command was interrupted '
+        'and may have partly run. The next operation starts the sandbox again.'
+    )
+
+
 async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
     """`WorkspaceUnavailableError` if Daytona deleted or stopped `sandbox`; an inconclusive lookup counts as running."""
     try:
@@ -215,10 +243,10 @@ async def _probe(sandbox: AsyncSandbox) -> WorkspaceUnavailableError | None:
         return None
     if _in_deleted_state(sandbox):
         return WorkspaceUnavailableError(_unavailable_message(sandbox.id))
-    if sandbox.state in (daytona.SandboxState.STOPPED, daytona.SandboxState.ARCHIVED, daytona.SandboxState.PAUSED):
-        return WorkspaceUnavailableError(
-            f'The Daytona sandbox {sandbox.id!r} was stopped while idle; a later run that attaches to it '
-            "starts it again. Pass `workspace='new'` to start a fresh sandbox."
+    if sandbox.state in _STOPPED_STATES:
+        return _SandboxStopped(
+            f'The Daytona sandbox {sandbox.id!r} was stopped while idle; the next operation starts it again. '
+            "Pass `workspace='new'` to start a fresh sandbox."
         )
     return None
 
@@ -289,6 +317,7 @@ class _DaytonaProcess:
         self._marker = f'pydantic-ai-end-{uuid.uuid4().hex}'
         self._out, self._error = f'/tmp/{self._marker}.out', f'/tmp/{self._marker}.err'
         self._command_id: str | None = None
+        self._session_created = False
         self._finished = False
         self.missing_cwd = False
         # The partial output a timeout reports, read from the output files by `kill()`.
@@ -310,16 +339,27 @@ class _DaytonaProcess:
         return shlex.join(['sh', '-c', script, 'sh', *argv])
 
     async def start(self, line: str) -> None:
-        """Run `line` in a new session; a start that fails or is cancelled deletes the session."""
+        """Run `line` in a new session; a start that fails or is cancelled deletes the session.
+
+        A stopped sandbox raises `_SandboxStopped` only while the session is not created yet, so the
+        command never started and can be run again.
+        """
         try:
             with anyio.fail_after(_REQUEST_TIMEOUT):
                 async with _mapped_errors('Could not start the command', sandbox=self._sandbox):
                     await self._process.create_session(self._session_id, request_timeout=_REQUEST_TIMEOUT)
+                    self._session_created = True
                     response = await self._process.execute_session_command(
                         self._session_id,
                         daytona.SessionExecuteRequest(command=line, run_async=True),
                         timeout=_REQUEST_TIMEOUT,
                     )
+        except _SandboxStopped as error:
+            # The stop ended every session, so there is none to delete.
+            if self._session_created:
+                # Daytona may have accepted the command.
+                raise _interrupted(self._sandbox) from error
+            raise
         except BaseException as error:
             # Daytona may have accepted the command without acknowledging it; the session ID is the cleanup token.
             await stop_shielded(lambda: _delete_session(self._sandbox, self._session_id))
@@ -332,16 +372,37 @@ class _DaytonaProcess:
 
     async def wait(self) -> CommandResult:
         assert self._command_id is not None
-        while True:
-            async with _mapped_errors('Could not read the command result', sandbox=self._sandbox):
-                command = await self._process.get_session_command(
-                    self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
-                )
-            if command.exit_code is not None:
-                break
-            await anyio.sleep(0.2)
-        self._finished = True
-        return await self._result(command.exit_code)
+        next_refresh = anyio.current_time() + _ACTIVITY_REFRESH_INTERVAL
+        try:
+            while True:
+                async with _mapped_errors('Could not read the command result', sandbox=self._sandbox):
+                    command = await self._process.get_session_command(
+                        self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
+                    )
+                if command.exit_code is not None:
+                    break
+                if anyio.current_time() >= next_refresh:
+                    await self._refresh_activity()
+                    next_refresh = anyio.current_time() + _ACTIVITY_REFRESH_INTERVAL
+                await anyio.sleep(0.2)
+            self._finished = True
+            return await self._result(command.exit_code)
+        except _SandboxStopped as error:
+            # The stop ended the session and its command, so `kill()` has nothing to delete.
+            self._command_id = None
+            raise _interrupted(self._sandbox) from error
+
+    async def _refresh_activity(self) -> None:
+        """Reset Daytona's idle timer, which a running command and polling its status do not.
+
+        Best effort: a failed refresh is retried at the next interval, and a stop it misses is
+        reported by the next poll.
+        """
+        with anyio.move_on_after(_REQUEST_TIMEOUT):
+            try:
+                await self._sandbox.refresh_activity(request_timeout=_REQUEST_TIMEOUT)
+            except Exception as error:
+                logger.debug('Could not refresh the activity of Daytona sandbox %s: %r', self._sandbox.id, error)
 
     async def _result(self, exit_code: int) -> CommandResult:
         try:
@@ -399,7 +460,7 @@ class _DaytonaProcess:
     async def kill(self) -> None:
         """Delete the session, which kills its command, and keep the tail of its output for a timeout."""
         if self._command_id is None:
-            return  # Never started: a failed start deletes its own session.
+            return  # Never started (a failed start deletes its own session), or ended by a stop.
         await _delete_session(self._sandbox, self._session_id)
         if self._finished:
             return  # The result already read and removed the output files.
@@ -423,9 +484,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     A command's complete output is returned once it exits. A shell string runs under `/bin/sh -c`;
     a timeout or cancellation stops the command.
 
-    A deleted sandbox, one Daytona stopped while idle (attaching again starts it), rejected
-    credentials, and an unknown snapshot raise `WorkspaceUnavailableError`. Path failures raise the
-    built-in errors, such as `FileNotFoundError`.
+    A sandbox Daytona stopped is started again, and the operation that found it stopped runs once
+    more, unless it is `make_dir`, `remove`, or a command that had already started. Those raise
+    `WorkspaceUnavailableError`, as do a deleted sandbox, rejected credentials, and an unknown
+    snapshot. Path failures raise the built-in errors, such as `FileNotFoundError`.
 
     Args:
         sandbox: A live `daytona.AsyncSandbox` you already have. Whoever created it owns deleting it.
@@ -658,6 +720,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._operations += 1
         try:
             yield
+        except WorkspaceUnavailableError:
+            # Forget the sandbox, so the next operation attaches by `ref` again, which starts a stopped one.
+            self._sandbox, self._resolved_working_dir = None, None
+            raise
         finally:
             self._operations -= 1
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
@@ -665,8 +731,30 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
                 await run_to_completion(lambda: _close_quietly(client))
 
+    async def _retry_if_stopped(self, operation: Callable[[], Awaitable[_T]]) -> _T:
+        """Run `operation`, and once more if Daytona had stopped the sandbox, after attaching again starts it.
+
+        Only for an operation that is safe to repeat. If the sandbox cannot be started now, the first
+        error is raised, and the next operation tries again.
+        """
+        try:
+            return await operation()
+        except _SandboxStopped as stopped:
+            first = stopped
+        try:
+            async with self._operation():
+                await self.get_sandbox()
+        except WorkspaceUnavailableError:
+            raise  # Deleted meanwhile, or the credentials stopped working.
+        except Exception:
+            raise first
+        return await operation()
+
     async def working_dir(self) -> str:
         """Return the canonical directory commands start in, probed once per connection."""
+        return await self._retry_if_stopped(self._working_dir_once)
+
+    async def _working_dir_once(self) -> str:
         async with self._operation():
             if self._resolved_working_dir is None:
                 sandbox = await self.get_sandbox()
@@ -688,6 +776,12 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        # Run again only when the stop came before the command started.
+        return await self._retry_if_stopped(lambda: self._run_once(command, shell=shell, env=env, timeout=timeout))
+
+    async def _run_once(
+        self, command: WorkspaceCommand, *, shell: bool, env: Mapping[str, str] | None, timeout: float | None
+    ) -> CommandResult:
         async with self._operation():
             check_timeout(timeout)
             argv = command_argv(command, shell)
@@ -708,6 +802,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             return result
 
     async def realpath(self, path: str) -> str:
+        return await self._retry_if_stopped(lambda: self._realpath_once(path))
+
+    async def _realpath_once(self, path: str) -> str:
         # Native, because the shell fallback would cost a whole session command per call.
         async with self._operation():
             _check_path(path)
@@ -721,6 +818,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             return result.result.strip()
 
     async def read_bytes(self, path: str) -> bytes:
+        return await self._retry_if_stopped(lambda: self._read_bytes_once(path))
+
+    async def _read_bytes_once(self, path: str) -> bytes:
         async with self._operation():
             _check_path(path)
             sandbox = await self.get_sandbox()
@@ -738,6 +838,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     raise
 
     async def write_bytes(self, path: str, data: bytes) -> None:
+        # Safe to repeat: the upload replaces the whole file.
+        return await self._retry_if_stopped(lambda: self._write_bytes_once(path, data))
+
+    async def _write_bytes_once(self, path: str, data: bytes) -> None:
         async with self._operation():
             _check_path(path)
             sandbox = await self.get_sandbox()
@@ -746,6 +850,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 await sandbox.fs.upload_file(data, path, timeout=_REQUEST_TIMEOUT)
 
     async def stat(self, path: str) -> FileEntry:
+        return await self._retry_if_stopped(lambda: self._stat_once(path))
+
+    async def _stat_once(self, path: str) -> FileEntry:
         async with self._operation():
             _check_path(path)
             sandbox = await self.get_sandbox()
@@ -759,6 +866,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        return await self._retry_if_stopped(lambda: self._list_dir_once(path))
+
+    async def _list_dir_once(self, path: str) -> Sequence[FileEntry]:
         async with self._operation():
             _check_path(path)
             sandbox = await self.get_sandbox()
@@ -813,8 +923,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
                 # The removal is recursive, so refuse the working directory and its ancestors, like the
                 # built-in backends. The leaf stays unresolved: removing a link removes only the link.
-                root = await self.working_dir()
-                parent = await self.realpath(posixpath.dirname(path) or '.')
+                # Single attempts: a stop partway through `remove` is not retried.
+                root = await self._working_dir_once()
+                parent = await self._realpath_once(posixpath.dirname(path) or '.')
                 target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
                 if root == target or root.startswith(target.rstrip('/') + '/'):
                     raise ValueError('cannot remove the workspace root or its ancestor')
