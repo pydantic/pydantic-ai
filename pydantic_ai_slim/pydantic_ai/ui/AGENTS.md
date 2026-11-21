@@ -13,7 +13,7 @@ Outbound, three inputs decide what the event stream emits. The `HAS_*` constants
 
 Tests for version-gated behavior belong behind `requires_ag_ui('<version>')` in `tests/test_ag_ui.py`, never behind the module-level `imports_successful()` gate: a name that only exists above the floor in that import block skips the entire module on CI's `test-lowest-versions` job, which is the only job that exercises the floor these gates exist for. Expectations that differ by installed SDK go through a version-aware helper (`run_finished_outcome()`-style) so the same test runs at the floor; a test that constructs a shape a newer SDK removed is skipped on that SDK with a dedicated marker (`skip_if_ag_ui_1_0`).
 
-## Inbound messages never gain harness provenance on their own
+## Inbound messages never gain framework provenance on their own
 
 `RetryFeedbackPart` dumps in the voice the model is shown it in, which its `retry.cause` decides: a
 user-role message for a `'validation_error'` or `'model_retry'`, a system-role one for `'no_output'`.

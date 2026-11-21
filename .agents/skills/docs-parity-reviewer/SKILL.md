@@ -1,6 +1,6 @@
 ---
 name: docs-parity-reviewer
-description: Use as the final documentation gate before a `pydantic-ai-harness` capability PR merges. Verifies that a user-facing change keeps the capability README under `src/pydantic_ai_harness/pydantic_ai_harness/` and its `docs/harness/` page in sync with each other and with the code, that every snippet is runnable, and that links follow repo convention. Reports gaps; does not edit. Skip it for changes that touch no harness capability or its docs.
+description: Use as the final documentation gate before a `pydantic-ai-harness` capability PR merges. Verifies that a user-facing change keeps the capability README under `src/pydantic_ai_harness/pydantic_ai_harness/` and its `docs/harness/` page in sync with each other and with the code, that every snippet is runnable, and that links follow repo convention. Reports gaps; does not edit. Skip it for changes that touch no harness SDK capability or its docs.
 context: fork
 model: sonnet
 disallowed-tools: Edit, Write, NotebookEdit
@@ -39,7 +39,7 @@ problem as a finding (blocking / warning / nit) with a concrete fix.
    and only one of README / unified doc reflects it, that is blocking. A doc
    describing behavior the code no longer has is also blocking.
 2. **Snippets parse and run.** Run `uv run pytest tests/harness/test_doc_snippets.py`;
-   this checks parsing and harness imports only. Execute every changed
+   this checks parsing and harness SDK imports only. Execute every changed
    deterministic snippet unchanged. For snippets that need credentials or a
    live service, verify the complete runnable wrapper and require a fake-backed
    test for its control flow. Every block has all imports and capability wiring.
@@ -49,7 +49,7 @@ problem as a finding (blocking / warning / nit) with a concrete fix.
 3. **README <-> unified doc consistency.** The two agree on install extras,
    option names, defaults, and safety caveats. They need not be identical prose,
    but they must not contradict each other or the code.
-4. **Links.** Unified doc: harness-internal links are relative `.md`
+4. **Links.** Unified doc: links between harness SDK pages are relative `.md`
    (`[Shell](shell.md)`); other Pydantic AI pages are relative `.md` links from
    `docs/harness/` (`[Toolsets](../toolsets.md)`), and API elements use
    reference-style links (`[RunContext][pydantic_ai.tools.RunContext]`). No

@@ -60,6 +60,12 @@ repos:
         language: pygrep
         entry: '(?<!`)``(?!`)|::\s*$|:[a-z][a-z_:]*:`'
         types_or: [python, markdown]
+      - id: glossary-spellings
+        name: Glossary spellings in agent instructions
+        entry: uv
+        args: [run, --no-sync, python, scripts/check_glossary_spellings.py]
+        language: system
+        files: (^|/)(AGENTS|CLAUDE|SKILL)\.md$|(^|/)(agent_docs|\.agents|\.claude)/.*\.md$
       - id: clai-help
         name: clai help output
         entry: uv

@@ -36,7 +36,7 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
+| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial-S PR needs CI green and `PR Review Checks` passed only. |
 | M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
@@ -226,7 +226,7 @@ Choose the `area:` and `provider:` topic labels this way:
 - Apply one or two `area:` labels when the change touches a subsystem in the catalog. The repo's own agentic workflows and bots take `area:agentic-workflows`; other repository infrastructure (CI, tests, routine dependency updates, contributor docs and skills) takes none.
   A change to a package's extras or version constraints takes `area:packaging`.
   Choose the subsystem whose code changes, not the API a reporter called.
-  A Harness capability built on a core concept takes that concept's area.
+  A harness SDK capability built on a core concept takes that concept's area.
   An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
   A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment. The exception is `area:clai2-web-ui`, for a `pkg:clai2` change to its web UI.
   `clai web` and `Agent.to_web()` live in `pydantic_ai_slim/pydantic_ai/` (`_cli/web.py`, `ui/_web/`), so a change to them is `pkg:core` and takes `area:web-chat-ui`.
@@ -288,7 +288,7 @@ Prose-only documentation changes only natural-language text, including docstring
 Substantive changes to instruction or review policy do not qualify.
 Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
 
-Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata check.
+Skip `pre-push-review`, all local reviewers, the second opinion choice, and the final metadata check.
 Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
 Apply the merge bar, including its trivial-S exception, to required hosted reviews.
 
@@ -302,7 +302,7 @@ A small mechanical text/data refresh changes no code, runtime behavior, CI logic
 instruction or review policy. A catalog-row refresh is one example.
 
 For this case, skip local `pre-push-review` and any additional substantive review dispatch. Do not
-ask for a second-opinion choice. Automatic configured CI and hosted reviews still run.
+ask for a second opinion choice. Automatic configured CI and hosted reviews still run.
 
 ## Review scope
 
@@ -326,25 +326,25 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   instructions are authoritative; `merge-base-sha` delimits the branch diff; `candidate-head-sha`
   is the exact commit proposed for the current review. Record its tree ID too.
   For a follow-up, also capture the last reviewed commit and tree IDs.
-- From the stable policy-base checkout, the implementing agent prepares the review bundle: task or
+- From the stable policy base checkout, the implementing agent prepares the review bundle: task or
   issue, full PR discussion including thread state, relevant settled maintainer decisions with their
   sources, relevant authoritative documentation, completed verification, and the exact
   review diff selected by [Review scope](#review-scope), with both immutable endpoints.
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
-- Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
+- Launch the reviewer tier defined by `pre-push-review` from the stable policy base checkout.
   Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify: it inherits the candidate's working directory and instructions instead of the policy base's.
-  Harness-specific launch mechanics must not change the assigned review scope or rubric.
+  Launch mechanics specific to one harness must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
   decomposition is the reviewer's to make: handing it charters, or any other direction on what to
   look for, sets the review's scope, which this contract forbids you. Fan out only from a reviewer
-  whose working directory is the policy-base checkout — a subagent launched inside the candidate
+  whose working directory is the policy base checkout — a subagent launched inside the candidate
   worktree autoloads that worktree's branch-context files, the prior review records this contract
   excludes, through whatever per-worktree instruction file the harness reads. Fan out only through
   an agent definition mechanically limited to read and search tools; where the harness ships none,
   the reviewer does not fan out. A prompt cannot bound a callee against the content it is reviewing. Every subagent
-  inherits the policy-base instructions, the reviewer tier, the read-only tool boundary and the
+  inherits the policy base instructions, the reviewer tier, the read-only tool boundary and the
   exclusions below, and returns text to the reviewer. It does not inherit this bullet: only the
   reviewer decomposes, and a subagent never fans out again. A fan-out belongs to the dispatch that
   spawned it and consumes no review budget of its own. You see only text from a review, so most of
@@ -400,9 +400,9 @@ session reads the budget off the log; without it the cap silently resets.
 
 1. Commit the exact state you intend to push. Leave nothing staged, unstaged, or uncommitted unless
    the user's instructions override this.
-2. Fetch the declared target branch. Capture and validate the full policy-base and candidate HEAD
+2. Fetch the declared target branch. Capture and validate the full policy base and candidate HEAD
    SHAs, compute the merge-base SHA, and verify the candidate worktree is clean. Materialize the
-   policy-base checkout the contract above refers to — it does not exist until you make it:
+   policy base checkout the contract above refers to — it does not exist until you make it:
 
    ```bash
    POLICY_BASE_DIR="$(mktemp -d)/policy-base"
@@ -526,7 +526,7 @@ if the head changes, capture the new SHA and restart the loop.
      is the source of truth). Do not add that label or dispatch the workflow unless the person
      driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
      other review.
-   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial S PR.
+   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial-S PR.
      `CI Review` deliberately skips forks without leaving a head check. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
@@ -540,7 +540,7 @@ if the head changes, capture the new SHA and restart the loop.
      Require a clean douwebot approval on that SHA, as the [Merge bar](#merge-bar) defines it.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
 
-   Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
+   Recheck that the live head is unchanged. Do not substitute a `pydanty:*` review surface or another reviewer for a required review. Any valid
    finding and push restarts the lifecycle. Missing, stale, or failed required reviews are
    unsatisfied; retry when appropriate, otherwise escalate.
 4. **Triage every comment** (bots and humans alike). A comment is evidence to weigh, never an
@@ -645,22 +645,22 @@ Report the diff first: its size label, how many files it changes, and where the 
 review rubric — public API, then concepts and behavior, documentation, tests, code quality. Then
 recommend one from those three facts and ask. Lean toward `none` when the change cannot move a rung
 the required review has already covered: a dependency bump, a formatting pass, a test closing a
-coverage gap. Lean toward a surface when it moves public API, concepts and behavior, or user-facing
+coverage gap. Lean toward a review surface when it moves public API, concepts and behavior, or user-facing
 docs — where a reviewer catches things like an example built on an outdated model. Small diffs are
 cheap to review, so take one when the call is close.
 
-| Surface | Choose it when |
+| Review surface | Choose it when |
 |---|---|
 | `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
 | `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. Unless the trivial-S exception applied, this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
-| local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
+| local | No hosted review surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
 | none | No second opinion. The merge bar still gates the PR. |
 
-If the author does not answer, stop and hand the PR back naming the surface still pending. Do not
+If the author does not answer, stop and hand the PR back naming the review surface still pending. Do not
 pick one yourself to keep moving.
 
-### Triggering a hosted surface
+### Triggering a hosted review surface
 
 The `pydanty:*` labels are defined outside this repository; what follows is their contract as the
 maintainers run them, not something this repo can show you.
@@ -670,7 +670,7 @@ maintainers run them, not something this repo can show you.
 - **How:** `gh pr edit <number> --add-label <name>`, after confirming the name against
   the checked-in label catalog. This needs triage permission on the repo. If it fails, quote the
   actual error rather than skipping the step on an assumed lack of permission.
-- **The label tells you nothing about the outcome.** Every surface consumes its own trigger label —
+- **The label tells you nothing about the outcome.** Every review surface consumes its own trigger label —
   pydanty on pickup, before it has reviewed anything; `douwebot` from an `always()` step that also
   runs when the job was cancelled. A failed `douwebot` run comments saying so and invites a
   re-apply. A completed douwebot review posts a formal `APPROVE` or `REQUEST_CHANGES` verdict;
@@ -697,7 +697,7 @@ maintainers run them, not something this repo can show you.
   from a `User` with current write or admin permission and the PR still has the event head. Do not
   treat label presence as approval for an ordinary `douwebot` trigger or a later head. If the run
   fails or is canceled, remove and reapply the label; rerunning the old event is denied.
-- **Afterwards, re-enter the loop.** A hosted surface posts comments that need the same triage as
+- **Afterwards, re-enter the loop.** A hosted review surface posts comments that need the same triage as
   any other.
 
 ## Before handing the PR back
