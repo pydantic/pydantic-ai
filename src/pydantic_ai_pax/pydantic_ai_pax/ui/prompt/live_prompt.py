@@ -106,9 +106,9 @@ class LivePrompt:
         self.queue_changed = queue_changed
         self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
-        """Whether Ctrl+Enter (and Ctrl-J, which older terminals send for it) steers, as Alt+Enter does.
+        """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
 
-        Otherwise Ctrl+Enter is Enter and Ctrl-J inserts a newline.
+        Otherwise Ctrl+Enter is Enter and Ctrl+J inserts a newline.
         """
         self.notice = ''
         self._chord_prefix = ''

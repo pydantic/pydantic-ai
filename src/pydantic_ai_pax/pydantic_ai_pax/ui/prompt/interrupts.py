@@ -17,8 +17,8 @@ class Interrupts:
     def __init__(self, *, signals: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
         """Use a monotonic clock so wall-clock changes cannot alter the window.
 
-        With `signals`, as for the session the terminal shows, Ctrl-C cancels the operation `run` awaits.
-        Other sessions leave the process's Ctrl-C handler alone, so overlapping runs cannot restore each
+        With `signals`, as for the session the terminal shows, Ctrl+C cancels the operation `run` awaits.
+        Other sessions leave the process's Ctrl+C handler alone, so overlapping runs cannot restore each
         other's, and are cancelled with `cancel` only.
         """
         self.signals = signals
@@ -27,7 +27,7 @@ class Interrupts:
         self.exit_requested = False
         self._cancel: Callable[[bool], None] | None = None
         self._handler: _Handler | None = None
-        """The Ctrl-C handler of the operation `run` awaits now."""
+        """The Ctrl+C handler of the operation `run` awaits now."""
 
     def press(self) -> bool:
         """Share the double-press window between running and input modes."""
@@ -49,7 +49,7 @@ class Interrupts:
         return True
 
     def focus(self, *, signals: bool) -> None:
-        """Take Ctrl-C, or give it up, also for the operation `run` awaits now: the terminal moved to or from it."""
+        """Take Ctrl+C, or give it up, also for the operation `run` awaits now: the terminal moved to or from it."""
         self.signals = signals
         if self._handler is not None:
             self._take(self._handler) if signals else self._give(self._handler)
@@ -123,7 +123,7 @@ class Interrupts:
         if signal.getsignal(signal.SIGINT) is handler.handle:
             signal.signal(signal.SIGINT, handler.previous)
         else:
-            # Another took Ctrl-C over this one, which ends first: that one gives it back to what this one replaced.
+            # Another took Ctrl+C over this one, which ends first: that one gives it back to what this one replaced.
             for other in _TAKEN:
                 if other.previous is handler.handle:
                     other.previous = handler.previous
@@ -138,13 +138,13 @@ class _Handler:
     loop: asyncio.AbstractEventLoop
     """The loop of the operation `handle` cancels."""
     previous: '_SignalHandler' = signal.SIG_DFL
-    """What Ctrl-C did before `handle` took it."""
+    """What Ctrl+C did before `handle` took it."""
 
 
 def _wake(loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
     """Make a signal wake `loop` until the returned function is called.
 
-    Python runs a signal handler only between bytecodes, so Ctrl-C landing as the loop blocks in its
+    Python runs a signal handler only between bytecodes, so Ctrl+C landing as the loop blocks in its
     selector, or on another thread, would wait for the loop's next event, such as a quiet command
     ending. A wakeup fd lets the signal itself wake the selector. One already set, such as the one
     asyncio sets for `add_signal_handler` or the Windows proactor's, wakes the loop instead, for as
@@ -174,7 +174,7 @@ def _wake(loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
 _SignalHandler: TypeAlias = Callable[[int, FrameType | None], object] | int | signal.Handlers | None
 
 _TAKEN: list[_Handler] = []
-"""The handlers holding Ctrl-C, oldest first, for every `Interrupts`: the process has one SIGINT handler."""
+"""The handlers holding Ctrl+C, oldest first, for every `Interrupts`: the process has one SIGINT handler."""
 
 
 def _no_wakeup() -> None:
