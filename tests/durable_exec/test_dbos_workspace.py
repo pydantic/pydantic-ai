@@ -187,9 +187,9 @@ async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: 
     handle = await DBOS.resume_workflow_async(workflow_id)
     assert await handle.get_result() == snapshot(['left', 'right', 'changed', 'Final result processed.'])
     assert provider.log == snapshot(['create:env-1', 'attach:env-1', 'attach:env-1', 'attach:env-1'])
-    # Each child workflow is named by the parent step that started it.
+    # Each child workflow is named by its run and tool call.
     steps = {
-        w.workflow_id.removeprefix(workflow_id): [
+        w.workflow_id.removeprefix(f'{workflow_id}-{workflow_id}:1-1-0-').removeprefix(workflow_id): [
             step['function_name'] for step in await dbos.list_workflow_steps_async(w.workflow_id)
         ]
         for w in workflows
@@ -206,12 +206,12 @@ async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: 
                 'dbos_parallel__capability__workspace.call',
                 'dbos_parallel__model.request',
             ],
-            '-5': [
+            'pyd_ai_tool_call_id__left': [
                 'dbos_parallel__capability__workspace.call',
                 'dbos_parallel__capability__workspace.call',
                 'dbos_parallel__capability__workspace.call',
             ],
-            '-3': [
+            'pyd_ai_tool_call_id__right': [
                 'dbos_parallel__capability__workspace.call',
                 'dbos_parallel__capability__workspace.call',
                 'dbos_parallel__capability__workspace.call',
