@@ -159,7 +159,7 @@ async def settled(task: asyncio.Task[_T]) -> _T:
 
 async def _open(machine: smol.Machine, argv: list[str], options: smol.ExecOptions) -> smol.ExecStream:
     """Start a command, closing its stream when it arrives after the caller was cancelled."""
-    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))
+    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))  # noqa: TID251  (not converted to anyio yet)
     try:
         await asyncio.wait([opening])
     except asyncio.CancelledError:
@@ -228,7 +228,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the VM (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one
@@ -329,9 +329,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                     config = smol.MachineConfig(
                         name=machine_id, image=self._image, resources=self._resources, persistent=True
                     )
-                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())  # noqa: TID251  (not converted to anyio yet)
                 else:
-                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())  # noqa: TID251  (not converted to anyio yet)
             except smol.SmolError as error:
                 if create:
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
@@ -410,7 +410,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             with anyio.move_on_after(timeout) as scope:
                 stream = await _open(machine, argv, options)
                 try:
-                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:
+                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:  # noqa: TID251  (not converted to anyio yet)
                         output.record(event)
                 finally:
                     # On any way out, this kills the command in the VM and wakes a thread waiting for its next event.
@@ -435,7 +435,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         """
         # Even a `NOT_FOUND` is checked: the error's code comes from its text, which may be the guest's.
         try:
-            state = await asyncio.to_thread(machine.state)
+            state = await asyncio.to_thread(machine.state)  # noqa: TID251  (not converted to anyio yet)
         except smol.SmolError as probe_error:
             if probe_error.code == 'NOT_FOUND':
                 return WorkspaceUnavailableError(_gone_message(machine.id))

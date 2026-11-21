@@ -77,6 +77,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles.decision import DecisionModelProfile, decision_model_profile
 from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._inline_snapshot import snapshot
 from ..conftest import (
@@ -104,8 +105,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider  # pyright: ignore[reportDeprecated]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 @pytest.fixture

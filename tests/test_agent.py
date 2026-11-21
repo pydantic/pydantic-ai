@@ -106,6 +106,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
@@ -129,8 +130,10 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -150,8 +153,10 @@ else:
         from pydantic_ai.providers.ollama import OllamaProvider
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.otari import OtariProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.stav import StavProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
         from pydantic_ai.providers.vllm import VLLMProvider
@@ -159,7 +164,7 @@ else:
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
+        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
@@ -215,11 +220,6 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
-
-# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
-# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
-# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
-READINESS_WAIT_TIMEOUT = 10
 
 
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
@@ -6386,6 +6386,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -10025,8 +10026,10 @@ async def test_azure_provider_lifecycle_closes_client():
             lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
         ),
         pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OtariProvider(api_key='t'), marks=[requires_openai], id='otari'),
         pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
         pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: StavProvider(api_key='t'), marks=[requires_openai], id='stav'),
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
@@ -11924,6 +11927,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -11994,6 +11998,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[

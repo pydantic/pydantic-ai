@@ -130,7 +130,7 @@ All of these must hold:
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
-- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
 - The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
 
 If any condition fails, hand the PR to a maintainer.
@@ -193,14 +193,15 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+Wrap every closing keyword inside a copied entry in backticks (`close`, `fix` or `resolve` in any form, followed by an issue reference). A bare closing keyword in the body closes that issue when the PR merges.
 The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
 
-For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the same subagent.
+For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the final metadata check's session.
 Reconcile labels whenever the title or body changes.
 
-Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to the subagent.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to that session.
 The checked-in catalog supplies clones and worktrees without label-read requests.
 Run the helper with `--refresh` after creating, renaming, or updating repository labels.
 Commit refreshed catalog changes.
@@ -287,7 +288,7 @@ Prose-only documentation changes only natural-language text, including docstring
 Substantive changes to instruction or review policy do not qualify.
 Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
 
-Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata-subagent review.
+Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata check.
 Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
 Apply the merge bar, including its trivial-S exception, to required hosted reviews.
 
@@ -332,7 +333,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
-  Use the current harness's native no-history primitive and native read and search tools.
+  Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify: it inherits the candidate's working directory and instructions instead of the policy base's.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
@@ -358,7 +359,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   review material.
 - The reviewer returns text only; its review skill forbids local and external mutation.
 
-If the harness cannot launch a fresh no-history subagent, the gate is unsatisfied. Do not pass it
+If the harness cannot launch a fresh no-history session, the gate is unsatisfied. Do not pass it
 silently. Tell the author the gate cannot be met in this harness and offer the one substitute there
 is: clear the session and review the diff from a fresh read. Say plainly what it costs — you are
 still the agent that wrote the diff, now without the memory of writing it, and a cleared session
@@ -415,7 +416,7 @@ session reads the budget off the log; without it the cap silently resets.
    instructions: whether the reviewer may decompose the diff turns on it, so skipping it would let
    your launch choice decide the review's scope, which the contract forbids you.
 3. Select the review scope above. Prepare the review bundle under the context contract.
-4. Launch the fresh subagent under the context contract above. Require actionable findings or
+4. Launch the fresh reviewer session under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
@@ -423,7 +424,7 @@ session reads the budget off the log; without it the cap silently resets.
    evidence, and a recommendation; record the resulting decision. A remediation changes the
    candidate content. Reapply this gate, including its scope and exemptions, only while the budget remains.
    After a maintainer decision
-   changes the acceptance criteria, dispatch a different fresh subagent when the budget remains.
+   changes the acceptance criteria, dispatch a different fresh reviewer session when the budget remains.
    An evidence-backed dismissal on unchanged reviewed content does not require another pass.
    Escalate persistent disagreement.
 
@@ -470,7 +471,7 @@ To claim an exemption the table does not name, write down the rubric rung the de
 why it cannot, in `pr-decisions.md`.
 
 Never use the implementing agent as the reviewer. The one exception is the substitute the contract
-names for a harness that cannot launch a fresh no-history subagent at all — the author accepts it,
+names for a harness that cannot launch a fresh no-history session at all — the author accepts it,
 and it leaves this gate unsatisfied. Never treat this gate as test execution.
 
 Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
@@ -513,8 +514,10 @@ if the head changes, capture the new SHA and restart the loop.
      No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
      When the status reads "Awaiting maintainer", the author lacks write access.
      Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     It does nothing on a PR whose author has write access.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
+     A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
@@ -701,14 +704,14 @@ maintainers run them, not something this repo can show you.
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
 Correct metadata directly, then hand the PR diff to a maintainer after the merge bar and comment triage are complete.
-Skip the subagent steps below.
+Skip the numbered steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
 Any author-selected additional review must also have settled.
 
-1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
-   The metadata subagent has not worked on the PR and never decomposes the diff.
-   Run the subagent on the light tier from [Model tiers](#model-tiers).
+1. Capture the current title, body, and labels. Start a fresh session under the context contract above.
+   The metadata session has not worked on the PR and never decomposes the diff.
+   Run the session on the light tier from [Model tiers](#model-tiers).
    Set effort from the PR's complexity. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
@@ -726,7 +729,7 @@ Any author-selected additional review must also have settled.
    The edit is done when all three hold:
    - The edited title, body, and labels follow every rule a kept correction cites.
    - The edited title, body, and labels break no rule that the current ones follow.
-   - The edit applies no subagent text that no kept correction covers.
+   - The edit applies no metadata-session text that no kept correction covers.
 
    Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 7. Verify the live title, body, and labels match the checked metadata.

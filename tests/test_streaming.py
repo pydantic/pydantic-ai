@@ -98,6 +98,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
@@ -111,9 +112,6 @@ from .conftest import (
     message_part,
 )
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
-"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -3279,6 +3277,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -3362,6 +3361,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
