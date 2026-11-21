@@ -17,8 +17,8 @@ changing acquisition, command, file, or error handling:
   the writes it had not flushed.
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
   raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine for a
-  moment. Conversely, `get` can raise `NotFoundError` for a machine `create` just returned (seen in two live test
-  runs, not reproduced on demand).
+  moment. Conversely, when `create` returns a machine as `starting`, `get` can raise `NotFoundError` for it for over
+  30 seconds before it finds it (seen in live test runs, not reproduced on demand).
 - An isolated machine's metadata endpoint refuses token requests (403), and boxd's env vars and integrations
   are not installed in it. A machine created from a snapshot keeps the named `networks` of the machine the
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
@@ -108,8 +108,9 @@ _SILENT_COMMAND_MESSAGE = (
 _NAME_PREFIX = 'pydantic-ai-'
 # Bound machine creation, attachment, and deletion so a wedged control plane cannot hang a run.
 _LIFECYCLE_TIMEOUT = 120.0
-# How long the operation that created a machine keeps looking it up while boxd does not list it yet.
-_UNLISTED_TIMEOUT = 30.0
+# How long the operation that created a machine keeps looking it up while boxd does not list it yet;
+# boxd has taken longer than 37 s to list one. The rest of `_LIFECYCLE_TIMEOUT` is left for booting it.
+_UNLISTED_TIMEOUT = 90.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.25
