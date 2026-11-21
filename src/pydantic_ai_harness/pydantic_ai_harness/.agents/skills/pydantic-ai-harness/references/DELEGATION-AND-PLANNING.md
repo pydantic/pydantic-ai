@@ -176,7 +176,7 @@ Gotchas:
   without the error. Other
   crashes abort the parent unless `contain_errors=True`.
 - `SubAgents(forward_deferred_calls=True)` instead passes a child's `DeferredToolRequests` to the parent run's
-  caller (outcome `deferred`; the parent's `output_type` must include `DeferredToolRequests`). Show them with
+  caller (outcome `failed`; the parent's `output_type` must include `DeferredToolRequests`). Show them with
   `delegated_requests(result.output)` (IDs `'<delegate call>:<child call>'`, metadata `agent_path`), answer every
   call, and resume with `deferred_tool_results=delegated_results(result.output, answers)`: the child continues from
   its history. Approving the delegate call itself approves none of the child's calls. The child's state is signed

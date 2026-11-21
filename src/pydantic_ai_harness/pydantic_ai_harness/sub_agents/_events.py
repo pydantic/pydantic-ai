@@ -33,7 +33,7 @@ SUB_AGENTS_EVENTS = 'sub_agents'
 MAX_EVENT_TEXT_CHARS = 4096
 """Characters kept of `DelegationStartedEvent.task` and `DelegationFinishedEvent.output` before they are cut."""
 
-DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'cancelled', 'error', 'deferred']
+DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'cancelled', 'error']
 """How a delegation ended, mirroring the failure-handling contract of `SubAgent`.
 
 - `ok`: the child finished and its output went back to the parent.
@@ -41,10 +41,9 @@ DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'c
 - `budget`: the child reached its own `SubAgent.usage_limits`; the parent got a steering message.
 - `failed`: the child raised a soft model error (the parent got a `ModelRetry` or a tool result, per
   `SubAgent.on_model_error`),
-  or its run ended with `DeferredToolRequests` or `PendingModelResponse` (the parent got a steering message).
+  or its run ended with `DeferredToolRequests` or `PendingModelResponse` (the parent got a steering message, or, with
+  `SubAgents(forward_deferred_calls=True)`, the deferred tool calls went to the parent run's caller).
 - `contained`: the child crashed with `contain_errors` on; the parent got a `ModelRetry`.
-- `deferred`: the child's run ended with `DeferredToolRequests`, which `SubAgents(forward_deferred_calls=True)` passed
-  to the parent's caller; answering them resumes the child in a new delegation.
 """
 
 

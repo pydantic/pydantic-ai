@@ -141,7 +141,9 @@ class TestForwardDeferredCalls:
         # The child stopped after running the call that needed no approval, and nothing was sent.
         assert (mailer.model_calls, mailer.lookups, mailer.sent) == (1, 1, [])
         # The delegation ends here, so its outcome is reported, and the child's request counts into the parent's usage.
-        assert [event.outcome for event in listener.ended] == ['deferred']
+        assert [(event.outcome, event.output) for event in listener.ended] == snapshot(
+            [('failed', "Sub-agent 'mailer' is waiting for answers to its deferred tool calls.")]
+        )
         assert first.usage.requests == 2
 
         results = flat.build_results(approvals={'c1:e1': True, 'c1:e2': ToolDenied('not the copy')})
@@ -153,7 +155,7 @@ class TestForwardDeferredCalls:
         # Resumed from its history: one more model request, the lookup not run again, only the approved call sent.
         assert (mailer.model_calls, mailer.lookups, mailer.sent) == (2, 1, ['ann@example.com'])
         assert mailer.seen == snapshot(['e1=sent to ann@example.com', 'e2=not the copy', 'l1=ann@example.com'])
-        assert [event.outcome for event in listener.ended] == ['deferred', 'ok']
+        assert [event.outcome for event in listener.ended] == ['failed', 'ok']
 
     async def test_every_child_call_needs_an_answer(self) -> None:
         mailer = _Mailer()

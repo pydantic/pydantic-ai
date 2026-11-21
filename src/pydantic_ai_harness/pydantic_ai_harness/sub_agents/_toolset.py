@@ -1764,7 +1764,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return self._crash_outcome(agent_name, sub_agent, exc)
         if forward_deferred is not None and isinstance(result.output, DeferredToolRequests):
             return _Ended(
-                outcome='deferred',
+                outcome='failed',
                 output=f'Sub-agent {agent_name!r} is waiting for answers to its deferred tool calls.',
                 deferral=deferral_metadata(
                     self._deferred_state_key,

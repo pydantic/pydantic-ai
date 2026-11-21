@@ -265,7 +265,7 @@ The next run resumes the sub-agent from its own history with those answers, so t
 - Every call the sub-agent waits on needs an answer: `delegated_results()` raises `ValueError` otherwise. Deny a call with `False` or `ToolDenied`.
 - Only the sub-agent decides which of its calls need approval. Approving the delegate call itself, for example with `build_results(approve_all=True)` on the parent's requests, approves none of them: the delegation runs the task again, and returns the steering message if it stops the same way.
 - The sub-agent's state, its message history (with its instructions and tool results) and pending calls, travels to the caller in the delegate call's metadata and back, signed with `deferred_state_key`. The resumed delegate accepts only state this `SubAgents` signed, for this delegation's sub-agent and task, answering only the calls the sub-agent asked about. Anything else raises `UserError`. Without `deferred_state_key`, each `SubAgents` instance signs with a random key, so resume through the same instance; set the same secret in every process that may resume a run. The state is signed, not encrypted: `delegated_requests()` leaves it out, but an adapter that sends the raw `DeferredToolRequests.metadata` to a client, as the AG-UI adapter does for approvals, sends it the sub-agent's history too.
-- The delegation that stops emits a `DelegationFinishedEvent` with outcome `deferred`, and the sub-agent's usage up to that point counts like any delegation's. The resumed run is a new delegation, with its own events.
+- The delegation that stops emits a `DelegationFinishedEvent` with outcome `failed`, whose `output` says the sub-agent is waiting for answers, and the sub-agent's usage up to that point counts like any delegation's. The resumed run is a new delegation, with its own events.
 - Only foreground delegations outside durable execution and task control forward their calls. Others return the steering message.
 
 ## Events
@@ -283,9 +283,8 @@ Both are notifications. A start and its end share the `tool_call_id` core stamps
 
 - `ok`: the child's output went back to the parent.
 - `timeout` or `budget`: the child hit its `timeout_seconds` or its own `usage_limits`.
-- `failed`: a soft model error, returned or raised per `on_model_error`, or a run that ended with `DeferredToolRequests` or `PendingModelResponse`.
+- `failed`: a soft model error, returned or raised per `on_model_error`, or a run that ended with `DeferredToolRequests` or `PendingModelResponse`, including one whose deferred tool calls `forward_deferred_calls` passed to the caller.
 - `contained`: a crash `contain_errors` caught.
-- `deferred`: the child's deferred tool calls went to the parent run's caller (`forward_deferred_calls`).
 
 `output` is what the delegate tool returns to the parent: the child's output, the steering message, or the retry text. It is emitted inside the tool, before any `ToolGuardrail` result guard screens it; for the screened text, read the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`), and `None` when its usage goes into the parent's.
 
