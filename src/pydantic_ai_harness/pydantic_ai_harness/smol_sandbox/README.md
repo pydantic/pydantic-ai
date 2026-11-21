@@ -47,6 +47,8 @@ The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol),
 - macOS on Apple silicon.
 - Linux on x86_64 or aarch64 with glibc 2.34 or newer. The user running the agent needs read and write access to `/dev/kvm`.
 
+smolvm itself also runs on Windows x86_64, with the Windows Hypervisor Platform, but smolmachines has no Windows build, so `SmolSandbox` doesn't. [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax)'s `/sandbox local` runs SmolVM there through the `smolvm` CLI.
+
 The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start

@@ -68,6 +68,7 @@ _HARNESS_DOCS = (
     'shell',
     'skills',
     'slack',
+    'smol_sandbox',
     'sprites_sandbox',
     'step_persistence',
     'sub_agents',

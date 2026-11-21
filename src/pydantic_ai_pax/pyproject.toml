@@ -84,6 +84,8 @@ boxd = ["pydantic-ai-harness[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.d
 daytona = ["pydantic-ai-harness[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 e2b = ["pydantic-ai-harness[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 kubernetes = ["pydantic-ai-harness[kubernetes]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# `/sandbox local` on macOS and Linux; smolmachines has no Windows wheel, where `/sandbox local` uses the `smolvm` CLI.
+local = ["pydantic-ai-harness[smol]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 modal = ["pydantic-ai-harness[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 opensandbox = ["pydantic-ai-harness[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 render = ["pydantic-ai-harness[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

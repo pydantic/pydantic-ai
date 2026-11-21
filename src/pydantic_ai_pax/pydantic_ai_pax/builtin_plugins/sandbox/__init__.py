@@ -1,4 +1,4 @@
-"""`/sandbox PROVIDER`: run a new conversation in a cloud sandbox holding a copy of this checkout.
+"""`/sandbox PROVIDER`: run a new conversation in a sandbox, local or in the cloud, holding a copy of this checkout.
 
 The sandbox gets the branch, its unpushed commits, and the uncommitted files (`seed`). Its `git` and `gh`
 act as the user's `gh` login. Where the provider's proxy can add the token to requests for GitHub, the token
@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.local import REF_PROVIDER as LOCAL_REF_PROVIDER
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.config.api_keys import load_keys
@@ -57,7 +58,17 @@ def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
 
 
 def _owned(ref: WorkspaceRef | None) -> WorkspaceRef | None:
-    return ref if ref is not None and ref.provider in PROVIDERS else None
+    return ref if ref is not None and _owner(ref) is not None else None
+
+
+def _owner(ref: WorkspaceRef) -> SandboxProvider | None:
+    """The provider whose sandbox `ref` names: the one named `ref.provider`, but `local` for a VM's `smol` ref.
+
+    A `local` ref names this machine's own folder, the workspace of a conversation outside any sandbox.
+    """
+    if ref.provider == LOCAL_REF_PROVIDER:
+        return PROVIDERS.get('local')
+    return None if ref.provider == 'local' else PROVIDERS.get(ref.provider)
 
 
 @dataclass(kw_only=True)
@@ -105,7 +116,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def _instructions(self, ctx: RunContext[None]) -> str:
         if (ref := _owned(ctx.workspace.ref)) is None:
             return ''
-        provider = PROVIDERS[ref.provider]
+        provider = self.plugin.sandbox(ref).provider
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
@@ -174,7 +185,9 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> ShellLineWorkspace | None:
         if (ref := history_sandbox(messages)) is None:
             return None
-        return ShellLineWorkspace(workspace=self._workspace(ref), name=f'the {PROVIDERS[ref.provider].title} sandbox')
+        return ShellLineWorkspace(
+            workspace=self._workspace(ref), name=f'the {self.plugin.sandbox(ref).provider.title} sandbox'
+        )
 
     def _workspace(self, ref: WorkspaceRef) -> WorkspaceBackend:
         """The sandbox `ref` names, with the variables `request_env` gave it; agent runs and `!` lines both use it."""
@@ -205,7 +218,7 @@ class _EnvWorkspace(WrapperWorkspace):
 
 
 class SandboxPlugin(Plugin):
-    """`/sandbox PROVIDER` moves a new conversation into a cloud sandbox; `/sandbox` says where it runs."""
+    """`/sandbox PROVIDER` moves a new conversation into a sandbox; `/sandbox` says where it runs."""
 
     def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
         super().__init__(host, settings)
@@ -219,7 +232,10 @@ class SandboxPlugin(Plugin):
         return (
             Command(
                 name='sandbox',
-                description=f'Run a new conversation in a cloud sandbox ({", ".join(PROVIDERS)}), or show where it runs',
+                description=(
+                    f'Run a new conversation in a sandbox ({", ".join(PROVIDERS)}; local uses SmolVM on this machine), '
+                    'or show where it runs'
+                ),
                 handler=self.command,
                 complete=self.complete,
             ),
@@ -235,7 +251,9 @@ class SandboxPlugin(Plugin):
     def sandbox(self, ref: WorkspaceRef) -> _Sandbox:
         """The sandbox `ref` names, which a `/sandbox` provider owns."""
         if (sandbox := self._sandboxes.get(ref)) is None:
-            sandbox = self._sandboxes[ref] = _Sandbox(provider=PROVIDERS[ref.provider], ref=ref)
+            provider = _owner(ref)
+            assert provider is not None
+            sandbox = self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref)
         return sandbox
 
     def current(self) -> _Sandbox | None:
@@ -261,7 +279,7 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             offer = ' or '.join(f'/sandbox {name}' for name in PROVIDERS)
-            return f'This conversation runs on this machine. {offer} moves a new conversation into a cloud sandbox.'
+            return f'This conversation runs on this machine. {offer} moves a new conversation into a sandbox.'
         if sandbox.deleted:
             return f'This conversation ran in {sandbox.provider.title} sandbox {sandbox.ref.id}, now deleted. Run /new.'
         return (

@@ -11,6 +11,7 @@ import io
 import itertools
 import json
 import os
+import re
 import shlex
 import stat
 import subprocess
@@ -45,7 +46,9 @@ from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     SupportsFilesystem,
     WorkspaceCommand,
+    WorkspaceError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness import Shell
@@ -59,6 +62,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
     daytona as daytona_provider,
     e2b as e2b_provider,
     kubernetes as kubernetes_provider,
+    local as local_provider,
     modal as modal_provider,
     opensandbox as opensandbox_provider,
     render as render_provider,
@@ -416,7 +420,7 @@ class TestCommand:
         loaded = load(checkout)
         plugin = plugin_of(loaded)
         assert await plugin.command([]) == (
-            'This conversation runs on this machine. /sandbox fake moves a new conversation into a cloud sandbox.'
+            'This conversation runs on this machine. /sandbox fake moves a new conversation into a sandbox.'
         )
         message = await plugin.command(['fake'])
         head = git(checkout, 'rev-parse', '--short=7', 'HEAD')
@@ -477,6 +481,7 @@ class TestCommand:
 
     def test_complete_offers_the_shipped_providers(self, checkout: Path) -> None:
         assert list(plugin_of(load(checkout)).complete([])) == [
+            'local',
             'e2b',
             'boxd',
             'daytona',
@@ -2222,6 +2227,311 @@ class TestKubernetes:
             await provider.create(github=GITHUB)
         assert fake_cluster.claims == {}
         assert all(client.closed for client in fake_cluster.clients)
+
+
+@dataclass
+class FakeSmolvm:
+    """The `smolvm` CLI, answering as smolvm 1.36 does, whose machines run each command here in `sh`."""
+
+    machines: dict[str, str] = field(default_factory=dict[str, str])
+    """Each machine's state, by name."""
+    created: list[list[str]] = field(default_factory=list[list[str]])
+    """The arguments of each `machine create`."""
+    commands: list[list[str]] = field(default_factory=list[list[str]])
+    """Every command line this machine ran."""
+    scripts: list[str] = field(default_factory=list[str])
+    """What each `machine exec` read on its stdin."""
+    failures: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
+    """The code and message each action named here fails with, such as `start` on a host that cannot run VMs."""
+
+    async def run_process(
+        self, command: list[str], *, input: bytes | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[bytes]:
+        self.commands.append(command)
+        executable, group, action, *args = command
+        assert (executable, group, args[:2], check) == ('smolvm', 'machine', ['--error-format', 'json'], False)
+        args = args[2:]
+        if action == 'ls':
+            listing = {'machines': [{'name': name, 'state': state} for name, state in self.machines.items()]}
+            return subprocess.CompletedProcess(command, 0, json.dumps(listing).encode(), b'')
+        name = args[args.index('--name') + 1]
+        if action in self.failures:
+            return self.error(command, *self.failures[action])
+        if action == 'create':
+            self.created.append(args)
+            self.machines[name] = 'stopped'
+        elif name not in self.machines:
+            return self.error(command, 'NOT_FOUND', f'machine not found: {name}')
+        elif action in ('start', 'stop'):
+            self.machines[name] = 'running' if action == 'start' else 'stopped'
+        elif action == 'delete':
+            del self.machines[name]
+        elif self.machines[name] != 'running':
+            return self.error(command, 'SMOLVM_ERROR', f'machine {name} is not running')
+        else:
+            assert action == 'exec' and input is not None
+            self.scripts.append(input.decode())
+            program = args[args.index('--') + 1 :]
+            workdir = args[args.index('--workdir') + 1] if '--workdir' in args else None
+            # A VM's commands get only what smolvm gives them, not this machine's environment.
+            env = {'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']}
+            return await anyio.run_process(program, input=input, cwd=workdir, env=env, check=False)
+        return subprocess.CompletedProcess(command, 0, b'', b'')
+
+    def error(self, command: list[str], code: str, message: str) -> subprocess.CompletedProcess[bytes]:
+        report = json.dumps({'error': {'code': code, 'message': message}}).encode()
+        return subprocess.CompletedProcess(command, 1, b'', b'Error: failed\n' + report + b'\n')
+
+
+LocalEngine = Literal['smolmachines', 'smolvm CLI']
+
+
+@pytest.fixture
+def fake_smolvm(monkeypatch: pytest.MonkeyPatch) -> FakeSmolvm:
+    fake = FakeSmolvm()
+    monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.run_process', fake.run_process)
+    return fake
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(('linux', 'smolmachines'), id='linux'),
+        pytest.param(('darwin', 'smolmachines'), id='macos'),
+        pytest.param(('win32', 'smolvm CLI'), id='windows'),
+        pytest.param(('linux', 'smolvm CLI'), id='linux-cli'),
+    ]
+)
+def local_host(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_smolvm: FakeSmolvm
+) -> LocalEngine:
+    """A host of each OS `/sandbox local` runs on, with the engine it has: smolmachines has no Windows wheel.
+
+    smolmachines' VMs are the harness's fake, whose commands run here; the `smolvm` CLI is `fake_smolvm`.
+    """
+    platform, engine = cast('tuple[str, LocalEngine]', request.param)
+    monkeypatch.setattr(local_provider.sys, 'platform', platform)
+    if engine == 'smolmachines':
+        if find_spec('smol') is None:  # pragma: no cover - smolmachines has wheels for macOS and Linux only
+            pytest.skip('smolmachines not installed')
+        from tests.harness.smol_sandbox.fake_smol import FakeSmol
+
+        control = FakeSmol(tmp_path.resolve())
+        for module in ('_backend', '_capability'):
+            monkeypatch.setattr(f'pydantic_ai_harness.smol_sandbox.{module}.smol', control.module)
+        monkeypatch.setattr(local_provider.shutil, 'which', not_installed)
+    else:
+        monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+        monkeypatch.setattr(local_provider.shutil, 'which', installed)
+    # The fakes' commands get only the environment they are sent; a real VM has a home of its own.
+    monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
+    return engine
+
+
+VM_NAME = r'pydantic-ai-[0-9a-f]{32}'
+
+
+class TestLocal:
+    """`/sandbox local`: a SmolVM VM on this machine, on Linux, macOS, and Windows."""
+
+    async def test_offered_as_smolvm(self, checkout: Path) -> None:
+        provider = sandbox.PROVIDERS['local']
+        assert (provider.name, provider.title, provider.token_in_sandbox) == ('local', 'SmolVM', True)
+        plugin = plugin_of(load(checkout))
+        [command] = plugin.get_commands()
+        assert command.description == (
+            'Run a new conversation in a sandbox (local, e2b, boxd, daytona, opensandbox, modal, render, sprites, '
+            'kubernetes; local uses SmolVM on this machine), or show where it runs'
+        )
+        assert await plugin.command([]) == (
+            'This conversation runs on this machine. /sandbox local or /sandbox e2b or /sandbox boxd or '
+            '/sandbox daytona or /sandbox opensandbox or /sandbox modal or /sandbox render or /sandbox sprites or '
+            '/sandbox kubernetes moves a new conversation into a sandbox.'
+        )
+        # The option is `local`, whichever engine runs the VM.
+        with pytest.raises(ValueError, match=r'^Usage: /sandbox \[local \| e2b \| .* \| kubernetes \| delete\]$'):
+            await plugin.command(['smolvm'])
+
+    @pytest.mark.parametrize('platform', ['linux', 'darwin', 'win32'])
+    def test_missing(self, platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(local_provider.sys, 'platform', platform)
+        provider = local_provider.LocalProvider()
+        # Either engine will do, and neither needs a key.
+        monkeypatch.setattr(local_provider, 'find_spec', installed)
+        monkeypatch.setattr(local_provider.shutil, 'which', not_installed)
+        assert provider.missing() is None
+        monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+        monkeypatch.setattr(local_provider.shutil, 'which', installed)
+        assert provider.missing() is None
+        monkeypatch.setattr(local_provider.shutil, 'which', not_installed)
+        assert provider.missing() == (
+            'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
+            'into a folder on PATH. It needs the Windows Hypervisor Platform.'
+            if platform == 'win32'
+            else "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
+        )
+
+    async def test_create_reopen_delete(self, local_host: LocalEngine, fake_smolvm: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        assert provider.missing() is None
+        ref, backend = await provider.create(github=GITHUB)
+        # Not `local`, which names this machine's own folder.
+        assert ref.provider == 'smol'
+        assert re.fullmatch(VM_NAME, ref.id)
+        assert (tmp_path / 'workspace').is_dir()
+        if local_host == 'smolvm CLI':
+            # The VM pulls an image with bash and git, which the copy of the checkout needs, and reaches GitHub.
+            assert fake_smolvm.created == [['--name', ref.id, '--net', '--image', local_provider.IMAGE]]
+        else:
+            assert fake_smolvm.created == []
+        assert (await backend.run(['printenv', 'GIT_TERMINAL_PROMPT'])).stdout == '0\n'
+        await give_github_login(backend, GITHUB)
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        # The token reached the VM on the command's stdin, never on a command line of this machine.
+        reopened = provider.reopen(ref)
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.delete(ref)
+        await provider.delete(ref)  # One already gone is fine.
+        assert fake_smolvm.machines == {}
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await provider.reopen(ref).run(['true'])
+        # Closing a deleted VM's workspace, as `/sandbox delete` does, has nothing left to write back.
+        await provider.close(reopened)
+
+    async def test_a_conversation_runs_in_the_vm(
+        self, local_host: LocalEngine, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        git(checkout, 'remote', 'remove', 'origin')
+        Path(os.environ['HOME']).mkdir()
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        monkeypatch.setattr(sandbox, 'PROVIDERS', {provider.name: provider})
+        monkeypatch.setattr(sandbox, 'gh_token', not_installed)
+        loaded = load(checkout)
+        session = on_screen(loaded, checkout, shell=True)
+        message = await plugin_of(loaded).command(['local'])
+        ref = history_sandbox(session.messages)
+        assert ref is not None and ref.provider == 'smol'
+        assert message.startswith(f'This conversation now runs in SmolVM sandbox {ref.id}. ')
+        copy = tmp_path / 'workspace'
+        assert git(copy, 'rev-parse', 'HEAD') == git(checkout, 'rev-parse', 'HEAD')
+        result = await session.prompt('where?')
+        assert result.response.workspace_ref == ref
+        assert await plugin_of(loaded).command(['delete']) == (
+            f'Deleted SmolVM sandbox {ref.id}. Run /new to start another conversation.'
+        )
+
+
+@pytest.fixture
+def windows(monkeypatch: pytest.MonkeyPatch, fake_smolvm: FakeSmolvm) -> FakeSmolvm:
+    """A Windows host, where `/sandbox local` drives the `smolvm` CLI."""
+    monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
+    monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+    monkeypatch.setattr(local_provider.shutil, 'which', installed)
+    monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
+    return fake_smolvm
+
+
+class TestLocalCli:
+    """The `smolvm` CLI that `/sandbox local` drives where smolmachines has no wheel, as on Windows."""
+
+    async def test_commands_go_on_stdin(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        await give_github_login(backend, GITHUB)
+        # Nor arguments nor environment reach a command line on this machine, which Windows caps at 32,767 characters.
+        long = 'x' * 40_000
+        result = await backend.run(
+            ['sh', '-c', 'printf %s "$1" | wc -c; printf %s "$KEY"', 'sh', long], env={'KEY': 'v=1'}
+        )
+        assert result == CommandResult(exit_code=0, stdout='40000\nv=1', stderr='')
+        token = base64.b64encode(b'gho_x').decode()
+        assert any(token in script for script in windows.scripts)
+        assert not any(token in argument for command in windows.commands for argument in command)
+        # A missing program exits 127, and a failing one keeps its status.
+        assert (await backend.run(['no-such-program'])).exit_code == 127
+        assert (await backend.run('exit 3', shell=True)).exit_code == 3
+        assert await backend.working_dir() == str(tmp_path.resolve() / 'workspace')
+        await provider.close(backend)
+        await provider.delete(ref)
+
+    async def test_timeout(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=None)
+        with pytest.raises(WorkspaceTimeoutError, match=r'timed out after 0\.1 seconds'):
+            await backend.run(['sleep', '10'], timeout=0.1)
+        # smolvm also kills the command in the VM, a little after this machine gives up on it.
+        [script] = [script for script in windows.scripts if 'sleep' in script]
+        assert 'sleep' in script
+        await provider.delete(ref)
+
+    async def test_a_stopped_vm_is_started(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, _ = await provider.create(github=None)
+        # As after this machine restarts.
+        windows.machines[ref.id] = 'stopped'
+        assert (await provider.reopen(ref).run(['true'])).exit_code == 0
+        assert windows.machines[ref.id] == 'running'
+        await provider.delete(ref)
+
+    async def test_a_vm_deleted_meanwhile(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=None)
+        # Output that looks like smolvm's own failure is the command's while the VM runs.
+        report = json.dumps({'error': {'code': 'NOT_FOUND', 'message': 'no such thing'}})
+        result = await backend.run(['sh', '-c', f"echo '{report}' >&2; exit 1"])
+        assert (result.exit_code, result.stderr) == (1, f'{report}\n')
+        windows.machines[ref.id] = 'stopped'
+        with pytest.raises(WorkspaceUnavailableError, match='is stopped'):
+            await backend.run(['true'])
+        del windows.machines[ref.id]
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await backend.run(['true'])
+
+    async def test_a_failed_create_leaves_nothing_behind(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        windows.failures['start'] = ('HYPERVISOR_UNAVAILABLE', 'the Windows Hypervisor Platform is not enabled')
+        with pytest.raises(WorkspaceUnavailableError, match=r'cannot run a local smol VM \(HYPERVISOR_UNAVAILABLE\)'):
+            await provider.create(github=GITHUB)
+        assert len(windows.created) == 1
+        assert windows.machines == {}
+        windows.failures['start'] = ('SMOLVM_ERROR', 'disk full')
+        with pytest.raises(WorkspaceError, match='smolvm machine start failed: disk full'):
+            await provider.create(github=GITHUB)
+        assert windows.machines == {}
+        # Made, but its working folder cannot be.
+        del windows.failures['start']
+        (tmp_path / 'file').touch()
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'file/workspace'))
+        with pytest.raises(WorkspaceError, match='Could not create working_dir'):
+            await provider.create(github=GITHUB)
+        assert windows.machines == {}
+        windows.failures['create'] = ('SMOLVM_ERROR', 'no space left')
+        with pytest.raises(WorkspaceError, match='smolvm machine create failed: no space left'):
+            await provider.create(github=GITHUB)
+
+    async def test_a_failed_delete(self, windows: FakeSmolvm, tmp_path: Path) -> None:
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, _ = await provider.create(github=None)
+        windows.failures['delete'] = ('SMOLVM_ERROR', 'machine is busy')
+        with pytest.raises(WorkspaceError, match='smolvm machine delete failed: machine is busy'):
+            await provider.delete(ref)
+        assert ref.id in windows.machines
+
+    async def test_without_smolvm(self, windows: FakeSmolvm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def missing(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+            raise FileNotFoundError(command[0])
+
+        monkeypatch.setattr('pydantic_ai_harness._smolvm_cli.run_process', missing)
+        provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        with pytest.raises(WorkspaceUnavailableError, match='smolvm was not found'):
+            await provider.create(github=None)
+
+    def test_only_its_own_vms(self, windows: FakeSmolvm) -> None:
+        # A conversation's history could otherwise open any VM of this user, such as one with this machine's folders.
+        with pytest.raises(ValueError, match='only uses VMs it created'):
+            local_provider.LocalProvider().reopen(WorkspaceRef(provider='smol', id='dev'))
 
 
 class TestCompaction:

@@ -42,11 +42,11 @@ class GitHubCredential:
 
 
 class SandboxProvider(Protocol):
-    """A cloud sandbox service that `/sandbox` can make, reopen, and delete sandboxes on."""
+    """A sandbox service, on this machine or in the cloud, that `/sandbox` can make, reopen, and delete sandboxes on."""
 
     @property
     def name(self) -> str:
-        """The name `/sandbox` takes and `WorkspaceRef.provider` holds, such as `e2b`."""
+        """The name `/sandbox` takes and `WorkspaceRef.provider` holds, such as `e2b`; `local`'s VMs' refs hold `smol`."""
         ...
 
     @property
