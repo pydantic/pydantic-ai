@@ -9,10 +9,10 @@ The conversation's history records its sandbox: `/sandbox` saves an exchange who
 AI, so a forked, resumed, or background conversation opens its own sandbox, whichever one is on screen.
 A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the conversation may still use it.
 
-Daytona stops a sandbox it counts as idle even while a command runs in it, so while an operation is in flight its
-provider's `keep_alive` is called; between operations the provider stops an idle sandbox as usual. An operation
-that finds the sandbox stopped (`WorkspaceUnavailableError`) retires its backend, whose handle fails every later
-operation, so the next run reopens the sandbox, which starts it again.
+Each run gets a fresh backend from `provider.reopen`, whose first operation attaches, starting or resuming a
+sandbox the provider stopped or paused while idle. Daytona stops a sandbox it counts as idle even while a command
+runs in it, so while a command runs its provider's `keep_alive` is called; between commands the provider stops an
+idle sandbox as usual.
 """
 
 import logging
@@ -21,7 +21,6 @@ import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import TypeVar
 
 import anyio
 import anyio.lowlevel
@@ -34,12 +33,10 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     CommandResult,
-    FileEntry,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
-    WorkspaceUnavailableError,
     WrapperWorkspace,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
@@ -61,10 +58,8 @@ __all__ = ('SandboxPlugin',)
 
 _LOGGER = logging.getLogger(__name__)
 
-_T = TypeVar('_T')
-
 KEEP_ALIVE_EVERY = 300.0
-"""Seconds between `keep_alive` calls while an operation runs: well inside Daytona's 15 idle minutes."""
+"""Seconds between `keep_alive` calls while a command runs: well inside Daytona's 15 idle minutes."""
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
@@ -85,38 +80,27 @@ class _Sandbox:
     ref: WorkspaceRef
     env: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
-    backend: SandboxBackend | None = None
-    retired: list[SandboxBackend] = field(default_factory=list[SandboxBackend], repr=False)
-    """Backends that found the sandbox stopped, left for `close`: a run may still hold one."""
     kept_alive_at: float = -math.inf
-    """When `keep_alive` was last called, so concurrent operations share one call per `KEEP_ALIVE_EVERY`."""
+    """When `keep_alive` was last called, so commands running at once share one call per `KEEP_ALIVE_EVERY`."""
     deleted: bool = False
 
-    def retire(self, backend: SandboxBackend) -> None:
-        """`backend` found the sandbox stopped, so the next `open` reopens it; one already retired stays retired."""
-        if self.backend is backend:
-            self.backend = None
-            self.retired.append(backend)
-
     def open(self) -> SandboxBackend:
-        """The workspace, attached on first use; `UserError` when it cannot be, so the run fails closed."""
+        """A run's backend, attached on first use; `UserError` when it cannot be, so the run fails closed.
+
+        A fresh one each run, so a sandbox the provider stopped while idle is started again by the run's first
+        operation rather than failing it.
+        """
         if self.deleted:
             raise UserError(
                 f"This conversation's {self.provider.title} sandbox was deleted. Run /new to start another."
             )
-        if self.backend is None:
-            if (missing := self.provider.missing()) is not None:
-                raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
-            self.backend = self.provider.reopen(self.ref)
-        return self.backend
+        if (missing := self.provider.missing()) is not None:
+            raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
+        return self.provider.reopen(self.ref)
 
     async def close(self) -> None:
-        """Close what the provider opened for the workspace, retired backends too; the next `open` reopens it."""
-        backends = [*self.retired, *([] if self.backend is None else [self.backend])]
-        self.retired = []
-        self.backend = None
-        for backend in backends:
-            await self.provider.close(backend)
+        """Close what the provider opened for the sandbox, for every run; the next `open` opens it again."""
+        await self.provider.close(self.ref)
 
 
 @dataclass
@@ -200,64 +184,18 @@ class _ConversationSandbox(ConversationWorkspace[None]):
             ref = history_sandbox(conversation.messages)
         if (ref := _owned(ref)) is None:
             return None
-        return _SandboxWorkspace(self.plugin.sandbox(ref))
+        sandbox = self.plugin.sandbox(ref)
+        return _EnvWorkspace(sandbox.open(), sandbox=sandbox)
 
 
-class _SandboxWorkspace(WrapperWorkspace):
-    """A sandbox's backend, through which every operation keeps the sandbox alive and notices it stopped.
+class _EnvWorkspace(WrapperWorkspace):
+    """Adds the variables `request_env` gave the sandbox to every command, and keeps the sandbox alive while one runs."""
 
-    Each operation goes to the wrapped `Workspace` through `_guarded`, so the backend calls one makes, such as the
-    `working_dir` a relative path is resolved against, are guarded with it, not again. The variables
-    `request_env` gave the sandbox are added to every command, read as each one starts.
-    """
-
-    def __init__(self, sandbox: _Sandbox) -> None:
-        self._opened = sandbox.open()
-        # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
-        super().__init__(Workspace(self._opened))
+    def __init__(self, backend: SandboxBackend, *, sandbox: _Sandbox) -> None:
+        super().__init__(Workspace(backend))
+        self._backend_unwrapped = backend
+        """What `keep_alive` is given: the provider's own backend, which names the sandbox."""
         self._sandbox = sandbox
-
-    async def _guarded(self, operation: Awaitable[_T]) -> _T:
-        """Await `operation`, calling the provider's `keep_alive` meanwhile; retire the backend if it is unavailable.
-
-        Only while an operation runs, so a sandbox nothing uses stops as its provider decides. A command started
-        in the background returns at once, so it can be stopped with the sandbox once nothing else runs.
-        """
-        try:
-            if (keep_alive := self._sandbox.provider.keep_alive) is None:
-                return await operation
-            failure: Exception | None = None
-            async with anyio.create_task_group() as pings:
-                pings.start_soon(self._keep_alive, keep_alive)
-                try:
-                    return await operation
-                except Exception as error:  # noqa: BLE001 -- re-raised below, unchanged.
-                    # Raised after the group, which would otherwise wrap it in an `ExceptionGroup`.
-                    failure = error
-                finally:
-                    pings.cancel_scope.cancel()
-            assert failure is not None  # The group is left without returning only when `operation` raised.
-            raise failure
-        except WorkspaceUnavailableError:
-            self._sandbox.retire(self._opened)
-            raise
-
-    async def _keep_alive(self, keep_alive: Callable[[SandboxBackend], Awaitable[None]]) -> None:
-        """Call `keep_alive` every `KEEP_ALIVE_EVERY` seconds until cancelled; a failure is only logged.
-
-        The first call comes one interval after the operation starts, which the provider counts as activity
-        itself, so a short operation makes no call.
-        """
-        sandbox = self._sandbox
-        started = anyio.current_time()
-        while True:
-            last = max(started, sandbox.kept_alive_at)
-            await anyio.sleep(max(0.0, last + KEEP_ALIVE_EVERY - anyio.current_time()))
-            sandbox.kept_alive_at = anyio.current_time()
-            try:
-                await keep_alive(self._opened)
-            except Exception:
-                _LOGGER.debug('Could not keep the sandbox alive', exc_info=True)
 
     async def run(
         self,
@@ -271,34 +209,41 @@ class _SandboxWorkspace(WrapperWorkspace):
         # The caller's own `env` wins, so a tool that sets a variable on purpose keeps it. The sandbox's own `env`,
         # read now, so a grant mid-run reaches the run's later commands.
         env = {**self._sandbox.env, **(env or {})}
-        return await self._guarded(self.wrapped.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd))
+        command_run = super().run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
+        if (keep_alive := self._sandbox.provider.keep_alive) is None:
+            return await command_run
+        # Only while a command runs, so a sandbox nothing uses stops as its provider decides. A command started in
+        # the background returns at once, so it stops with the sandbox once nothing else runs.
+        failure: Exception | None = None
+        async with anyio.create_task_group() as pings:
+            pings.start_soon(self._keep_alive, keep_alive)
+            try:
+                return await command_run
+            except Exception as error:  # noqa: BLE001 -- re-raised below, unchanged.
+                # Raised after the group, which would otherwise wrap it in an `ExceptionGroup`.
+                failure = error
+            finally:
+                pings.cancel_scope.cancel()
+        assert failure is not None  # The group is left without returning only when the command raised.
+        raise failure
 
-    async def working_dir(self) -> str:
-        return await self._guarded(self.wrapped.working_dir())
+    async def _keep_alive(self, keep_alive: Callable[[SandboxBackend], Awaitable[None]]) -> None:
+        """Call `keep_alive` every `KEEP_ALIVE_EVERY` seconds until cancelled; a failure is only logged.
 
-    async def read_bytes(self, path: str) -> bytes:
-        return await self._guarded(self.wrapped.read_bytes(path))
-
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        await self._guarded(self.wrapped.write_bytes(path, data))
-
-    async def stat(self, path: str) -> FileEntry:
-        return await self._guarded(self.wrapped.stat(path))
-
-    async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        return await self._guarded(self.wrapped.list_dir(path))
-
-    async def make_dir(self, path: str) -> None:
-        await self._guarded(self.wrapped.make_dir(path))
-
-    async def remove(self, path: str) -> None:
-        await self._guarded(self.wrapped.remove(path))
-
-    async def exists(self, path: str) -> bool:
-        return await self._guarded(self.wrapped.exists(path))
-
-    async def realpath(self, path: str) -> str:
-        return await self._guarded(self.wrapped.realpath(path))
+        The first call comes one interval after the command starts, which the provider counts as activity itself,
+        so a short command makes no call.
+        """
+        sandbox = self._sandbox
+        backend = self._backend_unwrapped
+        started = anyio.current_time()
+        while True:
+            last = max(started, sandbox.kept_alive_at)
+            await anyio.sleep(max(0.0, last + KEEP_ALIVE_EVERY - anyio.current_time()))
+            sandbox.kept_alive_at = anyio.current_time()
+            try:
+                await keep_alive(backend)
+            except Exception:
+                _LOGGER.debug('Could not keep the sandbox alive', exc_info=True)
 
 
 class SandboxPlugin(Plugin):
@@ -408,9 +353,10 @@ class SandboxPlugin(Plugin):
                     # Only once it is gone: a sandbox whose delete failed stays named, so `/sandbox delete` retries.
                     await conversation.commit_messages([])
                 finally:
-                    await provider.close(backend)
+                    await provider.close(ref)
             raise
-        self.sandbox(ref).backend = backend
+        # Kept, so `/sandbox delete` and the session's end close what the provider opened for it.
+        self.sandbox(ref)
         return _started(provider, ref, checkout, github=github)
 
     async def _delete(self) -> str:
@@ -457,7 +403,7 @@ async def _create(provider: SandboxProvider, github: GitHubCredential | None) ->
             try:
                 await provider.delete(ref)
             finally:
-                await provider.close(backend)
+                await provider.close(ref)
         raise
     return ref, backend
 

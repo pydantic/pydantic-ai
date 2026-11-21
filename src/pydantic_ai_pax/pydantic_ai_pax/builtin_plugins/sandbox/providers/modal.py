@@ -56,8 +56,8 @@ class ModalProvider:
 
         return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
-    async def close(self, backend: SandboxBackend) -> None:
-        del backend  # Modal's own client is shared by the process, and closes with it.
+    async def close(self, ref: WorkspaceRef) -> None:
+        del ref  # Modal's own client is shared by the process, and closes with it.
 
     async def delete(self, ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.modal_sandbox import ModalSandbox

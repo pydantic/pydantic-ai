@@ -10,7 +10,6 @@ import uuid
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
-from weakref import WeakKeyDictionary
 
 import anyio
 
@@ -25,8 +24,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 
 if TYPE_CHECKING:
     import boxd
-
-    from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
 
 KEY_NAME = 'BOXD_API_KEY'
 
@@ -45,10 +42,10 @@ class BoxdProvider:
     working_dir: str = '/home/boxd/workspace'
     token_in_sandbox: bool = False
     keep_alive: None = None
-    _clients: 'WeakKeyDictionary[SandboxBackend, boxd.AsyncBoxd]' = field(
-        default_factory=WeakKeyDictionary['SandboxBackend', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
+    _clients: 'dict[WorkspaceRef, boxd.AsyncBoxd]' = field(
+        default_factory=dict['WorkspaceRef', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
     )
-    """The client made for each backend: `BoxdSandboxBackend` leaves a client it was given open, so `close` closes it."""
+    """The client of each machine, shared by its backends: `BoxdSandboxBackend` leaves a client it was given open."""
 
     def missing(self) -> str | None:
         if find_spec('boxd') is None:
@@ -63,6 +60,8 @@ class BoxdProvider:
         return boxd.AsyncBoxd(api_key=saved_key(KEY_NAME))
 
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+        from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
+
         client = self._client()
         secret = None
         backend = None
@@ -71,7 +70,12 @@ class BoxdProvider:
                 # boxd refuses a spec naming a secret that does not exist yet, so the secret comes first.
                 secret = f'{SECRET_PREFIX}{uuid.uuid4().hex.upper()}'
                 await client.secrets.set(secret, github.token, scope=_SCOPE, domains=list(GITHUB_HOSTS))
-            backend = self._backend(client, secrets=None if secret is None else [secret])
+            backend = BoxdSandboxBackend(
+                client=client,
+                working_dir=self.working_dir,
+                env=SANDBOX_ENV,
+                secrets=None if secret is None else [secret],
+            )
             machine = await backend.get_sandbox()
             if github is not None and secret is not None:
                 stand_in = (await backend.run(['printenv', secret])).stdout.strip()
@@ -89,26 +93,20 @@ class BoxdProvider:
                 finally:
                     await client.close()
             raise
-        return WorkspaceRef(provider=self.name, id=machine.id), backend
-
-    def _backend(self, client: 'boxd.AsyncBoxd', *, secrets: list[str] | None = None) -> 'BoxdSandboxBackend':
-        from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
-
-        # The backend sets `env` on each command it runs, not on the machine, so each reopen passes it again.
-        backend = BoxdSandboxBackend(client=client, working_dir=self.working_dir, env=SANDBOX_ENV, secrets=secrets)
-        self._clients[backend] = client
-        return backend
+        ref = WorkspaceRef(provider=self.name, id=machine.id)
+        self._clients[ref] = client
+        return ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
 
-        client = self._client()
-        backend = BoxdSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
-        self._clients[backend] = client
-        return backend
+        if (client := self._clients.get(ref)) is None:
+            client = self._clients[ref] = self._client()
+        # The backend sets `env` on each command it runs, not on the machine, so each reopen passes it again.
+        return BoxdSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
-    async def close(self, backend: SandboxBackend) -> None:
-        if (client := self._clients.pop(backend, None)) is not None:
+    async def close(self, ref: WorkspaceRef) -> None:
+        if (client := self._clients.pop(ref, None)) is not None:
             await client.close()
 
     async def delete(self, ref: WorkspaceRef) -> None:

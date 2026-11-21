@@ -45,6 +45,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     SupportsFilesystem,
+    Workspace,
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceUnavailableError,
@@ -65,7 +66,12 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
     render as render_provider,
     sprites as sprites_provider,
 )
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login, saved_key
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
+    SANDBOX_ENV,
+    SandboxProvider,
+    give_github_login,
+    saved_key,
+)
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.e2b import E2BProvider
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import (
     SandboxBackend,
@@ -134,6 +140,8 @@ class FakeProvider:
     requirement: str | None = None
     created: list[GitHubCredential | None] = field(default_factory=list[GitHubCredential | None])
     reopened: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
+    opened: list[FakeSandboxBackend] = field(default_factory=list[FakeSandboxBackend])
+    """The backends `reopen` gave, in order."""
     deleted: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
     closed: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
     creating: anyio.Event | None = None
@@ -159,15 +167,16 @@ class FakeProvider:
 
     def reopen(self, ref: WorkspaceRef) -> FakeSandboxBackend:
         self.reopened.append(ref)
-        return self._backend(ref, {})
+        self.opened.append(backend := self._backend(ref, {}))
+        return backend
 
     async def delete(self, ref: WorkspaceRef) -> None:
         if self.delete_error is not None:
             raise self.delete_error
         self.deleted.append(ref)
 
-    async def close(self, backend: FakeSandboxBackend) -> None:
-        self.closed.append(backend.ref)
+    async def close(self, ref: WorkspaceRef) -> None:
+        self.closed.append(ref)
 
     def folder(self, ref: WorkspaceRef) -> Path:
         return self.root / ref.id
@@ -716,9 +725,10 @@ class TestLifecycle:
         current = plugin.current()
         assert current is not None
         backend = current.open()
-        assert current.open() is backend
+        # A fresh backend each run, which attaches afresh.
+        assert current.open() is not backend
         assert backend.ref == ref
-        assert provider.reopened == [ref]
+        assert provider.reopened == [ref, ref]
         await loaded.dispatch(SessionEnd(reason='exit'))
         assert provider.deleted == []
 
@@ -760,26 +770,50 @@ class TestLifecycle:
 
 
 class Commands(AbstractCapability[None]):
-    """Works in the run's workspace before each run, as the file and shell tools do: a failure fails the turn."""
+    """Runs `true` in each run's workspace, as the shell tool would, and keeps the workspace, as a `/fork` may."""
 
     def __init__(self) -> None:
-        self.failures: list[WorkspaceUnavailableError] = []
+        self.workspaces: list[Workspace] = []
 
     async def before_run(self, ctx: RunContext[None]) -> None:
-        workspace = ctx.workspace
-        await workspace.write_bytes('note.txt', b'hi')
-        assert await workspace.read_bytes('note.txt') == b'hi'
-        assert (await workspace.stat('note.txt')).size == 2
-        assert 'note.txt' in [entry.name for entry in await workspace.list_dir('.')]
-        await workspace.remove('note.txt')
-        # Two operations, as a turn makes many: once the sandbox is found stopped, the next fails the same way.
-        for _ in range(2):
-            try:
-                await ctx.workspace.run(['true'])
-            except WorkspaceUnavailableError as error:
-                self.failures.append(error)
-        if self.failures:
-            raise self.failures[-1]
+        self.workspaces.append(ctx.workspace)
+        await ctx.workspace.run(['true'])
+
+
+def sandboxed(loaded: LoadedPlugin[None], checkout: Path, commands: Commands) -> Session[None, str]:
+    """A session on screen whose runs go through `commands`."""
+    [capability] = loaded.capabilities
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
+    session = Session(agent, deps=None, plugins=[capability, commands], workspace=checkout)
+    loaded.host.conversation = session
+    return session
+
+
+async def test_each_run_attaches_afresh(
+    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    commands = Commands()
+    session = sandboxed(loaded, checkout, commands)
+    await plugin.command(['fake'])
+    ref = WorkspaceRef(provider='fake', id='sbx-1')
+    await session.prompt('go')
+
+    async def unavailable(*args: object, **kwargs: object) -> CommandResult:
+        raise WorkspaceUnavailableError('The sandbox was stopped while idle.')
+
+    # The provider stopped the sandbox while idle: the run's backend has a handle that fails from then on.
+    monkeypatch.setattr(provider.opened[0], 'run', unavailable)
+    # The next run's own backend attaches afresh, which starts the sandbox again, so its first command works.
+    await session.prompt('again')
+    await session.prompt('once more')
+    assert provider.reopened == [ref, ref, ref]
+    # A run still using an earlier backend, such as a `/fork`'s, keeps working: nothing was closed under it.
+    assert (await commands.workspaces[1].run(['echo', 'still here'])).stdout == 'still here\n'
+    assert provider.closed == []
+    await loaded.dispatch(SessionEnd(reason='exit'))
+    assert provider.closed == [ref]
 
 
 async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
@@ -797,25 +831,18 @@ async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
 
     provider.keep_alive = keep_alive
     loaded = load(checkout)
-    plugin = plugin_of(loaded)
-    [capability] = loaded.capabilities
-    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    session = Session(agent, deps=None, plugins=[capability, Commands()], workspace=checkout)
-    loaded.host.conversation = session
-    await plugin.command(['fake'])
-    held = plugin.current()
-    assert held is not None and held.backend is not None
-    run = held.backend.run
+    session = sandboxed(loaded, checkout, Commands())
+    await plugin_of(loaded).command(['fake'])
     fails = False
 
-    async def long_command(*args: object, **kwargs: object) -> CommandResult:
+    async def long_command(self: FakeSandboxBackend, *args: object, **kwargs: object) -> CommandResult:
         # Ends only once `keep_alive` was called while it ran.
         await pinged.wait()
         if fails:
             raise OSError('the command failed')
-        return await run(['true'])
+        return await LocalWorkspaceBackend.run(self, ['true'])
 
-    monkeypatch.setattr(held.backend, 'run', long_command)
+    monkeypatch.setattr(FakeSandboxBackend, 'run', long_command)
     with caplog.at_level(logging.DEBUG, logger=sandbox.__name__), anyio.fail_after(5):
         await session.prompt('go')
     # A failed call is only logged: the command goes on, and the next call comes as usual.
@@ -835,54 +862,6 @@ async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
     with pytest.raises(OSError, match=r'^the command failed$'), anyio.fail_after(5):
         await session.prompt('again')
     await no_more_calls()
-
-
-async def test_a_sandbox_found_stopped_is_reopened_by_the_next_turn(
-    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stopped_ref, other_ref = WorkspaceRef(provider='fake', id='stopped'), WorkspaceRef(provider='fake', id='other')
-    provider.folder(stopped_ref).mkdir()
-    provider.folder(other_ref).mkdir()
-    loaded = load(checkout)
-    plugin = plugin_of(loaded)
-    [capability] = loaded.capabilities
-    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    commands = Commands()
-
-    def conversation(ref: WorkspaceRef) -> Session[None, str]:
-        return Session(
-            agent, deps=None, plugins=[capability, commands], workspace=checkout, message_history=worked_in(ref)
-        )
-
-    stopped, other = conversation(stopped_ref), conversation(other_ref)
-    await stopped.prompt('go')
-    await other.prompt('go')
-    stale, untouched = plugin.sandbox(stopped_ref), plugin.sandbox(other_ref)
-    assert stale.backend is not None and untouched.backend is not None
-    stale_backend, untouched_backend = stale.backend, untouched.backend
-
-    async def unavailable(*args: object, **kwargs: object) -> CommandResult:
-        raise WorkspaceUnavailableError('The sandbox was stopped while idle.')
-
-    # The provider stopped it while idle: the backend's handle fails every operation from then on.
-    monkeypatch.setattr(stale_backend, 'run', unavailable)
-    with pytest.raises(WorkspaceUnavailableError):
-        await stopped.prompt('go')
-    assert len(commands.failures) == 2
-    # Nothing is closed under a run that may still hold the backend, such as a `/fork`'s in the other sandbox.
-    assert provider.closed == []
-    assert untouched.backend is untouched_backend
-    commands.failures.clear()
-    await stopped.prompt('again')
-    # A fresh backend for the same sandbox, which the provider starts again as it attaches.
-    assert provider.reopened == [stopped_ref, other_ref, stopped_ref]
-    assert stale.backend is not stale_backend
-    await other.prompt('again')
-    assert untouched.backend is untouched_backend
-    await loaded.dispatch(SessionEnd(reason='exit'))
-    # The retired backend is closed with the rest.
-    assert provider.closed == [stopped_ref, stopped_ref, other_ref]
-    assert stale.backend is None and stale.retired == []
 
 
 async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> None:
@@ -1157,6 +1136,14 @@ def fake_e2b(monkeypatch: pytest.MonkeyPatch) -> Iterator['FakeE2B']:
 
 
 @pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed')
+async def reopen_after_a_restart(restarted: SandboxProvider, ref: WorkspaceRef) -> None:
+    """A CLAI started afresh opens what the sandbox needs on its first `reopen`, shares it, and closes it once."""
+    first = restarted.reopen(ref)
+    assert restarted.reopen(ref).ref == first.ref == ref
+    await restarted.close(ref)
+    await restarted.close(ref)  # Closing again has nothing left to close.
+
+
 class TestE2B:
     """E2B, through the SDK fake the harness's own E2B tests use: a live run needs a billed account."""
 
@@ -1200,6 +1187,7 @@ class TestE2B:
         assert fake_e2b.create_calls[-1].envs == SANDBOX_ENV
         reopened = e2b.reopen(ref)
         assert reopened.ref == ref
+        await reopen_after_a_restart(E2BProvider(), ref)
         await e2b.delete(ref)
         assert fake_e2b.sandboxes[0].killed
         # `/keys` wins over the environment, for every call.
@@ -1337,19 +1325,23 @@ class TestBoxd:
         assert backend.ref == provider.reopen(ref).ref == ref
         assert (await provider.reopen(ref).run(['printenv', 'GIT_TERMINAL_PROMPT'])).stdout == '0\n'
         # Deleting the machine deletes its secret, so the token ends with it.
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
+        await provider.close(ref)
         assert machine.status == 'destroyed'
         assert account.secrets == {}
         # Without a GitHub login: no secret, and nothing for the spec to keep.
         ref, backend = await provider.create(github=None)
         assert account.secrets == {}
         assert ref.id not in account.specs
-        reopened = provider.reopen(ref)
+        assert provider.reopen(ref).ref == ref
         await provider.delete(ref)
-        # The clients made for workspaces stay open until clai is done with them.
-        await provider.close(backend)
-        await provider.close(reopened)
-        assert all(client.closed for client in account.clients[-3:])
+        # The client the machine's backends share stays open until clai is done with it.
+        assert not account.clients[3].closed
+        await provider.close(ref)
+        # One client per machine, which its reopens share, one per delete, and the restarted CLAI's.
+        assert len(account.clients) == 5
+        assert all(client.closed for client in account.clients)
 
     async def test_a_failed_secret_delete_is_retried(
         self, fake_boxd: 'tuple[FakeBoxd, FakeBoxdAccount]', monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1359,8 +1351,8 @@ class TestBoxd:
         monkeypatch.setattr(uuid, 'uuid4', lambda: uuid.UUID(int=0))
         monkeypatch.setenv('CLAI_GITHUB_' + '0' * 32, 'bxds_stand-in')
         provider = boxd_provider.BoxdProvider(working_dir=str(tmp_path / 'workspace'))
-        ref, backend = await provider.create(github=GitHubCredential(login='Ada', token='gho_x'))
-        await provider.close(backend)
+        ref, _ = await provider.create(github=GitHubCredential(login='Ada', token='gho_x'))
+        await provider.close(ref)
         account.delete_error = OSError('boxd is down')
         with pytest.raises(OSError, match='boxd is down'):
             await provider.delete(ref)
@@ -1382,10 +1374,10 @@ class TestBoxd:
             monkeypatch.setenv(f'CLAI_GITHUB_{uuid.UUID(int=number).hex.upper()}', 'bxds_stand-in')
         provider = boxd_provider.BoxdProvider(working_dir=str(tmp_path / 'workspace'))
         github = GitHubCredential(login='Ada', token='gho_x')
-        gone, backend = await provider.create(github=github)
-        await provider.close(backend)
-        kept, backend = await provider.create(github=github)
-        await provider.close(backend)
+        gone, _ = await provider.create(github=github)
+        await provider.close(gone)
+        kept, _ = await provider.create(github=github)
+        await provider.close(kept)
         account.secrets['USER_OWN'] = ('x', 'private-unattached', [])
         # boxd deleted the first machine itself, so only its secret is left.
         from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
@@ -1658,10 +1650,13 @@ class TestDaytona:
         assert reopened.ref == ref
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
-        await provider.close(reopened)
-        await provider.close(backend)
-        await provider.close(backend)  # Closing again has nothing left to close.
+        # The backends share the sandbox's one client, which closes once.
+        await provider.close(ref)
+        assert fake.closed_clients == 1
+        await provider.close(ref)  # Closing again has nothing left to close.
+        assert fake.closed_clients == 1
         # Deleting the sandbox deletes its secret, so the token ends with it.
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
         assert account.secrets == {}
         # Deleting again finds neither.
@@ -1671,7 +1666,7 @@ class TestDaytona:
         ref, backend = await provider.create(github=None)
         assert account.secrets == {}
         assert fake.create_params[-1].secrets is None
-        await provider.close(backend)
+        await provider.close(ref)
         await provider.delete(ref)
 
     async def test_keep_alive_refreshes_only_a_started_sandbox(
@@ -1703,8 +1698,7 @@ class TestDaytona:
         # A stopped sandbox stays stopped until an operation starts it.
         assert refreshed == [ref.id]
         assert made.state == SandboxState.STOPPED
-        await provider.close(reopened)
-        await provider.close(backend)
+        await provider.close(ref)
         await provider.delete(ref)
 
     async def test_a_secret_deleted_already_is_fine(
@@ -1716,8 +1710,8 @@ class TestDaytona:
         _, account = fake_daytona
         monkeypatch.setenv('GH_TOKEN', 'dtn_secret_1')
         provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
-        ref, backend = await provider.create(github=GITHUB)
-        await provider.close(backend)
+        ref, _ = await provider.create(github=GITHUB)
+        await provider.close(ref)
         account.secrets.clear()
         await provider.delete(ref)
 
@@ -1732,8 +1726,8 @@ class TestDaytona:
         fake, account = fake_daytona
         monkeypatch.setenv('GH_TOKEN', 'dtn_secret_1')
         provider = daytona_provider.DaytonaProvider(working_dir=str(tmp_path / 'workspace'))
-        ref, backend = await provider.create(github=GITHUB)
-        await provider.close(backend)
+        ref, _ = await provider.create(github=GITHUB)
+        await provider.close(ref)
         # What the secrets API raises, unwrapped by the SDK.
         account.delete_error = ApiException(status=503)
         with pytest.raises(ApiException):
@@ -1849,7 +1843,8 @@ class TestModal:
         reopened = provider.reopen(ref)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
-        await provider.close(reopened)
+        await provider.close(ref)
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
         assert made.shutting_down
         ref, _ = await provider.create(github=None)
@@ -1925,9 +1920,9 @@ class TestRender:
         reopened = provider.reopen(ref)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
-        await provider.close(reopened)
-        await provider.close(backend)
-        await provider.close(backend)  # Closing again has nothing left to close.
+        await provider.close(ref)
+        await provider.close(ref)  # Closing again has nothing left to close.
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
         assert fake_render.terminated == ['sb-1']
 
@@ -2026,13 +2021,13 @@ class TestSprites:
         reopened = provider.reopen(ref)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
-        await provider.close(reopened)
-        await provider.close(backend)
-        await provider.close(backend)  # Closing again has nothing left to close.
+        await provider.close(ref)
+        await provider.close(ref)  # Closing again has nothing left to close.
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
         assert fake_sprites.names == set()
         ref, backend = await provider.create(github=None)
-        await provider.close(backend)
+        await provider.close(ref)
         await provider.delete(ref)
 
     async def test_a_failed_create_leaves_nothing_behind(self, fake_sprites: 'SpriteTransport', tmp_path: Path) -> None:
@@ -2128,7 +2123,7 @@ class TestOpenSandbox:
         provider = opensandbox_provider.OpenSandboxProvider(working_dir=str(tmp_path.resolve()))
         ref, backend = await provider.create(github=GITHUB)
         assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
-        await provider.close(backend)
+        await provider.close(ref)
         await provider.delete(ref)
         # The API, the credential vault and the commands alike.
         assert {url.path.rsplit('/', 1)[-1] for url in urls} >= {'sandboxes', 'credential-vault', 'command'}
@@ -2174,8 +2169,9 @@ class TestOpenSandbox:
         reopened = provider.reopen(ref)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
-        await provider.close(reopened)
-        await provider.close(backend)
+        assert reopened is backend  # Every run shares the sandbox's one backend, and its connections.
+        await provider.close(ref)
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
         assert fake_opensandbox.sandboxes == {}
         assert fake_opensandbox.opened_transports == fake_opensandbox.closed_transports
@@ -2184,7 +2180,7 @@ class TestOpenSandbox:
         made = fake_opensandbox.sandboxes[ref.id]
         # Without a login, the server's own network policy applies.
         assert (made.network_policy, made.credential_proxy, made.credential_vault) == (None, None, None)
-        await provider.close(backend)
+        await provider.close(ref)
         await provider.delete(ref)
 
     async def test_a_failed_create_leaves_nothing_behind(
@@ -2252,14 +2248,16 @@ class TestKubernetes:
         await give_github_login(backend, GITHUB)
         assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
         reopened = provider.reopen(ref)
+        # Every run shares the claim's one backend, and its `kubectl port-forward`.
+        assert reopened is backend
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
-        await provider.close(reopened)
-        await provider.close(backend)
+        await provider.close(ref)
+        await reopen_after_a_restart(type(provider)(working_dir=provider.working_dir), ref)
         await provider.delete(ref)
         assert fake_cluster.claims == {}
         ref, backend = await provider.create(github=None)
-        await provider.close(backend)
+        await provider.close(ref)
         await provider.delete(ref)
 
     async def test_a_failed_create_leaves_nothing_behind(self, fake_cluster: 'FakeCluster') -> None:

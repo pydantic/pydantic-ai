@@ -13,7 +13,7 @@ OpenSandbox deprecates its credential proxy in a sandbox that can reach any host
 login reaches only `GITHUB_HOSTS`, and cannot install packages; one without keeps the server's network policy.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -32,6 +32,8 @@ from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 
 if TYPE_CHECKING:
     from opensandbox.config import ConnectionConfig
+
+    from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
 DOMAIN_NAME = 'OPEN_SANDBOX_DOMAIN'
 KEY_NAME = 'OPEN_SANDBOX_API_KEY'
@@ -54,6 +56,10 @@ class OpenSandboxProvider:
     working_dir: str = '/workspace'
     token_in_sandbox: bool = False
     keep_alive: None = None
+    _backends: 'dict[WorkspaceRef, OpenSandboxBackend]' = field(
+        default_factory=dict['WorkspaceRef', 'OpenSandboxBackend'], init=False, compare=False, repr=False
+    )
+    """The one backend of each sandbox, which every run shares: each backend opens its own connections."""
 
     def missing(self) -> str | None:
         if find_spec('opensandbox') is None:
@@ -141,18 +147,23 @@ class OpenSandboxProvider:
                 finally:
                     await backend.aclose()
             raise
-        return WorkspaceRef(provider=self.name, id=sandbox.id), backend
+        ref = WorkspaceRef(provider=self.name, id=sandbox.id)
+        self._backends[ref] = backend
+        return ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
-        return OpenSandboxBackend(ref=ref, connection=self._connection(), working_dir=self.working_dir, env=SANDBOX_ENV)
+        # A sandbox has no time limit and is never stopped, so there is nothing a fresh attach would recover.
+        if (backend := self._backends.get(ref)) is None:
+            backend = self._backends[ref] = OpenSandboxBackend(
+                ref=ref, connection=self._connection(), working_dir=self.working_dir, env=SANDBOX_ENV
+            )
+        return backend
 
-    async def close(self, backend: SandboxBackend) -> None:
-        from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
-
-        assert isinstance(backend, OpenSandboxBackend)
-        await backend.aclose()
+    async def close(self, ref: WorkspaceRef) -> None:
+        if (backend := self._backends.pop(ref, None)) is not None:
+            await backend.aclose()
 
     async def delete(self, ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox

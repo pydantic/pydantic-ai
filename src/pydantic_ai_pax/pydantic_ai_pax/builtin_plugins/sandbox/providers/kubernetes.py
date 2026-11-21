@@ -10,7 +10,7 @@ The claim has no time limit, so the sandbox lives until `/sandbox delete`.
 """
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
@@ -41,6 +41,10 @@ class KubernetesProvider:
     """Below sandboxd's default root, which the docs' templates also make the home, so the token is not in the checkout."""
     token_in_sandbox: bool = True
     keep_alive: None = None
+    _backends: 'dict[WorkspaceRef, KubernetesSandboxBackend]' = field(
+        default_factory=dict['WorkspaceRef', 'KubernetesSandboxBackend'], init=False, compare=False, repr=False
+    )
+    """The one backend of each claim, which every run shares: each backend starts its own `kubectl port-forward`."""
 
     def missing(self) -> str | None:
         if find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None:
@@ -72,16 +76,23 @@ class KubernetesProvider:
                 await backend.aclose()
             raise
         assert backend.ref is not None
+        self._backends[backend.ref] = backend
         return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
 
-        return KubernetesSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        # A claim has no time limit and is never stopped, so there is nothing a fresh attach would recover.
+        if (backend := self._backends.get(ref)) is None:
+            backend = self._backends[ref] = KubernetesSandboxBackend(
+                ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV
+            )
+        return backend
 
-    async def close(self, backend: SandboxBackend) -> None:
-        # Stops the `kubectl port-forward` the backend started.
-        await _kubernetes(backend).aclose()
+    async def close(self, ref: WorkspaceRef) -> None:
+        if (backend := self._backends.pop(ref, None)) is not None:
+            # Stops the `kubectl port-forward` the backend started.
+            await backend.aclose()
 
     async def delete(self, ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
@@ -89,10 +100,3 @@ class KubernetesProvider:
         # The ref names the claim's namespace; the warm pool is only for new claims.
         namespace = ref.id.partition('/')[0]
         await KubernetesSandbox[None](warm_pool='', namespace=namespace).destroy(ref)
-
-
-def _kubernetes(backend: SandboxBackend) -> 'KubernetesSandboxBackend':
-    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
-
-    assert isinstance(backend, KubernetesSandboxBackend)
-    return backend

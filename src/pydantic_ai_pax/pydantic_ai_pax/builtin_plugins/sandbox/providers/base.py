@@ -66,11 +66,11 @@ class SandboxProvider(Protocol):
 
     @property
     def keep_alive(self) -> Callable[[SandboxBackend], Awaitable[None]] | None:
-        """What keeps a running sandbox from stopping while an operation runs in it; `None` when nothing is needed.
+        """What keeps a running sandbox from stopping while a command runs in it; `None` when nothing is needed.
 
         A provider that stops a sandbox it counts as idle while a long command still runs in it, as Daytona does,
-        sets one. `/sandbox` calls it every few minutes while a command or file operation is in flight, never
-        between them. It must leave a stopped or paused sandbox as it is: starting one is the next operation's job.
+        sets one. `/sandbox` calls it every few minutes while a command runs, never between commands. It must
+        leave a stopped or paused sandbox as it is: starting one is the next run's attach.
         """
         ...
 
@@ -89,15 +89,23 @@ class SandboxProvider(Protocol):
         ...
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
-        """The sandbox `ref` names, attached on first use; its commands get `SANDBOX_ENV`."""
+        """A backend for the sandbox `ref` names, attached on first use; its commands get `SANDBOX_ENV`.
+
+        `/sandbox` asks for one per run, so attaching starts or resumes a sandbox the provider stopped meanwhile.
+        A run may still use an earlier one, such as a `/fork`'s, so backends share what they hold open, such as an
+        API client, until `close`.
+        """
         ...
 
     async def delete(self, ref: WorkspaceRef) -> None:
         """Delete the sandbox `ref` names, and the provider's copy of the token with it; one already gone is fine."""
         ...
 
-    async def close(self, backend: SandboxBackend) -> None:
-        """Close what `create` or `reopen` opened for `backend`, such as an API client; the sandbox keeps running."""
+    async def close(self, ref: WorkspaceRef) -> None:
+        """Close what `create` and `reopen` opened for the sandbox `ref` names, such as its API client.
+
+        The sandbox keeps running, and a later `reopen` opens what it needs again.
+        """
         ...
 
 

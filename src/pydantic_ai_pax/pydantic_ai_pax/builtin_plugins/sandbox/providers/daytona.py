@@ -11,7 +11,6 @@ import uuid
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
-from weakref import WeakKeyDictionary
 
 import anyio
 from anyio import to_thread
@@ -45,13 +44,10 @@ class DaytonaProvider:
     title: str = 'Daytona'
     working_dir: str = '/home/daytona/workspace'
     token_in_sandbox: bool = False
-    _clients: 'WeakKeyDictionary[SandboxBackend, daytona.AsyncDaytona]' = field(
-        default_factory=WeakKeyDictionary['SandboxBackend', 'daytona.AsyncDaytona'],
-        init=False,
-        compare=False,
-        repr=False,
+    _clients: 'dict[WorkspaceRef, daytona.AsyncDaytona]' = field(
+        default_factory=dict['WorkspaceRef', 'daytona.AsyncDaytona'], init=False, compare=False, repr=False
     )
-    """The client made for each backend: `DaytonaSandboxBackend` leaves a client it was given open, so `close` closes it."""
+    """The client of each sandbox, shared by its backends: `DaytonaSandboxBackend` leaves a client it was given open."""
 
     def missing(self) -> str | None:
         if find_spec('daytona') is None:
@@ -111,34 +107,33 @@ class DaytonaProvider:
                     finally:
                         await client.close()
             raise
-        self._clients[backend] = client
-        return WorkspaceRef(provider=self.name, id=sandbox.id), backend
+        ref = WorkspaceRef(provider=self.name, id=sandbox.id)
+        self._clients[ref] = client
+        return ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
 
         # Built here, though it reads the key store and two small dotenv files: the key may be only in `/keys`,
         # which a backend left to open its own client would not read.
-        client = self._client()
-        backend = DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
-        self._clients[backend] = client
-        return backend
+        if (client := self._clients.get(ref)) is None:
+            client = self._clients[ref] = self._client()
+        return DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
     async def keep_alive(self, backend: SandboxBackend) -> None:
         """Reset the idle timer, `auto_stop_interval` (15 minutes by default), which a running command does not reset.
 
-        The sandbox is looked up by id with the backend's client, as the backend's `get_sandbox` would start a
-        stopped one.
+        The sandbox is looked up by id with its client, as the backend's `get_sandbox` would start a stopped one.
         """
         import daytona
 
         assert backend.ref is not None  # Both `create` and `reopen` give backends that name their sandbox.
-        sandbox = await self._clients[backend].get(backend.ref.id, request_timeout=_REQUEST_TIMEOUT)
+        sandbox = await self._clients[backend.ref].get(backend.ref.id, request_timeout=_REQUEST_TIMEOUT)
         if sandbox.state == daytona.SandboxState.STARTED:
             await sandbox.refresh_activity(request_timeout=_REQUEST_TIMEOUT)
 
-    async def close(self, backend: SandboxBackend) -> None:
-        if (client := self._clients.pop(backend, None)) is not None:
+    async def close(self, ref: WorkspaceRef) -> None:
+        if (client := self._clients.pop(ref, None)) is not None:
             await client.close()
 
     async def delete(self, ref: WorkspaceRef) -> None:

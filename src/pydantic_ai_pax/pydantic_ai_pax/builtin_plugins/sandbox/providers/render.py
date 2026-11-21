@@ -10,7 +10,6 @@ the launch argument it sends to Render's API; a key `request_env` sets travels t
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
-from weakref import WeakKeyDictionary
 
 import anyio
 from anyio import to_thread
@@ -42,10 +41,10 @@ class RenderProvider:
     working_dir: str = '/root/workspace'
     token_in_sandbox: bool = True
     keep_alive: None = None
-    _clients: 'WeakKeyDictionary[SandboxBackend, RenderAsync]' = field(
-        default_factory=WeakKeyDictionary['SandboxBackend', 'RenderAsync'], init=False, compare=False, repr=False
+    _clients: 'dict[WorkspaceRef, RenderAsync]' = field(
+        default_factory=dict['WorkspaceRef', 'RenderAsync'], init=False, compare=False, repr=False
     )
-    """The client made for each backend: `RenderSandboxBackend` leaves a client it was given open, so `close` closes it."""
+    """The client of each sandbox, shared by its backends: `RenderSandboxBackend` leaves a client it was given open."""
 
     def missing(self) -> str | None:
         if find_spec('render') is None:
@@ -67,11 +66,9 @@ class RenderProvider:
         from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
         # Render's longest lifetime, 24 hours.
-        backend = RenderSandboxBackend(
+        return RenderSandboxBackend(
             client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, sandbox_timeout=86_400
         )
-        self._clients[backend] = client
-        return backend
 
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
         client = await to_thread.run_sync(self._client)
@@ -85,29 +82,36 @@ class RenderProvider:
                     if backend.ref is not None:
                         await self._destroy(client, backend.ref)
                 finally:
-                    await self.close(backend)
+                    await _close(client)
             raise
         assert backend.ref is not None
+        self._clients[backend.ref] = client
         return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         # Built here, though it reads its package's metadata: the keys may be only in `/keys`, which a backend
         # left to open its own client would not read.
-        return self._backend(self._client(), ref)
+        if (client := self._clients.get(ref)) is None:
+            client = self._clients[ref] = self._client()
+        return self._backend(client, ref)
 
-    async def close(self, backend: SandboxBackend) -> None:
-        if (client := self._clients.pop(backend, None)) is not None:
-            # Render's client has no close of its own; its connections are in its sandbox API's HTTP client.
-            await client.sandboxes.client.get_async_httpx_client().aclose()
+    async def close(self, ref: WorkspaceRef) -> None:
+        if (client := self._clients.pop(ref, None)) is not None:
+            await _close(client)
 
     async def delete(self, ref: WorkspaceRef) -> None:
         client = await to_thread.run_sync(self._client)
         try:
             await self._destroy(client, ref)
         finally:
-            await client.sandboxes.client.get_async_httpx_client().aclose()
+            await _close(client)
 
     async def _destroy(self, client: 'RenderAsync', ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.render_sandbox import RenderSandbox
 
         await RenderSandbox[None](client=client).destroy(ref)
+
+
+async def _close(client: 'RenderAsync') -> None:
+    # Render's client has no close of its own; its connections are in its sandbox API's HTTP client.
+    await client.sandboxes.client.get_async_httpx_client().aclose()

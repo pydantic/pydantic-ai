@@ -82,8 +82,8 @@ class E2BProvider:
 
         return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir)
 
-    async def close(self, backend: SandboxBackend) -> None:
-        del backend  # `e2b.E2B` holds no open connection between requests.
+    async def close(self, ref: WorkspaceRef) -> None:
+        del ref  # `e2b.E2B` holds no open connection between requests.
 
     async def delete(self, ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.e2b_sandbox import E2BSandbox

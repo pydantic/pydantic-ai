@@ -11,7 +11,6 @@ reaches Sprites' API in a URL. The GitHub token does not: it goes by the filesys
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
-from weakref import WeakKeyDictionary
 
 import anyio
 from anyio import to_thread
@@ -41,10 +40,10 @@ class SpritesProvider:
     working_dir: str = '/home/sprite/workspace'
     token_in_sandbox: bool = True
     keep_alive: None = None
-    _clients: 'WeakKeyDictionary[SandboxBackend, AsyncSpritesClient]' = field(
-        default_factory=WeakKeyDictionary['SandboxBackend', 'AsyncSpritesClient'], init=False, compare=False, repr=False
+    _clients: 'dict[WorkspaceRef, AsyncSpritesClient]' = field(
+        default_factory=dict['WorkspaceRef', 'AsyncSpritesClient'], init=False, compare=False, repr=False
     )
-    """The client made for each backend: `SpritesSandboxBackend` leaves a client it was given open, so `close` closes it."""
+    """The client of each Sprite, shared by its backends: `SpritesSandboxBackend` leaves a client it was given open."""
 
     def missing(self) -> str | None:
         if find_spec('sprites') is None:
@@ -62,9 +61,7 @@ class SpritesProvider:
     def _backend(self, client: 'AsyncSpritesClient', ref: WorkspaceRef | None = None) -> 'SpritesSandboxBackend':
         from pydantic_ai_harness.sprites_sandbox import SpritesSandboxBackend
 
-        backend = SpritesSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
-        self._clients[backend] = client
-        return backend
+        return SpritesSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
         client = await to_thread.run_sync(self._client)
@@ -78,18 +75,21 @@ class SpritesProvider:
                     if backend.ref is not None:
                         await self._destroy(client, backend.ref)
                 finally:
-                    await self.close(backend)
+                    await client.aclose()
             raise
         assert backend.ref is not None
+        self._clients[backend.ref] = client
         return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         # Built here, though it reads the key store: the token may be only in `/keys`, which a backend left to
         # open its own client would not read.
-        return self._backend(self._client(), ref)
+        if (client := self._clients.get(ref)) is None:
+            client = self._clients[ref] = self._client()
+        return self._backend(client, ref)
 
-    async def close(self, backend: SandboxBackend) -> None:
-        if (client := self._clients.pop(backend, None)) is not None:
+    async def close(self, ref: WorkspaceRef) -> None:
+        if (client := self._clients.pop(ref, None)) is not None:
             await client.aclose()
 
     async def delete(self, ref: WorkspaceRef) -> None:
