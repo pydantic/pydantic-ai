@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from prefect import task
-from prefect.context import FlowRunContext
+from prefect.context import FlowRunContext, TaskRunContext
 from prefect.utilities.hashing import hash_objects
 
 from pydantic_ai._utils import now_utc
@@ -123,6 +123,10 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
+
+    @property
+    def in_durable_unit(self) -> bool:
+        return TaskRunContext.get() is not None or super().in_durable_unit
 
     def get_default_run_id(self) -> str | None:
         """Return an ID using the legacy flow-counter policy, or `None` outside a flow.

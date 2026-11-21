@@ -63,7 +63,12 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        return self._merge_tools(await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets)))
+
+    def _merge_tools(
+        self, toolsets_tools: Sequence[dict[str, ToolsetTool[AgentDepsT]]]
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """Merge each of `toolsets`' tools, in the same order, into this toolset's tools."""
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
