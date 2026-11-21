@@ -807,7 +807,7 @@ async def test_each_run_attaches_afresh(
     await session.prompt('again')
     await session.prompt('once more')
     assert provider.reopened == [ref, ref, ref]
-    # Nothing is closed between runs: a run may still use an earlier one's backend, such as a `/fork`'s.
+    # Nothing is closed between runs: a run may still use an earlier one's backend, such as a background task's.
     assert provider.closed == []
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert provider.closed == [ref]

@@ -92,7 +92,7 @@ class SandboxProvider(Protocol):
         """A backend for the sandbox `ref` names, attached on first use; its commands get `SANDBOX_ENV`.
 
         `/sandbox` asks for one per run, so attaching starts or resumes a sandbox the provider stopped meanwhile.
-        A run may still use an earlier one, such as a `/fork`'s, so backends share what they hold open, such as an
+        A run may still use an earlier one, such as a background task's, so backends share what they hold open, such as an
         API client, until `close`.
         """
         ...

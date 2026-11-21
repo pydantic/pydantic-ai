@@ -80,6 +80,8 @@ class _Sandbox:
     env: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
     deleted: bool = False
+    checked: bool = False
+    """Whether the provider's setup was checked; once per session, as `missing` may read the key store."""
 
     def open(self) -> SandboxBackend:
         """A run's backend, attached on first use; `UserError` when it cannot be, so the run fails closed.
@@ -91,8 +93,10 @@ class _Sandbox:
             raise UserError(
                 f"This conversation's {self.provider.title} sandbox was deleted. Run /new to start another."
             )
-        if (missing := self.provider.missing()) is not None:
-            raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
+        if not self.checked:
+            if (missing := self.provider.missing()) is not None:
+                raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
+            self.checked = True
         return self.provider.reopen(self.ref)
 
     async def close(self) -> None:

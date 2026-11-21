@@ -121,7 +121,10 @@ class DaytonaProvider:
         return DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
 
     async def keep_alive(self, backend: SandboxBackend) -> None:
-        """Reset the idle timer, `auto_stop_interval` (15 minutes by default), which a running command does not reset.
+        """Reset the idle timer, `auto_stop_interval` (15 minutes by default).
+
+        A running command does not reset it, nor does the backend polling the command's status: measured live, a
+        `sleep 240` polled every 0.2s was stopped after 76s with `auto_stop_interval=1`.
 
         The sandbox is looked up by id with its client, as the backend's `get_sandbox` would start a stopped one.
         """
