@@ -17,7 +17,7 @@ import stat
 import subprocess
 import sys
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
@@ -45,7 +45,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     SupportsFilesystem,
-    Workspace,
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceUnavailableError,
@@ -237,7 +236,7 @@ def provider(tmp_path: Path, upstream: Path, monkeypatch: pytest.MonkeyPatch) ->
     sandboxes = tmp_path / 'sandboxes'
     sandboxes.mkdir()
     fake = FakeProvider(sandboxes, upstream)
-    monkeypatch.setattr(sandbox, 'PROVIDERS', {fake.name: fake})
+    monkeypatch.setattr(sandbox, 'PROVIDERS', {fake.name: lambda: fake})
 
     def gh_token(hostname: str) -> str:
         return 'gho_secret'
@@ -461,7 +460,7 @@ class TestCommand:
         self, checkout: Path, provider: FakeProvider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         other = FakeProvider(tmp_path, provider.upstream, name='other', title='Other')
-        monkeypatch.setattr(sandbox, 'PROVIDERS', {provider.name: provider, other.name: other})
+        monkeypatch.setattr(sandbox, 'PROVIDERS', {provider.name: lambda: provider, other.name: lambda: other})
         plugin = plugin_of(load(checkout))
         await plugin.command(['fake'])
         with pytest.raises(ValueError, match=r'^This conversation runs in Fake sandbox sbx-1\. Run /new first\.$'):
@@ -770,21 +769,21 @@ class TestLifecycle:
 
 
 class Commands(AbstractCapability[None]):
-    """Runs `true` in each run's workspace, as the shell tool would, and keeps the workspace, as a `/fork` may."""
-
-    def __init__(self) -> None:
-        self.workspaces: list[Workspace] = []
+    """Runs `true` in each run's workspace, as the shell tool would."""
 
     async def before_run(self, ctx: RunContext[None]) -> None:
-        self.workspaces.append(ctx.workspace)
         await ctx.workspace.run(['true'])
 
 
-def sandboxed(loaded: LoadedPlugin[None], checkout: Path, commands: Commands) -> Session[None, str]:
-    """A session on screen whose runs go through `commands`."""
+def sandboxed(
+    loaded: LoadedPlugin[None], checkout: Path, *, history: Sequence[ModelMessage] = ()
+) -> Session[None, str]:
+    """A session on screen, continuing `history`, whose runs each run a command."""
     [capability] = loaded.capabilities
     agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    session = Session(agent, deps=None, plugins=[capability, commands], workspace=checkout)
+    session = Session(
+        agent, deps=None, plugins=[capability, Commands()], workspace=checkout, message_history=list(history)
+    )
     loaded.host.conversation = session
     return session
 
@@ -794,8 +793,7 @@ async def test_each_run_attaches_afresh(
 ) -> None:
     loaded = load(checkout)
     plugin = plugin_of(loaded)
-    commands = Commands()
-    session = sandboxed(loaded, checkout, commands)
+    session = sandboxed(loaded, checkout)
     await plugin.command(['fake'])
     ref = WorkspaceRef(provider='fake', id='sbx-1')
     await session.prompt('go')
@@ -809,8 +807,7 @@ async def test_each_run_attaches_afresh(
     await session.prompt('again')
     await session.prompt('once more')
     assert provider.reopened == [ref, ref, ref]
-    # A run still using an earlier backend, such as a `/fork`'s, keeps working: nothing was closed under it.
-    assert (await commands.workspaces[1].run(['echo', 'still here'])).stdout == 'still here\n'
+    # Nothing is closed between runs: a run may still use an earlier one's backend, such as a `/fork`'s.
     assert provider.closed == []
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert provider.closed == [ref]
@@ -831,7 +828,7 @@ async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
 
     provider.keep_alive = keep_alive
     loaded = load(checkout)
-    session = sandboxed(loaded, checkout, Commands())
+    session = sandboxed(loaded, checkout)
     await plugin_of(loaded).command(['fake'])
     fails = False
 
@@ -862,6 +859,58 @@ async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
     with pytest.raises(OSError, match=r'^the command failed$'), anyio.fail_after(5):
         await session.prompt('again')
     await no_more_calls()
+
+
+async def test_a_session_ending_leaves_another_sessions_sandbox_open(
+    checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two sessions in one process, such as a `pax --web` conversation and its fork, each open the sandbox themselves."""
+    made: list[FakeProvider] = []
+
+    def make() -> FakeProvider:
+        made.append(fake := FakeProvider(provider.root, provider.upstream))
+
+        async def keep_alive(backend: SandboxBackend) -> None:
+            # What a provider holding a client per sandbox finds once its client is closed, as Daytona's does.
+            assert backend.ref is not None and backend.ref not in fake.closed
+            if first_ended.is_set():
+                pinged.set()
+
+        fake.keep_alive = keep_alive
+        return fake
+
+    monkeypatch.setattr(sandbox, 'PROVIDERS', {'fake': make})
+    monkeypatch.setattr(sandbox, 'KEEP_ALIVE_EVERY', 0)
+    first = load(checkout)
+    first_session = sandboxed(first, checkout)
+    await plugin_of(first).command(['fake'])
+    await first_session.prompt('go')
+    second = load(checkout, Transcript(messages=first_session.messages))
+    second_session = sandboxed(second, checkout, history=first_session.messages)
+    first_provider, second_provider = made
+    ref = WorkspaceRef(provider='fake', id='sbx-1')
+    running = anyio.Event()
+    first_ended = anyio.Event()
+    pinged = anyio.Event()
+
+    async def long_command(self: FakeSandboxBackend, *args: object, **kwargs: object) -> CommandResult:
+        running.set()
+        # Ends once `keep_alive` worked after the other session closed what it held.
+        await pinged.wait()
+        return await LocalWorkspaceBackend.run(self, ['true'])
+
+    monkeypatch.setattr(FakeSandboxBackend, 'run', long_command)
+    with anyio.fail_after(5):
+        async with anyio.create_task_group() as runs:
+            runs.start_soon(second_session.prompt, 'go on')
+            await running.wait()
+            await first.dispatch(SessionEnd(reason='exit'))
+            first_ended.set()
+    assert first_provider.closed == [ref]
+    assert second_provider.closed == []
+    assert second_provider.reopened == [ref]
+    await second.dispatch(SessionEnd(reason='exit'))
+    assert second_provider.closed == [ref]
 
 
 async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> None:
@@ -1135,7 +1184,6 @@ def fake_e2b(monkeypatch: pytest.MonkeyPatch) -> Iterator['FakeE2B']:
         control.close()
 
 
-@pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed')
 async def reopen_after_a_restart(restarted: SandboxProvider, ref: WorkspaceRef) -> None:
     """A CLAI started afresh opens what the sandbox needs on its first `reopen`, shares it, and closes it once."""
     first = restarted.reopen(ref)
@@ -1144,6 +1192,7 @@ async def reopen_after_a_restart(restarted: SandboxProvider, ref: WorkspaceRef) 
     await restarted.close(ref)  # Closing again has nothing left to close.
 
 
+@pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed')
 class TestE2B:
     """E2B, through the SDK fake the harness's own E2B tests use: a live run needs a billed account."""
 

@@ -16,7 +16,6 @@ idle sandbox as usual.
 """
 
 import logging
-import math
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -80,8 +79,6 @@ class _Sandbox:
     ref: WorkspaceRef
     env: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
-    kept_alive_at: float = -math.inf
-    """When `keep_alive` was last called, so commands running at once share one call per `KEEP_ALIVE_EVERY`."""
     deleted: bool = False
 
     def open(self) -> SandboxBackend:
@@ -99,7 +96,7 @@ class _Sandbox:
         return self.provider.reopen(self.ref)
 
     async def close(self) -> None:
-        """Close what the provider opened for the sandbox, for every run; the next `open` opens it again."""
+        """Close what this session's provider opened for the sandbox, for every run; the next `open` opens it again."""
         await self.provider.close(self.ref)
 
 
@@ -118,7 +115,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def _instructions(self, ctx: RunContext[None]) -> str:
         if (ref := _owned(ctx.workspace.ref)) is None:
             return ''
-        provider = PROVIDERS[ref.provider]
+        provider = self.plugin.provider(ref.provider)
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
@@ -233,15 +230,10 @@ class _EnvWorkspace(WrapperWorkspace):
         The first call comes one interval after the command starts, which the provider counts as activity itself,
         so a short command makes no call.
         """
-        sandbox = self._sandbox
-        backend = self._backend_unwrapped
-        started = anyio.current_time()
         while True:
-            last = max(started, sandbox.kept_alive_at)
-            await anyio.sleep(max(0.0, last + KEEP_ALIVE_EVERY - anyio.current_time()))
-            sandbox.kept_alive_at = anyio.current_time()
+            await anyio.sleep(KEEP_ALIVE_EVERY)
             try:
-                await keep_alive(backend)
+                await keep_alive(self._backend_unwrapped)
             except Exception:
                 _LOGGER.debug('Could not keep the sandbox alive', exc_info=True)
 
@@ -251,6 +243,8 @@ class SandboxPlugin(Plugin):
 
     def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
         super().__init__(host, settings)
+        self._providers = {name: make() for name, make in PROVIDERS.items()}
+        """This session's own providers, so what one holds open is closed only when this session is done with it."""
         self._sandboxes: dict[WorkspaceRef, _Sandbox] = {}
         """Each sandbox this session made or opened."""
 
@@ -274,10 +268,14 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         return '' if sandbox is None else f'{sandbox.provider.name} sandbox'
 
+    def provider(self, name: str) -> SandboxProvider:
+        """This session's provider called `name`, one of `PROVIDERS`."""
+        return self._providers[name]
+
     def sandbox(self, ref: WorkspaceRef) -> _Sandbox:
         """The sandbox `ref` names, which a `/sandbox` provider owns."""
         if (sandbox := self._sandboxes.get(ref)) is None:
-            sandbox = self._sandboxes[ref] = _Sandbox(provider=PROVIDERS[ref.provider], ref=ref)
+            sandbox = self._sandboxes[ref] = _Sandbox(provider=self.provider(ref.provider), ref=ref)
         return sandbox
 
     def current(self) -> _Sandbox | None:
@@ -295,7 +293,7 @@ class SandboxPlugin(Plugin):
             case ['delete']:
                 return await self._delete()
             case [name] if name in PROVIDERS:
-                return await self._start(PROVIDERS[name])
+                return await self._start(self.provider(name))
             case _:
                 raise ValueError(f'Usage: /sandbox [{" | ".join(PROVIDERS)} | delete]')
 
