@@ -131,6 +131,15 @@ def _state(metadata: object) -> dict[str, Any] | None:
     return None
 
 
+def _delegation(requests: DeferredToolRequests, call: ToolCallPart, tool_name: str) -> dict[str, Any] | None:
+    """The forwarded state of a delegate call, `None` for any other call.
+
+    Only a call of the delegate tool counts, so another tool that puts what looks like a state in its own approval
+    metadata can't have its call hidden or approved through `delegated_results()`.
+    """
+    return _state(requests.metadata.get(call.tool_call_id)) if call.tool_name == tool_name else None
+
+
 def _invalid(error: Exception) -> UserError:
     return UserError(
         'The sub-agent state passed back with `deferred_tool_results` is not valid. Build the results with '
@@ -153,7 +162,7 @@ def _flat_ids(requests: DeferredToolRequests) -> list[str]:
     return [call.tool_call_id for call in (*requests.approvals, *requests.calls)]
 
 
-def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict[str, list[str]]]:
+def _flatten(requests: DeferredToolRequests, tool_name: str) -> tuple[DeferredToolRequests, dict[str, list[str]]]:
     """`requests` with each delegate call replaced by its child's calls, and the delegate path of each of those.
 
     Raises:
@@ -167,16 +176,16 @@ def _flatten(requests: DeferredToolRequests) -> tuple[DeferredToolRequests, dict
     kinds = _kinds(requests)
     paths: dict[str, list[str]] = {}
     # Drop the delegate calls' own entries first, so one's child call can't be dropped as another delegate call.
-    delegated = {call.tool_call_id for call in requests.approvals if _state(requests.metadata.get(call.tool_call_id))}
+    delegated = {call.tool_call_id for call in requests.approvals if _delegation(requests, call, tool_name)}
     metadata = {key: value for key, value in metadata.items() if key not in delegated}
     validated_args = {key: value for key, value in validated_args.items() if key not in delegated}
     for call in requests.approvals:
-        state = _state(requests.metadata.get(call.tool_call_id))
+        state = _delegation(requests, call, tool_name)
         if state is None:
             approvals.append(call)
             continue
         agent_name, child = _child_requests(state)
-        child, child_paths = _flatten(child)
+        child, child_paths = _flatten(child, tool_name)
         prefix = f'{call.tool_call_id}:'
         approvals.extend(_prefixed_calls(prefix, child.approvals))
         calls.extend(_prefixed_calls(prefix, child.calls))
@@ -210,7 +219,7 @@ def _require_unique(ids: Sequence[str]) -> None:
         )
 
 
-def delegated_requests(requests: DeferredToolRequests) -> DeferredToolRequests:
+def delegated_requests(requests: DeferredToolRequests, *, tool_name: str = 'delegate_task') -> DeferredToolRequests:
     """The deferred tool calls of a run and of the sub-agents it delegated to, as one `DeferredToolRequests`.
 
     Each delegate call that a sub-agent's deferred calls stopped, with `SubAgents(forward_deferred_calls=True)`, is
@@ -219,30 +228,34 @@ def delegated_requests(requests: DeferredToolRequests) -> DeferredToolRequests:
     first, so a UI can say which delegate asks. Other calls are kept as they are.
 
     Answer the calls with `build_results()` on the returned requests, then pass the answers through
-    `delegated_results()` to resume the run.
+    `delegated_results()` to resume the run. Pass `tool_name` when `SubAgents(tool_name=...)` renamed the delegate
+    tool: only its calls are replaced.
 
     Raises:
         ValueError: Two calls end up with the same ID.
     """
-    flat, paths = _flatten(requests)
+    flat, paths = _flatten(requests, tool_name)
     for tool_call_id, path in paths.items():
         flat.metadata[tool_call_id] = {**flat.metadata.get(tool_call_id, {}), AGENT_PATH_KEY: path}
     return flat
 
 
-def delegated_results(requests: DeferredToolRequests, results: DeferredToolResults) -> DeferredToolResults:
+def delegated_results(
+    requests: DeferredToolRequests, results: DeferredToolResults, *, tool_name: str = 'delegate_task'
+) -> DeferredToolResults:
     """The `deferred_tool_results` that resume a run with the answers to the calls of `delegated_requests(requests)`.
 
     `requests` is the `DeferredToolRequests` the run ended with, and `results` answers the calls of
     `delegated_requests(requests)`, keyed by their IDs. Each delegate call is approved with the child's state and
     answers in its metadata, so the delegate resumes the child from its history. Approving a delegate call some
-    other way runs it again, but approves none of its child's calls.
+    other way runs it again, but approves none of its child's calls. Pass the same `tool_name` as to
+    `delegated_requests()`.
 
     Raises:
         ValueError: A child call has no answer, as a run resumes only once every call it waits on is answered, or
             two calls end up with the same ID.
     """
-    _flatten(requests)
+    _flatten(requests, tool_name)
     routed = DeferredToolResults(
         approvals=dict(results.approvals),
         calls=dict(results.calls),
@@ -250,12 +263,12 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
         answered_by=dict(results.answered_by),
     )
     for call in requests.approvals:
-        state = _state(requests.metadata.get(call.tool_call_id))
+        state = _delegation(requests, call, tool_name)
         if state is None:
             continue
         _, child = _child_requests(state)
         prefix = f'{call.tool_call_id}:'
-        child_ids = _flat_ids(_flatten(child)[0])
+        child_ids = _flat_ids(_flatten(child, tool_name)[0])
         if missing := [prefix + key for key in child_ids if prefix + key not in {*results.approvals, *results.calls}]:
             raise ValueError(f'`results` has no answer for the calls {missing}')
         own = [(key, prefix + key) for key in child_ids]
@@ -267,6 +280,7 @@ def delegated_results(requests: DeferredToolRequests, results: DeferredToolResul
                 metadata={key: results.metadata[flat] for key, flat in own if flat in results.metadata},
                 answered_by={key: results.answered_by[flat] for key, flat in own if flat in results.answered_by},
             ),
+            tool_name=tool_name,
         )
         for _, flat in own:
             for mapping in (routed.approvals, routed.calls, routed.metadata, routed.answered_by):
