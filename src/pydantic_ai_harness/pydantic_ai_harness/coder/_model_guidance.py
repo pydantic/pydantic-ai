@@ -29,13 +29,14 @@ _OPENAI_MODEL_GLOBS = ('gpt-*', 'chatgpt-*', 'o[1-9]*')
 class ModelGuidance:
     """One row of the lookup table.
 
-    `match` is a provider name, as in `Model.system` (`'openai'`), optionally followed by `:` and a
-    glob over `Model.model_name` (`'openai:gpt-6.2-*'`). A row with a model glob beats a provider-only row.
+    `match` is a provider name, as in `Model.system` (`'anthropic'`), optionally followed by `:` and a
+    glob over `Model.model_name` (`'openai:gpt-6.2-*'`). A row with a model glob beats a provider-only
+    row. If several rows have the same specificity, the first one wins.
 
-    The `'openai'` provider key matches the OpenAI family: `Model.system == 'openai'`, a model name
-    with an `openai/` prefix (OpenRouter and similar gateways), or a leaf name matching `gpt-*`,
-    `chatgpt-*`, or `o[1-9]*` (Azure and other gateways that keep the OpenAI model name). A model
-    glob is tried against the full name and the last `/` segment.
+    The `'openai'` match key means the OpenAI family, not only the `openai` provider: the `openai`
+    provider itself, a model name with an `openai/` prefix, or a leaf name matching `gpt-*`,
+    `chatgpt-*`, or `o[1-9]*`, except `gpt-oss-*`. Every other provider key compares exactly against
+    `Model.system`. A model glob is tried against the full name and the last `/` segment.
     """
 
     match: str
@@ -76,15 +77,16 @@ def is_openai_family(model: AbstractModel) -> bool:
     """True for OpenAI models, including the same models reached through a gateway.
 
     Matches the `openai` provider, an `openai/` model-name prefix, and the leaf-name patterns in
-    `_OPENAI_MODEL_GLOBS`. This is deliberately narrow: an OpenRouter Anthropic route does not match.
+    `_OPENAI_MODEL_GLOBS`, except `gpt-oss-*` (open-weights models that share a `gpt-` prefix).
+    An OpenAI-compatible server that uses `OpenAIProvider` also reports `system == 'openai'`, so it
+    matches. An OpenRouter Anthropic route does not.
     """
     model = _unwrap_model(model)
-    if model.system == 'openai':
+    leaf = model.model_name.rsplit('/', 1)[-1]
+    if fnmatchcase(leaf, 'gpt-oss-*'):
+        return False
+    if model.system == 'openai' or model.model_name.startswith('openai/'):
         return True
-    name = model.model_name
-    if name.startswith('openai/'):
-        return True
-    leaf = name.rsplit('/', 1)[-1]
     return any(fnmatchcase(leaf, pat) for pat in _OPENAI_MODEL_GLOBS)
 
 
@@ -110,8 +112,9 @@ def _model_name_matches(name: str, pattern: str) -> bool:
 def resolve_model_guidance(table: Sequence[ModelGuidance], model: AbstractModel) -> ModelGuidance | None:
     """The most specific row matching `model`, or `None`.
 
-    Wrapper models already report the wrapped model's `system` and `model_name`. Fallback models
-    are resolved against their first constituent.
+    A row with a model glob beats a provider-only row. If several rows have the same specificity,
+    the first one wins. Wrapper models already report the wrapped model's `system` and `model_name`.
+    Fallback models are resolved against their first constituent.
     """
     model = _unwrap_model(model)
     best: ModelGuidance | None = None

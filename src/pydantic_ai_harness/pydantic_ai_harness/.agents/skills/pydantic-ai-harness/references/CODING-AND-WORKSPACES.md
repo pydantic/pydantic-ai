@@ -117,7 +117,9 @@ files as the agent reads, inlining up to 32,000 characters of them per conversat
 `RepoContext` to use it in place of the bundled one, whose settings it replaces entirely), `sub_agents=True`,
 `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
-`strict=False`.
+`strict=False`, `model_guidance=None` (`None` uses the default table, which applies only at
+`'max'` autonomy and only to the OpenAI family; pass `()` to disable it, or a sequence of
+`ModelGuidance` rows to replace it, which applies at every autonomy level).
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring

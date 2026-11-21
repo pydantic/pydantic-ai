@@ -201,7 +201,7 @@ def _coder_guidance_texts(
     repo_files: Sequence[str] | None,
     nested_instructions: bool,
     model_guidance: Sequence[ModelGuidance] | None,
-) -> tuple[str, str, Callable[[AbstractModel], tuple[str, str] | None]]:
+) -> tuple[str, str, Callable[[AbstractModel], tuple[str, str] | None] | None]:
     """Default instruction texts, and a per-run adjustment for the model when a table row matches."""
     build = partial(
         coder_instructions,
@@ -212,9 +212,10 @@ def _coder_guidance_texts(
         nested_instructions=nested_instructions,
     )
     table = MODEL_GUIDANCE if model_guidance is None else tuple(model_guidance)
-    apply = model_guidance is not None or autonomy == 'max'
     guidance, delegated = build()
-    return guidance, delegated, partial(_apply_model_guidance, build=build, table=table, apply=apply)
+    if table and (model_guidance is not None or autonomy == 'max'):
+        return guidance, delegated, partial(_apply_model_guidance, build=build, table=table)
+    return guidance, delegated, None
 
 
 def _apply_model_guidance(
@@ -222,10 +223,7 @@ def _apply_model_guidance(
     *,
     build: Callable[..., tuple[str, str]],
     table: tuple[ModelGuidance, ...],
-    apply: bool,
 ) -> tuple[str, str] | None:
-    if not apply:
-        return None
     row = resolve_model_guidance(table, model)
     if row is None:
         return None
