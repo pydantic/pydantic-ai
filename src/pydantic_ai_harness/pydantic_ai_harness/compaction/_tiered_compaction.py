@@ -123,9 +123,9 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     """Exceptions that skip a failing tier on this capability's own trigger, rather than failing the run.
 
     Defaults to model failures, so programming errors and usage limits propagate. Pass `()` to
-    propagate every exception. Unlike `FallbackCompaction.fallback_on`, this includes
-    `UnexpectedModelBehavior`, which a summary tier raises when it exhausts its retries: the next
-    tier can still shrink the history without that tier's model.
+    propagate every exception. Includes `UnexpectedModelBehavior`, which a summary tier raises when
+    it exhausts its retries, so the next tier can still shrink the history without that tier's
+    model; `FallbackCompaction.fallback_on` uses the same selection.
     """
 
     def __post_init__(self) -> None:
