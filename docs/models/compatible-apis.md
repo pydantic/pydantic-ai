@@ -506,6 +506,14 @@ The [API key documentation](https://docs.oracle.com/en-us/iaas/Content/generativ
 !!! note "Allow API keys in an IAM policy"
     An API key works only once an IAM policy lets API keys use Generative AI. To authorize every key in a compartment, create the policy before the key. To limit the policy to one key, create the key first and use its OCID. See [Adding Key Permissions](https://docs.oracle.com/en-us/iaas/Content/generative-ai/add-api-permission.htm) for the policy statements.
 
+### Tsubasa
+
+For text requests to [Tsubasa](https://tsubasa.sh/), configure [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
+with `base_url='https://api.tsubasa.sh/v1'` and pass the value of your
+`TSUBASA_API_KEY` environment variable as `api_key`. Use this provider with
+[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], selecting
+`tsubasa-fast` or `tsubasa-pro` as the model name.
+
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
