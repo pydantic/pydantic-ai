@@ -452,12 +452,13 @@ class TestShellTool:
         # With nowhere to create `watch.stop`, the supervisor must still stop its log watcher rather than wait on it.
         output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
         pid = int(output.split('PID: ')[1].split(' ')[0])
-        group_id = int(output.split('kill -- -')[1].split('`')[0])
         try:
             await wait_for_exit(pid)
         finally:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(group_id, signal.SIGKILL)
+            # A job already gone with its status file is reported lost, with no `kill` command: nothing is left to stop.
+            if 'kill -- -' in output:  # pragma: lax no cover
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(int(output.split('kill -- -')[1].split('`')[0]), signal.SIGKILL)
 
     async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path) -> None:
         # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop. A job started with `TERM` ignored never

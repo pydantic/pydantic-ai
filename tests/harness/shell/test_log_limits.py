@@ -240,7 +240,7 @@ class _WatcherTrapsLate(LocalWorkspaceBackend):
 class _HeldAtWatcherFork(LocalWorkspaceBackend):
     """Launches a job whose wrapper creates `forking` just before it forks the log watcher, then waits for `release`.
 
-    Serves only the launch: the test reads the job's files directly.
+    Other scripts, such as the liveness check, run unchanged.
     """
 
     async def run(
@@ -253,6 +253,8 @@ class _HeldAtWatcherFork(LocalWorkspaceBackend):
     ) -> CommandResult:
         assert not isinstance(command, str)
         sh, flag, script, *arguments = command
+        if 'watch_logs' not in script:
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
         held = script.replace(
             'watch_logs "$6" "$7" &',
             ': > "$dir/forking"; until [ -e "$dir/release" ]; do sleep 0.01; done; watch_logs "$6" "$7" &',
