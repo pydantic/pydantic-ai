@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
+    Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
@@ -452,6 +453,51 @@ async def test_attaching_starts_a_stopped_container_but_not_a_running_one(
     await container.backend(ref).working_dir()
 
     assert [call for call in docker.calls if call.startswith('start')] == ['start -- stopped']
+
+
+async def test_a_container_stopped_under_a_held_backend_is_started_by_the_next_operation(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    workspace = Workspace(backend)
+    await workspace.write_text('kept.txt', 'kept')
+    assert backend.ref is not None
+
+    docker.stop(backend.ref.id)
+    assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+    docker.stop(backend.ref.id)
+    assert await workspace.read_text('kept.txt') == 'kept'
+    docker.stop(backend.ref.id)
+    await workspace.write_text('new.txt', 'new')
+
+    assert (container_dir / 'new.txt').read_text() == 'new'
+    assert [call for call in docker.calls if call.startswith('start')] == [f'start -- {backend.ref.id}'] * 3
+
+
+async def test_a_command_its_container_stopped_under_is_not_run_again(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    await backend.working_dir()
+    assert backend.ref is not None
+    # The wrapper is the command's parent: killing it ends the command without a reported status, as a stop does.
+    stop = f'echo ran >> runs; rm {docker.running_file(backend.ref.id)}; kill -KILL $PPID'
+
+    with pytest.raises(WorkspaceUnavailableError, match='stopped during the command, which may have partly run'):
+        await backend.run(stop, shell=True)
+
+    # The next operation starts the container again, and the command ran only the once.
+    assert (await backend.run(['cat', 'runs'])).stdout == 'ran\n'
+
+
+async def test_a_container_removed_under_a_held_backend_stays_unavailable(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    await backend.working_dir()
+    assert backend.ref is not None
+    await DockerContainer().destroy(backend.ref)
+
+    with pytest.raises(WorkspaceUnavailableError, match='No such container'):
+        await backend.run(['true'])
 
 
 async def test_containers_it_did_not_create_are_refused(docker: FakeDocker, container_dir: Path) -> None:
