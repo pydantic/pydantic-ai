@@ -10,9 +10,10 @@ replaced it, as a `CapabilityLoadDeltaPart` rather than an exchange the model ne
 delivers the capability's current instructions again. With `preserve_loaded_capabilities=False`, it leaves
 them unloaded and says so instead.
 
-This module imports only Pydantic AI, and `keep_loaded_state` is a plain function of messages and
-capability ids, so it runs workflow-side in a durable run and can move into core's compaction step
-(#11454), which will call it once per attempt after whichever compaction ran, a provider's included.
+Core's compaction step calls `keep_loaded_state` once per attempt, after whichever `compact_history` hook
+compacted, a provider's included. Harness strategies that compact in their own hooks call it too, which is a no-op
+on a history it already recorded the loads in. It's a plain function of messages and capability ids, so it runs
+workflow-side in a durable run.
 """
 
 from __future__ import annotations
