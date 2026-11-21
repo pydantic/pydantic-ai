@@ -18,7 +18,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for ADK; [Google Cloud support](https://cloud.google.com/support) for the cloud | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Action and GitHub Agentic Workflows](../github-actions.md) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
@@ -46,8 +46,10 @@ same [`Agent`][pydantic_ai.Agent]; the harness repository has a
 [complete coding agent](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/coding_agent.py)
 built from the pieces `Coder` puts together.
 
-**Can I run my agents in CI?** Yes. [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs Pydantic AI agents
-from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
+**Can I run my agents in CI?** Yes. [In GitHub Actions](../github-actions.md), the
+`pydantic/pydantic-ai-action` step runs an agent in a workflow you already have, and
+[GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs one from a Markdown
+workflow file on issues and pull requests. Anywhere else, run a Python script directly with `uv run`;
 nothing requires an Action.
 
 *Last checked: 2026-09-26*

@@ -16,7 +16,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | [From Daily](https://docs.pipecat.ai/enterprise-support), for Pipecat and Pipecat Cloud | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | No | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | WebRTC and WebSocket transports, telephony, client SDKs | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| Interfaces | WebRTC and WebSocket transports, telephony, client SDKs | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Action and GitHub Agentic Workflows](../github-actions.md) |
 | Realtime voice | Cascaded STT + LLM + TTS, and speech-to-speech services | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | Image-generation services | [Image Generation](../image-generation.md) |

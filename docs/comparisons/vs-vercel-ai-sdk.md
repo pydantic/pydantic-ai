@@ -18,7 +18,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for the AI SDK; [Vercel Enterprise](https://vercel.com/enterprise) for the platform | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | React chat UI, stream protocol, GitHub Action | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| Interfaces | React chat UI, stream protocol, GitHub Action | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Action and GitHub Agentic Workflows](../github-actions.md) |
 | Realtime voice | Yes (experimental) | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
 | Image generation | Yes | [Image Generation](../image-generation.md) |
