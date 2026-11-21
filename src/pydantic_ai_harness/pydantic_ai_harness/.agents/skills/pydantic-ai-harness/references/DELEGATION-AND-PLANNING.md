@@ -175,6 +175,12 @@ Gotchas:
   keeps the `ModelRetry` even with `on_failure` set. If it's unset, setting `on_failure` returns that message alone,
   without the error. Other
   crashes abort the parent unless `contain_errors=True`.
+- `SubAgents(forward_deferred_calls=True)` instead passes a child's `DeferredToolRequests` to the parent run's
+  caller (outcome `deferred`; the parent's `output_type` must include `DeferredToolRequests`). Show them with
+  `delegated_requests(result.output)` (IDs `'<delegate call>:<child call>'`, metadata `agent_path`), answer every
+  call, and resume with `deferred_tool_results=delegated_results(result.output, answers)`: the child continues from
+  its history. Approving the delegate call itself approves none of the child's calls. Foreground delegations outside
+  durable execution and task control only.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
   `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
   has not passed output validation and can be text the child rejected; leave it off for a child whose

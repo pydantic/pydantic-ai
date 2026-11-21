@@ -87,7 +87,7 @@ agent = Agent(
 
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` do not reach the delegate. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
 - **Delegation depth is capped.** The delegate has `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
-- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation. The delegate returns the agent's own `output_type`, rendered with `str()`; a run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) returns a steering message instead (see [Failure handling](#failure-handling)).
+- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation. The delegate returns the agent's own `output_type`, rendered with `str()`; a run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) returns a steering message instead (see [Failure handling](#failure-handling)), unless `forward_deferred_calls=True` passes its deferred tool calls to the caller (see [Approving a delegate's tool calls](#approving-a-delegates-tool-calls)).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
 - **On Temporal, `agent_folders` is not supported.** Disk-loaded sub-agents add a toolset at run time, which Temporal refuses, so pass `agent_folders=None`. When `self` is the only delegate, it runs in the workflow, so register a `Model` instance from `models` with `TemporalDurability(models=...)`. Otherwise delegations run in an activity, or in a child workflow when you opt in (see [Delegates as child workflows](#delegates-as-child-workflows)). Neither has the parent run's model, so a delegate needs a model of its own (or, in an activity, a `models` option); see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
@@ -206,13 +206,62 @@ A *soft outcome* returns a steering message to the parent as a normal tool resul
 
 With `keep_partial_output=True`, a delegation stopped by its timeout or its own usage budget also passes the child's last text response to the parent. It follows the steering message (or `on_failure`) as `<partial_output>...</partial_output>`, and the outcome stays `timeout` or `budget`. `DelegationFinishedEvent.output` carries the same text, bounded like any other output. The text has not passed the child's output validation: it can be text the child's output validator or `OutputGuardrail` rejected, so leave this off for a child whose guardrails keep content from its parent. Text from a response the child answered with a retry is skipped, as is a final response the run stopped before acting on, or one whose output tool call the stop cut off before its verdict. A child with no such text returns the steering message alone.
 
-A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is soft too. The parent cannot approve the child's tool calls or resume its run, and the same task would likely stop the same way again, so the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/), never ends this way. A run that ends with `PendingModelResponse` (a model request left waiting on the provider, for example in a batch) returns a steering message the same way, including on a remote worker, and the request is cancelled, since nobody will check on it later. Cancelling is best effort, and a [batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is cancelled only once no other request in it is still waiting.
+A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is soft too by default. The parent's model cannot approve the child's tool calls or resume its run, and the same task would likely stop the same way again, so the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message. With `forward_deferred_calls=True`, the calls go to the parent run's caller instead, and the child resumes once they are answered (see [Approving a delegate's tool calls](#approving-a-delegates-tool-calls)). A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/), never ends this way. A run that ends with `PendingModelResponse` (a model request left waiting on the provider, for example in a batch) returns a steering message the same way, including on a remote worker, and the request is cancelled, since nobody will check on it later. Cancelling is best effort, and a [batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is cancelled only once no other request in it is still waiting.
 
 A sub-agent run that fails with a *soft model error* (`ModelRetry`, or `UnexpectedModelBehavior` such as exhausted retries) becomes a `ModelRetry` for the parent by default: the parent's model sees `Sub-agent '<name>' failed: ...` and can re-delegate. The delegate tool defaults to `tool_retries=2`, so the parent aborts only after that many consecutive delegate failures; a successful delegation resets the count. Raise `tool_retries` for a flakier sub-agent, or set `None` to inherit the parent agent's default. `on_model_error='return'` makes a delegate's failures soft: the parent gets `Sub-agent '<name>' failed: ...` as a normal tool result, followed by the `on_failure` message or a default steering message. `on_model_error='retry'` keeps the parent `ModelRetry` even with `on_failure` set, so `on_failure` then customizes only the other soft outcomes. With `on_model_error` unset, `on_failure` makes failures soft and returns its message alone, without the error.
 
 Hard errors stop the whole run. A `UsageLimitExceeded` from a child with *no* per-delegate `usage_limits` (sharing the parent's accounting) means the whole tree is out of budget, and propagates; a child reaching its *own* `usage_limits` is soft, as above.
 
 An *unexpected crash*, any other exception the child raises (a provider `ModelAPIError` or `FallbackExceptionGroup`, a `ValueError` from a bad tool argument), propagates by default and aborts the parent run. `contain_errors=True` (per delegate, or as the `SubAgents` default) returns it to the parent as a bounded `ModelRetry` instead, so one crash cannot kill the whole run. The exception is in the retry message (`Sub-agent '<name>' crashed: ...`) and logged through `logging`, and `tool_retries` still turns consecutive crashes into an abort. A contained crash always raises this retry, never the `on_failure` return. These bypass containment: cancellation, a shared `UsageLimitExceeded`, Pydantic AI control-flow signals (`CallDeferred`, `ApprovalRequired`, the `Skip*` signals), and `UserError`. External cancellation (`asyncio.CancelledError`) propagates as-is. A child's own cancellation (`RunContext.cancel()` in the child, raising `RunCancelled`) leaves the delegate tool uncontained; Pydantic AI then isolates it as a failed `delegate_task` return the parent model can react to, not a crash retry that invites re-delegation.
+
+### Approving a delegate's tool calls
+
+With `SubAgents(forward_deferred_calls=True)`, a sub-agent run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) doesn't return a steering message. The delegate call raises `ApprovalRequired` instead, so the parent run ends with `DeferredToolRequests` too, and its caller answers the sub-agent's calls the way it answers the parent's own. The parent's `output_type` must include `DeferredToolRequests`, or a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) on the parent must answer them.
+
+`delegated_requests()` lists the sub-agent's calls in place of the delegate call that stopped on them, each under the delegate call's ID and its own joined by `:` (`'c1:e1'`), with an `agent_path` metadata entry naming the delegates it was made under, outermost first. `delegated_results()` routes the answers back:
+
+```python
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai_harness import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import delegated_requests, delegated_results
+
+mailer = Agent('anthropic:claude-opus-5-5', name='mailer', output_type=[str, DeferredToolRequests])
+
+
+@mailer.tool_plain(requires_approval=True)
+def send_email(to: str, body: str) -> str:
+    return f'Sent to {to}'
+
+
+orchestrator = Agent(
+    'anthropic:claude-opus-5-5',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[SubAgents(agents=[SubAgent(mailer)], forward_deferred_calls=True)],
+)
+
+
+async def run_with_approvals(prompt: str) -> str:
+    result = await orchestrator.run(prompt)
+    while isinstance(result.output, DeferredToolRequests):
+        requests = delegated_requests(result.output)
+        approvals: dict[str, bool] = {}
+        for call in requests.approvals:
+            path = ' > '.join(requests.metadata.get(call.tool_call_id, {}).get('agent_path', ['agent']))
+            approvals[call.tool_call_id] = input(f'{path} wants {call.tool_name}({call.args}). Approve? ') == 'y'
+        result = await orchestrator.run(
+            message_history=result.all_messages(),
+            deferred_tool_results=delegated_results(result.output, requests.build_results(approvals=approvals)),
+        )
+    return result.output
+```
+
+The next run resumes the sub-agent from its own history with those answers, so the calls it already ran don't run again, and the delegation then ends like any other. A delegate that sets `forward_deferred_calls` too passes its own delegates' calls up the same way.
+
+- Every call the sub-agent waits on needs an answer: `delegated_results()` raises `ValueError` otherwise. Deny a call with `False` or `ToolDenied`.
+- Only the sub-agent decides which of its calls need approval. Approving the delegate call itself, for example with `build_results(approve_all=True)` on the parent's requests, approves none of them: the delegation runs the task again, and returns the steering message if it stops the same way.
+- The sub-agent's state, its message history (including its instructions) and pending calls, travels to the caller in the delegate call's metadata and back. The resumed delegate checks that the state belongs to this delegation, with the same sub-agent and task, and that each answer is for a call the sub-agent is waiting on, with the tool and arguments it asked about. Anything else raises `UserError`. Beyond that, the state is trusted like the parent's own message history, so keep it where you keep that history.
+- The delegation that stops emits a `DelegationFinishedEvent` with outcome `deferred`, and the sub-agent's usage up to that point counts like any delegation's. The resumed run is a new delegation, with its own events.
+- Only foreground delegations outside durable execution and task control forward their calls. Others return the steering message.
 
 ## Events
 
@@ -231,6 +280,7 @@ Both are notifications. A start and its end share the `tool_call_id` core stamps
 - `timeout` or `budget`: the child hit its `timeout_seconds` or its own `usage_limits`.
 - `failed`: a soft model error, returned or raised per `on_model_error`, or a run that ended with `DeferredToolRequests` or `PendingModelResponse`.
 - `contained`: a crash `contain_errors` caught.
+- `deferred`: the child's deferred tool calls went to the parent run's caller (`forward_deferred_calls`).
 
 `output` is what the delegate tool returns to the parent: the child's output, the steering message, or the retry text. It is emitted inside the tool, before any `ToolGuardrail` result guard screens it; for the screened text, read the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`), and `None` when its usage goes into the parent's.
 
@@ -648,6 +698,7 @@ SubAgents(
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,  # WorkspaceBackend to read agent_folders from instead of the run's workspace
     workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
+    forward_deferred_calls=False,  # pass a sub-agent's deferred tool calls to the caller, and resume it
     include_self=False,  # also list the running agent itself as the delegate `self`
     max_depth=3,  # delegation levels, counting the top-level run
     task_control=None,  # TaskControl: background tasks, task-control tools, questions, and task events

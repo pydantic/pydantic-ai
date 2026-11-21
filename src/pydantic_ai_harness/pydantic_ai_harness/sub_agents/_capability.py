@@ -263,6 +263,18 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Resuming a task keeps its saved directory; the resolver is called again for that directory.
     This does not change where `agent_folders` are discovered (see `workspace`)."""
 
+    forward_deferred_calls: bool = field(default=False, kw_only=True)
+    """Pass a sub-agent's deferred tool calls to the caller of the parent run, and resume the sub-agent once they
+    are answered. Off by default: a sub-agent run that ends with `DeferredToolRequests` returns a steering message.
+
+    When on, such a run makes the delegate call raise `ApprovalRequired`, so the parent run ends with
+    `DeferredToolRequests` too (its `output_type` must include it, or a `HandleDeferredToolCalls` must answer it).
+    `delegated_requests()` lists the sub-agent's calls under IDs prefixed by the delegate call's, and
+    `delegated_results()` routes the answers back, so the next run resumes the sub-agent from its history rather than
+    running the task again. Approving the delegate call itself approves none of the sub-agent's calls: the
+    delegation runs the task again and returns the steering message if it stops the same way. Foreground
+    delegations outside durable execution and task control only."""
+
     include_self: bool = False
     """If `True`, the roster also lists the running agent itself, as `self`.
 
@@ -796,6 +808,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
+            forward_deferred_calls=self.forward_deferred_calls,
             _record_delegation=self._delegate
             if self.dynamic_agents is not None or self.task_control is not None
             else None,
