@@ -313,6 +313,37 @@ class TestSubAgentsForwardDeferredCalls:
             ['ann@example.com', 'cc@example.com'],
         )
 
+    async def test_nested_delegate_tools_with_other_names(self) -> None:
+        mailer = _Mailer()
+
+        def assistant_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for part in messages[-1].parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(f'assistant: {part.content}')])
+            args = {'agent_name': 'mailer', 'task': 'email ann'}
+            return ModelResponse(parts=[ToolCallPart('ask_mailer', args, tool_call_id='m1')])
+
+        assistant = Agent(
+            FunctionModel(assistant_fn),
+            name='assistant',
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                SubAgents(agents=[SubAgent(mailer.agent)], tool_name='ask_mailer', forward_deferred_calls=True)
+            ],
+        )
+        parent = _parent(assistant, task='handle the mail')
+        first = await parent.run('go')
+        assert isinstance(first.output, DeferredToolRequests)
+        # Without its name, the inner delegate call is shown as it is.
+        assert [call.tool_call_id for call in delegated_requests(first.output).approvals] == ['c1:m1']
+
+        names = ('delegate_task', 'ask_mailer')
+        flat = delegated_requests(first.output, tool_names=names)
+        assert [call.tool_call_id for call in flat.approvals] == ['c1:m1:e1', 'c1:m1:e2']
+        routed = delegated_results(first.output, flat.build_results(approve_all=True), tool_names=names)
+        second = await parent.run(message_history=first.all_messages(), deferred_tool_results=routed)
+        assert second.output == 'parent saw: assistant: mail handled'
+
     async def test_external_calls_and_questions_keep_their_kind(self) -> None:
         def fetcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
@@ -449,18 +480,18 @@ class TestSubAgentsForwardDeferredCalls:
 
     async def test_the_in_memory_store_is_bounded(self) -> None:
         store = InMemoryDeferredStateStore(max_states=1)
-        await store.save('a', {'n': 1})
-        await store.save('b', {'n': 2})
+        await store.save('a', b'1')
+        await store.save('b', b'2')
         assert await store.take('a') is None
-        assert await store.take('b') == {'n': 2}
+        assert await store.take('b') == b'2'
         assert await store.take('b') is None
 
         with pytest.raises(ValueError, match='at least 1'):
             InMemoryDeferredStateStore(max_states=0)
 
         expiring = InMemoryDeferredStateStore(max_age=timedelta(0))
-        await expiring.save('a', {'n': 1})
-        await expiring.save('b', {'n': 2})
+        await expiring.save('a', b'1')
+        await expiring.save('b', b'2')
         assert await expiring.take('b') is None
 
     async def test_the_history_stays_on_the_server(self) -> None:
