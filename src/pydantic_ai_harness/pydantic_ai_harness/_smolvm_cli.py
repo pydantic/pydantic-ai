@@ -8,9 +8,11 @@ https://github.com/smol-machines/smol/blob/main/sdk/rust/src/transport/local.rs
 CLI behavior, from smolvm 1.36's `smolvm machine --help` and that transport:
 
 - `machine create` records a machine and `machine start` boots it; it keeps running after the CLI exits.
+  `machine stop` of a stopped machine exits 0, and smolvm's own failures name a missing machine `NOT_FOUND`.
 - `machine exec` exits with the command's exit status and, with `--interactive`, passes its stdin to the command.
   Its `--timeout` kills the command in the VM.
-- `machine ls --json` lists machines as objects with `name` and `state`, bare or under `machines`. A `stopped` or
+- `machine ls --json` lists machines as objects with `name` and `state` (bare in 1.36; under `machines` in some
+  versions the Rust transport reads). A `stopped` or
   `created` machine is started, and a `paused` one resumed, as that transport does.
 - With `--error-format json`, smolvm reports its own failures as a last stderr line
   `{"error": {"code": ..., "message": ...}}`.
@@ -246,7 +248,8 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             if self._ready:
                 assert self._ref is not None
                 result = await _cli('stop', '--name', self._ref.id)
-                if result.returncode != 0 and not _is_gone(result.stderr):
+                # A VM another backend stopped meanwhile, or deleted, is already down.
+                if result.returncode != 0 and (await _state(self._ref.id) or 'stopped') not in _STARTABLE:
                     # Still reached, so a retry stops it.
                     raise _error('stop', result.stderr)
                 self._ready = False

@@ -3059,7 +3059,8 @@ your local network too. On macOS and Linux the `local` extra installs smolmachin
 CLAI's process; Linux needs read and write access to `/dev/kvm`. On Windows, which smolmachines has no
 build for, unzip the `windows-x86_64` [smolvm release](https://github.com/smol-machines/smolvm/releases)
 into a folder on `PATH`, with the Windows Hypervisor Platform turned on; CLAI then drives `smolvm` itself,
-which macOS and Linux do too when the extra is not installed. The VM runs the `python:3.13` image, which
+which macOS and Linux do too when the extra is not installed. That way of running it has not been tested on a
+Windows host yet. The VM runs the `python:3.13` image, which
 smolvm downloads the first time.
 
 How long a sandbox lasts differs. A `local` VM keeps its files until `/sandbox delete`; it stops when CLAI

@@ -106,6 +106,8 @@ class FakeSmolvm:
     """Every command line run on this machine."""
     failures: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
     """The code and message each action named here fails with, such as `start` on a host that cannot run VMs."""
+    wrapped_listing: bool = False
+    """Whether `machine ls --json` puts its list under `machines`, as some versions do; 1.36 prints it bare."""
     workdirs: dict[str, set[str]] = field(default_factory=dict[str, set[str]])
     """The working directories each machine's commands ran in: its filesystem, which deleting it removes."""
 
@@ -122,8 +124,8 @@ class FakeSmolvm:
         assert (group, args[:2]) == ('machine', ['--error-format', 'json'])
         args = args[2:]
         if action == 'ls':
-            listing = {'machines': [{'name': name, 'state': state} for name, state in self.machines.items()]}
-            return await self._reply(stdin, 0, json.dumps(listing))
+            machines = [{'name': name, 'state': state} for name, state in self.machines.items()]
+            return await self._reply(stdin, 0, json.dumps({'machines': machines} if self.wrapped_listing else machines))
         name = args[args.index('--name') + 1]
         if action in self.failures:
             return await self._error(stdin, *self.failures[action])

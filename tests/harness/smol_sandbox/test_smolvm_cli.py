@@ -142,6 +142,13 @@ class TestSmolvmCliBackend:
         del fake_smolvm.failures['stop']
         await backend.stop()
         assert fake_smolvm.machines[backend.ref.id] == 'stopped'
+        # One another backend stopped meanwhile is down, even if smolvm says the stop failed.
+        assert (await backend.run(['true'])).exit_code == 0
+        await other.run(['true'])
+        await other.stop()
+        fake_smolvm.failures['stop'] = ('SMOLVM_ERROR', 'machine is not running')
+        await backend.stop()
+        del fake_smolvm.failures['stop']
         # A VM deleted already has nothing to stop.
         assert (await backend.run(['true'])).exit_code == 0
         await delete_machine(backend.ref.id)
@@ -150,6 +157,9 @@ class TestSmolvmCliBackend:
     async def test_smolvm_failures(self, fake_smolvm: FakeSmolvm, working_dir: str) -> None:
         backend = await _booted(working_dir)
         assert backend.ref is not None
+        # A listing under `machines`, as some smolvm versions print it, names the VM too.
+        fake_smolvm.wrapped_listing = True
+        assert (await SmolvmCliBackend(ref=backend.ref, working_dir=working_dir).run(['true'])).exit_code == 0
         # Output that looks like smolvm's own failure is the command's while the VM runs.
         report = json.dumps({'error': {'code': 'NOT_FOUND', 'message': 'no such thing'}})
         result = await backend.run(['sh', '-c', f"echo '{report}' >&2; exit 1"])

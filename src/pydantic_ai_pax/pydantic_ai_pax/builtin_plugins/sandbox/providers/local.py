@@ -7,7 +7,8 @@ checkout, and it has network access, from this machine's network, to clone and p
 SmolVM runs on macOS (Apple silicon), Linux, and Windows. Where smolmachines is installed, which has wheels for
 macOS and Linux only, the VM runs through it in CLAI's process (harness `SmolSandboxBackend`), and it ends with
 that process, so `close` runs `sync`: smolmachines writes a VM's disk back only then or on a stop. Elsewhere, Windows
-included, CLAI drives the `smolvm` CLI on `PATH`, whose VM would outlive CLAI, so `close` stops it. Either way the
+included, CLAI drives the `smolvm` CLI on `PATH`, whose VM would outlive CLAI, so `close` stops it. That path has
+run only against a fake CLI and smolvm 1.36's Linux build, not yet on a Windows host. Either way the
 next command starts the VM again, and a conversation resumed later finds its files.
 """
 
@@ -61,7 +62,8 @@ class LocalProvider:
         if sys.platform == 'win32':
             return (
                 'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
-                'into a folder on PATH. It needs the Windows Hypervisor Platform.'
+                'into a folder on PATH. It needs the Windows Hypervisor Platform. '
+                '/sandbox local on Windows has not been tested on a Windows host yet.'
             )
         if sys.platform == 'darwin' and platform.machine() != 'arm64':
             return 'SmolVM runs only on Macs with Apple silicon.'

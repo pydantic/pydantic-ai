@@ -2339,7 +2339,8 @@ class TestLocal:
         monkeypatch.setenv('PATH', f'.{os.pathsep}{empty}')
         assert provider.missing() == (
             'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
-            'into a folder on PATH. It needs the Windows Hypervisor Platform.'
+            'into a folder on PATH. It needs the Windows Hypervisor Platform. '
+            '/sandbox local on Windows has not been tested on a Windows host yet.'
             if platform == 'win32'
             else 'SmolVM runs only on Macs with Apple silicon.'
             if machine == 'x86_64' and platform == 'darwin'
@@ -2458,7 +2459,8 @@ class TestLocalCli:
         provider = local_provider.LocalProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
         assert provider.missing() == (
             'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
-            'into a folder on PATH. It needs the Windows Hypervisor Platform.'
+            'into a folder on PATH. It needs the Windows Hypervisor Platform. '
+            '/sandbox local on Windows has not been tested on a Windows host yet.'
         )
         with pytest.raises(WorkspaceUnavailableError, match='smolvm was not found on PATH'):
             await provider.create(github=None)
