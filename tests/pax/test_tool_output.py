@@ -1,6 +1,7 @@
 """Native capability events drive terminal-safe specialized output."""
 
 import io
+from typing import Literal
 
 import pytest
 from rich.color import Color
@@ -9,8 +10,8 @@ from rich.style import Style
 from rich.text import Text
 from termflow.themes import PALETTES
 
-from pydantic_ai import FunctionToolCallEvent
-from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_pax import StreamRenderer
@@ -37,6 +38,7 @@ async def test_shell_header_includes_argument_once() -> None:
             pid=1,
         )
     )
+    await renderer.finish()
     assert output.getvalue() == '● shell ls /tmp\n\n'
 
 
@@ -46,6 +48,7 @@ async def test_shell_header_without_a_command_shows_only_the_tool_name() -> None
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': ''}, tool_call_id='empty-shell'))
     )
+    await renderer.finish()
     assert output.getvalue() == '● shell\n\n'
 
 
@@ -70,18 +73,21 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
 @pytest.mark.parametrize(
     ('name', 'args', 'expected'),
     [
-        ('list_files', {}, "● list_files '.' recursive=true limit=200"),
+        ('list_files', {}, "● list_files '.'"),
+        ('list_files', {'recursive': False}, "● list_files '.' recursive=false"),
         (
             'list_files',
             {'path': '/tmp', 'glob': '*.cpp', 'limit': 10},
-            "● list_files '/tmp' recursive=true limit=10 glob='*.cpp'",
+            "● list_files '/tmp' limit=10 glob='*.cpp'",
         ),
-        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp' offset=0 limit=2000 lines"),
+        # Coder's defaults are left out, so the header shows only what this call chose.
+        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp'"),
+        ('read_file', {'path': 'main.py', 'offset': 20}, "● read_file 'main.py' offset=20"),
         ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, "● read_file 'main.py' offset=20 limit=15 lines"),
         (
             'read_file',
             {'path': 'main.py', 'limit': 5000},
-            "● read_file 'main.py' offset=0 limit=2000 lines (requested 5000)",
+            "● read_file 'main.py' limit=2000 lines (requested 5000)",
         ),
     ],
 )
@@ -89,6 +95,7 @@ async def test_inspection_headers(name: str, args: dict[str, object], expected: 
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=160), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(name, args, tool_call_id='inspect')))
+    await renderer.finish()
     assert output.getvalue() == expected + '\n\n'
 
 
@@ -110,7 +117,7 @@ async def test_shell_event_display() -> None:
     assert '● shell printf hello' in output.getvalue()
     assert 'hello' in output.getvalue()
     assert '\x1b]52;' not in output.getvalue()
-    assert 'truncated' in output.getvalue()
+    assert output.getvalue().endswith('  ⎿ exit 0 · log /tmp/output.log\n\n')
 
 
 @pytest.mark.parametrize('limit', [0, 1, 2])
@@ -131,7 +138,7 @@ async def test_shell_line_limit_across_chunks(limit: int) -> None:
         )
     )
     text = output.getvalue()
-    assert f'Truncated {4 - limit} lines' in text
+    assert f'  ⎿ exit 0 · 4 lines, {limit} shown\n' in text
     assert ('first' in text) == (limit >= 1)
     assert ('second' in text) == (limit >= 2)
     assert 'third' not in text and 'fourth' not in text
@@ -163,8 +170,8 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
     text = output.getvalue()
     assert 'header\n100%\ndone\n' in text
     assert '10%' not in text and '50%' not in text and '\\x0d' not in text
-    assert text.startswith('● shell python3 - <<PY\n        print(123)\n        PY\n\n')
-    assert 'Truncated' not in text
+    assert text.startswith('● shell python3 - <<PY\n        print(123)\n        PY\nheader\n')
+    assert text.endswith('done\n  ⎿ exit 0 · 3 lines\n\n')
 
 
 async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
@@ -174,6 +181,7 @@ async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='long'))
     )
+    await renderer.finish()
     assert output.getvalue() == (
         '● shell cd /repo/src; cat pkg/module.py;\n        grep -n "needle" -r pkg | head\n        -40\n\n'
     )
@@ -185,6 +193,7 @@ async def test_shell_command_wraps_rather_than_clips_on_a_narrow_console() -> No
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo abcdefghijkl'}, tool_call_id='narrow'))
     )
+    await renderer.finish()
     assert output.getvalue() == '● shell echo\n        abcdefgh\n        ijkl\n\n'
 
 
@@ -195,6 +204,7 @@ async def test_shell_command_rows_beyond_the_limit_are_counted() -> None:
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='script'))
     )
+    await renderer.finish()
     lines = output.getvalue().splitlines()
     assert lines[0] == '● shell echo 0'
     assert lines[9] == '        echo 9'
@@ -227,6 +237,7 @@ async def _print_shell_call(console: Console, command: str) -> None:
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='call'))
     )
+    await renderer.finish()
 
 
 # Rich 15.0.0's `from_ansi` keeps the trailing newline that earlier versions drop
@@ -419,3 +430,77 @@ async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width()
             '        cwd())',
         ]
         assert [Text.from_ansi(row).plain for row in rows()][4:6] == ['', 'after']
+
+
+def _finished(tool_call_id: str, *, exit_code: int | None, line_count: int) -> CommandFinishedEvent:
+    return CommandFinishedEvent(
+        tool_call_id=tool_call_id,
+        pid=1,
+        output_path='/tmp/out',
+        status_path='/tmp/status',
+        exit_code=exit_code,
+        truncated=False,
+        line_count=line_count,
+    )
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'denied', 'retried'])
+async def test_a_failed_or_refused_call_is_marked_under_its_header(
+    outcome: Literal['failed', 'denied', 'retried'],
+) -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('deploy', {}, tool_call_id='d')))
+    part = ToolReturnPart('deploy', 'Not allowed here.\nMore detail.', tool_call_id='d', outcome=outcome)
+    await renderer.on_stream_event(FunctionToolResultEvent(part=part))
+    await renderer.finish()
+    text = Text.from_ansi(output.getvalue())
+    assert text.plain.rstrip('\n') == '● deploy\n  ⎿ Not allowed here.'
+    assert _color(console, text, 'Not allowed') == console.get_style(theme.ERROR).color
+
+
+async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    part = ToolReturnPart('deploy', '', tool_call_id='d', outcome='failed')
+    await renderer.on_stream_event(FunctionToolResultEvent(part=part))
+    assert output.getvalue() == '  ⎿ failed\n\n'
+
+
+async def test_a_row_under_another_calls_header_names_its_command() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    for call_id, command in (('a', 'git status'), ('b', 'git log -1')):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id=call_id))
+        )
+    await renderer.on_stream_event(_finished('a', exit_code=0, line_count=2))
+    await renderer.on_stream_event(_finished('b', exit_code=0, line_count=1))
+    await renderer.finish()
+    assert output.getvalue() == (
+        '● shell git status\n\n● shell git log -1\n\n  ⎿ exit 0 · 2 lines · git status\n\n'
+        '  ⎿ exit 0 · 1 line · git log -1\n\n'
+    )
+
+
+@pytest.mark.parametrize(
+    ('shell_lines', 'expected'),
+    [
+        # Every line is already on screen, so the failure adds no tail.
+        (20, 'one\ntwo\nthree\nfour\n  ⎿ exit 2 · 4 lines\n\n'),
+        # Only the lines the preview left out are repeated.
+        (2, 'one\ntwo\n  ⎿ exit 2 · 4 lines, 2 shown\n    three\n    four\n\n'),
+    ],
+)
+async def test_a_failed_command_with_output_on_repeats_only_unseen_last_lines(shell_lines: int, expected: str) -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(
+        Console(file=output, width=80), stop_loading=lambda: None, show_tool_output=True, shell_lines=shell_lines
+    )
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+    )
+    await renderer.on_stream_event(CommandOutputEvent(tool_call_id='m', text='one\ntwo\nthree\nfour'))
+    await renderer.on_stream_event(_finished('m', exit_code=2, line_count=4))
+    assert output.getvalue() == '● shell make\n' + expected

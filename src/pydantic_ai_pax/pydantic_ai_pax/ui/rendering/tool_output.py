@@ -3,6 +3,7 @@
 import io
 import json
 import re
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import partial
@@ -13,7 +14,7 @@ from rich.ansi import AnsiDecoder
 from rich.console import Console, Group
 from rich.text import Text
 
-from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
+from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_pax.config import ToolCallDisplay
@@ -67,11 +68,11 @@ def print_shell_header(console: Console, command: str) -> None:
     """Wrap the whole command under a hanging indent, so long one-liners and scripts stay readable.
 
     The command is highlighted as Bash, with embedded code in its own language. Rows beyond
-    `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged. In the
-    live prompt the header is its own transcript item, so a new width or theme renders it again.
+    `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged. No blank
+    line follows, so the command's result row can sit under it. In the live prompt the header is its own transcript item, so a new width or theme renders it again.
     """
     if not command.strip():
-        print_tool_header(console, name='shell')
+        console.print(tool_header(name='shell'))
         return
     surface = console.file
     if console.is_terminal and isinstance(surface, PromptSurface):
@@ -112,7 +113,6 @@ def _print_shell_header(console: Console, command: str) -> None:
         console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
     if total > SHELL_COMMAND_ROWS:
         console.print(indent + Text(f'… +{total - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
-    console.print()
 
 
 def tool_arguments_text(arguments: Mapping[str, object], *, max_chars: int) -> Text:
@@ -155,23 +155,33 @@ class DisplayArgs(BaseModel):
     recursive: bool = True
 
 
+READ_LIMIT = 2000
+"""Coder's default and largest `read_file` limit, which a header leaves out."""
+
+FAILURE_TAIL_LINES = 3
+"""Last output lines shown under a failed command, so the reason is on screen."""
+
+
 @dataclass
 class ShellPreview:
-    """Count displayed logical lines across output chunks."""
+    """Count a command's logical lines across output chunks, keeping the last few for a failure."""
 
     completed_lines: int = 0
+    shown: int = 0
+    """Lines printed as the output preview."""
     pending: str = ''
     carriage_return: bool = False
+    tail: deque[str] = field(default_factory=lambda: deque[str](maxlen=FAILURE_TAIL_LINES))
     decoder: AnsiDecoder = field(default_factory=AnsiDecoder)
-
-    @property
-    def shown(self) -> int:
-        """Include a displayed unterminated line."""
-        return self.completed_lines
 
 
 class ToolOutput:
-    """Present bounded shell chunks and Termflow-highlighted file diffs."""
+    """Present bounded shell chunks, Termflow-highlighted file diffs, and one result row per command or failure.
+
+    A header's separating blank line is owed rather than printed, so a result row can sit right under
+    it; `separate` pays it before anything else prints. A row that lands under another call's header
+    names its own call.
+    """
 
     def __init__(
         self,
@@ -183,7 +193,7 @@ class ToolOutput:
     ) -> None:
         """Use the conversation's output stream, not global stdout.
 
-        A `grouped` tool-call style counts shell calls, so it shows no shell header or output.
+        A `grouped` tool-call style counts shell calls, so it shows no shell header, output, or result row.
         """
         self.console = console
         self.shell_lines = shell_lines
@@ -192,16 +202,50 @@ class ToolOutput:
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestedEvent] = {}
+        self._labels: dict[str | None, str] = {}
+        """What each shown call's header said, for a row that does not land under it."""
+        self._owed: str | None = None
+        """The call whose header still owes its blank line."""
+        self._blank_owed = False
 
-    def _header(self, name: str, argument: str) -> None:
-        if name == 'shell':
+    def separate(self) -> None:
+        """Print the blank line a header still owes, before other output follows it."""
+        if self._blank_owed:
+            self.console.print()
+        self._blank_owed = False
+        self._owed = None
+
+    def header(self, tool_call_id: str | None, *, name: str, argument: str | Text = '') -> None:
+        """Print a tool's header, owing the blank line that separates it from what follows."""
+        self.separate()
+        if name == 'shell' and isinstance(argument, str):
             print_shell_header(self.console, argument)
-            return
-        lines = argument.splitlines()
-        summary = lines[0] if lines else ''
-        if len(lines) > 1:
-            summary += f' (+{len(lines) - 1} command lines)'
-        print_tool_header(self.console, name=name, argument=summary)
+            label = argument.strip().split('\n', 1)[0]
+        else:
+            self.console.print(tool_header(name=name, argument=argument))
+            label = name
+        self._labels[tool_call_id] = label
+        self._owed = tool_call_id
+        self._blank_owed = True
+
+    def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None) -> None:
+        """Print one result row under the call's header, naming the call when another header is in between."""
+        under_header = self._blank_owed and tool_call_id is not None and self._owed == tool_call_id
+        if not under_header:
+            self.separate()
+        row = Text('  ⎿ ', style=theme.color(theme.MUTED))
+        row.append(terminal_text(text, keep=''), style=style)
+        label = self._labels.get(tool_call_id)
+        if not under_header and label:
+            row.append(f' · {terminal_text(label, keep="")}', style=theme.color(theme.MUTED))
+        if log is None:
+            self.console.print(row, overflow='ellipsis', no_wrap=True)
+        else:
+            row.truncate(self.console.width, overflow='ellipsis')
+            # The path wraps rather than clips, so it stays usable.
+            self.console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED)))
+        self._blank_owed = False
+        self._owed = None
 
     def prints_diff(self, event: AgentStreamEvent) -> bool:
         """Whether `event` is a file's diff, or a call to a tool that prints one, in every tool-call style."""
@@ -219,39 +263,53 @@ class ToolOutput:
         except ValueError:
             return False
         if name in ('read_file', 'list_files'):
-            return self._inspection_header(name, args)
+            return self._inspection_header(event.part.tool_call_id, name, args)
         argument = args.command if name == 'shell' else args.path
         if argument is None:
             return False
-        self._header(name, argument)
+        self.header(event.part.tool_call_id, name=name, argument=argument)
         self._headers.add((event.part.tool_call_id, name))
         return True
 
-    def _inspection_header(self, name: str, args: DisplayArgs) -> bool:
+    def _inspection_header(self, tool_call_id: str, name: str, args: DisplayArgs) -> bool:
+        """Show the path and only the arguments that differ from Coder's defaults."""
+        details: list[str] = []
         if name == 'read_file':
             if args.path is None:
                 return False
-            limit = min(args.limit, 2000) if args.limit is not None else 2000
-            details = f'offset={args.offset} limit={limit} lines'
-            if args.limit is not None and args.limit > 2000:
-                details += f' (requested {args.limit})'
             path = args.path
+            if args.offset:
+                details.append(f'offset={args.offset}')
+            if args.limit is not None:
+                limit = f'limit={min(args.limit, READ_LIMIT)} lines'
+                if args.limit > READ_LIMIT:
+                    limit += f' (requested {args.limit})'
+                details.append(limit)
         else:
             path = args.path or '.'
-            limit = args.limit if args.limit is not None else 200
-            details = f'recursive={str(args.recursive).lower()} limit={limit}'
+            if not args.recursive:
+                details.append('recursive=false')
+            if args.limit is not None:
+                details.append(f'limit={args.limit}')
             if args.glob is not None:
-                details += f' glob={args.glob!r}'
-        self._header(name, f'{path!r} {details}')
+                details.append(f'glob={args.glob!r}')
+        self.header(tool_call_id, name=name, argument=' '.join([repr(path), *details]))
         return True
+
+    def render_result(self, event: FunctionToolResultEvent) -> None:
+        """Mark a call that failed, was refused, or has to be retried; a success shows nothing more."""
+        if event.part.outcome != 'success':
+            lines = event.part.model_response_str(wrap_if_error=False).strip().splitlines()
+            reason = lines[0] if lines else event.part.outcome
+            self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR))
+            self.console.print()
+        self.discard_call(event.part.tool_call_id)
 
     def _shell_chunk(self, event: CommandOutputEvent) -> None:
         preview = self._shells.setdefault(event.tool_call_id, ShellPreview())
         for char in event.text:
-            if preview.completed_lines >= self.shell_lines:
-                break
             if char == '\n':
-                self._shell_line(preview)
+                self._shell_line(event.tool_call_id, preview)
                 preview.carriage_return = False
             elif char == '\r':
                 preview.carriage_return = True
@@ -262,40 +320,54 @@ class ToolOutput:
                     preview.carriage_return = False
                 preview.pending += char
 
-    def _shell_line(self, preview: ShellPreview) -> None:
-        self.console.print(
-            shell_text(preview.pending, preview.decoder),
-            style=theme.color(theme.MUTED),
-            markup=False,
-            highlight=False,
-            overflow='ellipsis',
-            no_wrap=True,
-        )
+    def _shell_line(self, tool_call_id: str | None, preview: ShellPreview) -> None:
+        if self.show_output and preview.shown < self.shell_lines:
+            if not (self._blank_owed and self._owed == tool_call_id):
+                # Output under another call's header starts its own block.
+                self.separate()
+            self.console.print(
+                shell_text(preview.pending, preview.decoder),
+                style=theme.color(theme.MUTED),
+                markup=False,
+                highlight=False,
+                overflow='ellipsis',
+                no_wrap=True,
+            )
+            preview.shown += 1
+        preview.tail.append(preview.pending)
         preview.pending = ''
         preview.completed_lines += 1
 
     def _shell_finished(self, event: CommandFinishedEvent) -> None:
+        """One row: the exit status and line count, the log when output was cut, and a failure's last lines."""
         preview = self._shells.pop(event.tool_call_id, ShellPreview())
-        if preview.pending and preview.completed_lines < self.shell_lines:
-            self._shell_line(preview)
-        omitted = max(0, event.line_count - preview.shown) if event.line_count is not None else 0
-        if omitted:
-            self.console.print(f'Truncated {omitted} lines', style=theme.color(theme.MUTED))
-        state = f'exit {event.exit_code}' if event.exit_code is not None else 'running in background'
-        self.console.print(f'{state} | PID {event.pid}', style=theme.color(theme.MUTED), markup=False, highlight=False)
-        self.console.print(
-            f'Output: {terminal_text(event.output_path)}', style=theme.color(theme.MUTED), markup=False, highlight=False
+        if preview.pending:
+            self._shell_line(event.tool_call_id, preview)
+        failed = event.exit_code not in (None, 0)
+        parts = [f'exit {event.exit_code}' if event.exit_code is not None else 'running in background']
+        if event.line_count:
+            lines = f'{event.line_count} line{"s" if event.line_count != 1 else ""}'
+            if self.show_output and preview.shown < event.line_count:
+                lines += f', {preview.shown} shown'
+            parts.append(lines)
+        style = theme.color(theme.ERROR if failed else theme.MUTED)
+        self._row(
+            event.tool_call_id, ' · '.join(parts), style=style, log=event.output_path if event.truncated else None
         )
-        self.console.print(
-            f'Status: {terminal_text(event.status_path)}', style=theme.color(theme.MUTED), markup=False, highlight=False
-        )
-        if event.truncated and not omitted:
-            self.console.print(
-                'Output preview truncated; full output is in the command log.', style=theme.color(theme.MUTED)
-            )
+        # The tail of a cut preview is not the end of the output, so the log is the place to look.
+        unseen = preview.completed_lines - preview.shown
+        if failed and not event.truncated and unseen:
+            for line in list(preview.tail)[-unseen:]:
+                self.console.print(
+                    Text('    ') + shell_text(line, AnsiDecoder()),
+                    style=theme.color(theme.MUTED),
+                    overflow='ellipsis',
+                    no_wrap=True,
+                )
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
+        self.separate()
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
@@ -312,10 +384,12 @@ class ToolOutput:
         self._writes.clear()
         self._headers.clear()
         self._shells.clear()
+        self._labels.clear()
 
     def discard_call(self, tool_call_id: str) -> None:
-        """Release proposed diffs after a tool result, including refusals and retries."""
+        """Release proposed diffs and the header label after a tool result, including refusals and retries."""
         self._writes = {key: value for key, value in self._writes.items() if key[0] != tool_call_id}
+        self._labels.pop(tool_call_id, None)
 
     def render(self, event: AgentStreamEvent) -> bool:
         """Return whether this event belongs to the specialized tool display."""
@@ -323,13 +397,11 @@ class ToolOutput:
             case CommandStartedEvent():
                 self._shell_started(event)
             case CommandOutputEvent():
-                if self.show_output:
+                if self.tool_calls == 'detailed':
                     self._shell_chunk(event)
             case CommandFinishedEvent():
-                if not self.show_output:
-                    self._shells.pop(event.tool_call_id, None)
-                    return True
-                self._shell_finished(event)
+                if self.tool_calls == 'detailed':
+                    self._shell_finished(event)
             case FileChangeRequestedEvent():
                 if event.operation == 'write':
                     self._writes[event.tool_call_id, event.root_dir, event.path] = event
@@ -345,23 +417,23 @@ class ToolOutput:
         self._shells[event.tool_call_id] = ShellPreview()
         key = (event.tool_call_id, 'shell')
         if key not in self._headers and self.tool_calls == 'detailed':
-            self._header('shell', event.command)
+            self.header(event.tool_call_id, name='shell', argument=event.command)
         self._headers.discard(key)
 
     def _file_edited(self, event: FileEditedEvent) -> None:
         key = (event.tool_call_id, 'edit_file')
         if key not in self._headers:
-            self._header('edit_file', event.path)
+            self.header(event.tool_call_id, name='edit_file', argument=event.path)
         self._headers.discard(key)
         self._diff(event.diff, truncated=event.truncated)
 
     def _file_written(self, event: FileWrittenEvent) -> None:
         key = (event.tool_call_id, 'write_file')
         if key not in self._headers:
-            self._header('write_file', event.path)
+            self.header(event.tool_call_id, name='write_file', argument=event.path)
         self._headers.discard(key)
         request = self._writes.pop((event.tool_call_id, event.root_dir, event.path), None)
         if request is not None and not request.cancelled:
             self._diff(request.diff, truncated=request.truncated)
         else:
-            self.console.print()
+            self.separate()

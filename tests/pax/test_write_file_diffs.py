@@ -101,7 +101,11 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     await renderer.finish()
 
     assert path.read_text() == ('external\n' if conflict else 'old\n')
-    assert output.getvalue() == '● write_file file.txt\n\ndone\n\n'
+    # A conflict fails the call, so it is marked; a cancelled write is an ordinary result.
+    failure = "  ⎿ Conflict: file 'file.txt' has changed" if conflict else ''
+    assert output.getvalue().startswith(f'● write_file file.txt\n{failure}')
+    assert output.getvalue().endswith('\n\ndone\n\n')
+    assert 'old' not in output.getvalue() and 'new' not in output.getvalue()
 
 
 async def test_write_file_shows_truncation_in_compact_mode(tmp_path: Path) -> None:

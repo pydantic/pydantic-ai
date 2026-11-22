@@ -52,7 +52,6 @@ from pydantic_ai_pax.ui.rendering.tool_output import (
     ColorSystemName,
     ToolOutput,
     color_system,
-    print_tool_header,
     terminal_text,
     tool_arguments_text,
 )
@@ -309,7 +308,7 @@ class StreamRenderer:
         self._tool_output = ToolOutput(
             console, shell_lines=shell_lines, show_output=show_tool_output, tool_calls=tool_calls
         )
-        self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
+        self._grep_output = GrepOutput(self._tool_output, lines=grep_lines, show_output=show_tool_output)
         self._group = ToolCallGroup(console, colors=color_system(console)) if tool_calls == 'grouped' else None
         self.smooth_seconds = smooth_seconds
         self._thinking = False
@@ -408,22 +407,25 @@ class StreamRenderer:
     def _render_tool_event(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
         if isinstance(event, DelegationToolCallEvent):
             return
-        if isinstance(event, FunctionToolResultEvent):
+        if isinstance(event, FunctionToolResultEvent) and self._group is not None:
             self._tool_output.discard_call(event.part.tool_call_id)
         if self._group is not None:
             if not isinstance(event, FunctionToolCallEvent):
                 return
             if not self._tool_output.prints_diff(event):
+                self._tool_output.separate()
                 self._group.add(event.part.tool_name)
                 return
             # A count would repeat the header its diff prints under.
             self._group.close()
         if self._grep_output.render(event):
             return
-        if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):
+        if isinstance(event, FunctionToolResultEvent):
+            self._tool_output.render_result(event)
+        elif not self._tool_output.render_call(event):
             name = ''.join(char if char.isprintable() else ' ' for char in event.part.tool_name)
             arguments = tool_arguments_text(event.part.args_as_dict(), max_chars=self.tool_arg_chars)
-            print_tool_header(self.console, name=name, argument=arguments)
+            self._tool_output.header(event.part.tool_call_id, name=name, argument=arguments)
 
     async def _render_with_plugins(self, event: AgentStreamEvent) -> bool:
         for renderer in self._renderers:
@@ -450,6 +452,8 @@ class StreamRenderer:
             self._block.extend(buffer)
 
     def _start_part(self, continuation: tuple[Parser, str] | None = None) -> None:
+        # Before the part's transcript item opens, so the blank line lands above it.
+        self._tool_output.separate()
         surface = self._output = self.console.file
         self._block = (
             surface.markdown(
@@ -524,6 +528,8 @@ class StreamRenderer:
         self._close_group()
 
     def _close_group(self) -> None:
+        """End what tool output left open: the group's line, or the blank line a header owes."""
+        self._tool_output.separate()
         if self._group is not None:
             self._group.close()
 
