@@ -332,6 +332,22 @@ class TestWrapUpAtLimits:
         assert sorted(looked_up) == ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
         assert wrapped_up_by(result.new_messages()) == 'request_limit'
 
+    async def test_each_run_measures_its_own_steps(self) -> None:
+        slow = True
+        clock = _Clock(tool_seconds=lambda topic: 100.0 if slow else 0.0)
+        looked_up: list[str] = []
+        agent = _agent(_Researcher(clock), looked_up)
+
+        # The first run takes 200s a step.
+        await agent.run('Research', usage_limits=UsageLimits(request_limit=2), timeout=1000)
+        slow = False
+        looked_up.clear()
+        # The second run's steps are instant: a 200s step carried over from the first would wrap it up at once.
+        result = await agent.run('Research', usage_limits=UsageLimits(request_limit=3), timeout=100)
+
+        assert len(looked_up) == 4
+        assert wrapped_up_by(result.new_messages()) == 'request_limit'
+
     async def test_short_timeout_still_calls_tools(self) -> None:
         looked_up: list[str] = []
 
