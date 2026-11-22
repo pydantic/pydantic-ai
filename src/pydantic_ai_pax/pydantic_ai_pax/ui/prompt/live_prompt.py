@@ -583,21 +583,7 @@ class LivePrompt:
             for entry in self.queued_prompts()
         ]
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
-        title = ''
-        if self.interrupts.active:
-            head, glyph = '─ Working ', self.spinner().frame(self.clock())
-            # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
-            chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
-            hints = f'· Enter to queue · {chord} to steer ' if self.queued_messages or self.buffer.text.strip() else ''
-            # Esc, unlike Ctrl-C, never counts toward the double press that quits.
-            elapsed = format_duration(self.interrupts.elapsed)
-            title = f'{head}{glyph} {elapsed} · Esc to interrupt {hints}'
-            if hints and visible_length(title) > width:
-                # Typing a message makes its keys the hint that matters; Esc is in the welcome text.
-                title = f'{head}{glyph} {elapsed} {hints}'
-            title = truncate(title, width)
-            if title.startswith(head + glyph):
-                title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
+        title = self._working_title(width, muted=muted) if self.interrupts.active else ''
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
         # The box has no side borders: the draft and the suggestions are rows between the top and
         # bottom rules, so no row can drift out of alignment with the corners. The draft wraps two
@@ -623,6 +609,28 @@ class LivePrompt:
             rows.append(truncate(pinned, width) + reset)
         rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
         return tuple(rows)
+
+    def _working_title(self, width: int, *, muted: str) -> str:
+        """The rule above the draft while work runs: the animation, its time, and the keys that act on it.
+
+        The first of the candidate rows that fits wins; a draft's own keys outrank the Esc hint and the time.
+        """
+        head, glyph, reset = '─ Working ', self.spinner().frame(self.clock()), '\x1b[0m'
+        # Esc, unlike Ctrl-C, never counts toward the double press that quits.
+        candidates = [[format_duration(self.interrupts.elapsed), 'Esc to interrupt']]
+        # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
+        if self.queued_messages or self.buffer.text.strip():
+            keys = ['Enter to queue', f'{"Ctrl+Enter" if self.ctrl_enter_steers else "Alt+Enter"} to steer']
+            candidates = [[*candidates[0], *keys], [candidates[0][0], *keys], keys]
+        title = ''
+        for parts in candidates:
+            title = f'{head}{glyph} {" · ".join(parts)} '
+            if visible_length(title) <= width:
+                break
+        title = truncate(title, width)
+        if title.startswith(head + glyph):
+            title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
+        return title
 
     def _footer(self, *, muted: str) -> str:
         """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""

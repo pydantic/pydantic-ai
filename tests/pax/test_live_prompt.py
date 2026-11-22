@@ -251,6 +251,9 @@ async def test_working_rule_counts_the_turn_and_names_esc() -> None:
             live.console.width = 60
             rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
             assert rule == '─ Working ⠋ 1m 12s · Enter to queue · Alt+Enter to steer ───'
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
             pipe.send_text('\x1b')
             await done.wait()
         assert not live.interrupts.exit_requested
