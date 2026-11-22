@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import gc
 import os
 import re
 import sys
@@ -142,6 +143,9 @@ def run(*, splash: Splash | None = None) -> None:
 def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: Splash | None) -> None:
     """Run the parsed command, or start the session it asks for."""
     _resolve_paths(args)
+    # These imports create about 300,000 objects that live until exit. With the garbage collector on, it walks
+    # them again and again as they arrive; frozen afterwards, no later collection walks them either.
+    gc.disable()
     try:
         from pydantic_ai.usage import UsageLimits
         from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
@@ -151,6 +155,8 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
         from pydantic_ai_pax.config.settings_store import SettingsStore
         from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
     finally:
+        gc.freeze()
+        gc.enable()
         if splash is not None:
             splash.stop()
     _held = hold_environment()  # Open until exit, so `/update` elsewhere does not replace the code this one runs.

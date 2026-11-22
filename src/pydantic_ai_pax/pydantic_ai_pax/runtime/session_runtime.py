@@ -1144,6 +1144,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     # Reports a task left while no CLAI ran are known once the owner opened.
                     if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
+                    # The first window lookup imports the model's provider SDK, a fifth of a second for OpenAI's.
+                    # Done here on a worker thread, keys typed at the new prompt echo meanwhile.
+                    await to_thread.run_sync(infer_model_profile, self._window_model())
                     reason = await self._read_loop()
                     return reason
         finally:
@@ -1321,10 +1324,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         elif self.session.model is None and isinstance(agent_model, Model):
             self.status.model_window = agent_model.context_window
         else:
-            profiled = base_model(self.loader.settings_model(model))
-            self.status.model_window = infer_model_profile(profiled).get('context_window')
+            self.status.model_window = infer_model_profile(self._window_model()).get('context_window')
         if self.status.context_tokens is None:
             self.status.context_tokens = _last_context_tokens(self.session.messages)
+
+    def _window_model(self) -> str:
+        """The model whose profile gives the selected model's window: a plugin model's `settings_from` one."""
+        return base_model(self.loader.settings_model(self.session.model or _model_label(self.agent)))
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
