@@ -248,7 +248,8 @@ def roles(name: str) -> tuple[tuple[str, str], ...]:
     """The Rich colour `name` paints each role with; where roles share a colour, the earlier one claims it.
 
     Roles are the background and foreground, diff lines and markers, CLAI's brand colours, and the
-    16 ANSI slots. The default theme leaves the background, foreground, and slots to the terminal.
+    16 ANSI slots. The default theme leaves the background and foreground to the terminal, and the slots too on a
+    dark or unknown background; on a light one they are `github_light`'s.
     Output painted in one theme repaints in another by translating its colours role by role.
     """
     with use(lambda: name):
