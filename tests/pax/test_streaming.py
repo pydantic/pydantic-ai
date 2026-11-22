@@ -4,6 +4,7 @@ import asyncio
 import io
 from typing import IO, Literal
 
+import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
@@ -15,6 +16,7 @@ from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -131,8 +133,9 @@ async def test_part_end_writes_queued_text_at_once(part: TextPart | ThinkingPart
 
     output = ObservedOutput()
     renderer = StreamRenderer(Console(file=output, width=200, force_terminal=True), stop_loading=lambda: None)
-    await renderer.on_stream_event(PartStartEvent(index=0, part=part))
-    await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await renderer.on_stream_event(PartStartEvent(index=0, part=part))
+        await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
     counts = [text.count('x') for text in writes if 'x' in text]
     # At most the writer's first tick, then the rest in one write; typing it out takes about 30 writes.
     assert sum(counts) == 60
