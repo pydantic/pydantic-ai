@@ -169,6 +169,21 @@ EXPAND_HINT = 'ctrl+o to expand'
 """Ends a live result row whose output Ctrl+O shows, when the row has room for it."""
 
 
+def _call_label(label: str, *, text: str, width: int, used: int) -> Text:
+    """`label` clipped to the room a row of `width` with `used` cells and result `text` leaves it.
+
+    A short result keeps all of itself. A long one gives the name at most half the row, less if its
+    first part (a shell call's exit status) would not fit, leaving a cell for the ellipsis.
+    """
+    call = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
+    result = Text(terminal_text(text, keep='')).cell_len
+    half = width // 2
+    head = Text(text.split(' · ')[0]).cell_len if ' · ' in text else 0
+    room = width - used - result - 3 if result <= half else min(half, width - used - head - 4)
+    call.truncate(max(room, 1), overflow='ellipsis')
+    return call
+
+
 def _draw_row(
     console: Console,
     *,
@@ -181,44 +196,28 @@ def _draw_row(
 ) -> None:
     """Print a result row at `console`'s width, naming `label`'s call first, then the `tail` lines under it.
 
-    The call's name gets the room a short result leaves, or half the row beside a long one. `role`, the
-    result's theme role, resolves as it draws, so a row rendered again for a new theme takes its colours.
+    `role`, the result's theme role, resolves as it draws, so a row rendered again for a new theme
+    takes its colours. A row with only the hint keeps it, clipped, so the result never takes no rows;
+    without it (a read expanded under its own header) the row is left out and the output follows the header.
     """
     muted = theme.color(theme.MUTED)
     row = Text('  ⎿ ', style=muted)
-    result = Text(terminal_text(text, keep=''), style=theme.color(role))
     if label:
-        call = Text(terminal_text(label, keep=''), style=muted)
-        half = console.width // 2
-        # A short result keeps all of itself. A long one gives the name at most half the row,
-        # less if its first part (a shell call's exit status) would not fit, leaving a cell for the ellipsis.
-        head = Text(text.split(' · ')[0]).cell_len if ' · ' in text else 0
-        room = (
-            console.width - row.cell_len - result.cell_len - 3
-            if result.cell_len <= half
-            else min(half, console.width - row.cell_len - head - 4)
-        )
-        call.truncate(max(room, 1), overflow='ellipsis')
-        row.append_text(call)
+        row.append_text(_call_label(label, text=text, width=console.width, used=row.cell_len))
         if text:
             row.append(' · ', style=muted)
-    row.append_text(result)
+    row.append(terminal_text(text, keep=''), style=theme.color(role))
     shown = bool(text or label)
-    if hint:
-        more = Text(f' · {EXPAND_HINT}' if shown else EXPAND_HINT, style=muted)
-        # A row with nothing else keeps its hint, clipped, so the result never takes no rows.
-        if row.cell_len + more.cell_len <= console.width or not shown:
-            row.append_text(more)
-            shown = True
-    if not shown:
-        # A read under its own header says nothing but the hint, so expanded its output follows the header.
-        pass
-    elif log is None:
+    more = Text(f' · {EXPAND_HINT}' if shown else EXPAND_HINT, style=muted)
+    if hint and (row.cell_len + more.cell_len <= console.width or not shown):
+        row.append_text(more)
+        shown = True
+    if shown and log is None:
         console.print(row, overflow='ellipsis', no_wrap=True)
-    else:
+    elif shown:
         row.truncate(console.width, overflow='ellipsis')
         # The path wraps rather than clips, so it stays usable.
-        console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=muted))
+        console.print(row + Text(f' · log {terminal_text(log or "", keep="")}', style=muted))
     for line in tail:
         console.print(Text('    ') + shell_text(line, AnsiDecoder()), style=muted, overflow='ellipsis', no_wrap=True)
 
@@ -235,10 +234,11 @@ def _row_ansi(
     draw(console, hint=not expanded)
     if expanded:
         decoder = AnsiDecoder()
-        for line in source.splitlines():
+        # Only line feeds end a line, so a read keeps its numbered lines; other controls show escaped.
+        for line in source.removesuffix('\n').split('\n'):
             # Printed whole: the transcript wraps it, so a wrapped URL still opens in full.
             console.print(
-                Text('    ') + shell_text(line, decoder),
+                Text('    ') + shell_text(line.removesuffix('\r'), decoder),
                 style=theme.color(theme.MUTED),
                 no_wrap=True,
                 overflow='ignore',
@@ -425,12 +425,7 @@ class ToolOutput:
         A success adds a command's output to its live row. A read or listing gets a live row whose
         output, the text the tool returned, Ctrl+O shows; elsewhere a success shows nothing more.
         """
-        content = event.part.content
-        if (pending := self._outputs.pop(event.part.tool_call_id, None)) is not None and isinstance(content, str):
-            block, pid = pending
-            # The model's copy, with secrets masked, ends with the command's handles, which the row already gives.
-            output, handles, _ = content.rpartition(f'PID: {pid} (')
-            block.extend(output if handles else content)
+        self._add_output(event)
         if event.part.outcome != 'success':
             lines = event.part.model_response_str(wrap_if_error=False).strip().splitlines()
             reason = lines[0] if lines else event.part.outcome
@@ -444,12 +439,23 @@ class ToolOutput:
         if reason:
             self._row(event.part.tool_call_id, reason, role=theme.ERROR, name=event.part.tool_name)
             self.console.print()
-        elif (
-            event.part.tool_name in ('read_file', 'list_files')
-            and self._live
-            and isinstance(content, str)
-            and content.strip()
-        ):
+        else:
+            self._inspection_row(event)
+
+    def _add_output(self, event: FunctionToolResultEvent) -> None:
+        """Give a command's live row the output its tool result brings."""
+        content = event.part.content
+        if (pending := self._outputs.pop(event.part.tool_call_id, None)) is not None and isinstance(content, str):
+            block, pid = pending
+            # The model's copy, with secrets masked, ends with the command's handles, which the row already gives.
+            output, handles, _ = content.rpartition(f'PID: {pid} (')
+            block.extend(output if handles else content)
+
+    def _inspection_row(self, event: FunctionToolResultEvent) -> None:
+        """In the live prompt, a read or listing gets a row whose output, what the tool returned, Ctrl+O shows."""
+        content = event.part.content
+        names = ('read_file', 'list_files')
+        if event.part.tool_name in names and self._live and isinstance(content, str) and content.strip():
             self._row(event.part.tool_call_id, '', role=theme.MUTED, name=event.part.tool_name, output=content)
             self.console.print()
 
@@ -511,15 +517,19 @@ class ToolOutput:
         unseen = preview.completed_lines - preview.shown
         tail = list(preview.tail)[-unseen:] if failed and not event.truncated and unseen and self.shell_lines else []
         # Its output comes with the tool result, so the row waits for it.
-        hidden = event.tool_call_id not in self._background and (
-            event.line_count is None or event.line_count > preview.shown or preview.cut
-        )
+        hidden = self._hides_output(event, preview)
         block = self._row(
             event.tool_call_id, ' · '.join(parts), role=role, log=log, tail=tail, output='' if hidden else None
         )
         if block is not None:
             self._outputs[event.tool_call_id] = (block, event.pid)
         self.console.print()
+
+    def _hides_output(self, event: CommandFinishedEvent, preview: ShellPreview) -> bool:
+        """Whether the command's tool result brings output its preview did not show; a background one brings none."""
+        if event.tool_call_id in self._background:
+            return False
+        return event.truncated or preview.cut or event.line_count is None or event.line_count > preview.shown
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
         self.separate()
