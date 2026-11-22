@@ -2267,8 +2267,8 @@ def local_host(
     platform, engine = cast('tuple[str, LocalEngine]', request.param)
     monkeypatch.setattr(local_provider.sys, 'platform', platform)
     if engine == 'smolmachines':
-        # smolmachines has wheels for macOS and Linux only.
-        if find_spec('smol') is None:  # pragma: no cover
+        # smolmachines has wheels for macOS and Linux only, so some test jobs lack it.
+        if find_spec('smol') is None:  # pragma: lax no cover
             pytest.skip('smolmachines not installed')
         from tests.harness.smol_sandbox.fake_smol import FakeSmol
 
