@@ -5,7 +5,6 @@ A unit test, since no model is involved: the claim is what goes over the termina
 
 import os
 import select
-import sys
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -18,7 +17,7 @@ from pydantic_ai_pax.ui import terminal_background as background_module
 from pydantic_ai_pax.ui.terminal_background import terminal_background
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
+termios = pytest.importorskip('termios', reason='needs a POSIX pseudo-terminal')
 
 DA1 = b'\x1b[?1;2;4c'
 QUERY = b'\x1b]11;?\x07\x1b[c'
@@ -76,8 +75,6 @@ def answer(leader: int, reply: bytes) -> tuple[threading.Thread, list[bytes]]:
     ids=['bel', 'st-two-digit', 'dark', 'no-background-reply'],
 )
 def test_reads_the_reported_background(reply: bytes, expected: str | None) -> None:
-    import termios
-
     with on_a_terminal() as leader:
         responder, read = answer(leader, reply)
         assert terminal_background() == expected

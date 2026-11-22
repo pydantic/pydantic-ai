@@ -119,11 +119,11 @@ def _nearest_eight_bit(colour: str, bg: str) -> str:
     """The 256-colour shade closest to `colour` that still reads on `bg`, since the nearest one may not."""
     from rich.color import Color
 
-    def distance(shade: str) -> int:
-        return sum((int(shade[index : index + 2], 16) - int(colour[index : index + 2], 16)) ** 2 for index in (1, 3, 5))
-
     shades = (Color.from_ansi(number).get_truecolor().hex.upper() for number in range(16, 256))
-    return min((shade for shade in shades if _contrast(shade, bg) >= _MIN_CONTRAST), key=distance)
+    return min(
+        (shade for shade in shades if _contrast(shade, bg) >= _MIN_CONTRAST),
+        key=lambda shade: sum((int(shade[i : i + 2], 16) - int(colour[i : i + 2], 16)) ** 2 for i in (1, 3, 5)),
+    )
 
 
 def _luminance(colour: str) -> float:
@@ -295,10 +295,7 @@ def use(
     """
     active = _ACTIVE
     token = active.set(get_name)
-    if background is not None:
-        light = _LIGHT_BACKGROUND.set(background if _is_light_colour(background) else None)
-    else:
-        light = _LIGHT_BACKGROUND.set(_LIGHT_BACKGROUND.get())
+    light = _LIGHT_BACKGROUND.set(background if _is_light_colour(background) else None) if background else None
     try:
         if output is not None and get_name() != 'default':
             apply(get_name(), output=output)
@@ -306,7 +303,8 @@ def use(
     finally:
         if output is not None and get_name() != 'default':
             apply('default', output=output)
-        _LIGHT_BACKGROUND.reset(light)
+        if light is not None:
+            _LIGHT_BACKGROUND.reset(light)
         active.reset(token)
 
 
