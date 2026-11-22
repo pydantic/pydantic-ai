@@ -199,7 +199,7 @@ or a prompt that moves to full screen, is not saved. Deleting the file only brin
 back the splash for one start.
 
 On Python 3.15, startup also defers the imports in CLAI's own packages until they
-are first used, then loads the rest in the background once the prompt is ready.
+are first used, then loads the rest in the background while the prompt opens.
 
 ### File access and safety
 
