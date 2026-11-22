@@ -3,7 +3,6 @@
 import io
 
 import pytest
-from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 from termflow import Parser, Renderer
@@ -61,8 +60,13 @@ def test_a_header_only_table_too_narrow_for_its_words_keeps_them() -> None:
     assert lines == ['Variant', 'InvalidCodePoint(u16)']
 
 
-def test_wide_characters_may_wrap_between_any_two() -> None:
-    source = '| 名前 | 説明 |\n|---|---|\n| 東京タワー | 東京都港区にある電波塔で、高さは333メートルです 🚀 |'
-    lines = Text.from_ansi(_render(source, 40)).plain.splitlines()
-    assert lines[0].startswith('┌')
-    assert all(cell_len(line) <= 40 for line in lines)
+def test_wide_characters_join_the_word_around_them() -> None:
+    lines = Text.from_ansi(_render('| Name | Code |\n|---|---|\n| 東京hello | 12345678 |', 20)).plain.splitlines()
+    assert any('東京hello' in line for line in lines)
+
+
+def test_termflow_table_width_cap_applies_to_every_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', '40')
+    lines = Text.from_ansi(_render(ERRORS, 80)).plain.splitlines()
+    assert lines[0] == 'Variant: UnexpectedEof'
+    assert max(len(line) for line in lines) == 40

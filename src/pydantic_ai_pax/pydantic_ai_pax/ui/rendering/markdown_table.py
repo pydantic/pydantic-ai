@@ -1,5 +1,7 @@
 """Markdown tables that never split a word: wrapped columns when the words fit, one block per row when not."""
 
+import os
+import re
 from collections.abc import Sequence
 
 from termflow.ansi import BOLD_OFF, BOLD_ON, RESET, fg_color, visible_length, wrap_ansi
@@ -14,6 +16,9 @@ from termflow.render.table import (
     render_table_separator,
     render_table_top,
 )
+
+_BREAKS = re.compile('[ \t]+')
+"""Where Termflow's wrap breaks a line; a word longer than its column is split anywhere."""
 
 
 def table_lines(
@@ -32,12 +37,20 @@ def table_lines(
     breaks only between words. A table whose longest words cannot sit side by side at this
     width becomes one block of `Header: value` lines per row, so no word is cut in half.
     """
-    cells = [header, *rows]
-    columns = max(len(row) for row in cells)
-    natural = [
-        max((visible_length(row[i].strip()) for row in cells if i < len(row)), default=0) for i in range(columns)
-    ]
-    words = [max((_longest_word(row[i]) for row in cells if i < len(row)), default=0) for i in range(columns)]
+    # The cap Termflow's own table renderer applies, so every layout stays within it.
+    cap = os.environ.get('TERMFLOW_MAX_TABLE_WIDTH', '')
+    if cap.isdigit():
+        width = min(width, int(cap) - visible_length(margin))
+    natural: list[int] = []
+    words: list[int] = []
+    for row in (header, *rows):
+        for i, cell in enumerate(row):
+            if i == len(natural):
+                natural.append(0)
+                words.append(0)
+            natural[i] = max(natural[i], visible_length(cell.strip()))
+            words[i] = max(words[i], *(visible_length(word) for word in _BREAKS.split(visible(cell))))
+    columns = len(natural)
     # Each cell is padded by a space on either side, and every column has a border on its left plus one on the right.
     room = width - (3 * columns + 1)
     if sum(natural) <= room:
@@ -52,22 +65,6 @@ def table_lines(
         lines += render_table_row(row, state, width, margin, style)
     lines.append(render_table_bottom(state, margin, style))
     return lines
-
-
-def _longest_word(cell: str) -> int:
-    """The widest run a wrap may not break: a run of narrow characters between spaces, or one wide character.
-
-    Lines may break between any two wide (CJK or emoji) characters, as text in those scripts does.
-    """
-    longest = run = 0
-    for char in visible(cell):
-        cells = visible_length(char)
-        if char.isspace() or cells > 1:
-            longest = max(longest, run, cells if cells > 1 else 0)
-            run = 0
-        else:
-            run += cells
-    return max(longest, run)
 
 
 def _share(*, natural: list[int], words: list[int], room: int) -> list[int]:
