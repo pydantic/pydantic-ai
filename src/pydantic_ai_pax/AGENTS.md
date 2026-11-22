@@ -567,8 +567,8 @@ An idle session must cost next to no CPU, since users keep dozens open. The
 editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
 turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise,
 sleeping in between; a read wakes it, since the work it starts animates.
-`PromptSurface.paint` skips a frame identical to the last one. Input and output
-paint at once, and a resize to a new width once the width has held for `RESIZE_SETTLE`; output inside a frame interval paints when it ends
+`PromptSurface.paint` skips a frame identical to the last one. Input, output,
+and resizes paint at once, Markdown rendering again at a new width only once it has held for `RESIZE_SETTLE`; output inside a frame interval paints when it ends
 (`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
 repaints unconditionally, or one that wakes an idle editor more than once a second.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
