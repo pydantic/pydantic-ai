@@ -1,8 +1,8 @@
 """Paint the panel's first frame from the last launch before this launch's imports, so the prompt shows at once.
 
-A bare `pax` in a terminal saves the rows its inline panel first painted, with the terminal's size and colour
-settings. The next bare `pax` in a terminal with the same ones paints those rows again before importing anything
-heavy, and the panel paints over them when it is ready. Keys typed meanwhile wait in the terminal, unechoed,
+A bare `pax` in a terminal saves the shape of its inline panel's first frame (`PromptSurface.startup_frame`), with
+the terminal's size and colour settings. The next bare `pax` in a terminal with the same ones paints that shape before
+importing anything heavy, and the panel paints over it when it is ready. Keys typed meanwhile wait in the terminal, unechoed,
 for the editor. Standard library only: this runs before the heavy imports it covers.
 """
 

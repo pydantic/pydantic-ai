@@ -2,10 +2,10 @@
 
 import io
 import os
+import select
 import struct
 import sys
 from collections.abc import Iterator
-from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,8 @@ if sys.platform != 'win32':
 
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
 
-ROWS = ('', 'RULE', '> ', 'RULE', 'FOOTER')
+RULE = '─' * 40
+ROWS = ('', RULE, '❯ ', RULE, 'model | ~/project | ready')
 
 
 class TerminalErrors(io.StringIO):
@@ -51,12 +52,14 @@ class Tty:
         fcntl.ioctl(self.terminal, termios.TIOCSWINSZ, struct.pack('HHHH', height, width, 0, 0))
 
     def shown(self) -> str:
-        """What the program wrote since the last call, with the line discipline's added carriage returns removed."""
-        os.set_blocking(self.screen, False)
+        """What the program wrote since the last call, with the line discipline's added carriage returns removed.
+
+        Linux delivers a pseudo-terminal's output, echo included, a moment after the write, so this reads until
+        nothing more arrives.
+        """
         chunks: list[bytes] = []
-        with suppress(BlockingIOError):
-            while True:
-                chunks.append(os.read(self.screen, 65536))
+        while select.select([self.screen], [], [], 0.1)[0]:
+            chunks.append(os.read(self.screen, 65536))
         return b''.join(chunks).decode().replace('\r\r\n', '\r\n')
 
     def typed(self) -> bytes:
@@ -89,7 +92,7 @@ def launch(
     surface.full_screen = False
     surface.adopt(adopted, size=size)
     surface.write('banner\n')
-    surface.paint(tuple(row.replace('> ', f'> {draft}') for row in ROWS))
+    surface.paint(tuple(row.replace('❯ ', f'❯ {draft}') for row in ROWS))
     return surface
 
 
@@ -111,7 +114,8 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     shown = tty.shown()
     assert '\x1b[?2004h' in shown, 'a paste waits as one paste, not as lines that each press Enter'
     after.write(shown)
-    assert after.lines() == before.lines()
+    shape = ['$ pax', '', '', '', RULE, '❯', RULE, '']
+    assert after.lines() == [*shape, *[''] * 2], 'only the rules and the empty prompt, which read the same every launch'
     os.write(tty.screen, b'hi\r')
     assert tty.shown() == '', 'keys typed during imports are not echoed among the rows'
     print('Traceback: import-time warning', file=sys.stderr)
@@ -124,7 +128,7 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     os.write(tty.screen, b'x')
     assert tty.shown() == 'x', 'echo is back for the editor to save and turn off itself'
     launch(after, adopted=rows, size=size, draft='hi')
-    assert after.lines() == [('> hi' if line == '>' else line) for line in before.lines()], 'no row painted twice'
+    assert after.lines() == [('❯ hi' if line == '❯' else line) for line in before.lines()], 'no row painted twice'
 
 
 def test_a_resize_before_the_panel_opens_moves_it_to_full_screen(

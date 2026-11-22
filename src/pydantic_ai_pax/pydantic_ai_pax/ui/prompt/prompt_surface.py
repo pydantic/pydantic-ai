@@ -41,6 +41,8 @@ FRAME_INTERVAL = 1 / 60
 _TERMINAL_OSC = re.compile(r'\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)')
 _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
 """An OSC, or a lone ESC that may start one, still waiting for its terminator at the end of a write."""
+_SHAPE_ROW = re.compile(r'(?:\x1b\[[0-9;]*m|─)*|(?:\x1b\[[0-9;]*m)*❯(?:\x1b\[[0-9;]*m| )*')
+"""A rule or the empty prompt, the rows of the panel's first frame that read the same on every launch."""
 MAX_HELD_OSC = 4096
 """An unterminated control longer than this is malformed and dropped, as the transcript does."""
 TRANSCRIPT_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
@@ -341,8 +343,10 @@ class PromptSurface(io.StringIO):
             self._painted_as = (*size, theme.name())
 
     def startup_frame(self) -> list[str] | None:
-        """Every row the inline panel shows from launch on, for the next launch to paint first.
+        """The shape of the inline panel's first frame, for the next launch to paint first: its rules and empty prompt.
 
+        Every other row is blank. The banner, the footer, and the rest can read differently next launch (another
+        folder, model, branch, version, or plugin), and the early frame must not show what is no longer true.
         `None` once full screen, or when the rows fill the terminal: the next launch's panel, holding them all
         unprinted, would move to full screen.
         """
@@ -350,13 +354,15 @@ class PromptSurface(io.StringIO):
             width, height = self._geometry()
             if self._screen:
                 return None
-            frame: list[str] = []
+            printed = 0
             for item in self.transcript.ids():
-                frame.extend(self.transcript.rows(item, width=width))
-                if len(frame) >= height:  # A long resumed conversation stops here instead of wrapping all of it.
+                printed += len(self.transcript.rows(item, width=width))
+                if printed >= height:  # A long resumed conversation stops here instead of wrapping all of it.
                     return None
-            frame.extend(self._rows[-(height - 2) :])
-            return None if len(frame) >= height else frame
+            panel = self._rows[-(height - 2) :]
+            if printed + len(panel) >= height:
+                return None
+            return [''] * printed + [row if _SHAPE_ROW.fullmatch(row) else '' for row in panel]
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
