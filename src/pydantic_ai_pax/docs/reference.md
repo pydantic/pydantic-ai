@@ -1815,9 +1815,10 @@ terminal grows. Resizing repaints the panel at the new size and preserves the
 draft and scroll position. It never erases terminal scrollback.
 
 Assistant text and thinking retain their Markdown source and render again when
-the width or theme changes. A reply still streaming keeps its streamed rows, wrapped to the new width,
-and renders again once it ends. While a resize goes on, replies, tool-call groups, and shell headers
-keep the rows they showed until the width has held for 0.1 seconds. Tool and command output rewrap at the new width,
+the width or theme changes. A reply still streaming keeps its streamed rows,
+wrapped to the new width, and renders again once it ends. While a resize goes
+on, replies, tool-call groups, and shell headers keep the rows they showed until
+the width has held for 0.1 seconds. Tool and command output rewrap at the new width,
 and a `/theme` change repaints their colours role by role: muted text, errors,
 diff lines, and code take the new palette's shades. Colours no theme assigns
 keep their original values, and so does the CLAI logo. Full-screen menus
