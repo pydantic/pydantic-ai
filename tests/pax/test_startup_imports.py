@@ -113,22 +113,3 @@ def test_warming_failure_is_logged_not_raised(caplog: pytest.LogCaptureFixture) 
         warm_imports.start(('pydantic_ai_pax._no_such_module', 'pydantic_ai_pax.models.vllm')).join()
     assert 'pydantic_ai_pax.models.vllm' in sys.modules
     assert [record.getMessage() for record in caplog.records] == ['Could not warm pydantic_ai_pax._no_such_module']
-
-
-@pytest.mark.skipif(sys.version_info < (3, 15), reason='lazy imports are new in Python 3.15')
-def test_startup_imports_lazily_and_warming_binds_the_rest() -> None:
-    script = """
-import sys
-from pydantic_ai_pax import warm_imports
-from pydantic_ai_pax.__main__ import _lazy_imports
-with _lazy_imports():
-    import pydantic_ai_pax.app
-    assert 'pydantic_ai._agent_graph' not in sys.modules
-    # `from .durable_operation import durable_operation` must bind the function, not the submodule loaded later.
-    from pydantic_ai.capabilities import durable_operation
-    assert callable(durable_operation)
-    warm_imports.start(()).join()
-    assert 'pydantic_ai._agent_graph' in sys.modules
-"""
-    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=15, check=False)
-    assert result.returncode == 0, result.stderr

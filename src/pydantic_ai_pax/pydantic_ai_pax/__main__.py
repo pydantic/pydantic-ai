@@ -7,12 +7,10 @@ import sqlite3
 import sys
 import warnings
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
-
-from pydantic_ai_pax.warm_imports import LAZY_IMPORTERS
 
 TELEMETRY_LOGGERS = ('logfire', 'opentelemetry')
 """Loggers of the telemetry SDKs, whose export retries, timeouts, and batch failures run on background threads."""
@@ -50,44 +48,26 @@ def main() -> None:
     from pydantic_ai_pax.ui import first_frame
 
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
-    bare = len(sys.argv) == 1
+    bare = len(sys.argv) == 1 and not os.getenv('CLAI_NO_SPLASH')
     try:
         if bare:
-            first_frame.current.paint(database.with_name('first-frame'))
-        with _lazy_imports():
-            _main(database, animate=bare and not first_frame.current.holding)
+            theme = None
+            with suppress(sqlite3.Error):  # The rules are drawn in the theme's colours.
+                theme = _setting(database, 'display.theme')
+            first_frame.current.paint(database.with_name('first-frame'), theme=theme or '')
+        _main(database, animate=bare and not first_frame.current.holding)
     finally:
         first_frame.current.close()
 
 
-@contextmanager
-def _lazy_imports() -> Generator[None]:
-    """On Python 3.15, make module-level imports in `LAZY_IMPORTERS` bind on first use while the CLI runs.
-
-    Startup then skips the modules the prompt never needs. Every other package imports as usual: some import
-    modules only for their side effects. Only in a fresh process: one that imported Pydantic AI already, such as a
-    test run, keeps its imports as they are.
-    """
-    # Coverage is collected on older Pythons only.
-    if sys.version_info >= (3, 15) and 'pydantic_ai' not in sys.modules:  # pragma: no cover
-        # Typeshed has no stubs for PEP 810's functions yet.
-        sys.set_lazy_imports_filter(_lazy_import)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-        sys.set_lazy_imports('all')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-        try:
-            yield
-        finally:
-            sys.set_lazy_imports('normal')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-            sys.set_lazy_imports_filter(None)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-    else:
-        yield
-
-
-def _lazy_import(importer: str, name: str, fromlist: tuple[str, ...] | None) -> bool:  # pragma: no cover
-    """Whether an import may bind on first use: only in our own packages, never in a dependency.
-
-    `from .name import name` stays eager: a lazy `name` would be replaced by the submodule `name` once that loads.
-    """
-    return importer.partition('.')[0] in LAZY_IMPORTERS and name.rpartition('.')[2] not in (fromlist or ())
+def _setting(database: Path, key: str) -> str | None:
+    """A setting's stored JSON, read without importing the configuration; `None` when unset."""
+    connection = sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)
+    try:
+        row = connection.execute('SELECT value_json FROM settings WHERE key = ?', (key,)).fetchone()
+    finally:
+        connection.close()
+    return None if row is None else row[0]
 
 
 def _main(database: Path, *, animate: bool) -> None:
@@ -96,15 +76,11 @@ def _main(database: Path, *, animate: bool) -> None:
     from pydantic_ai_pax.ui.rendering.splash import Splash
 
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
-    enabled = animate and not os.getenv('CLAI_NO_SPLASH')
+    enabled = animate
     if enabled and database.exists():
         try:
-            connection = sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)
-            try:
-                row = connection.execute("SELECT value_json FROM settings WHERE key = 'display.splash'").fetchone()
-                enabled = row is None or json.loads(row[0]) is True
-            finally:
-                connection.close()
+            value = _setting(database, 'display.splash')
+            enabled = value is None or json.loads(value) is True
         except (sqlite3.Error, ValueError):
             enabled = False
     splash = Splash(enabled=bool(enabled))

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai_pax.ui import first_frame
-from pydantic_ai_pax.ui.first_frame import FirstFrame
+from pydantic_ai_pax.ui.first_frame import INLINE_OFF, PASTE_OFF, FirstFrame
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer, TranscriptOutput
 from tests.pax.surface_terminal import SurfaceTerminal
@@ -102,7 +102,7 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     tty.attach(monkeypatch)
     path = tmp_path / 'first-frame'
     first, before = FirstFrame(), SurfaceTerminal(width=40, height=10)
-    first.paint(path)
+    first.paint(path, theme='')
     assert not first.holding and tty.shown() == '', 'nothing saved yet'
     before.write('$ pax\r\n')
     first.save(launch(before).startup_frame)
@@ -110,7 +110,7 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
 
     second, after = FirstFrame(), SurfaceTerminal(width=40, height=10)
     after.write('$ pax\r\n')
-    second.paint(path)
+    second.paint(path, theme='')
     shown = tty.shown()
     assert '\x1b[?2004h' in shown, 'a paste waits as one paste, not as lines that each press Enter'
     after.write(shown)
@@ -119,9 +119,13 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     os.write(tty.screen, b'hi\r')
     assert tty.shown() == '', 'keys typed during imports are not echoed among the rows'
     print('Traceback: import-time warning', file=sys.stderr)
+    print('a plugin says hello')
+    assert tty.shown() == '', 'printed among the early rows, it would be painted over'
 
-    rows, size, errors = second.adopt()
-    assert sys.stderr is not None and errors == 'Traceback: import-time warning\n'
+    rows, size, held = second.adopt()
+    assert held == 'Traceback: import-time warning\na plugin says hello\n', 'the panel shows it instead'
+    print('later', end='', flush=True)
+    assert tty.shown() == 'later', 'standard output is the terminal again'
     second.restore_input()
     second.restore_input()
     assert tty.typed() == b'hi\r', 'the keys wait for the editor, Enter as raw mode reads it'
@@ -138,10 +142,10 @@ def test_a_resize_before_the_panel_opens_moves_it_to_full_screen(
     tty.attach(monkeypatch)
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
-    saved.paint(path)
+    saved.paint(path, theme='')
     saved.save(lambda: ['banner', *ROWS])
     frame, terminal = FirstFrame(), SurfaceTerminal(width=40, height=10)
-    frame.paint(path)
+    frame.paint(path, theme='')
     terminal.write(tty.shown())
     tty.resize(width=30, height=10)
     terminal.resize(width=30, height=10)
@@ -157,11 +161,13 @@ def test_a_frame_saved_for_another_terminal_is_not_painted(
     tty.attach(monkeypatch)
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
-    saved.paint(path)
+    saved.paint(path, theme='"dark"')
     saved.save(lambda: ['banner', *ROWS])
-    tty.resize(width=30, height=10)
     frame = FirstFrame()
-    frame.paint(path)
+    frame.paint(path, theme='"light"')
+    assert not frame.holding and tty.shown() == '', 'the rules would show in the old theme'
+    tty.resize(width=30, height=10)
+    frame.paint(path, theme='"dark"')
     assert not frame.holding and tty.shown() == ''
     frame.save(lambda: None)
     assert not path.exists(), 'a panel on the alternate screen leaves no frame to paint'
@@ -190,13 +196,13 @@ def test_closing_before_the_panel_opens_erases_the_rows_and_shows_what_went_to_s
     tty.attach(monkeypatch)
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
-    saved.paint(path)
+    saved.paint(path, theme='')
     saved.save(lambda: ['banner', *ROWS])
     frame, terminal = FirstFrame(), SurfaceTerminal(width=40, height=10)
     terminal.write('$ pax\r\n')
     stderr = sys.stderr
     assert isinstance(stderr, TerminalErrors)
-    frame.paint(path)
+    frame.paint(path, theme='')
     print('Traceback: ImportError', file=sys.stderr)
     assert stderr.getvalue() == '', 'held while the rows show'
     frame.close()
@@ -214,22 +220,46 @@ def test_standard_error_redirected_away_from_the_terminal_is_not_held(
     tty.attach(monkeypatch)
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
-    saved.paint(path)
+    saved.paint(path, theme='')
     saved.save(lambda: ['banner', *ROWS])
     errors = io.StringIO()
     monkeypatch.setattr(sys, 'stderr', errors)
     frame = FirstFrame()
-    frame.paint(path)
+    frame.paint(path, theme='')
     assert frame.holding
     print('Traceback: ImportError', file=sys.stderr)
     assert errors.getvalue() == 'Traceback: ImportError\n', 'it is in the file at once, whatever happens next'
     assert frame.adopt()[2] == ''
 
 
+def test_ctrl_c_while_painting_still_restores_the_terminal(
+    tty: Tty, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tty.attach(monkeypatch)
+    path = tmp_path / 'first-frame'
+    saved = FirstFrame()
+    saved.paint(path, theme='')
+    saved.save(lambda: ['banner', *ROWS])
+
+    def interrupted(text: str) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys.stdout, 'write', interrupted)
+    frame = FirstFrame()
+    with pytest.raises(KeyboardInterrupt):
+        frame.paint(path, theme='')
+    monkeypatch.undo()
+    tty.attach(monkeypatch)
+    frame.close()
+    assert tty.shown().endswith(INLINE_OFF + PASTE_OFF), 'cursor, autowrap, and paste back as they were'
+    os.write(tty.screen, b'x')
+    assert tty.shown() == 'x', 'echo is back'
+
+
 def test_nothing_is_painted_or_saved_outside_a_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'stdin', io.StringIO())
     frame = FirstFrame()
-    frame.paint(tmp_path / 'first-frame')
+    frame.paint(tmp_path / 'first-frame', theme='')
     frame.save(lambda: ['banner'])
     assert not (tmp_path / 'first-frame').exists()
 

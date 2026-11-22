@@ -553,6 +553,15 @@ follows. It erases its rows by moving up the count it painted, which a terminal 
 reflows text, or pushes rows into scrollback as it shrinks, or anything else writing to
 the terminal would invalidate, hence the switches. Do not let anything but `PromptSurface`
 write to the main screen while inline rows are up.
+The one writer before it is `ui/first_frame.py`: a bare launch paints the last launch's
+saved shape (rules and the empty prompt, every other row blank; see
+`PromptSurface.startup_frame`) before the heavy imports, with echo and canonical input
+off (`TCSANOW`, never a flush) and bracketed paste on. Until `LivePrompt.opened` calls
+`adopt`, it holds every write to `sys.stdout` and to a terminal `sys.stderr`, and
+`TranscriptOutput` holds console output, so the cursor stays on the last early row:
+`PromptSurface.adopt` erases that count, or goes full screen when the terminal size
+changed since the paint. Anything else writing to the terminal in that window breaks
+the count. `close` restores the terminal however startup ends.
 The rules below about scrolling, the mouse, and resizes are the alternate screen's.
 On the alternate screen it composes a termflow.live `ScreenBuffer`,
 `TranscriptView` draws its transcript region, and `render_diff` paints changed

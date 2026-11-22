@@ -194,16 +194,13 @@ A bare `pax` in a terminal also saves the shape of its prompt's first frame to
 `first-frame` in CLAI's folder: the box's rules and empty prompt, at the row they
 were painted. The banner, footer and other rows are left blank, since the
 folder, model, version or plugins can differ next time. The next bare `pax` in a
-terminal of the same size and colour settings paints that shape within a few
+terminal of the same size, colour settings and theme paints that shape within a few
 milliseconds of starting, instead of the splash, and the prompt fills it in once
 it loads. Keys you type meanwhile are not echoed and land in the prompt. When
 the startup messages above the prompt change in number, the box moves to its new
 row as the prompt loads. A frame that fills the terminal, or a prompt that moves
-to full screen, is not saved. Deleting the file only brings back the splash for
-one start.
-
-On Python 3.15, startup also defers the imports in CLAI's own packages until they
-are first used, then loads the rest in the background while the prompt opens.
+to full screen, is not saved. `CLAI_NO_SPLASH=1` turns this off along with the
+splash.
 
 ### File access and safety
 

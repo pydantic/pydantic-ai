@@ -718,9 +718,9 @@ class LivePrompt:
         self.console.file = self.output
         try:
             with resize_notifications(resized), holding_output(self.output.held):
-                rows, size, errors = first_frame.current.adopt()
+                rows, size, held = first_frame.current.adopt()
                 self.output.adopt(rows, size=size)
-                self.output.write(errors)
+                self.output.write(held)
                 self.paint()
                 first_frame.current.save(self.output.startup_frame)
                 first_frame.current.restore_input()

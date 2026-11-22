@@ -8,13 +8,9 @@ waits for it instead of importing it twice.
 
 import importlib
 import logging
-import sys
-import types
 from collections.abc import Sequence
 from threading import Thread
 
-LAZY_IMPORTERS = frozenset({'pydantic_ai', 'pydantic_ai_harness', 'pydantic_ai_pax', 'pydantic_graph'})
-"""Packages whose module-level imports Python 3.15 makes lazy for a launch: this repository's, not a dependency's."""
 FIRST_USE_MODULES = (
     'pydantic_ai.models.openai',
     'pydantic_ai.models.anthropic',
@@ -45,28 +41,3 @@ def _import_all(modules: tuple[str, ...]) -> None:
             importlib.import_module(name)
         except Exception:
             logging.getLogger(__name__).debug('Could not warm %s', name, exc_info=True)
-    lazy_type = getattr(types, 'LazyImportType', None)
-    if lazy_type is not None:  # pragma: no cover - Python 3.15, where coverage is not collected
-        _bind_lazy_imports(lazy_type)
-
-
-def _bind_lazy_imports(lazy_type: type) -> None:  # pragma: no cover - Python 3.15
-    """Bind every import startup left lazy in `LAZY_IMPORTERS`, and those of the modules that loads, as an eager startup would have.
-
-    Otherwise the first keypress, menu or turn that uses one imports it on the event loop.
-    """
-    scanned: set[str] = set()
-    while pending := [
-        (name, module)
-        for name, module in list(sys.modules.items())
-        if name not in scanned and name.partition('.')[0] in LAZY_IMPORTERS
-    ]:
-        for name, module in pending:
-            scanned.add(name)
-            namespace: dict[str, object] = getattr(module, '__dict__', {})
-            for attribute, value in list(namespace.items()):
-                if isinstance(value, lazy_type):
-                    try:
-                        namespace[attribute] = value.resolve()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-                    except Exception:
-                        logging.getLogger(__name__).debug('Could not warm %s.%s', name, attribute, exc_info=True)
