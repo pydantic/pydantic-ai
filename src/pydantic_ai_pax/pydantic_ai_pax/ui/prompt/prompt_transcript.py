@@ -312,6 +312,10 @@ class MarkdownBlock(io.StringIO):
 
     def _lines(self, *, width: int, render: bool = True) -> list[_Line]:
         key = (width, theme.name())
+        if self.streaming and key != self._key:
+            # Code fences render at the console's width when they close, so after a resize the
+            # stream's rows are no longer all at `_key`: the ended part renders again at any width.
+            self._key = (0, '')
         if self.source is None or self.streaming or not render or key == self._key:
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)

@@ -14,6 +14,7 @@ from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, 
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import color_system, render_markdown, thinking_heading
 
@@ -196,6 +197,10 @@ async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_th
     assert len(narrow) > len(wide)
     assert all(len(row) <= 40 for row in narrow)
     assert ''.join(''.join(narrow).split()) == 'Thinking' + ''.join(words.split())
+    replay = TranscriptBuffer()
+    replay.write(render_markdown(source=words, width=40, thinking=True, colors='truecolor'))
+    rendered = [Text.from_ansi(row).plain for row in replay.frame(width=40, height=50).rows]
+    assert narrow[: len(rendered) - 1] == rendered[:-1], 'the ended part renders again'
 
     def heading() -> str:
         """The heading's SGR as this console emits it, whatever Rich cached for the style."""

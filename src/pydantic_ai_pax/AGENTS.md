@@ -584,7 +584,8 @@ Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)` and pin the question text in their rows, not the
 transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 a tool-call group its call names, and a shell call's header its command, for width/theme repaint
-(syntax colours share hex values with brand roles under a palette, so translating them would guess);
+(syntax colours share hex values with brand roles under a palette, so translating them would guess;
+a part still streaming is translated like tool output until it ends, then renders again);
 tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`

@@ -267,7 +267,9 @@ def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
     )
     block.end()
     assert plain(buffer, width=30) == ['tool header', 'rendered at 30: **hi**', 'after', '']
-    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
+    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['rendered at 40: **hi**'], (
+        'shown at another width while streaming, so its streamed rows may mix widths'
+    )
 
 
 def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None:
@@ -378,9 +380,12 @@ def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output(
     block = _block(transcript)
     block.extend('answer')
     block.write('answer\n')
+    # Blocks from before parts ended had no `streaming`; a reload happens between turns.
+    del vars(block)['streaming']
     for _ in range(2):
         assert TranscriptBuffer.rebind(transcript) is transcript
         assert plain(transcript, width=40) == ['notice', 'answer', '']
+    assert plain(transcript, width=30) == ['notice', 'rendered at 30: answer', '']
     block.extend(' more')
     block.write('more\n')
     assert plain(transcript, width=40) == ['notice', 'answer', 'more', '']
