@@ -210,9 +210,9 @@ class PartWriter(SmoothWriter):
                 whole, self._pending = self._queued.popleft()
                 emitted.append(whole)
                 n -= 1
-        if emitted:
-            self._target.write(''.join(emitted))
-            self._target.flush()
+        # The drainer asks only while units remain, so something is always emitted.
+        self._target.write(''.join(emitted))
+        self._target.flush()
 
     def _discard_all(self) -> None:
         super()._discard_all()
