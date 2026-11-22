@@ -240,9 +240,11 @@ in the reference for everything else, including vLLM and OpenRouter.
 ### Tool calls and diffs
 
 Each tool call gets one line: the tool and what it worked on, as in the screenshot at
-the top. When CLAI edits or writes a file, you see the diff. Shell output stays out of
-the way unless you ask for it with `/set display.tool_output true`; the model always gets
-the full output. To list fewer lines, `/set display.tool_calls grouped` counts calls in
+the top. When CLAI edits or writes a file, you see the diff. A shell command adds one row
+with its exit code and line count, such as `⎿ exit 0 · 23 lines`; a failure is red and
+shows its last lines. A failed or refused call of any tool gets a red row with the reason.
+The rest of the shell output stays out of the way unless you ask for it with
+`/set display.tool_output true`; the model always gets the full output. To list fewer lines, `/set display.tool_calls grouped` counts calls in
 a row instead, such as `● shell 4, grep 2`.
 
 ### Questions from the model

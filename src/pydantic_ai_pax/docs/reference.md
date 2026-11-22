@@ -1569,8 +1569,14 @@ run in order with other queued input. `/help` lists the syntax.
 Tool calls show a single-line summary followed by a blank line by default.
 Tool and argument names are pink; argument values and bullet markers are muted grey.
 Successful file writes and edits also show their diffs, even with `display.tool_output` off.
-Shell output, exit details and log paths, and grep results stay out of the terminal;
-the model still receives full tool results. Long summaries are clipped to the terminal width.
+A finished shell command always adds one result row under its header, such as
+`⎿ exit 0 · 23 lines`, or `⎿ running in background` for a background command. A nonzero
+exit is red and is followed by the last 3 lines of output, so the reason is on screen. When
+the output was too long to preview in full, the row ends with the path of the command's log.
+A call of any tool that fails, is refused, or has to be retried gets a red row with the first
+line of the reason. When calls run in parallel, a row that does not sit under its own header
+ends with the command or tool name it belongs to. Other shell output and grep results stay
+out of the terminal; the model still receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
@@ -1579,7 +1585,7 @@ default. Plugin-provided rendering, including interactive questions, is unchange
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
 tool or other output follows. The `grouped` style shows only names and counts, so it ignores
-`display.tool_output` and `display.tool_arg_chars`. File edits and writes still print their summary and diff,
+`display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and writes still print their summary and diff,
 which ends the line. `/set` previews both styles when you pick one. The default is `detailed`, one line per call.
 
 ### Streaming
@@ -1624,7 +1630,7 @@ of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is r
 as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
 mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
-The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output and result rows.
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
 
@@ -1678,16 +1684,18 @@ Full output remains in the log; display formatting does not alter model results.
 
 Shell output defaults to the first 20 logical lines per command. Change it with
 `/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
-to the next prompt. After the command returns, `Truncated N lines` reports omitted
-lines from the log snapshot at that time, including an unterminated final line.
-The capability's 16 KB event preview cap can shorten the preview further. Full
-output remains in the displayed log path. Background commands can keep writing
+to the next prompt. After the command returns, its result row counts the lines in the
+log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown`,
+including an unterminated final line. A failed command repeats only the last lines the preview
+left out. The capability's 16 KB event preview cap can shorten the preview further; then the row
+ends with the log path, where the full output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, zero-based offset, and effective line limit (Coder
-default and maximum: 2000). Listing headers show the directory, recursive mode,
-result limit (default 200), and optional glob. Coder listings recurse using
-ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
+Read headers show the path, plus the offset and line limit only when the call sets them
+(Coder's default offset is 0, and its default and largest limit 2000 lines). Listing
+headers show the directory, plus `recursive=false`, a result limit, or a glob only when
+the call sets them. Coder listings recurse using ripgrep and honor ignore rules. These
+defaults describe Coder tools. Read and listing calls add no result row on success.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no
