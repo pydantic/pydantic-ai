@@ -80,7 +80,7 @@ def report(result: AgentRunResult[str]) -> str:
 
 ## Durable execution
 
-`WrapUpAtLimits` decides from the run's usage and message history, and from the time left before the run's deadline at each of its requests, which it keeps for the run. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) its hooks run in workflow code, so when Temporal, DBOS or Prefect replays a run, they make the same request the last. On Temporal, the time left is read from the workflow's replay-safe clock, so this holds for `timeout=` too; DBOS and Prefect measure it against the system clock from the run's recorded start, so a recovered run can wrap up for time at a different request than the first attempt did.
+`WrapUpAtLimits` decides from the run's usage and message history, and from the time left before the run's deadline at each of its requests, which it keeps for the run. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) its hooks run in workflow code, so when Temporal, DBOS or Prefect replays a run, they make the same request the last. On Temporal, the time left is read from the workflow's replay-safe clock, so this holds for `timeout=` too; DBOS and Prefect measure it against the system clock from the run's recorded start, so a recovered run counts the time that passed before recovery, and its time trigger can fire at a different request.
 
 ## Telemetry
 
