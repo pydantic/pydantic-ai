@@ -97,3 +97,27 @@ def test_a_stacked_table_in_thinking_stays_dim() -> None:
     text = Text.from_ansi(render_markdown(source=ERRORS, width=60, thinking=True, colors='truecolor'))
     assert text.plain.splitlines()[1].startswith('Meaning: Input ends')
     assert text.get_style_at_offset(Console(), text.plain.index('Input ends')).dim
+
+
+def test_spare_room_goes_to_the_columns_that_wrap() -> None:
+    """At 80 columns each column gets its longest word, and the prose column takes the rest."""
+    assert (
+        '\n' + Text.from_ansi(_render(ERRORS, 80)).plain + '\n'
+        == r"""
+┌───────────────────────┬────────────────────┬─────────┬───────────────────────┐
+│ Variant               │ Meaning            │ Example │ Fix                   │
+├───────────────────────┼────────────────────┼─────────┼───────────────────────┤
+│ UnexpectedEof         │ Input ends before  │ \u00    │ UnexpectedEof         │
+│                       │ all 4 hex digits   │         │                       │
+│                       │ of a \u escape     │         │                       │
+│ InvalidHexDigit(char) │ A non-hex          │ \u00G1  │ Keep                  │
+│                       │ character inside a │         │ InvalidHexDigit(char) │
+│                       │ \u escape          │         │                       │
+│ InvalidCodePoint(u16) │ A lone surrogate   │ \uD800  │ Report                │
+│                       │ that does not pair │         │ InvalidCodePoint(u16) │
+│                       │ with another       │         │                       │
+│                       │ escape to form a   │         │                       │
+│                       │ code point         │         │                       │
+└───────────────────────┴────────────────────┴─────────┴───────────────────────┘
+"""
+    )
