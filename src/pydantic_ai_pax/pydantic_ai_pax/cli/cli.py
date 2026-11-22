@@ -264,7 +264,8 @@ def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
     """Import with the garbage collector off, then freeze what was imported out of later collections.
 
     Startup's imports create about 300,000 objects that live until exit; with the collector on, it walks them
-    again and again as they arrive. One collection afterwards frees the few that are garbage. Freezing takes
+    again and again as they arrive. Freezing without collecting first keeps the few that are garbage, about
+    2 MB, for the life of the process: a collection here would cost the 70 ms this saves. Freezing takes
     every object in the process, so only a launch from `main`, the one passing a splash, is `enabled`.
     """
     if not enabled or not gc.isenabled():
@@ -274,7 +275,6 @@ def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
     try:
         yield
     finally:
-        gc.collect()
         gc.freeze()
         gc.enable()
 
