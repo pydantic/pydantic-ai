@@ -1566,7 +1566,7 @@ run in order with other queued input. `/help` lists the syntax.
 
 ### How tool calls look
 
-Tool calls show a single-line summary followed by a blank line by default.
+Tool calls show a single-line summary by default, then any result row, then a blank line.
 Tool and argument names are pink; argument values and bullet markers are muted grey.
 Successful file writes and edits also show their diffs, even with `display.tool_output` off.
 A finished shell command always adds one result row under its header, such as

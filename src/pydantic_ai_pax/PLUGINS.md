@@ -3130,7 +3130,7 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 
 
 Built-in tool rendering shows one summary line per call by default, clipped to
-the terminal width and followed by a blank line. Tool names are pink; arguments
+the terminal width, then any result row, then a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
 diffs even with `display.tool_output` off. A finished shell command always adds one result row
 (`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call

@@ -105,6 +105,7 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     if conflict:
         assert output.getvalue().startswith("● write_file file.txt\n  ⎿ Conflict: file 'file.txt' has changed")
         assert output.getvalue().endswith('\n\ndone\n\n')
+        assert 'old' not in output.getvalue() and 'new' not in output.getvalue()
     else:
         assert output.getvalue() == '● write_file file.txt\n  ⎿ refused: not approved\n\ndone\n\n'
 
