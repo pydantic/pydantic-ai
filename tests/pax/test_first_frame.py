@@ -74,11 +74,13 @@ def tty() -> Iterator[Tty]:
     tty.close()
 
 
-def launch(terminal: SurfaceTerminal, *, adopted: int = 0, draft: str = '') -> PromptSurface:
+def launch(
+    terminal: SurfaceTerminal, *, adopted: int = 0, size: tuple[int, int] = (40, 10), draft: str = ''
+) -> PromptSurface:
     """The panel of one launch: the banner above the editor, painted inline."""
     surface = PromptSurface(output=terminal, size=lambda: (terminal.width, terminal.height))
     surface.full_screen = False
-    surface.adopt(adopted)
+    surface.adopt(adopted, size=size)
     surface.write('banner\n')
     surface.paint(tuple(row.replace('> ', f'> {draft}') for row in ROWS))
     return surface
@@ -105,15 +107,34 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     assert tty.shown() == '', 'keys typed during imports are not echoed among the rows'
     print('Traceback: import-time warning', file=sys.stderr)
 
-    rows, errors = second.adopt()
+    rows, size, errors = second.adopt()
     assert sys.stderr is not None and errors == 'Traceback: import-time warning\n'
     second.restore_input()
     second.restore_input()
     assert tty.typed() == b'hi\r', 'the keys wait for the editor, Enter as raw mode reads it'
     os.write(tty.screen, b'x')
     assert tty.shown() == 'x', 'echo is back for the editor to save and turn off itself'
-    launch(after, adopted=rows, draft='hi')
+    launch(after, adopted=rows, size=size, draft='hi')
     assert after.lines() == [('> hi' if line == '>' else line) for line in before.lines()], 'no row painted twice'
+
+
+def test_a_resize_before_the_panel_opens_moves_it_to_full_screen(
+    tty: Tty, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The terminal reflowed the early rows, so erasing them by count would leave some behind."""
+    tty.attach(monkeypatch)
+    path = tmp_path / 'first-frame'
+    saved = FirstFrame()
+    saved.paint(path)
+    saved.save(['banner', *ROWS])
+    frame, terminal = FirstFrame(), SurfaceTerminal(width=40, height=10)
+    frame.paint(path)
+    terminal.write(tty.shown())
+    tty.resize(width=30, height=10)
+    terminal.resize(width=30, height=10)
+    rows, size, _ = frame.adopt()
+    launch(terminal, adopted=rows, size=size)
+    assert terminal.alternate
 
 
 def test_a_frame_saved_for_another_terminal_is_not_painted(
@@ -130,6 +151,20 @@ def test_a_frame_saved_for_another_terminal_is_not_painted(
     assert not frame.holding and tty.shown() == ''
     frame.save(None)
     assert not path.exists(), 'a panel on the alternate screen leaves no frame to paint'
+
+
+def test_a_frame_that_fills_the_terminal_is_not_saved() -> None:
+    """Holding all of it unprinted, the next launch's panel would move to full screen, then forget the frame."""
+    terminal = SurfaceTerminal(width=40, height=10)
+    surface = PromptSurface(output=terminal, size=lambda: (terminal.width, terminal.height))
+    surface.full_screen = False
+    for line in range(4):
+        terminal.write(f'printed {line}\r\n')
+        surface.transcript.write(f'printed {line}\n')
+    surface.transcript.mark_printed()
+    surface.paint(ROWS)
+    assert not terminal.alternate
+    assert surface.startup_frame() is None
 
 
 def test_closing_before_the_panel_opens_erases_the_rows_and_shows_what_went_to_stderr(

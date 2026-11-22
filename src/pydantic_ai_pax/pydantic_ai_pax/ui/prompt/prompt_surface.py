@@ -331,20 +331,26 @@ class PromptSurface(io.StringIO):
             if not unchanged:
                 self._paint(modes=True)
 
-    def adopt(self, rows: int) -> None:
-        """Paint the first frame over `rows` inline rows a frame painted before this surface existed left."""
+    def adopt(self, rows: int, *, size: tuple[int, int]) -> None:
+        """Paint the first frame over `rows` inline rows painted before this surface existed, in a terminal of `size`.
+
+        A terminal resized since then reflowed them, so the panel moves to full screen as for any resize.
+        """
         with self._lock:
             self._inline_rows = rows
-            self._painted_as = (*self._geometry(), theme.name())
+            self._painted_as = (*size, theme.name())
 
     def startup_frame(self) -> list[str] | None:
-        """Every row the inline panel shows from launch on, for the next launch to paint first; `None` once full screen."""
+        """Every row the inline panel shows from launch on, for the next launch to paint first.
+
+        `None` once full screen, or when the rows fill the terminal: the next launch's panel, holding them all
+        unprinted, would move to full screen.
+        """
         with self._lock:
-            if self._screen:
-                return None
             width, height = self._geometry()
             rows = [row for item in self.transcript.ids() for row in self.transcript.rows(item, width=width)]
-            return [*rows, *self._rows[-(height - 2) :]] if height > 2 else rows
+            frame = [*rows, *self._rows[-(height - 2) :]]
+            return None if self._screen or len(frame) >= height else frame
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()

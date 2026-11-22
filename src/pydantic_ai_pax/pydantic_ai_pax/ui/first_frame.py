@@ -29,6 +29,8 @@ class FirstFrame:
         """Where this launch saves its first frame; `None` outside a bare `pax` in a terminal."""
         self.rows = 0
         """Rows painted early, which the panel has not taken over yet."""
+        self._size = (0, 0)
+        """The terminal's columns and lines when the rows were painted: a resize since then reflowed them."""
         self._modes: list[int | list[bytes | int]] | None = None
         """The terminal's input modes before echo was turned off, given back before the editor reads."""
         self._stderr: TextIO | None = None
@@ -66,13 +68,15 @@ class FirstFrame:
         )
         sys.stdout.flush()
         self.rows = len(rows)
+        size = os.get_terminal_size(sys.stdout.fileno())
+        self._size = (size.columns, size.lines)
         # A traceback or usage error would print among the early rows, so it waits until they are gone.
         self._stderr, sys.stderr = sys.stderr, self._held
 
-    def adopt(self) -> tuple[int, str]:
-        """Hand the early rows to the panel: how many there are, and what standard error got meanwhile."""
+    def adopt(self) -> tuple[int, tuple[int, int], str]:
+        """Hand the early rows to the panel: how many, the terminal size they were painted at, and what stderr got."""
         rows, self.rows = self.rows, 0
-        return rows, self._release_stderr()
+        return rows, self._size, self._release_stderr()
 
     def save(self, rows: list[str] | None) -> None:
         """Save the panel's first frame for the next launch, once; `None`, for a panel on the alternate screen, forgets it."""
