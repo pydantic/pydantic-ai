@@ -527,6 +527,7 @@ async def test_a_resize_renders_markdown_once_it_settles_without_waiting_for_the
     screen.surface.paint(ROWS)
     screen.terminal.resize(width=20, height=24)
     screen.surface.paint(ROWS)
+    screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'answer'
     screen.now += 0.001
     await asyncio.sleep(0.01)  # real-wait: the delayed frame is the claim
