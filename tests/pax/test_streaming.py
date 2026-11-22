@@ -7,7 +7,6 @@ from typing import IO, Literal
 import pytest
 from rich.console import Console
 from rich.text import Text
-from termflow.stream import SmoothWriter
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
@@ -15,7 +14,7 @@ from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import color_system, render_markdown, thinking_heading
+from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -120,34 +119,31 @@ async def test_burst_is_queued_then_drained() -> None:
     assert output.getvalue() == before
 
 
-async def test_abort_discards_pending_output() -> None:
-    output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='Discard this\n')))
-    await renderer.abort()
-    await renderer.finish()
-    assert 'Discard this' not in output.getvalue()
-
-
-async def test_cancel_during_drain_stops_writer() -> None:
-    writing = asyncio.Event()
+@pytest.mark.parametrize('part', [TextPart(content='x' * 60 + '\n'), ThinkingPart(content='x' * 60 + '\n')])
+async def test_part_end_writes_queued_text_at_once(part: TextPart | ThinkingPart) -> None:
+    """The tool line must not wait for the smoother to type out the rest of the part."""
+    writes: list[str] = []
 
     class ObservedOutput(io.StringIO):
         def write(self, text: str) -> int:
-            if 'x' in text:  # pragma: no branch
-                writing.set()
+            writes.append(text)
             return super().write(text)
 
     output = ObservedOutput()
-    renderer = StreamRenderer(Console(file=output, width=20000, force_terminal=True), stop_loading=lambda: None)
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 10000 + '\n')))
-    task = asyncio.create_task(renderer.finish())
-    await writing.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    renderer = StreamRenderer(Console(file=output, width=200, force_terminal=True), stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=part))
+    await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
+    assert [text.count('x') for text in writes if 'x' in text] == [60]
+
+
+async def test_abort_shows_queued_lines_and_drops_the_unfinished_line() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='Already sent\nunfinished')))
     await renderer.abort()
-    assert output.getvalue().count('x') < 10000
+    await renderer.finish()
+    assert 'Already sent' in output.getvalue()
+    assert 'unfinished' not in output.getvalue()
 
 
 async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -156,16 +152,16 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
 
     def writer(
         target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
-    ) -> SmoothWriter:
+    ) -> PartWriter:
         observed.append((tick_interval, catch_up_seconds, min_chars_per_tick))
-        return SmoothWriter(
+        return PartWriter(
             target,
             tick_interval=tick_interval,
             catch_up_seconds=catch_up_seconds,
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.PartWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds

@@ -164,6 +164,14 @@ class LinkOutput(io.StringIO):
         self.output.flush()
 
 
+class PartWriter(SmoothWriter):
+    """Types a streaming part out smoothly, then writes what is still queued at once when the part ends."""
+
+    def write_queued(self) -> None:
+        """Write the queued rest in one go, so the next tool line or the prompt does not wait for it to be typed."""
+        self._flush_all()
+
+
 def thinking_heading(console: Console) -> str:
     """The label reasoning starts with, styled for `console`."""
     with console.capture() as capture:
@@ -316,7 +324,7 @@ class StreamRenderer:
         self._heading_printed = False
         self.show_thinking = show_thinking
         self.stop_loading = stop_loading
-        self._writer: SmoothWriter | None = None
+        self._writer: PartWriter | None = None
         self._markdown: MarkdownPipeline | None = None
         self._block: MarkdownBlock | None = None
         self._output: IO[str] | None = None
@@ -476,12 +484,12 @@ class StreamRenderer:
             continuation=continuation,
         )
 
-    def _make_writer(self, output: IO[str]) -> SmoothWriter:
+    def _make_writer(self, output: IO[str]) -> PartWriter:
         """Reasoning keeps Code Puppy's slower thinking pace; responses use the configured catch-up."""
         output = LinkOutput(output=output)
         if self._thinking:
-            return SmoothWriter(output, tick_interval=0.02, catch_up_seconds=0.4, min_chars_per_tick=2)
-        return SmoothWriter(output, tick_interval=0.012, catch_up_seconds=self.smooth_seconds, min_chars_per_tick=1)
+            return PartWriter(output, tick_interval=0.02, catch_up_seconds=0.4, min_chars_per_tick=2)
+        return PartWriter(output, tick_interval=0.012, catch_up_seconds=self.smooth_seconds, min_chars_per_tick=1)
 
     def _feed(self, content: str) -> None:
         content = terminal_text(content)
@@ -537,21 +545,23 @@ class StreamRenderer:
         visible = self._heading_printed
         self._reset()
         if writer is not None:
+            writer.write_queued()
             await writer.close()
         if visible:
             self.console.print()
         self.console.file.flush()
 
     async def abort(self) -> None:
-        """Discard pending output on cancellation and let the drainer terminate."""
+        """On cancellation, show the lines already rendered at once and drop the unfinished line."""
         self._tool_output.abort()
         self._close_group()
+        writer, self._writer = self._writer, None
+        if writer is not None:
+            writer.write_queued()
+            writer.abort()
         if self._block is not None:
             self._block.freeze()
-        writer, self._writer = self._writer, None
         self._reset()
-        if writer is not None:
-            writer.abort()
         await anyio.sleep(0)
 
     def _reset(self) -> None:
