@@ -15,7 +15,6 @@ from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
-from tests.conftest import no_leaked_tasks
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -137,27 +136,34 @@ async def test_part_end_writes_queued_text_at_once(part: TextPart | ThinkingPart
     assert [text.count('x') for text in writes if 'x' in text] == [60]
 
 
-async def test_a_failed_write_still_stops_the_typing_task() -> None:
-    class BrokenOutput(io.StringIO):
-        def write(self, text: str) -> int:
-            raise OSError('terminal closed')
-
-    with no_leaked_tasks():
-        renderer = StreamRenderer(Console(file=BrokenOutput(), force_terminal=True), stop_loading=lambda: None)
-        await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='Queued line\n')))
-        with pytest.raises(OSError):
-            await renderer.finish()
-        await asyncio.sleep(0)
-
-
-async def test_abort_shows_queued_lines_and_drops_the_unfinished_line() -> None:
+async def test_abort_discards_pending_output() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='Already sent\nunfinished')))
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='Discard this\n')))
     await renderer.abort()
     await renderer.finish()
-    assert 'Already sent' in output.getvalue()
-    assert 'unfinished' not in output.getvalue()
+    assert 'Discard this' not in output.getvalue()
+
+
+async def test_cancel_during_drain_stops_writer() -> None:
+    writing = asyncio.Event()
+
+    class ObservedOutput(io.StringIO):
+        def write(self, text: str) -> int:
+            if 'x' in text:  # pragma: no branch
+                writing.set()
+            return super().write(text)
+
+    output = ObservedOutput()
+    renderer = StreamRenderer(Console(file=output, width=20000, force_terminal=True), stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 10000 + '\n')))
+    task = asyncio.create_task(renderer.finish())
+    await writing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await renderer.abort()
+    assert output.getvalue().count('x') < 10000
 
 
 async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:

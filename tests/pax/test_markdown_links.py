@@ -154,7 +154,7 @@ async def test_abort_mid_label_does_not_leave_a_hyperlink() -> None:
     decoder = AnsiDecoder()
     list(decoder.decode(output.getvalue()))
     assert decoder.style.link is None
-    assert 'PR #1006' in Text.from_ansi(output.getvalue()).plain  # Abort writes the queued label at once.
+    assert 'PR #1006' not in Text.from_ansi(output.getvalue()).plain
 
 
 async def test_streamed_link_survives_surface_resize() -> None:

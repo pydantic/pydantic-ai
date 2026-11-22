@@ -1596,16 +1596,15 @@ Streaming uses the defaults from [Code Puppy's smoothing adapters](https://githu
   per second; changed cells do not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
   written directly. When a part ends, the text still queued is written at once,
-  so the next heading, tool status, or prompt does not wait for it.
+  so the next heading, tool status, or prompt does not wait for it to be typed.
 
 `/set display.smooth_seconds 0.5` restores the Code Puppy response catch-up
 window if you previously saved a slower preference. This response-only setting
 accepts 0.1 to 5 seconds; thinking retains its separate 0.4-second window.
 Empty thinking parts show no heading. The CLI disables core's first-run
 observability banner.
-Cancellation also writes the queued lines at once and drops the unfinished line.
-Incomplete Markdown lines are still buffered until a newline or part end;
-smoothing does not remove that parsing delay.
+Cancellation discards queued output. Incomplete Markdown lines are still buffered
+until a newline or part end; smoothing does not remove that parsing delay.
 Thinking signatures without text cannot be shown. A supplied agent's existing
 stream handler is preserved. Custom renderer integrations must await `finish()`
 and use `await abort()` on cancellation.

@@ -165,17 +165,12 @@ class LinkOutput(io.StringIO):
 
 
 class PartWriter(SmoothWriter):
-    """Types a streaming part out smoothly, then writes what is still queued at once when the part ends."""
+    """Types a streaming part out smoothly, and writes what is still queued in one tick once the part ends."""
 
-    def stop(self) -> None:
-        """Write the queued rest in one go and stop typing, so the next tool line or the prompt does not wait for it.
-
-        The typing task stops even if the write fails, and drops whatever the write did not take.
-        """
-        try:
-            self._flush_all()
-        finally:
-            self.abort()
+    async def close(self) -> None:
+        """Write the queued rest on the next tick, so the next tool line or the prompt does not wait for it to be typed."""
+        self._catch_up_ticks = 1
+        await super().close()
 
 
 def thinking_heading(console: Console) -> str:
@@ -551,22 +546,21 @@ class StreamRenderer:
         visible = self._heading_printed
         self._reset()
         if writer is not None:
-            writer.stop()
-            await anyio.sleep(0)  # Let the cancelled typing task end.
+            await writer.close()
         if visible:
             self.console.print()
         self.console.file.flush()
 
     async def abort(self) -> None:
-        """On cancellation, show the lines already rendered at once and drop the unfinished line."""
+        """Discard pending output on cancellation and let the drainer terminate."""
         self._tool_output.abort()
         self._close_group()
-        writer, self._writer = self._writer, None
-        if writer is not None:
-            writer.stop()
         if self._block is not None:
             self._block.freeze()
+        writer, self._writer = self._writer, None
         self._reset()
+        if writer is not None:
+            writer.abort()
         await anyio.sleep(0)
 
     def _reset(self) -> None:
