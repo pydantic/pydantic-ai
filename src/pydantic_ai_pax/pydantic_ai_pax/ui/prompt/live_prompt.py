@@ -591,7 +591,11 @@ class LivePrompt:
             hints = f'· Enter to queue · {chord} to steer ' if self.queued_messages or self.buffer.text.strip() else ''
             # Esc, unlike Ctrl-C, never counts toward the double press that quits.
             elapsed = format_duration(self.interrupts.elapsed)
-            title = truncate(f'{head}{glyph} {elapsed} · Esc to interrupt {hints}', width)
+            title = f'{head}{glyph} {elapsed} · Esc to interrupt {hints}'
+            if hints and visible_length(title) > width:
+                # Typing a message makes its keys the hint that matters; Esc is in the welcome text.
+                title = f'{head}{glyph} {elapsed} {hints}'
+            title = truncate(title, width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)

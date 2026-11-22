@@ -389,9 +389,9 @@ def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[Foot
 def _shortened(fields: dict[FooterField, list[tuple[str, str]]]) -> dict[FooterField, list[tuple[str, str]]]:
     """The shorter form of each field `FIT_ORDER` shortens before hiding it."""
     role, path = fields['workspace'][0]
-    folder = PurePath(path).name
+    folder = f'…/{PurePath(path).name}'
     return {
-        'workspace': [(role, f'…/{folder}' if folder and folder != path else path)],
+        'workspace': [(role, folder if cell_len(folder) < cell_len(path) else path)],
         'context': fields['context'][1:2],
     }
 
