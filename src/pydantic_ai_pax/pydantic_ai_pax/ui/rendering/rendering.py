@@ -412,10 +412,9 @@ class StreamRenderer:
 
     def _render_result(self, event: FunctionToolResultEvent) -> None:
         """A grouped style counts calls only; otherwise a failure gets its row."""
-        if self._group is not None:
-            self._tool_output.discard_call(event.part.tool_call_id)
-        elif not self._grep_output.render(event):
+        if self._group is None and not self._grep_output.render(event):
             self._tool_output.render_result(event)
+        self._tool_output.discard_call(event.part.tool_call_id)
 
     def _render_call(self, event: FunctionToolCallEvent) -> None:
         if self._group is not None:

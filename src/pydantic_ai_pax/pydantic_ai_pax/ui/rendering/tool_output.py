@@ -69,7 +69,8 @@ def print_shell_header(console: Console, command: str) -> None:
 
     The command is highlighted as Bash, with embedded code in its own language. Rows beyond
     `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged. No blank
-    line follows, so the command's result row can sit under it. In the live prompt the header is its own transcript item, so a new width or theme renders it again.
+    line follows, so the command's result row can sit under it. In the live prompt the header is its
+    own transcript item, so a new width or theme renders it again.
     """
     if not command.strip():
         console.print(tool_header(name='shell'))
@@ -223,6 +224,8 @@ class ToolOutput:
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestedEvent] = {}
+        self._changes: dict[str | None, FileChangeRequestedEvent] = {}
+        """Each call's latest file change request, which a listener may cancel before the result."""
         self._labels: dict[str | None, str] = {}
         """What each shown call's header said, for a row that does not land under it."""
         self._owed: str | None = None
@@ -329,19 +332,12 @@ class ToolOutput:
                 # Its reason is a dump of validation errors, not a sentence.
                 reason = 'invalid arguments'
         else:
-            # A refused write still succeeds, telling the model it was not written.
-            reason = next(
-                (
-                    f'not written: {request.cancel_reason or "refused"}'
-                    for (call_id, _, _), request in self._writes.items()
-                    if call_id == event.part.tool_call_id and request.cancelled
-                ),
-                '',
-            )
+            # A refused file change still succeeds, telling the model why nothing changed.
+            request = self._changes.get(event.part.tool_call_id)
+            reason = f'refused: {request.cancel_reason or "not approved"}' if request and request.cancelled else ''
         if reason:
             self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
             self.console.print()
-        self.discard_call(event.part.tool_call_id)
 
     def _shell_chunk(self, event: CommandOutputEvent) -> None:
         preview = self._shells.setdefault(event.tool_call_id, ShellPreview())
@@ -426,6 +422,7 @@ class ToolOutput:
     def abort(self) -> None:
         """Release pending events when a run ends without tool results."""
         self._writes.clear()
+        self._changes.clear()
         self._headers.clear()
         self._shells.clear()
         self._labels.clear()
@@ -433,6 +430,7 @@ class ToolOutput:
     def discard_call(self, tool_call_id: str) -> None:
         """Release proposed diffs and the header label after a tool result, including refusals and retries."""
         self._writes = {key: value for key, value in self._writes.items() if key[0] != tool_call_id}
+        self._changes.pop(tool_call_id, None)
         self._labels.pop(tool_call_id, None)
 
     def render(self, event: AgentStreamEvent) -> bool:
@@ -449,6 +447,7 @@ class ToolOutput:
                 else:
                     self._shells.pop(event.tool_call_id, None)
             case FileChangeRequestedEvent():
+                self._changes[event.tool_call_id] = event
                 if event.operation == 'write':
                     self._writes[event.tool_call_id, event.root_dir, event.path] = event
             case FileEditedEvent():

@@ -244,8 +244,9 @@ the top. When CLAI edits or writes a file, you see the diff. A shell command add
 with its exit code and line count, such as `⎿ exit 0 · 23 lines`, in red when the
 command fails. A failed or refused call of any tool gets a red row with the reason.
 The rest of the shell output stays out of the way unless you ask for it with
-`/set display.tool_output true`; the model always gets the full output. To list fewer lines, `/set display.tool_calls grouped` counts calls in
-a row instead, such as `● shell 4, grep 2`.
+`/set display.tool_output true`; the model always gets the full output. To list fewer
+lines, `/set display.tool_calls grouped` counts calls in a row instead, such as
+`● shell 4, grep 2`. That style prints no result rows.
 
 ### Questions from the model
 

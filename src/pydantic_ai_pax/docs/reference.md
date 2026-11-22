@@ -1574,11 +1574,11 @@ A finished shell command always adds one result row under its header, such as
 A nonzero exit is red; with `display.tool_output` on, its last lines follow, so the reason is
 on screen. The row ends with the path of the command's log when the command keeps
 running or its output was cut. A call of any tool that fails or is refused gets a red row with
-the first line of the reason; a write you refuse says `not written` and why, and a call whose
-arguments did not validate says `invalid arguments`. When calls
-run in parallel, a row that does not sit under its own header starts with the command or call
-it belongs to. Other shell output and grep results stay
-out of the terminal; the model still receives full tool results. Long summaries are clipped to the terminal width.
+the first line of the reason; a file change you refuse says `refused` and why, and a call whose
+arguments did not validate says `invalid arguments`. When calls run in parallel, a row that
+does not sit under its own header starts with the command or call it belongs to. Other shell
+output and grep results stay out of the terminal; the model still receives full tool results.
+Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
@@ -1587,8 +1587,8 @@ default. Plugin-provided rendering, including interactive questions, is unchange
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
 tool or other output follows. The `grouped` style shows only names and counts, so it ignores
-`display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and writes still print their summary and diff,
-which ends the line. `/set` previews both styles when you pick one. The default is `detailed`, one line per call.
+`display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and
+writes still print their summary and diff, which ends the line. `/set` previews both styles when you pick one. The default is `detailed`, one line per call.
 
 ### Streaming
 
@@ -1632,7 +1632,8 @@ of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is r
 as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
 mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
-The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output and result rows.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell
+command output and result rows.
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
 
