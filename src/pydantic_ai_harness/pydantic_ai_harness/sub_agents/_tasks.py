@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
-from pydantic import SerializerFunctionWrapHandler, TypeAdapter, ValidationError, WrapSerializer
+from pydantic import ConfigDict, SerializerFunctionWrapHandler, TypeAdapter, ValidationError, WrapSerializer
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent, CapabilityEvent, RunContext, capture_run_messages
@@ -116,6 +116,8 @@ class DelegationSnapshot:
 @dataclass(kw_only=True)
 class DelegationTask:
     """A stable child conversation, retained across explicit resumes."""
+
+    __pydantic_config__ = ConfigDict(defer_build=True)
 
     id: str
     agent_name: str

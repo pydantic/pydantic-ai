@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, Protocol, TypeVar
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UserError
@@ -94,6 +94,8 @@ class InMemoryDeferredStateStore:
 @dataclass(frozen=True)
 class _StoredState:
     """What a `DeferredStateStore` keeps for a stopped delegation, serialized with `_STORED`."""
+
+    __pydantic_config__ = ConfigDict(defer_build=True)
 
     agent_name: str
     task: str

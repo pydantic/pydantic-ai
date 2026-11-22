@@ -49,22 +49,36 @@ def main() -> None:
 
     from pydantic_ai_pax.ui import first_frame
 
-    if sys.version_info >= (3, 15):
-        # Module-level imports in these packages bind on first use, so startup skips modules the prompt
-        # never needs. Every other package imports as usual: some import modules only for their side effects.
-        sys.set_lazy_imports_filter(_lazy_import)
-        sys.set_lazy_imports('all')
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
     bare = len(sys.argv) == 1
     if bare:
-        first_frame.current.paint(database.with_name('first-frame.json'))
+        first_frame.current.paint(database.with_name('first-frame'))
     try:
-        _main(database, animate=bare and not first_frame.current.holding)
+        with _lazy_imports():
+            _main(database, animate=bare and not first_frame.current.holding)
     finally:
         first_frame.current.close()
-        if sys.version_info >= (3, 15):
-            sys.set_lazy_imports('normal')
-            sys.set_lazy_imports_filter(None)
+
+
+@contextmanager
+def _lazy_imports() -> Generator[None]:
+    """On Python 3.15, make module-level imports in `LAZY_IMPORTERS` bind on first use while the CLI runs.
+
+    Startup then skips the modules the prompt never needs. Every other package imports as usual: some import
+    modules only for their side effects. Only in a fresh process: one that imported Pydantic AI already, such as a
+    test run, keeps its imports as they are.
+    """
+    if sys.version_info < (3, 15) or 'pydantic_ai' in sys.modules:
+        yield
+        return
+    # Typeshed has no stubs for PEP 810's functions yet.
+    sys.set_lazy_imports_filter(_lazy_import)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+    sys.set_lazy_imports('all')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+    try:
+        yield
+    finally:
+        sys.set_lazy_imports('normal')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+        sys.set_lazy_imports_filter(None)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
 
 def _lazy_import(importer: str, name: str, fromlist: tuple[str, ...] | None) -> bool:

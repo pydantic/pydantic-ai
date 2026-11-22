@@ -7,10 +7,10 @@ for the editor. Standard library only: this runs before the heavy imports it cov
 """
 
 import io
-import json
 import os
 import sys
 from pathlib import Path
+from typing import TextIO
 
 INLINE_ON = '\x1b[?25l\x1b[?7l'
 """Hidden cursor and no autowrap for the inline panel, so each row takes exactly one terminal row."""
@@ -28,10 +28,11 @@ class FirstFrame:
         """Where this launch saves its first frame; `None` outside a bare `pax` in a terminal."""
         self.rows = 0
         """Rows painted early, which the panel has not taken over yet."""
-        self._attrs: list[int | list[bytes | int]] | None = None
-        """The terminal's input modes before echo was turned off, restored before the editor reads."""
-        self._stderr: tuple[io.TextIOBase, io.StringIO] | None = None
-        """Standard error and the buffer holding what was written to it while the frame shows."""
+        self._modes: list[int | list[bytes | int]] | None = None
+        """The terminal's input modes before echo was turned off, given back before the editor reads."""
+        self._stderr: TextIO | None = None
+        """Standard error, while `sys.stderr` holds what is written to it until the early rows are gone."""
+        self._held = io.StringIO()
 
     @property
     def holding(self) -> bool:
@@ -44,30 +45,28 @@ class FirstFrame:
             return
         self.path = path
         try:
-            saved = json.loads(path.read_text(encoding='utf-8'))
-            rows = saved['rows'] if saved['key'] == _key() else None
-        except (OSError, ValueError, LookupError, TypeError):
+            key, *rows = path.read_text(encoding='utf-8').split('\n')
+        except (OSError, UnicodeDecodeError, ValueError):
             return
-        if not isinstance(rows, list) or not rows or not all(isinstance(row, str) for row in rows):
+        if key != _key() or not rows:
             return
         import termios  # Not on Windows, which returned above.
 
-        attrs = termios.tcgetattr(sys.stdin)
+        modes = termios.tcgetattr(sys.stdin)
         quiet = termios.tcgetattr(sys.stdin)
-        # Typed keys wait unechoed, Enter as `\r`, as the editor's raw mode would read them. Ctrl-C still stops
-        # the launch. TCSANOW keeps what was typed before this.
+        # Typed keys wait unechoed, Enter as `\r`, as the editor's raw mode reads them; Ctrl-C still stops the
+        # launch. TCSANOW keeps what was typed before this; the default TCSAFLUSH would discard it.
         quiet[0] &= ~termios.ICRNL
         quiet[3] &= ~(termios.ECHO | termios.ICANON)
         termios.tcsetattr(sys.stdin, termios.TCSANOW, quiet)
-        self._attrs = attrs
+        self._modes = modes
         sys.stdout.write(
             '\x1b[?2026h' + INLINE_ON + '\r' + '\r\n'.join(f'{row}\x1b[0m' for row in rows) + '\x1b[?2026l'
         )
         sys.stdout.flush()
         self.rows = len(rows)
-        # A traceback or usage error would print among the early rows; it waits for them to be erased.
-        self._stderr = (sys.stderr, io.StringIO())
-        sys.stderr = self._stderr[1]
+        # A traceback or usage error would print among the early rows, so it waits until they are gone.
+        self._stderr, sys.stderr = sys.stderr, self._held
 
     def adopt(self) -> tuple[int, str]:
         """Hand the early rows to the panel: how many there are, and what standard error got meanwhile."""
@@ -75,10 +74,7 @@ class FirstFrame:
         return rows, self._release_stderr()
 
     def save(self, rows: list[str] | None) -> None:
-        """Save the panel's first frame for the next launch once, or forget the saved one when `rows` is `None`.
-
-        `None` means the panel started on the alternate screen, where inline rows painted early would not be.
-        """
+        """Save the panel's first frame for the next launch, once; `None`, for a panel on the alternate screen, forgets it."""
         path, self.path = self.path, None
         if path is None:
             return
@@ -86,20 +82,20 @@ class FirstFrame:
             if rows is None:
                 path.unlink(missing_ok=True)
             else:
-                path.write_text(json.dumps({'key': _key(), 'rows': rows}), encoding='utf-8')
+                path.write_text('\n'.join([_key(), *rows]), encoding='utf-8')
         except OSError:
             pass
 
     def restore_input(self) -> None:
         """Give the terminal back its input modes, before the editor's raw mode saves them."""
-        attrs, self._attrs = self._attrs, None
-        if attrs is not None:
+        modes, self._modes = self._modes, None
+        if modes is not None:
             import termios
 
-            termios.tcsetattr(sys.stdin, termios.TCSANOW, attrs)
+            termios.tcsetattr(sys.stdin, termios.TCSANOW, modes)
 
     def close(self) -> None:
-        """At exit: erase rows the panel never took over, and print what standard error got meanwhile."""
+        """At exit: erase early rows the panel never took over, then print what standard error got meanwhile."""
         self.restore_input()
         if rows := self.rows:
             self.rows = 0
@@ -110,18 +106,23 @@ class FirstFrame:
             sys.stderr.flush()
 
     def _release_stderr(self) -> str:
-        if self._stderr is None:
+        original, self._stderr = self._stderr, None
+        if original is None:
             return ''
-        (original, held), self._stderr = self._stderr, None
-        if sys.stderr is held:
+        if sys.stderr is self._held:
             sys.stderr = original
-        return held.getvalue()
+        held, self._held = self._held.getvalue(), io.StringIO()
+        return held
 
 
-def _key() -> list[object]:
+def _key() -> str:
+    """The terminal's size and colour settings, which a saved frame must match to be painted."""
     size = os.get_terminal_size(sys.stdout.fileno())
-    return [size.columns, size.lines, *(os.getenv(name) for name in _KEY_VARIABLES)]
+    return '\t'.join([str(size.columns), str(size.lines), *(os.getenv(name, '') for name in _KEY_VARIABLES)])
 
 
 current = FirstFrame()
-"""This process's early frame: `__main__` paints it, the live prompt takes it over."""
+"""This process's early frame: `__main__` paints it, the live prompt takes it over.
+
+On the module because it exists before anything the launch builds, as `stderr_relay`'s terminal does.
+"""
