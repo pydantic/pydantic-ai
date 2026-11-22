@@ -6,6 +6,7 @@ import gc
 import os
 import re
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,7 +16,7 @@ from pydantic_ai_pax.ui.rendering.splash import Splash
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     from pydantic_ai_pax.cli.self_update import Relaunch, WebHandoff
     from pydantic_ai_pax.config import Settings, UpdateChannel
@@ -143,24 +144,16 @@ def run(*, splash: Splash | None = None) -> None:
 def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: Splash | None) -> None:
     """Run the parsed command, or start the session it asks for."""
     _resolve_paths(args)
-    # These imports create about 300,000 objects that live until exit. With the garbage collector on, it walks
-    # them again and again as they arrive; frozen afterwards, no later collection walks them either. Freezing
-    # takes every object in the process, so only a launch from `main`, the one passing a splash, does it.
-    collecting = splash is not None and gc.isenabled()
-    if collecting:
-        gc.disable()
     try:
-        from pydantic_ai.usage import UsageLimits
-        from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
-        from pydantic_ai_pax.cli.agent_import import import_agent
-        from pydantic_ai_pax.cli.self_update import Relaunch, hold_environment
-        from pydantic_ai_pax.config.project_settings import load_project_settings
-        from pydantic_ai_pax.config.settings_store import SettingsStore
-        from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
+        with _frozen_imports(enabled=splash is not None):
+            from pydantic_ai.usage import UsageLimits
+            from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
+            from pydantic_ai_pax.cli.agent_import import import_agent
+            from pydantic_ai_pax.cli.self_update import Relaunch, hold_environment
+            from pydantic_ai_pax.config.project_settings import load_project_settings
+            from pydantic_ai_pax.config.settings_store import SettingsStore
+            from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
     finally:
-        if collecting:
-            gc.freeze()
-            gc.enable()
         if splash is not None:
             splash.stop()
     _held = hold_environment()  # Open until exit, so `/update` elsewhere does not replace the code this one runs.
@@ -264,6 +257,26 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
     except KeyboardInterrupt:
         if _interrupt_fails(args):
             raise SystemExit(130) from None
+
+
+@contextmanager
+def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
+    """Import with the garbage collector off, then freeze what was imported out of later collections.
+
+    Startup's imports create about 300,000 objects that live until exit; with the collector on, it walks them
+    again and again as they arrive. One collection afterwards frees the few that are garbage. Freezing takes
+    every object in the process, so only a launch from `main`, the one passing a splash, is `enabled`.
+    """
+    if not enabled or not gc.isenabled():
+        yield
+        return
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.collect()
+        gc.freeze()
+        gc.enable()
 
 
 def _resolve_paths(args: argparse.Namespace) -> None:
