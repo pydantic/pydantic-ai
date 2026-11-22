@@ -598,3 +598,17 @@ async def test_a_live_background_command_row_offers_nothing_to_expand() -> None:
     await renderer.on_stream_event(_finished('b', exit_code=None, line_count=3))
     rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
     assert '  ⎿ running in background · 3 lines · log /tmp/out' in rows
+
+
+async def test_a_live_command_whose_result_never_arrives_expands_to_its_row_alone() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+    )
+    await renderer.on_stream_event(_finished('m', exit_code=0, line_count=4))
+    surface.toggle_details()
+    rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
+    assert rows == ['● shell make', '  ⎿ exit 0 · 4 lines', '', '']

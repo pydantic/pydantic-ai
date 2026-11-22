@@ -232,7 +232,7 @@ def _row_ansi(
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system=colors, width=width)
     draw(console, hint=not expanded)
-    if expanded:
+    if expanded and source:
         decoder = AnsiDecoder()
         # Only line feeds end a line, so a read keeps its numbered lines; other controls show escaped.
         for line in source.removesuffix('\n').split('\n'):
