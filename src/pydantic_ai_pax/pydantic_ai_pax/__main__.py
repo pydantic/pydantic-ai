@@ -12,6 +12,8 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
+LAZY_IMPORTERS = frozenset({'pydantic_ai', 'pydantic_ai_harness', 'pydantic_ai_pax', 'pydantic_graph'})
+"""Packages whose module-level imports Python 3.15 makes lazy for a launch: this repository's, not a dependency's."""
 TELEMETRY_LOGGERS = ('logfire', 'opentelemetry')
 """Loggers of the telemetry SDKs, whose export retries, timeouts, and batch failures run on background threads."""
 
@@ -47,6 +49,11 @@ def main() -> None:
 
     from pydantic_ai_pax.ui import first_frame
 
+    if sys.version_info >= (3, 15):
+        # Module-level imports in these packages bind on first use, so startup skips modules the prompt
+        # never needs. Every other package imports as usual: some import modules only for their side effects.
+        sys.set_lazy_imports_filter(_lazy_import)
+        sys.set_lazy_imports('all')
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
     bare = len(sys.argv) == 1
     if bare:
@@ -55,6 +62,17 @@ def main() -> None:
         _main(database, animate=bare and not first_frame.current.holding)
     finally:
         first_frame.current.close()
+        if sys.version_info >= (3, 15):
+            sys.set_lazy_imports('normal')
+            sys.set_lazy_imports_filter(None)
+
+
+def _lazy_import(importer: str, name: str, fromlist: tuple[str, ...] | None) -> bool:
+    """Whether an import may bind on first use: only in our own packages, never in a dependency.
+
+    `from .name import name` stays eager: a lazy `name` would be replaced by the submodule `name` once that loads.
+    """
+    return importer.partition('.')[0] in LAZY_IMPORTERS and name.rpartition('.')[2] not in (fromlist or ())
 
 
 def _main(database: Path, *, animate: bool) -> None:
