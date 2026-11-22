@@ -118,26 +118,36 @@ def _break_offsets(plain: str, width: int) -> list[int]:
     # Each match starts where the last ended, as in Rich, so a long run of spaces is scanned once.
     while word := _WORD.match(plain, position):
         position = word.end()
-        if cell_len(word[0].rstrip()) <= width:
-            names = [(word.start(), word[0])]
-        else:
-            names = [(word.start() + name.start(), name[0]) for name in re.finditer(r'[^/]*/+|.+', word[0])]
-        for start, text in names:
-            shown = text.rstrip()
-            if used + cell_len(shown) <= width:
+        for start, text in _names(word, width):
+            if used + cell_len(text.rstrip()) <= width:
                 used += cell_len(text)
                 continue
             if used and start:
                 offsets.append(start)
-            used = cell_len(text)
-            if cell_len(shown) > width:
-                # A name longer than a row folds at the row's end, as Rich does; its trailing spaces stay on the last row.
-                *full, last = chop_cells(shown, width)
-                for chunk in full:
-                    start += len(chunk)
-                    offsets.append(start)
-                used = cell_len(last) + len(text) - len(shown)
+            used = _start_row(text, start=start, width=width, offsets=offsets)
     return offsets
+
+
+def _names(word: re.Match[str], width: int) -> list[tuple[int, str]]:
+    """The word and where it starts, or for a word too long for a row, each of its `/`-ended names."""
+    if cell_len(word[0].rstrip()) <= width:
+        return [(word.start(), word[0])]
+    return [(word.start() + name.start(), name[0]) for name in re.finditer(r'[^/]*/+|.+', word[0])]
+
+
+def _start_row(text: str, *, start: int, width: int, offsets: list[int]) -> int:
+    """Place `text` at the start of a row and return the cells it uses on its last row.
+
+    A name longer than a row folds at the row's end, as Rich does; its trailing spaces stay on the last row.
+    """
+    shown = text.rstrip()
+    if cell_len(shown) <= width:
+        return cell_len(text)
+    *full, last = chop_cells(shown, width)
+    for chunk in full:
+        start += len(chunk)
+        offsets.append(start)
+    return cell_len(last) + len(text) - len(shown)
 
 
 def _print_shell_header(console: Console, command: str) -> None:
