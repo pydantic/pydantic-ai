@@ -91,3 +91,9 @@ def test_a_stacked_row_keeps_ragged_cells(monkeypatch: pytest.MonkeyPatch) -> No
         'InvalidCodePoint(u16): b',
         'extra',
     ]
+
+
+def test_a_stacked_table_in_thinking_stays_dim() -> None:
+    text = Text.from_ansi(render_markdown(source=ERRORS, width=60, thinking=True, colors='truecolor'))
+    assert text.plain.splitlines()[1].startswith('Meaning: Input ends')
+    assert text.get_style_at_offset(Console(), text.plain.index('Input ends')).dim

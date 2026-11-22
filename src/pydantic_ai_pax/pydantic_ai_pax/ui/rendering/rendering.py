@@ -110,6 +110,9 @@ class MarkdownRenderer(Renderer):
     def render(self, event: ParseEvent) -> None:
         """Render one event, remembering a heading's style for links inside it."""
         self._enclosing = _heading_codes(event.level, self.style)[0] if isinstance(event, HeadingEvent) else ''
+        # Termflow buffers a table's header, rows and alignments until its end event and draws it
+        # there only while the header is set; pax draws it instead, then clears the header so the
+        # base class only resets its table state. Tests compare the result with Termflow's own.
         if isinstance(event, TableEndEvent) and self._table_header is not None:
             for line in table_lines(
                 header=[self._format_inline(cell) for cell in self._table_header],
@@ -120,7 +123,7 @@ class MarkdownRenderer(Renderer):
                 style=self.style,
             ):
                 self._writeln(line)
-            self._table_header = None  # Drawn; Termflow only resets its table state now.
+            self._table_header = None
         super().render(event)
 
     def _format_inline(self, text: str) -> str:
