@@ -85,9 +85,13 @@ def _linear(colour: str) -> tuple[float, ...]:
     return tuple(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
 
 
+def _luminance_of(colour: str) -> float:
+    return sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), _linear(colour)))
+
+
 def _contrast(a: str, b: str) -> float:
     """WCAG 2 contrast ratio."""
-    darker, lighter = sorted(sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), _linear(x))) for x in (a, b))
+    darker, lighter = sorted(_luminance_of(x) for x in (a, b))
     return (lighter + 0.05) / (darker + 0.05)
 
 
@@ -306,7 +310,3 @@ async def test_default_preview_over_a_dark_palette_paints_the_light_background()
     assert {(fg, bg) for fg, bg in painted if _contrast(fg, bg) < 4.5} <= {
         (theme.LOGO.removeprefix('bold '), '#FFFFFF')
     }
-
-
-def _luminance_of(colour: str) -> float:
-    return sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), _linear(colour)))
