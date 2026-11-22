@@ -1768,7 +1768,7 @@ fits, and the rest keep their configured order:
 `activity` and the context figure are never hidden: they say whether CLAI is
 working and how full the conversation is. A row that still does not fit is cut
 at the terminal's edge; it never wraps onto a second row. At 80 columns the
-default layout reads `claude-opus-5-5 | …/jsonrc | context: 61k/1m tokens | ready`.
+default layout reads `claude-code:claude-opus-5-5 | …/jsonrc | context: 61k/1m tokens | ready`.
 To set the list directly, keep the JSON in one quoted argument:
 
 ```text
