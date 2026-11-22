@@ -310,39 +310,39 @@ class MarkdownBlock(io.StringIO):
         self.source = None
         self._changed()
 
-    def _lines(self, *, width: int, render: bool = True) -> list[_Line]:
+    def _lines(self, *, width: int, keep: bool = False) -> list[_Line]:
         key = (width, theme.name())
         if self.streaming and key != self._key:
             # Code fences render at the console's width when they close, so after a resize the
             # stream's rows are no longer all at `_key`: the ended part renders again at any width.
             self._key = (0, '')
-        if self.source is None or self.streaming or not render or key == self._key:
+        if self.source is None or self.streaming or keep or key == self._key:
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(self._render(source=self.source, width=width))
         return rendered.all()
 
-    def rows(self, *, width: int, render: bool = True) -> tuple[str, ...]:
+    def rows(self, *, width: int, keep: bool = False) -> tuple[str, ...]:
         """Rows at `width`; the cache follows theme and source, not just width.
 
-        Without `render`, the rows last built stay, at their width and with their content, so a frame
+        With `keep`, the rows last built stay, at their width and with their content, so a frame
         costs nothing while a resize goes on. Wrapping a long part again costs about as much as rendering it.
         A part still streaming holds back its new text until the width holds too.
         A part with no rows yet wraps its streamed rows instead.
         """
-        if not render and self._rows[0]:
+        if keep and self._rows[0]:
             return self._rows[1]
         source = None if self.source is None else len(self.source)
-        key = (width, theme.name(), source, self._stream.revision, self.streaming or not render)
+        key = (width, theme.name(), source, self._stream.revision, self.streaming or keep)
         if self._rows[0] != key:
-            lines = self._lines(width=width, render=render)
+            lines = self._lines(width=width, keep=keep)
             self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
             self._continued = tuple(flag for line in lines for flag in line.continued(width=width))
         return self._rows[1]
 
-    def continued(self, *, width: int, render: bool = True) -> tuple[bool, ...]:
+    def continued(self, *, width: int, keep: bool = False) -> tuple[bool, ...]:
         """Per row at `width`, whether it wraps on from the row above rather than starting a line."""
-        self.rows(width=width, render=render)
+        self.rows(width=width, keep=keep)
         return self._continued
 
     def printed(self, *, width: int) -> str:
@@ -535,7 +535,7 @@ class TranscriptBuffer:
             return _Line(self._tail(), theme_name=self._pending_theme).rows(width=width)
         found = self._items[item - self._first]
         if isinstance(found, MarkdownBlock):
-            return found.rows(width=width, render=not self.keep_rows)
+            return found.rows(width=width, keep=self.keep_rows)
         return found.rows(width=width)
 
     def continued(self, item: int, *, width: int) -> tuple[bool, ...]:
@@ -544,7 +544,7 @@ class TranscriptBuffer:
             return _Line(self._tail(), theme_name=self._pending_theme).continued(width=width)
         found = self._items[item - self._first]
         if isinstance(found, MarkdownBlock):
-            return found.continued(width=width, render=not self.keep_rows)
+            return found.continued(width=width, keep=self.keep_rows)
         return found.continued(width=width)
 
     def _tail(self) -> Text:
