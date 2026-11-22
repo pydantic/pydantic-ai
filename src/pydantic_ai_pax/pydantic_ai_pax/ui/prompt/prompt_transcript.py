@@ -216,7 +216,8 @@ class _Line:
 class _Lines:
     """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one.
 
-    `PREVIEW` saves the stream as it is and `DROP` goes back to it, removing what came between.
+    What follows `PREVIEW` goes to `preview`, shown after the lines until `DROP` discards it. A preview
+    has the same limits of its own, so it never evicts the lines it is shown after.
     """
 
     def __init__(self, *, max_chars: int = 4_000_000, max_lines: int = 10_000) -> None:
@@ -228,15 +229,15 @@ class _Lines:
         self.pending_theme = theme.painted_in()
         """The theme the unfinished line started in, which its completion keeps."""
         self._decoder = TranscriptDecoder()
-        self._saved: tuple[int, str, str | None, Style] | None = None
-        """At the last `PREVIEW`: the number of lines, the unfinished line, its theme, and the decoder style."""
+        self.preview: _Lines | None = None
 
     @classmethod
     def rebind(cls, stream: '_Lines') -> '_Lines':
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
         vars(stream).setdefault('pending_theme', theme.name())
-        vars(stream).setdefault('_saved', None)
+        if (preview := vars(stream).setdefault('preview', None)) is not None:
+            cls.rebind(preview)
         for line in stream.lines:
             _Line.rebind(line)
         return stream
@@ -245,18 +246,14 @@ class _Lines:
         self.revision += 1
         for part in _MARKS.split(text):
             if part == PREVIEW:
-                self._saved = (len(self.lines), self.pending, self.pending_theme, self._decoder.style)
+                # The preview goes on from the unfinished line, as a reasoning heading's text does.
+                self.preview = _Lines(max_chars=self.max_chars, max_lines=self.max_lines)
+                self.preview.pending, self.preview.pending_theme = self.pending, self.pending_theme
+                self.preview._decoder.style = self._decoder.style
             elif part == DROP:
-                self._drop()
+                self.preview = None
             elif part:
-                self._write(part)
-
-    def _drop(self) -> None:
-        assert self._saved is not None
-        kept, self.pending, self.pending_theme, self._decoder.style = self._saved
-        self._saved = None
-        self.chars -= sum(len(line.text) for line in self.lines[kept:])
-        del self.lines[kept:]
+                (self if self.preview is None else self.preview)._write(part)
 
     def _write(self, text: str) -> None:
         started = self.pending_theme if self.pending else theme.painted_in()
@@ -269,10 +266,7 @@ class _Lines:
             started = theme.painted_in()
         self.pending_theme = started
         self.pending = self.pending[-self.max_chars :]
-        # A preview is replaced, so it must not evict the lines before it; its replacement prunes.
-        while self._saved is None and (
-            len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars
-        ):
+        while len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars:
             self.chars -= len(self.lines.pop(0).text)
 
     def tail(self) -> Text:
@@ -282,7 +276,13 @@ class _Lines:
         escape = incomplete_escape_start(complete)
         return decoder.decode_line(complete if escape < 0 else complete[:escape])
 
+    def size(self) -> int:
+        """Characters held, a preview's included."""
+        return self.chars + len(self.pending) + (0 if self.preview is None else self.preview.size())
+
     def all(self) -> list[_Line]:
+        if self.preview is not None:
+            return [*self.lines, *self.preview.all()]
         if not self.pending:
             return self.lines
         return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme, words=True)]
@@ -334,7 +334,7 @@ class MarkdownBlock(io.StringIO):
     @property
     def chars(self) -> int:
         """Retained source plus visible output, for the transcript memory limit."""
-        return len(self.source or '') + self._stream.chars + len(self._stream.pending)
+        return len(self.source or '') + self._stream.size()
 
     def write(self, text: str) -> int:
         """Receive the stream's rendered ANSI."""

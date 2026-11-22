@@ -276,12 +276,17 @@ class MarkdownPipeline:
 
     def partial(self, line: str) -> None:
         """Show the unfinished `line` as plain text until `line` renders it, outside code blocks and tables."""
-        if not self._partial and (not self.preview or self._parser.state.is_in_code() or line.lstrip().startswith('|')):
+        if not self._partial and not self._previews(line):
             return
         if not self._partial:
             self.output.write(PREVIEW + (DIM_ON if self.thinking else ''))
         self.output.write(line[self._partial :])
         self._partial = len(line)
+
+    def _previews(self, line: str) -> bool:
+        """Whether to start showing `line`; leading spaces wait for the text that says whether it is a table row."""
+        stripped = line.lstrip()
+        return self.preview and bool(stripped) and not stripped.startswith('|') and not self._parser.state.is_in_code()
 
     def line(self, line: str) -> None:
         """Render one complete source line."""
