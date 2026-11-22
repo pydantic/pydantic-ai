@@ -11,7 +11,7 @@ from rich.text import Text
 from termflow.themes import PALETTES
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import PartStartEvent, RetryInfo, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_pax import StreamRenderer
@@ -444,20 +444,37 @@ def _finished(tool_call_id: str, *, exit_code: int | None, line_count: int) -> C
     )
 
 
-@pytest.mark.parametrize('outcome', ['failed', 'denied', 'retried'])
+@pytest.mark.parametrize(
+    ('outcome', 'cause', 'reason'),
+    [
+        ('failed', None, 'Not allowed here.'),
+        ('denied', None, 'Not allowed here.'),
+        ('interrupted', None, 'Not allowed here.'),
+        ('retried', 'model_retry', 'Not allowed here.'),
+        ('retried', 'validation_error', 'invalid arguments'),
+    ],
+)
 async def test_a_failed_or_refused_call_is_marked_under_its_header(
-    outcome: Literal['failed', 'denied', 'retried'],
+    outcome: Literal['failed', 'denied', 'retried', 'interrupted'],
+    cause: Literal['model_retry', 'validation_error'] | None,
+    reason: str,
 ) -> None:
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
     renderer = StreamRenderer(console, stop_loading=lambda: None)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('deploy', {}, tool_call_id='d')))
-    part = ToolReturnPart('deploy', 'Not allowed here.\nMore detail.', tool_call_id='d', outcome=outcome)
+    part = ToolReturnPart(
+        'deploy',
+        'Not allowed here.\nMore detail.',
+        tool_call_id='d',
+        outcome=outcome,
+        retry=RetryInfo(cause=cause) if cause else None,
+    )
     await renderer.on_stream_event(FunctionToolResultEvent(part=part))
     await renderer.finish()
     text = Text.from_ansi(output.getvalue())
-    assert text.plain.rstrip('\n') == '● deploy\n  ⎿ Not allowed here.'
-    assert _color(console, text, 'Not allowed') == console.get_style(theme.ERROR).color
+    assert text.plain.rstrip('\n') == f'● deploy\n  ⎿ {reason}'
+    assert _color(console, text, reason) == console.get_style(theme.ERROR).color
 
 
 async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() -> None:
@@ -532,4 +549,3 @@ async def test_a_preview_line_cut_at_the_terminal_edge_keeps_the_log_path() -> N
     await renderer.on_stream_event(CommandOutputEvent(tool_call_id='w', text='x' * 60 + '\n'))
     await renderer.on_stream_event(_finished('w', exit_code=0, line_count=1))
     assert output.getvalue().endswith('  ⎿ exit 0 · 1 line · log /tmp/out\n\n')
-

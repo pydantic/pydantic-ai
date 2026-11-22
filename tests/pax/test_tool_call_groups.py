@@ -335,6 +335,8 @@ def test_preview_shows_the_same_calls_in_each_style() -> None:
     detailed = Text.from_ansi(tool_calls_preview('detailed', width=60)).plain
     assert detailed.splitlines()[0] == '● shell git status'
     assert detailed.count('● shell') == 4 and detailed.count('● read_file') == 2
+    assert detailed.splitlines()[1] == '  ⎿ exit 0 · 2 lines'
+    assert 'offset=' not in detailed
     assert Text.from_ansi(tool_calls_preview('grouped', width=60)).plain == '● shell 3, read_file 2, shell 1'
 
 

@@ -1573,9 +1573,11 @@ A finished shell command always adds one result row under its header, such as
 `⎿ exit 0 · 23 lines`, or `⎿ running in background · log PATH` for a background command.
 A nonzero exit is red; with `display.tool_output` on, its last lines follow, so the reason is
 on screen. The row ends with the path of the command's log when the command keeps
-running or its output was cut. A call of any tool that fails, is refused, or has to be retried
-gets a red row with the first line of the reason. When calls run in parallel, a row that does
-not sit under its own header starts with the command or call it belongs to. Other shell output and grep results stay
+running or its output was cut. A call of any tool that fails or is refused gets a red row with
+the first line of the reason; a write you refuse says `not written` and why, and a call whose
+arguments did not validate says `invalid arguments`. When calls
+run in parallel, a row that does not sit under its own header starts with the command or call
+it belongs to. Other shell output and grep results stay
 out of the terminal; the model still receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,

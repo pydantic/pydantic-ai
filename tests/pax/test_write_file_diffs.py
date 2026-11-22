@@ -101,10 +101,12 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     await renderer.finish()
 
     assert path.read_text() == ('external\n' if conflict else 'old\n')
-    # A conflict fails the call, so it is marked; a cancelled write is an ordinary result.
-    failure = "  ⎿ Conflict: file 'file.txt' has changed" if conflict else ''
-    assert output.getvalue().startswith(f'● write_file file.txt\n{failure}')
-    assert output.getvalue().endswith('\n\ndone\n\n')
+    # A conflict fails the call; a cancelled write reports its own reason.
+    if conflict:
+        assert output.getvalue().startswith("● write_file file.txt\n  ⎿ Conflict: file 'file.txt' has changed")
+        assert output.getvalue().endswith('\n\ndone\n\n')
+    else:
+        assert output.getvalue() == '● write_file file.txt\n  ⎿ not written: not approved\n\ndone\n\n'
     assert 'old' not in output.getvalue() and 'new' not in output.getvalue()
 
 

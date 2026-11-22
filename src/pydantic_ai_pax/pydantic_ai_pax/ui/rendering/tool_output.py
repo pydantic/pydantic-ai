@@ -321,10 +321,24 @@ class ToolOutput:
         return True
 
     def render_result(self, event: FunctionToolResultEvent) -> None:
-        """Mark a call that failed, was refused, or has to be retried; a success shows nothing more."""
+        """Mark a call that failed, was refused, was interrupted, or has to be retried; a success shows nothing more."""
         if event.part.outcome != 'success':
             lines = event.part.model_response_str(wrap_if_error=False).strip().splitlines()
             reason = lines[0] if lines else event.part.outcome
+            if event.part.retry is not None and event.part.retry.cause == 'validation_error':
+                # Its reason is a dump of validation errors, not a sentence.
+                reason = 'invalid arguments'
+        else:
+            # A refused write still succeeds, telling the model it was not written.
+            reason = next(
+                (
+                    f'not written: {request.cancel_reason or "refused"}'
+                    for (call_id, _, _), request in self._writes.items()
+                    if call_id == event.part.tool_call_id and request.cancelled
+                ),
+                '',
+            )
+        if reason:
             self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
             self.console.print()
         self.discard_call(event.part.tool_call_id)
