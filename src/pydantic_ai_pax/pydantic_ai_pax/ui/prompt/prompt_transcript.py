@@ -224,7 +224,7 @@ class _Lines:
         self._decoder = TranscriptDecoder()
         self._pruned = 0
         """Lines dropped from the start for the limits, so a saved position still finds its line."""
-        self._saved: tuple[int, str, str, Style] | None = None
+        self._saved: tuple[int, str, str | None, Style] | None = None
         """At the last `PREVIEW`: lines so far counting pruned ones, the unfinished line, its theme, and the decoder style."""
 
     @classmethod

@@ -7,15 +7,21 @@ from typing import IO, Literal
 import pytest
 from rich.console import Console
 from rich.text import Text
-from termflow.stream import SmoothWriter
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
+from pydantic_ai import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import color_system, render_markdown, thinking_heading
+from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -156,16 +162,16 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
 
     def writer(
         target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
-    ) -> SmoothWriter:
+    ) -> PartWriter:
         observed.append((tick_interval, catch_up_seconds, min_chars_per_tick))
-        return SmoothWriter(
+        return PartWriter(
             target,
             tick_interval=tick_interval,
             catch_up_seconds=catch_up_seconds,
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.PartWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds
@@ -242,3 +248,58 @@ def test_whole_markdown_repaint_processes_complete_source_lines() -> None:
         'one',
         'two',
     ]
+
+
+async def test_live_panel_shows_the_unfinished_line_then_renders_it_in_place() -> None:
+    """A one-line paragraph shows as it streams, wrapped as it will render, instead of all at once at its newline."""
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (40, 24))
+    console = Console(file=surface, force_terminal=True, width=40, color_system='truecolor')
+    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
+
+    async def feed(text: str) -> list[str]:
+        await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=text)))
+        return [row.rstrip() for row in _rows(surface, width=40)]
+
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('First.\n\n')))
+    words = ' '.join(f'word{index}' for index in range(12))
+    assert await feed(words) == [
+        'First.',
+        '',
+        'word0 word1 word2 word3 word4 word5',
+        'word6 word7 word8 word9 word10 word11',
+        '',
+    ]
+    assert (await feed(' **bo'))[-2:] == ['**bo', '']
+    # The finished line replaces its preview: Termflow wraps it the same way, and the markup renders.
+    assert await feed('ld** done\n\n| a | b') == [
+        'First.',
+        '',
+        'word0 word1 word2 word3 word4 word5',
+        'word6 word7 word8 word9 word10 word11',
+        'bold done',
+        '',
+        # A table row would vanish into its table once complete, so it shows only then.
+        '',
+    ]
+    await renderer.finish()
+    assert '| a | b' in _rows(surface, width=40)
+
+
+async def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None:
+    """Retyping a finished line from its first character would blank the preview the user was reading."""
+    writes: list[str] = []
+
+    class ObservedOutput(io.StringIO):
+        def write(self, text: str) -> int:
+            writes.append(text)
+            return super().write(text)
+
+    writer = PartWriter(ObservedOutput(), tick_interval=0.001, catch_up_seconds=0.01, min_chars_per_tick=1)
+    writer.write('preview ' * 4)
+    writer.commit('the rendered line\n')
+    writer.write('next ' * 4)
+    writer.start()
+    await writer.close()
+    assert ''.join(writes) == 'preview ' * 4 + 'the rendered line\n' + 'next ' * 4
+    assert any('the rendered line\n' in text for text in writes)
+    assert len(writes) > 3

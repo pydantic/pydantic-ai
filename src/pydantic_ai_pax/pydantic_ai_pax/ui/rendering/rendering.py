@@ -174,7 +174,10 @@ class PartWriter(SmoothWriter):
     ) -> None:
         """Type into `target` at the given pace."""
         super().__init__(
-            target, tick_interval=tick_interval, catch_up_seconds=catch_up_seconds, min_chars_per_tick=min_chars_per_tick
+            target,
+            tick_interval=tick_interval,
+            catch_up_seconds=catch_up_seconds,
+            min_chars_per_tick=min_chars_per_tick,
         )
         self._queued: deque[tuple[str, str]] = deque()
         """Writes made whole by `commit`, each with the text typed after it, waiting behind `_pending`."""
@@ -210,11 +213,6 @@ class PartWriter(SmoothWriter):
         if emitted:
             self._target.write(''.join(emitted))
             self._target.flush()
-
-    def _flush_all(self) -> None:
-        self._pending += ''.join(whole + typed for whole, typed in self._queued)
-        self._queued.clear()
-        super()._flush_all()
 
     def _discard_all(self) -> None:
         super()._discard_all()
@@ -256,7 +254,7 @@ class MarkdownPipeline:
         self._rendered = io.StringIO()
         """What the events of one line rendered, written to `output` at once."""
         self._renderer = MarkdownRenderer(
-            output=self._rendered,  # pyright: ignore[reportArgumentType] -- Termflow annotates TextIO but only writes and flushes.
+            output=self._rendered,
             width=console.width,
             style=markdown_style(),
             features=RenderFeatures(clipboard=False, hyperlinks=hyperlinks, images=False),
@@ -320,7 +318,9 @@ class MarkdownPipeline:
                 if self._code_shown:
                     self._rendered.write(DROP)
                     self._code_shown = False
-                self._rendered.write(self._code_rule() + self._code('\n'.join(self._code_lines)) + self._code_rule(end=True))
+                self._rendered.write(
+                    self._code_rule() + self._code('\n'.join(self._code_lines)) + self._code_rule(end=True)
+                )
                 self._code_lines = []
             else:
                 self._renderer.render(event)
