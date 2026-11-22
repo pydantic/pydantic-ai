@@ -1,12 +1,11 @@
-"""Markdown tables that never split a word: wrapped columns when the words fit, one block per row when not."""
+"""Markdown tables that keep words whole: wrapped columns when the words fit, one block per row when not."""
 
 import os
 import re
 from collections.abc import Sequence
 from itertools import zip_longest
 
-from termflow.ansi import BOLD_OFF, BOLD_ON, RESET, fg_color, visible_length, wrap_ansi
-from termflow.ansi.utils import visible
+from termflow.ansi import BOLD_OFF, BOLD_ON, RESET, fg_color, visible, visible_length, wrap_ansi
 from termflow.render.style import RenderStyle
 from termflow.render.table import (
     TABLE_HORIZ,
@@ -36,7 +35,8 @@ def table_lines(
     A table whose cells fit unwrapped renders as Termflow draws it. Otherwise every column
     gets at least its longest word and the room left goes to the columns that wrap, so text
     breaks only between words. A table whose longest words cannot sit side by side at this
-    width becomes one block of `Header: value` lines per row, so no word is cut in half.
+    width becomes one block of `Header: value` lines per row, where
+    only a word wider than the whole width is split.
     """
     # The cap Termflow's own table renderer applies, so every layout stays within it.
     try:
@@ -105,6 +105,7 @@ def _stacked(
         if index:
             lines.append(rule)
         for label, cell in zip_longest(header, row, fillvalue=''):
-            line = f'{BOLD_ON}{label.strip()}:{BOLD_OFF} {cell.strip()}'
+            label = label.strip()
+            line = f'{BOLD_ON}{label}:{BOLD_OFF} {cell.strip()}' if label else cell.strip()
             lines += [margin + part for part in wrap_ansi(line, width)]
     return lines

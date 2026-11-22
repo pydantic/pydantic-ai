@@ -80,7 +80,14 @@ def test_a_table_width_cap_with_no_room_is_ignored(monkeypatch: pytest.MonkeyPat
     assert _render(ERRORS, 80) == uncapped
 
 
-def test_a_stacked_row_names_the_cells_it_lacks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_stacked_row_keeps_ragged_cells(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', 'wide')  # Not a number, so no cap.
-    lines = Text.from_ansi(_render('| Variant | InvalidCodePoint(u16) |\n|---|---|\n| UnexpectedEof |', 24)).plain
-    assert lines.splitlines() == ['Variant: UnexpectedEof', 'InvalidCodePoint(u16):']
+    source = '| Variant | InvalidCodePoint(u16) |\n|---|---|\n| UnexpectedEof |\n| a | b | extra |'
+    assert Text.from_ansi(_render(source, 24)).plain.splitlines() == [
+        'Variant: UnexpectedEof',
+        'InvalidCodePoint(u16):',
+        '─' * 24,
+        'Variant: a',
+        'InvalidCodePoint(u16): b',
+        'extra',
+    ]
