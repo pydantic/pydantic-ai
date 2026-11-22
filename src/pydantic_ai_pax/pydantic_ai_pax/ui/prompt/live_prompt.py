@@ -722,7 +722,7 @@ class LivePrompt:
                 self.output.adopt(rows, size=size)
                 self.output.write(errors)
                 self.paint()
-                first_frame.current.save(self.output.startup_frame())
+                first_frame.current.save(self.output.startup_frame)
                 first_frame.current.restore_input()
                 self.keys.start()
                 async with anyio.create_task_group() as tasks:

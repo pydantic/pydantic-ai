@@ -9,6 +9,7 @@ for the editor. Standard library only: this runs before the heavy imports it cov
 import io
 import os
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import TextIO
@@ -83,11 +84,15 @@ class FirstFrame:
         rows, self.rows = self.rows, 0
         return rows, self._size, self._release_stderr()
 
-    def save(self, rows: list[str] | None) -> None:
-        """Save the panel's first frame for the next launch, once; `None`, for a panel on the alternate screen, forgets it."""
+    def save(self, frame: Callable[[], list[str] | None]) -> None:
+        """Save the panel's first frame for the next launch, once; `None`, for a panel on the alternate screen, forgets it.
+
+        `frame` is only called when this launch saves one, as it wraps the transcript.
+        """
         path, self.path = self.path, None
         if path is None:
             return
+        rows = frame()
         with suppress(OSError):
             if rows is None:
                 path.unlink(missing_ok=True)

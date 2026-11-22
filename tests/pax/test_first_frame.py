@@ -102,8 +102,8 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     first.paint(path)
     assert not first.holding and tty.shown() == '', 'nothing saved yet'
     before.write('$ pax\r\n')
-    first.save(launch(before).startup_frame())
-    first.save(['ignored'])
+    first.save(launch(before).startup_frame)
+    first.save(lambda: ['ignored'])
 
     second, after = FirstFrame(), SurfaceTerminal(width=40, height=10)
     after.write('$ pax\r\n')
@@ -135,15 +135,16 @@ def test_a_resize_before_the_panel_opens_moves_it_to_full_screen(
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
     saved.paint(path)
-    saved.save(['banner', *ROWS])
+    saved.save(lambda: ['banner', *ROWS])
     frame, terminal = FirstFrame(), SurfaceTerminal(width=40, height=10)
     frame.paint(path)
     terminal.write(tty.shown())
     tty.resize(width=30, height=10)
     terminal.resize(width=30, height=10)
     rows, size, _ = frame.adopt()
-    launch(terminal, adopted=rows, size=size)
+    surface = launch(terminal, adopted=rows, size=size)
     assert terminal.alternate
+    assert surface.startup_frame() is None, 'a full-screen panel leaves no frame to paint'
 
 
 def test_a_frame_saved_for_another_terminal_is_not_painted(
@@ -153,12 +154,12 @@ def test_a_frame_saved_for_another_terminal_is_not_painted(
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
     saved.paint(path)
-    saved.save(['banner', *ROWS])
+    saved.save(lambda: ['banner', *ROWS])
     tty.resize(width=30, height=10)
     frame = FirstFrame()
     frame.paint(path)
     assert not frame.holding and tty.shown() == ''
-    frame.save(None)
+    frame.save(lambda: None)
     assert not path.exists(), 'a panel on the alternate screen leaves no frame to paint'
 
 
@@ -174,6 +175,9 @@ def test_a_frame_that_fills_the_terminal_is_not_saved() -> None:
     surface.paint(ROWS)
     assert not terminal.alternate
     assert surface.startup_frame() is None
+    for line in range(4, 10):
+        surface.transcript.write(f'printed {line}\n')
+    assert surface.startup_frame() is None, 'the transcript alone fills it'
 
 
 def test_closing_before_the_panel_opens_erases_the_rows_and_shows_what_went_to_stderr(
@@ -183,7 +187,7 @@ def test_closing_before_the_panel_opens_erases_the_rows_and_shows_what_went_to_s
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
     saved.paint(path)
-    saved.save(['banner', *ROWS])
+    saved.save(lambda: ['banner', *ROWS])
     frame, terminal = FirstFrame(), SurfaceTerminal(width=40, height=10)
     terminal.write('$ pax\r\n')
     stderr = sys.stderr
@@ -207,7 +211,7 @@ def test_standard_error_redirected_away_from_the_terminal_is_not_held(
     path = tmp_path / 'first-frame'
     saved = FirstFrame()
     saved.paint(path)
-    saved.save(['banner', *ROWS])
+    saved.save(lambda: ['banner', *ROWS])
     errors = io.StringIO()
     monkeypatch.setattr(sys, 'stderr', errors)
     frame = FirstFrame()
@@ -222,7 +226,7 @@ def test_nothing_is_painted_or_saved_outside_a_terminal(tmp_path: Path, monkeypa
     monkeypatch.setattr(sys, 'stdin', io.StringIO())
     frame = FirstFrame()
     frame.paint(tmp_path / 'first-frame')
-    frame.save(['banner'])
+    frame.save(lambda: ['banner'])
     assert not (tmp_path / 'first-frame').exists()
 
 

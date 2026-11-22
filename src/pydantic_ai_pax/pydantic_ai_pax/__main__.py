@@ -51,9 +51,9 @@ def main() -> None:
 
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
     bare = len(sys.argv) == 1
-    if bare:
-        first_frame.current.paint(database.with_name('first-frame'))
     try:
+        if bare:
+            first_frame.current.paint(database.with_name('first-frame'))
         with _lazy_imports():
             _main(database, animate=bare and not first_frame.current.holding)
     finally:

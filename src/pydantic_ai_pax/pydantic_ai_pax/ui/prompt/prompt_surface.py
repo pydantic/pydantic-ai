@@ -348,9 +348,15 @@ class PromptSurface(io.StringIO):
         """
         with self._lock:
             width, height = self._geometry()
-            rows = [row for item in self.transcript.ids() for row in self.transcript.rows(item, width=width)]
-            frame = [*rows, *self._rows[-(height - 2) :]]
-            return None if self._screen or len(frame) >= height else frame
+            if self._screen:
+                return None
+            frame: list[str] = []
+            for item in self.transcript.ids():
+                frame.extend(self.transcript.rows(item, width=width))
+                if len(frame) >= height:  # A long resumed conversation stops here instead of wrapping all of it.
+                    return None
+            frame.extend(self._rows[-(height - 2) :])
+            return None if len(frame) >= height else frame
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
