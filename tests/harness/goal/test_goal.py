@@ -18,7 +18,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.goal import Goal
-from pydantic_ai_harness.graceful_limits import GracefulLimits
+from pydantic_ai_harness.wrap_up_at_limits import WrapUpAtLimits
 from tests.harness._recording_durability import RecordingDurability
 
 
@@ -137,7 +137,7 @@ Continue within the supplied constraints; do not bypass approvals or fabricate s
                 return ModelResponse(parts=[TextPart(final_answer)])
             return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
 
-        agent = Agent(FunctionModel(research), capabilities=[GracefulLimits(), Goal(goal='Finish', verify=complete)])
+        agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits(), Goal(goal='Finish', verify=complete)])
 
         @agent.tool_plain
         def look_up(topic: str) -> str:

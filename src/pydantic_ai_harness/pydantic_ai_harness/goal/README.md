@@ -103,7 +103,7 @@ When a final output fails verification, `Goal` raises `ModelRetry` through the p
 
 Set `Agent(retries={'output': n})` to bound these continuations. Goal rejections share the output retry budget with other output validation failures; they do not reserve independent rounds. Exhaustion raises `UnexpectedModelBehavior` rather than returning an unverified answer. Outside durable execution verifier exceptions propagate, and an empty explanation raises `UserError`.
 
-`UsageLimits` remain authoritative. Reaching a usage limit raises `UsageLimitExceeded`; `Goal` does not bypass the limit with an extra request. For a final tool-less answer when the limits are about to end the run, add [`GracefulLimits`](../graceful_limits/). Its wrap-up answer still goes through `Goal`'s check, and if the verifier rejects it there is no request left for the retry, so the run raises `UsageLimitExceeded`: the wrap-up only returns an answer `Goal` accepts.
+`UsageLimits` remain authoritative. Reaching a usage limit raises `UsageLimitExceeded`; `Goal` does not bypass the limit with an extra request. For a final tool-less answer when the limits are about to end the run, add [`WrapUpAtLimits`](../wrap_up_at_limits/). Its wrap-up answer still goes through `Goal`'s check, and if the verifier rejects it there is no request left for the retry, so the run raises `UsageLimitExceeded`: the wrap-up only returns an answer `Goal` accepts.
 
 The instructions ask the model to make reasonable decisions, but do not authorize bypassing approvals or inventing credentials. Decide whether an accurately reported blocker satisfies your completion condition. If not, the verifier should reject it and the bounded run will eventually fail rather than claim success.
 

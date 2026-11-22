@@ -1,9 +1,9 @@
-"""Helpers shared by the `GracefulLimits` tests."""
+"""Helpers shared by the `WrapUpAtLimits` tests."""
 
 from __future__ import annotations
 
 from pydantic_ai.messages import ModelMessage, ModelRequest
-from pydantic_ai_harness.graceful_limits import LimitName, WrapUpPart
+from pydantic_ai_harness.wrap_up_at_limits import LimitName, WrapUpPart
 
 
 def wrap_ups(messages: list[ModelMessage]) -> list[tuple[str, LimitName]]:

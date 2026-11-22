@@ -1,4 +1,4 @@
-"""`GracefulLimits` under `DBOSDurability`: recovering a workflow wraps up at the same request over the journal."""
+"""`WrapUpAtLimits` under `DBOSDurability`: recovering a workflow wraps up at the same request over the journal."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ToolChoice
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness import GracefulLimits
-from pydantic_ai_harness.graceful_limits import DEFAULT_WRAP_UP_PROMPT
+from pydantic_ai_harness import WrapUpAtLimits
+from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT
 from tests.conftest import try_import
 
 from ._messages import wrap_ups
@@ -38,7 +38,7 @@ class _Crash(BaseException):
 @pytest.fixture
 def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
-        'name': 'durable_graceful_limits',
+        'name': 'durable_wrap_up_at_limits',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
     instance = DBOS(config=config)
@@ -64,7 +64,7 @@ def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 
 def test_recovery_wraps_up_at_the_same_request(dbos: DBOS) -> None:
-    agent = Agent(FunctionModel(_model), name='wrap_up_dbos', capabilities=[GracefulLimits(), DBOSDurability()])
+    agent = Agent(FunctionModel(_model), name='wrap_up_dbos', capabilities=[WrapUpAtLimits(), DBOSDurability()])
 
     @agent.tool_plain
     def look_up(topic: str) -> str:
@@ -101,7 +101,7 @@ def test_recovery_wraps_up_for_timeout(dbos: DBOS) -> None:
     agent = Agent(
         FunctionModel(_model),
         name='wrap_up_dbos_timeout',
-        capabilities=[GracefulLimits(timeout_margin=60), DBOSDurability()],
+        capabilities=[WrapUpAtLimits(timeout_margin=60), DBOSDurability()],
     )
 
     @agent.tool_plain
