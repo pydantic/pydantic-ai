@@ -26,6 +26,13 @@ pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX p
 ROWS = ('', 'RULE', '> ', 'RULE', 'FOOTER')
 
 
+class TerminalErrors(io.StringIO):
+    """Standard error shown in the terminal, as it is unless redirected."""
+
+    def isatty(self) -> bool:
+        return True
+
+
 class Tty:
     """A pseudo-terminal standing in for the one `pax` runs in: `sys.stdin` and `sys.stdout` are its other end."""
 
@@ -37,7 +44,7 @@ class Tty:
         """Run the test in this terminal; pytest swaps the standard streams back in after fixtures run."""
         monkeypatch.setattr(sys, 'stdin', open(self.terminal, encoding='utf-8', closefd=False))
         monkeypatch.setattr(sys, 'stdout', open(self.terminal, 'w', encoding='utf-8', closefd=False))
-        monkeypatch.setattr(sys, 'stderr', io.StringIO())
+        monkeypatch.setattr(sys, 'stderr', TerminalErrors())
         monkeypatch.delenv('TERM', raising=False)
 
     def resize(self, *, width: int, height: int) -> None:
@@ -101,7 +108,9 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     second, after = FirstFrame(), SurfaceTerminal(width=40, height=10)
     after.write('$ pax\r\n')
     second.paint(path)
-    after.write(tty.shown())
+    shown = tty.shown()
+    assert '\x1b[?2004h' in shown, 'a paste waits as one paste, not as lines that each press Enter'
+    after.write(shown)
     assert after.lines() == before.lines()
     os.write(tty.screen, b'hi\r')
     assert tty.shown() == '', 'keys typed during imports are not echoed among the rows'
@@ -178,15 +187,35 @@ def test_closing_before_the_panel_opens_erases_the_rows_and_shows_what_went_to_s
     frame, terminal = FirstFrame(), SurfaceTerminal(width=40, height=10)
     terminal.write('$ pax\r\n')
     stderr = sys.stderr
-    assert isinstance(stderr, io.StringIO)
+    assert isinstance(stderr, TerminalErrors)
     frame.paint(path)
     print('Traceback: ImportError', file=sys.stderr)
     assert stderr.getvalue() == '', 'held while the rows show'
     frame.close()
-    terminal.write(tty.shown())
+    shown = tty.shown()
+    assert shown.endswith('\x1b[?2004l'), 'the shell gets pastes back as typed text'
+    terminal.write(shown)
     assert terminal.lines() == ['$ pax', *[''] * 9]
     assert stderr.getvalue() == 'Traceback: ImportError\n'
     frame.close()
+
+
+def test_standard_error_redirected_away_from_the_terminal_is_not_held(
+    tty: Tty, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tty.attach(monkeypatch)
+    path = tmp_path / 'first-frame'
+    saved = FirstFrame()
+    saved.paint(path)
+    saved.save(['banner', *ROWS])
+    errors = io.StringIO()
+    monkeypatch.setattr(sys, 'stderr', errors)
+    frame = FirstFrame()
+    frame.paint(path)
+    assert frame.holding
+    print('Traceback: ImportError', file=sys.stderr)
+    assert errors.getvalue() == 'Traceback: ImportError\n', 'it is in the file at once, whatever happens next'
+    assert frame.adopt()[2] == ''
 
 
 def test_nothing_is_painted_or_saved_outside_a_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -16,6 +16,9 @@ from typing import TextIO
 INLINE_ON = '\x1b[?25l\x1b[?7l'
 """Hidden cursor and no autowrap for the inline panel, so each row takes exactly one terminal row."""
 INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
+PASTE_ON = '\x1b[?2004h'
+"""Bracketed paste, so a paste typed before the editor reads waits as one paste, not as lines each sending Enter."""
+PASTE_OFF = '\x1b[?2004l'
 _KEY_VARIABLES = ('TERM', 'COLORTERM', 'NO_COLOR', 'FORCE_COLOR')
 """Variables that change how the rows' colours are written, so a frame saved under other values is not reused."""
 
@@ -64,14 +67,16 @@ class FirstFrame:
         termios.tcsetattr(sys.stdin, termios.TCSANOW, quiet)
         self._modes = modes
         sys.stdout.write(
-            '\x1b[?2026h' + INLINE_ON + '\r' + '\r\n'.join(f'{row}\x1b[0m' for row in rows) + '\x1b[?2026l'
+            '\x1b[?2026h' + INLINE_ON + PASTE_ON + '\r' + '\r\n'.join(f'{row}\x1b[0m' for row in rows) + '\x1b[?2026l'
         )
         sys.stdout.flush()
         self.rows = len(rows)
         size = os.get_terminal_size(sys.stdout.fileno())
         self._size = (size.columns, size.lines)
-        # A traceback or usage error would print among the early rows, so it waits until they are gone.
-        self._stderr, sys.stderr = sys.stderr, self._held
+        # A traceback or usage error would print among the early rows, so it waits until they are gone; one
+        # redirected away from the terminal goes where it was sent.
+        if sys.stderr.isatty():
+            self._stderr, sys.stderr = sys.stderr, self._held
 
     def adopt(self) -> tuple[int, tuple[int, int], str]:
         """Hand the early rows to the panel: how many, the terminal size they were painted at, and what stderr got."""
@@ -102,7 +107,9 @@ class FirstFrame:
         self.restore_input()
         if rows := self.rows:
             self.rows = 0
-            sys.stdout.write('\x1b[0m\r' + (f'\x1b[{rows - 1}A' if rows > 1 else '') + '\x1b[J' + INLINE_OFF)
+            sys.stdout.write(
+                '\x1b[0m\r' + (f'\x1b[{rows - 1}A' if rows > 1 else '') + '\x1b[J' + INLINE_OFF + PASTE_OFF
+            )
             sys.stdout.flush()
         if held := self._release_stderr():
             sys.stderr.write(held)
