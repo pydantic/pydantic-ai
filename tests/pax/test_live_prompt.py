@@ -226,6 +226,32 @@ async def test_interrupt_targets_work_and_preserves_draft(key: str) -> None:
         assert live.buffer.text == 'retained draft'
 
 
+async def test_working_rule_counts_the_turn_and_names_esc() -> None:
+    now = [100.0]
+    async with editor() as (live, pipe, _):
+        live.interrupts = Interrupts(clock=lambda: now[0])
+        started, done = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            started.set()
+            await anyio.sleep_forever()
+
+        async def run() -> None:
+            assert not await live.interrupts.run(operation())
+            done.set()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            await started.wait()
+            now[0] += 72
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule.startswith('─ Working ⠋ 1m 12s · Esc to interrupt ─')
+            pipe.send_text('\x1b')
+            await done.wait()
+        assert not live.interrupts.exit_requested
+        assert live.interrupts.elapsed == 0
+
+
 async def test_ctrl_l_clears_the_screen_but_keeps_the_draft_and_queue() -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal) as (live, pipe, _):

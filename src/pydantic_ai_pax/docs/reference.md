@@ -1201,7 +1201,7 @@ response has omitted usage information.
 ```text
 Follow-up: Add tests for the change
 Command: /usage
-─ Working ⠋ ────────────────────────────────────
+─ Working ⠋ 12s · Esc to interrupt ─────────────
 /
 /resume Browse or restore a saved session; claude or codex imports theirs
 /set Change settings; no arguments opens menu
@@ -1215,6 +1215,10 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+While a turn or command runs, the rule above the draft shows the working animation,
+the time it has run, and that Esc interrupts it (`─ Working ⠋ 12s · Esc to interrupt`).
+Ctrl-C interrupts too, and a second Ctrl-C within two seconds quits; Esc never quits.
+With a draft or a queued message, the rule adds `Enter to queue` and the steer key.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold. This keeps your prompts apart from
 answers. Steering messages, commands entered during a turn, and prompts restored by
@@ -1739,7 +1743,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to fit; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1752,6 +1756,19 @@ Every field is independently selectable and reorderable:
 
 Reordering preserves each field's colours and conditional visibility. Plugin
 fragments move and hide together through `plugins`, not as individual fields.
+
+When the row is wider than the terminal, fields give way in this order until it
+fits, and the rest keep their configured order:
+
+1. `workspace` shortens to its last folder (`…/jsonrc`).
+2. `assistant_age`, `output`, `cost`, `queued`, `updates`, and `live` are hidden, in that order.
+3. `workspace` is hidden, then `plugins`, then `model`.
+4. `context` drops its labels and keeps the figure (`61k/1m`).
+
+`activity` and the context figure are never hidden: they say whether CLAI is
+working and how full the conversation is. A row that still does not fit is cut
+at the terminal's edge; it never wraps onto a second row. At 80 columns the
+default layout reads `claude-opus-5-5 | …/jsonrc | context: 61k/1m tokens | ready`.
 To set the list directly, keep the JSON in one quoted argument:
 
 ```text

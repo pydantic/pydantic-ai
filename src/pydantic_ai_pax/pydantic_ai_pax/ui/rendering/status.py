@@ -7,11 +7,11 @@ import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Self, cast
 
 import anyio
-from rich.cells import set_cell_size
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
@@ -188,15 +188,13 @@ class Status:
             else ''
         )
         queued = self.queued()
+        # A POSIX path can contain terminal controls; sanitize it on every painter.
+        workspace = terminal_text(shown.workspace, keep='')
+        figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            # A POSIX path can contain terminal controls; sanitize it on every painter.
-            'workspace': [(theme.MUTED, _short_path(terminal_text(shown.workspace, keep='')))],
-            'context': [
-                (theme.MUTED, 'context: '),
-                (theme.WARNING if shown.context_alert else theme.MUTED, context),
-                (theme.MUTED, ' tokens'),
-            ],
+            'workspace': [(theme.MUTED, _short_path(workspace))],
+            'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
             'activity': activity,
@@ -228,18 +226,23 @@ class Status:
         """Show compact used/max context, with `?` for unknown counts."""
         return ''.join(self.segments(frame))
 
-    def toolbar(self) -> list[tuple[str, str]]:
-        """Apply visibility and ordering without tying any field's style to its position."""
+    def toolbar(self, *, width: int | None = None) -> list[tuple[str, str]]:
+        """Apply visibility and ordering without tying any field's style to its position.
+
+        With `width`, take `FIT_ORDER`'s steps until the row fits in that many cells, keeping the
+        configured order of what is left; a row that still does not fit is the painter's to cut.
+        """
         fields = self._fields()
-        painted: list[tuple[str, str]] = []
-        for name in self.fields():
-            fragments = fields[name]
-            if not any(text for _, text in fragments):
-                continue
-            if painted:
-                painted.append((theme.MUTED, ' | '))
-            painted.extend((role, text) for role, text in fragments if text)
-        return painted
+        row = _join(fields, self.fields())
+        if width is None:
+            return row
+        shorter = _shortened(fields)
+        for name in FIT_ORDER:
+            if _cells(row) <= width:
+                break
+            fields[name] = shorter.pop(name, [])
+            row = _join(fields, self.fields())
+        return row
 
 
 class StatusLine:
@@ -318,7 +321,7 @@ class StatusLine:
             return
         rows = 4 if height >= 6 and width >= 4 else 1
         # Leave one column unused so the footer cannot trigger autowrap.
-        fragments = self.status.toolbar()
+        fragments = self.status.toolbar(width=max(0, width - 1))
         prefix = '\x1b7'
         if (height, rows) != (self._height, self._rows):
             self._clear()
@@ -346,6 +349,53 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+FIT_ORDER: tuple[FooterField, ...] = (
+    'workspace',
+    'assistant_age',
+    'output',
+    'cost',
+    'queued',
+    'updates',
+    'live',
+    'workspace',
+    'plugins',
+    'model',
+    'context',
+)
+"""How a footer too wide for the terminal gives way, first step first.
+
+The first step on a field shortens it, as `workspace` to its last folder and `context` to its bare
+figure; a step on a field with no shorter form left hides it. `activity` is never hidden, nor is
+`context`'s figure: they say whether CLAI is working and how full the conversation is.
+"""
+
+
+def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:
+    """The fields of `order` that have text, joined by separators."""
+    painted: list[tuple[str, str]] = []
+    for name in order:
+        fragments = [(role, text) for role, text in fields[name] if text]
+        if fragments:
+            if painted:
+                painted.append((theme.MUTED, ' | '))
+            painted.extend(fragments)
+    return painted
+
+
+def _shortened(fields: dict[FooterField, list[tuple[str, str]]]) -> dict[FooterField, list[tuple[str, str]]]:
+    """The shorter form of each field `FIT_ORDER` shortens before hiding it."""
+    role, path = fields['workspace'][0]
+    folder = PurePath(path).name
+    return {
+        'workspace': [(role, f'…/{folder}' if folder and folder != path else path)],
+        'context': fields['context'][1:2],
+    }
+
+
+def _cells(row: Sequence[tuple[str, str]]) -> int:
+    return sum(cell_len(text) for _, text in row)
 
 
 def _compact_tokens(count: int | None) -> str:

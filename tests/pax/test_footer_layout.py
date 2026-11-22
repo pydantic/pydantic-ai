@@ -12,6 +12,7 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import ValidationError
+from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
@@ -100,6 +101,44 @@ async def test_conditional_fields_empty_layout_and_narrow_terminal() -> None:
         pass
     assert 'ready' in Text.from_ansi(stream.getvalue()).plain
     assert 'agent default' not in Text.from_ansi(stream.getvalue()).plain
+
+
+DEEP = '/private/tmp/claude-501/-Users-adtyavrdhn/f1229371-cff2/scratchpad/proj/jsonrc'
+WIDE = '/srv/プロジェクト/日本語のリポジトリ'
+
+
+@pytest.mark.parametrize(
+    ('workspace', 'width', 'expected'),
+    [
+        (DEEP, 200, 'opus | …hn/f1229371-cff2/scratchpad/proj/jsonrc | context: 61k/1m tokens | 1,804 output tokens'
+         ' | $0.0123 | running: shell | docker sandbox'),
+        (DEEP, 120, 'opus | …/jsonrc | context: 61k/1m tokens | 1,804 output tokens | $0.0123 | running: shell'
+         ' | docker sandbox'),
+        (DEEP, 80, 'opus | …/jsonrc | context: 61k/1m tokens | running: shell | docker sandbox'),
+        (DEEP, 60, 'opus | context: 61k/1m tokens | running: shell'),
+        (DEEP, 40, 'context: 61k/1m tokens | running: shell'),
+        (DEEP, 30, '61k/1m | running: shell'),
+        (WIDE, 90, 'opus | …/日本語のリポジトリ | context: 61k/1m tokens | running: shell | docker sandbox'),
+    ],
+)
+def test_a_narrow_footer_gives_way_by_priority_in_the_configured_order(
+    workspace: str, width: int, expected: str
+) -> None:
+    status = Status(
+        model='opus',
+        workspace=workspace,
+        context_tokens=61_000,
+        context_window=1_000_000,
+        output_tokens=1804,
+        cost=Decimal('0.0123'),
+        activity='running: shell',
+        status_segments=(lambda: 'docker sandbox',),
+    )
+    assert ''.join(text for _, text in status.toolbar(width=width)) == expected
+    assert cell_len(expected) <= width
+    # The figure keeps its warning colour once its labels are gone.
+    status.context_alert = True
+    assert (theme.WARNING, '61k/1m') in status.toolbar(width=30)
 
 
 @pytest.mark.parametrize('fields', [['bogus'], ['model', 'model'], 'model', [1]])

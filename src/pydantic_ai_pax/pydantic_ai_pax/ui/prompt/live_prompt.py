@@ -30,6 +30,7 @@ from pydantic_ai_pax.ui.prompt.prompt_resize import resize_notifications
 from pydantic_ai_pax.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
@@ -587,8 +588,10 @@ class LivePrompt:
             head, glyph = '─ Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
             chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
-            hints = f'| Enter: queue | {chord}: steer ' if self.queued_messages or self.buffer.text.strip() else ''
-            title = truncate(f'{head}{glyph} {hints}', width)
+            hints = f'· Enter to queue · {chord} to steer ' if self.queued_messages or self.buffer.text.strip() else ''
+            # Esc, unlike Ctrl-C, never counts toward the double press that quits.
+            elapsed = format_duration(self.interrupts.elapsed)
+            title = truncate(f'{head}{glyph} {elapsed} · Esc to interrupt {hints}', width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
