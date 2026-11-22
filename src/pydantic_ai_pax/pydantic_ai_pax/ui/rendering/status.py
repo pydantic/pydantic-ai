@@ -188,13 +188,15 @@ class Status:
             else ''
         )
         queued = self.queued()
-        # A POSIX path can contain terminal controls; sanitize it on every painter.
-        workspace = terminal_text(shown.workspace, keep='')
-        figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            'workspace': [(theme.MUTED, _short_path(workspace))],
-            'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
+            # A POSIX path can contain terminal controls; sanitize it on every painter.
+            'workspace': [(theme.MUTED, _short_path(terminal_text(shown.workspace, keep='')))],
+            'context': [
+                (theme.MUTED, 'context: '),
+                (theme.WARNING if shown.context_alert else theme.MUTED, context),
+                (theme.MUTED, ' tokens'),
+            ],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
             'activity': activity,
@@ -232,8 +234,8 @@ class Status:
         With `width`, take `FIT_ORDER`'s steps until the row fits in that many cells, keeping the
         configured order of what is left; a row that still does not fit is the painter's to cut.
         """
-        fields = self._fields()
-        row = _join(fields, self.fields())
+        fields, order = self._fields(), self.fields()
+        row = _join(fields, order)
         if width is None:
             return row
         shorter = _shortened(fields)
@@ -241,7 +243,7 @@ class Status:
             if _cells(row) <= width:
                 break
             fields[name] = shorter.pop(name, [])
-            row = _join(fields, self.fields())
+            row = _join(fields, order)
         return row
 
 

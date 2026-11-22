@@ -110,10 +110,18 @@ WIDE = '/srv/プロジェクト/日本語のリポジトリ'
 @pytest.mark.parametrize(
     ('workspace', 'width', 'expected'),
     [
-        (DEEP, 200, 'opus | …hn/f1229371-cff2/scratchpad/proj/jsonrc | context: 61k/1m tokens | 1,804 output tokens'
-         ' | $0.0123 | running: shell | docker sandbox'),
-        (DEEP, 120, 'opus | …/jsonrc | context: 61k/1m tokens | 1,804 output tokens | $0.0123 | running: shell'
-         ' | docker sandbox'),
+        (
+            DEEP,
+            200,
+            'opus | …hn/f1229371-cff2/scratchpad/proj/jsonrc | context: 61k/1m tokens | 1,804 output tokens'
+            ' | $0.0123 | running: shell | docker sandbox',
+        ),
+        (
+            DEEP,
+            120,
+            'opus | …/jsonrc | context: 61k/1m tokens | 1,804 output tokens | $0.0123 | running: shell'
+            ' | docker sandbox',
+        ),
         (DEEP, 80, 'opus | …/jsonrc | context: 61k/1m tokens | running: shell | docker sandbox'),
         (DEEP, 60, 'opus | context: 61k/1m tokens | running: shell'),
         (DEEP, 40, 'context: 61k/1m tokens | running: shell'),

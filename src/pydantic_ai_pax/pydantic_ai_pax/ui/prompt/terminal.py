@@ -196,7 +196,8 @@ class Terminal(Generic[DepsT, OutputT]):
                 [
                     (theme.color(style), text)
                     for style, text in (
-                        [(theme.MUTED, self.images.notice)] if self.images.notice
+                        [(theme.MUTED, self.images.notice)]
+                        if self.images.notice
                         else self._shown().status.toolbar(width=self.console.width)
                     )
                 ]
