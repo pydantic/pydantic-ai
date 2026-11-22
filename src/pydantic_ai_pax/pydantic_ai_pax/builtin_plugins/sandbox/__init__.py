@@ -33,8 +33,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.local import REF_PROVIDER as LOCAL_REF_PROVIDER
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login, ref_provider
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.config.api_keys import load_keys
@@ -62,13 +61,8 @@ def _owned(ref: WorkspaceRef | None) -> WorkspaceRef | None:
 
 
 def _owner(ref: WorkspaceRef) -> SandboxProvider | None:
-    """The provider whose sandbox `ref` names: the one named `ref.provider`, but `local` for a `local-vm` ref.
-
-    A `local` ref names this machine's own folder, the workspace of a conversation outside any sandbox.
-    """
-    if ref.provider == LOCAL_REF_PROVIDER:
-        return PROVIDERS.get('local')
-    return None if ref.provider == 'local' else PROVIDERS.get(ref.provider)
+    """The provider whose sandbox `ref` names; none for a `local` ref, this machine's own folder."""
+    return next((provider for name, provider in PROVIDERS.items() if ref_provider(name) == ref.provider), None)
 
 
 @dataclass(kw_only=True)
@@ -200,7 +194,7 @@ class _EnvWorkspace(WrapperWorkspace):
     """Adds the variables `request_env` gave the sandbox to every command, read as each one starts.
 
     It reports the sandbox's ref as `/sandbox` recorded it, which responses carry, so `/sandbox local`'s VMs stay
-    apart from the harness's `smol` ones.
+    apart from the harness's own `smol` and `boxlite` ones.
     """
 
     def __init__(self, wrapped: Workspace, *, env: Mapping[str, str], ref: WorkspaceRef) -> None:
@@ -242,8 +236,8 @@ class SandboxPlugin(Plugin):
             Command(
                 name='sandbox',
                 description=(
-                    f'Run a new conversation in a sandbox ({", ".join(PROVIDERS)}; local uses SmolVM on this machine), '
-                    'or show where it runs'
+                    f'Run a new conversation in a sandbox ({", ".join(PROVIDERS)}; local ones run a VM on this '
+                    'machine), or show where it runs'
                 ),
                 handler=self.command,
                 complete=self.complete,
@@ -271,7 +265,11 @@ class SandboxPlugin(Plugin):
         return None if ref is None else self.sandbox(ref)
 
     def complete(self, args: list[str]) -> Iterable[str]:
-        return (*PROVIDERS, 'delete') if len(args) <= 1 else ()
+        words = [name.split() for name in PROVIDERS]
+        if len(args) <= 1:
+            return (*dict.fromkeys(first for first, *_ in words), 'delete')
+        # The second word of a provider such as `local smol`.
+        return [second for first, *rest in words for second in rest if first == args[0]] if len(args) == 2 else ()
 
     async def command(self, args: list[str]) -> str:
         match args:
@@ -279,7 +277,9 @@ class SandboxPlugin(Plugin):
                 return self._where()
             case ['delete']:
                 return await self._delete()
-            case [name] if name in PROVIDERS:
+            case ['local']:
+                return _local_choice()
+            case [*words] if (name := ' '.join(words)) in PROVIDERS:
                 return await self._start(PROVIDERS[name])
             case _:
                 raise ValueError(f'Usage: /sandbox [{" | ".join(PROVIDERS)} | delete]')
@@ -404,6 +404,15 @@ def _github() -> GitHubCredential | None:
     # Not caught: `gh_user` asks GitHub, and a GitHub too slow to answer is no reason to say the user has no login.
     login = gh_user('github.com') if token is not None else None
     return None if token is None or login is None else GitHubCredential(login=login, token=token)
+
+
+def _local_choice() -> str:
+    """What `/sandbox local` says: which engine to run the VM with, and what each still needs here."""
+    local = [provider for name, provider in PROVIDERS.items() if name.startswith('local ')]
+    offer = ' or '.join(f'/sandbox {provider.name} ({provider.title})' for provider in local)
+    lines = [f'/sandbox local runs a new conversation in a VM on this machine. Pick its engine: {offer}.']
+    lines += [f'{provider.title}: {missing}' for provider in local if (missing := provider.missing()) is not None]
+    return '\n'.join(lines)
 
 
 def _started(

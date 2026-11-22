@@ -40,6 +40,7 @@ Docs outside the package are copied into `pydantic_ai_pax/_docs/` by the wheel's
 _HARNESS_DOCS = (
     'ask_user',
     'boxd_sandbox',
+    'boxlite_sandbox',
     'code_mode',
     'coder',
     'compaction',

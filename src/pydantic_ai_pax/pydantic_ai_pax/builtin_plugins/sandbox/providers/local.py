@@ -1,20 +1,25 @@
-"""`/sandbox local`: a SmolVM microVM on this machine; the GitHub token is written into the VM, where anything run there can read it.
+"""`/sandbox local smol` and `/sandbox local boxlite`: a microVM on this machine; the GitHub token is written into the VM.
 
-No proxy stands between the VM and GitHub, so `give_github_login` writes the token into the VM's home, and it goes
-when the VM does. Nothing of this machine is mounted into the VM: like a cloud sandbox, it holds a copy of the
-checkout, and it has network access, from this machine's network, to clone and push.
+`/sandbox local` alone asks which: SmolVM (`smol`) runs on macOS (Apple silicon), Linux, and Windows; BoxLite
+(`boxlite`) on macOS (Apple silicon) and Linux. No proxy stands between the VM and GitHub, so `give_github_login`
+writes the token into the VM's home, where anything run there can read it, and it goes when the VM does. Nothing of
+this machine is mounted into the VM: like a cloud sandbox, it holds a copy of the checkout, and it has network
+access, from this machine's network, to clone and push.
 
-SmolVM runs on macOS (Apple silicon), Linux, and Windows. Where smolmachines is installed, which has wheels for
-macOS and Linux only, the VM runs through it in CLAI's process (harness `SmolSandboxBackend`), and it ends with
-that process, so `close` runs `sync`: smolmachines writes a VM's disk back only then or on a stop. Elsewhere, Windows
-included, CLAI drives the `smolvm` CLI on `PATH`, whose VM would outlive CLAI, so `close` stops it. That path has
-run only against a fake CLI and smolvm 1.36's Linux build, not yet on a Windows host. Either way the
-next command starts the VM again, and a conversation resumed later finds its files.
+SmolVM: where smolmachines is installed, which has wheels for macOS and Linux only, the VM runs through it in
+CLAI's process (harness `SmolSandboxBackend`), and it ends with that process, so `close` runs `sync`: smolmachines
+writes a VM's disk back only then or on a stop. Elsewhere, Windows included, CLAI drives the `smolvm` CLI on
+`PATH`, whose VM would outlive CLAI, so `close` stops it. That path has run only against a fake CLI and smolvm
+1.36's Linux build, not yet on a Windows host. Either way the next command starts the VM again, and a conversation
+resumed later finds its files.
+
+BoxLite: the box runs in CLAI's process (harness `BoxLiteSandboxBackend`) and stops when CLAI exits, keeping its
+disk, writes included, so `close` has nothing to do. One process at a time can use BoxLite's home directory.
 """
 
 import platform
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib.util import find_spec
@@ -29,27 +34,43 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential, ref_provider
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 
-REF_PROVIDER = 'local-vm'
-"""What `WorkspaceRef.provider` holds for this provider's VMs.
-
-Not `local`, which names this machine's own folder, nor the harness's `smol`, which a `SmolSandbox` of the user's
-own makes too: `/sandbox` must not take that VM for one of its sandboxes.
-"""
-
 IMAGE = 'python:3.13'
-"""Debian with bash and git, which the copy of the checkout needs; smolvm pulls it the first time."""
+"""Debian with bash and git, which the copy of the checkout needs; the engine pulls it the first time."""
 
 _SYNC_TIMEOUT = 60.0
 
+_INSTALL = "Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
+
+
+def _not_on_intel_mac(title: str) -> str | None:
+    if sys.platform == 'darwin' and platform.machine() != 'arm64':
+        return f'{title} runs only on Macs with Apple silicon.'
+    return None
+
+
+async def _boot(
+    backend: SandboxBackend, name: str, delete: Callable[[WorkspaceRef], Awaitable[None]]
+) -> tuple[WorkspaceRef, SandboxBackend]:
+    """Boot a new VM and make its working folder, deleting it if that fails; the ref `/sandbox` records for it."""
+    try:
+        await backend.working_dir()
+    except BaseException:
+        with anyio.CancelScope(shield=True):
+            if backend.ref is not None:
+                await delete(backend.ref)
+        raise
+    assert backend.ref is not None
+    return WorkspaceRef(provider=ref_provider(name), id=backend.ref.id), backend
+
 
 @dataclass(frozen=True)
-class LocalProvider:
-    """[SmolVM](https://smolmachines.com) microVMs on this machine, with no account or key."""
+class SmolProvider:
+    """`/sandbox local smol`: [SmolVM](https://smolmachines.com) microVMs on this machine, with no account or key."""
 
-    name: str = 'local'
+    name: str = 'local smol'
     title: str = 'SmolVM'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = True
@@ -63,14 +84,12 @@ class LocalProvider:
             return (
                 'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
                 'into a folder on PATH. It needs the Windows Hypervisor Platform. '
-                '/sandbox local on Windows has not been tested on a Windows host yet.'
+                '/sandbox local smol on Windows has not been tested on a Windows host yet.'
             )
-        if sys.platform == 'darwin' and platform.machine() != 'arm64':
-            return 'SmolVM runs only on Macs with Apple silicon.'
-        return "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
+        return _not_on_intel_mac(self.title) or f'SmolVM support is not installed. {_INSTALL}'
 
     def _backend(self, ref: WorkspaceRef | None) -> SandboxBackend:
-        ref = None if ref is None else _vm(ref)
+        ref = None if ref is None else WorkspaceRef(provider='smol', id=ref.id)
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
@@ -89,17 +108,7 @@ class LocalProvider:
         )
 
     async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
-        backend = self._backend(None)
-        try:
-            # Boots the VM and makes the working folder.
-            await backend.working_dir()
-        except BaseException:
-            with anyio.CancelScope(shield=True):
-                if backend.ref is not None:
-                    await self._delete(backend.ref)
-            raise
-        assert backend.ref is not None
-        return WorkspaceRef(provider=REF_PROVIDER, id=backend.ref.id), backend
+        return await _boot(self._backend(None), self.name, self.delete)
 
     def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
         return self._backend(ref)
@@ -118,17 +127,65 @@ class LocalProvider:
                     await backend.run(['sync'], timeout=_SYNC_TIMEOUT)
 
     async def delete(self, ref: WorkspaceRef) -> None:
-        await self._delete(_vm(ref))
-
-    async def _delete(self, vm: WorkspaceRef) -> None:
+        """Delete the VM `ref` names; the harness's ref, or `/sandbox`'s, as only the id is read."""
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-            await SmolSandbox[None]().destroy(vm)
+            await SmolSandbox[None]().destroy(WorkspaceRef(provider='smol', id=ref.id))
         else:
             from pydantic_ai_harness._smolvm_cli import delete_machine
 
-            await delete_machine(vm.id)
+            await delete_machine(ref.id)
+
+
+@dataclass(frozen=True)
+class BoxLiteProvider:
+    """`/sandbox local boxlite`: [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VMs on this machine, with no key."""
+
+    name: str = 'local boxlite'
+    title: str = 'BoxLite'
+    working_dir: str = '/workspace'
+    token_in_sandbox: bool = True
+
+    def missing(self) -> str | None:
+        if find_spec('boxlite') is not None:
+            return None
+        if sys.platform == 'win32':
+            return 'BoxLite does not run on Windows: use /sandbox local smol.'
+        return (
+            _not_on_intel_mac(self.title)
+            or f'BoxLite support is not installed. {_INSTALL} It needs Python 3.14 or older.'
+        )
+
+    def _backend(self, ref: WorkspaceRef | None) -> SandboxBackend:
+        from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
+
+        if ref is not None:
+            # Checks the name, so a history cannot open a box of another tool's, such as one with folders mounted.
+            return BoxLiteSandbox[None](working_dir=self.working_dir, env=SANDBOX_ENV).backend(
+                WorkspaceRef(provider='boxlite', id=ref.id)
+            )
+        return BoxLiteSandboxBackend(
+            image=IMAGE, allow_internet_access=True, working_dir=self.working_dir, env=SANDBOX_ENV
+        )
+
+    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+        return await _boot(self._backend(None), self.name, self.delete)
+
+    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+        return self._backend(ref)
+
+    async def close(self, backend: SandboxBackend) -> None:
+        # The box stops when CLAI exits, keeping its disk, so there is nothing to write back or stop.
+        pass
+
+    async def delete(self, ref: WorkspaceRef) -> None:
+        """Delete the box `ref` names; the harness's ref, or `/sandbox`'s, as only the id is read."""
+        if (missing := self.missing()) is not None:
+            raise WorkspaceUnavailableError(missing)
+        from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
+
+        await BoxLiteSandbox[None]().destroy(WorkspaceRef(provider='boxlite', id=ref.id))
 
 
 class _Reached(WorkspaceBackend, SupportsCommands):
@@ -169,8 +226,3 @@ class _Reached(WorkspaceBackend, SupportsCommands):
             raise
         finally:
             self.reached = self.reached or reached
-
-
-def _vm(ref: WorkspaceRef) -> WorkspaceRef:
-    """The harness's ref for the VM `ref` names."""
-    return WorkspaceRef(provider='smol', id=ref.id)
