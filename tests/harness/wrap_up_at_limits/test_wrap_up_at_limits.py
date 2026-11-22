@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from dataclasses import replace
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -13,6 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, RunContext, ToolOutput, capture_run_messages
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -48,10 +50,23 @@ _TRIGGERS: list[tuple[UsageLimits | None, float | None, str]] = [
     (UsageLimits(request_limit=2), None, 'request_limit'),
     # 0.01 a response: after two, a final pair is projected to reach 0.04.
     (UsageLimits(cost_limit=Decimal('0.035')), None, 'cost_limit'),
-    # Less than `timeout_margin` (60s) is left from the start, so the first request is the last.
-    (None, 30, 'timeout'),
+    # 20s a step: at the fourth request 30s are left, less than two more steps.
+    (None, 90, 'timeout'),
 ]
 """The `usage_limits`, `timeout` and expected `wrapped_up_by` of a run for each kind of wrap-up trigger."""
+
+
+@dataclass
+class _Clock(AbstractCapability[None]):
+    """The run's clock, which only moves when `advance` is called, so a test sets how long each step takes."""
+
+    now: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
+
+    def get_run_clock(self) -> Callable[[], datetime]:
+        return lambda: self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
 
 
 def _wrap_up_prompted(messages: list[ModelMessage]) -> bool:
@@ -98,17 +113,23 @@ class _Researcher:
 
 
 def _agent(
-    model: _Researcher, looked_up: list[str], capability: WrapUpAtLimits[None] | None = None
+    model: _Researcher,
+    looked_up: list[str],
+    capability: WrapUpAtLimits[None] | None = None,
+    clock: _Clock | None = None,
 ) -> Agent[None, str]:
     agent = Agent(
         FunctionModel(model, stream_function=model.stream),
         deps_type=type(None),
-        capabilities=[capability or WrapUpAtLimits()],
+        capabilities=[*([clock] if clock else []), capability or WrapUpAtLimits()],
     )
 
     @agent.tool_plain
     def look_up(topic: str) -> str:
         looked_up.append(topic)
+        # Two calls a step: 20s a step.
+        if clock:
+            clock.advance(10)
         return f'notes on {topic}'
 
     return agent
@@ -268,27 +289,43 @@ class TestWrapUpAtLimits:
         assert result.usage.cost == Decimal('0.03')
         assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, 'cost_limit')]
 
-    async def test_timeout_wraps_up_with_time_left(self) -> None:
+    async def test_timeout_wraps_up_when_two_more_steps_do_not_fit(self) -> None:
         model = _Researcher()
         looked_up: list[str] = []
 
-        result = await _agent(model, looked_up).run('Research', timeout=30)
+        # 20s a step: 70s and 50s left still fit two more, 30s at the fourth request doesn't.
+        result = await _agent(model, looked_up, clock=_Clock()).run('Research', timeout=90)
 
         assert result.output == 'what I found so far'
-        assert looked_up == []
+        assert sorted(looked_up) == ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
         assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, 'timeout')]
-        assert [(choice, prompted) for choice, _, prompted in model.requests] == [('none', True)]
+        assert [(choice, prompted) for choice, _, prompted in model.requests][-1] == ('none', True)
 
-    async def test_timeout_margin_none_does_not_wrap_up_for_time(self) -> None:
-        result = await _agent(_Researcher(), [], WrapUpAtLimits(timeout_margin=None)).run(
-            'Research', usage_limits=UsageLimits(request_limit=2), timeout=30
+    async def test_timeout_margin_keeps_time_in_reserve(self) -> None:
+        looked_up: list[str] = []
+
+        # With 30s in reserve, the third request's 50s left are less than two steps and the margin.
+        result = await _agent(_Researcher(), looked_up, WrapUpAtLimits(timeout_margin=30), _Clock()).run(
+            'Research', timeout=90
         )
 
+        assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
+        assert wrapped_up_by(result.new_messages()) == 'timeout'
+
+    async def test_short_timeout_still_calls_tools(self) -> None:
+        looked_up: list[str] = []
+
+        # Steps take milliseconds, so a 30s timeout leaves room for many.
+        result = await _agent(_Researcher(), looked_up).run(
+            'Research', usage_limits=UsageLimits(request_limit=3), timeout=30
+        )
+
+        assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
         assert wrapped_up_by(result.new_messages()) == 'request_limit'
 
-    async def test_timeout_far_off_is_unchanged(self) -> None:
-        result = await _agent(_Researcher(), [], WrapUpAtLimits(timeout_margin=5)).run(
-            'Research', usage_limits=UsageLimits(request_limit=2), timeout=30
+    async def test_timeout_margin_none_does_not_wrap_up_for_time(self) -> None:
+        result = await _agent(_Researcher(), [], WrapUpAtLimits(timeout_margin=None), _Clock()).run(
+            'Research', usage_limits=UsageLimits(request_limit=5), timeout=90
         )
 
         assert wrapped_up_by(result.new_messages()) == 'request_limit'
@@ -316,10 +353,17 @@ class TestWrapUpAtLimits:
             # Native and prompted output answer in text that is parsed against the schema.
             return ModelResponse(parts=[TextPart('{"summary": "partial"}')], usage=_PRICED)
 
-        agent = Agent(FunctionModel(model), output_type=output_type, capabilities=[WrapUpAtLimits()])
+        clock = _Clock()
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            output_type=output_type,
+            capabilities=[clock, WrapUpAtLimits[None]()],
+        )
 
         @agent.tool_plain
         def look_up(topic: str) -> str:
+            clock.advance(20)
             return topic
 
         result = await agent.run('Research', usage_limits=limits, timeout=timeout)

@@ -1103,8 +1103,8 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 
 ## WrapUpAtLimits
 
-When the run's `UsageLimits` leave room for one more model request but not another, or less than
-`timeout_margin` seconds (default 60) are left before the run's `timeout=` deadline, makes that request
+When the run's `UsageLimits` leave room for one more model request but not another, or the time left
+before the run's `timeout=` deadline fits only two more steps as long as its longest, makes that request
 the last: no function tools callable, with the tool definitions kept (cached tools and instructions match), plus a
 request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
 with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
@@ -1140,7 +1140,7 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (fewer calls left than the
   largest batch so far), input/output/total token and `cost_limit` limits (projected from the run's
   responses), and the run's `timeout=` (`'timeout'`). `per_request_input_tokens_limit` is not projected.
-  `timeout_margin=None` turns the time trigger off. A larger batch that goes over
+  `timeout_margin` (default `0.0`) keeps extra seconds in reserve; `None` turns the time trigger off. A larger batch that goes over
   `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
 - `wrapped_up_by(result.new_messages())` returns the `LimitName` that cut the run short, or `None`; it reads
   the `WrapUpPart` on the final request, found by type.
