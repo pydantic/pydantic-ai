@@ -552,7 +552,7 @@ control the group's position and visibility with `display.footer_fields`; see th
 The row repaints about ten times a second while CLAI works and once a second while idle,
 so it runs that often: no blocking IO, no awaits, no printing. Return an empty
 string to contribute nothing that frame. On a narrow terminal the
-whole group is hidden before the model, context, and activity; fragments cannot set their own colours. get_status_segments adds
+whole group is hidden before the model; fragments cannot set their own colours. get_status_segments adds
 to the row; replacing the row, prompt editor, splash, or adding custom palettes
 is still a CLAI source change.
 

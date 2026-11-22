@@ -363,14 +363,15 @@ FIT_ORDER: tuple[FooterField, ...] = (
     'live',
     'workspace',
     'plugins',
-    'model',
     'context',
+    'model',
 )
 """How a footer too wide for the terminal gives way, first step first.
 
 The first step on a field shortens it, as `workspace` to its last folder and `context` to its bare
 figure; a step on a field with no shorter form left hides it. `activity` is never hidden, nor is
-`context`'s figure: they say whether CLAI is working and how full the conversation is.
+`context`'s figure: they say whether CLAI is working and how full the conversation is. `model` goes
+last because it names a focused subagent whose figures are shown.
 """
 
 

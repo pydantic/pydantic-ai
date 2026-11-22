@@ -124,8 +124,9 @@ WIDE = '/srv/プロジェクト/日本語のリポジトリ'
         ),
         (DEEP, 80, 'opus | …/jsonrc | context: 61k/1m tokens | running: shell | docker sandbox'),
         (DEEP, 60, 'opus | context: 61k/1m tokens | running: shell'),
-        (DEEP, 40, 'context: 61k/1m tokens | running: shell'),
-        (DEEP, 30, '61k/1m | running: shell'),
+        (DEEP, 46, 'opus | context: 61k/1m tokens | running: shell'),
+        (DEEP, 40, 'opus | 61k/1m | running: shell'),
+        (DEEP, 24, '61k/1m | running: shell'),
         (WIDE, 90, 'opus | …/日本語のリポジトリ | context: 61k/1m tokens | running: shell | docker sandbox'),
     ],
 )
@@ -146,7 +147,7 @@ def test_a_narrow_footer_gives_way_by_priority_in_the_configured_order(
     assert cell_len(expected) <= width
     # The figure keeps its warning colour once its labels are gone.
     status.context_alert = True
-    assert (theme.WARNING, '61k/1m') in status.toolbar(width=30)
+    assert (theme.WARNING, '61k/1m') in status.toolbar(width=24)
 
 
 @pytest.mark.parametrize('fields', [['bogus'], ['model', 'model'], 'model', [1]])

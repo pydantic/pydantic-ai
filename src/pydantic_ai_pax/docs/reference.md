@@ -1763,8 +1763,9 @@ fits, and the rest keep their configured order:
 
 1. `workspace` shortens to its last folder (`…/jsonrc`).
 2. `assistant_age`, `output`, `cost`, `queued`, `updates`, and `live` are hidden, in that order.
-3. `workspace` is hidden, then `plugins`, then `model`.
+3. `workspace` is hidden, then `plugins`.
 4. `context` drops its labels and keeps the figure (`61k/1m`).
+5. `model` is hidden.
 
 Fitting never hides `activity` or the context figure: they say whether CLAI is
 working and how full the conversation is. A row that still does not fit, such as
