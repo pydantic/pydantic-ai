@@ -129,7 +129,10 @@ async def test_live_panel_shows_code_lines_as_they_arrive_and_lexes_the_block_at
     def color(row: Text) -> Color | None:
         return row.get_style_at_offset(console, row.plain.index('return')).color
 
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('Before\n\n```python\n')))
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('Before\n\n```pyt')))
+    # An opening fence shows only as the rule its newline makes.
+    assert [row.plain for row in rows()] == ['Before', '', '']
+    await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta('hon\n')))
     assert rows()[2].plain.startswith('python ─')
     await renderer.on_stream_event(
         PartDeltaEvent(index=0, delta=TextPartDelta('value = """inside\nreturn False\n"""\nreturn False\n'))

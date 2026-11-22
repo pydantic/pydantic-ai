@@ -142,7 +142,7 @@ async def test_a_part_follows_its_console_to_another_file(live: bool) -> None:
             return '\n'.join(Text.from_ansi(row).plain for row in file.transcript.frame(width=80, height=24).rows)
         return file.getvalue()
 
-    console = Console(file=before, force_terminal=False)
+    console = Console(file=before, force_terminal=False, width=80)
     renderer = StreamRenderer(console, stop_loading=lambda: None)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('shown before\nhalf a ')))
     assert ('half a' in shown(before)) == live

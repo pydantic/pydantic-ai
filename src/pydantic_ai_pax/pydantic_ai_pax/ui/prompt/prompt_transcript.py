@@ -248,7 +248,10 @@ class _Lines:
             if part == PREVIEW:
                 # The preview goes on from the unfinished line, as a reasoning heading's text does.
                 # Only the room the lines leave, so with its lines the part keeps to its limits.
-                self.preview = _Lines(max_chars=self.max_chars - self.chars, max_lines=self.max_lines - len(self.lines))
+                self.preview = _Lines(
+                    max_chars=self.max_chars - self.chars - len(self.pending),
+                    max_lines=self.max_lines - len(self.lines),
+                )
                 self.preview.pending, self.preview.pending_theme = self.pending, self.pending_theme
                 self.preview._decoder.style = self._decoder.style
             elif part == DROP:
