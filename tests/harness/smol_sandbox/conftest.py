@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .fake_smolvm import FakeSmolvm, install_fake_smolvm
+
 # smolmachines only has wheels for macOS on Apple silicon and Linux x86_64/aarch64.
 _HAS_SMOL = importlib.util.find_spec('smol') is not None
 collect_ignore = [] if _HAS_SMOL else ['test_conformance.py', 'test_smol_sandbox.py']
@@ -48,8 +50,9 @@ class _PoisonedSmol(types.ModuleType):
 
 @pytest.fixture(autouse=True)
 def _no_real_smol(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Poison `smol` for every test here except the opt-in live tier."""
-    if 'smol_live' in request.keywords:  # pragma: no cover - live tier runs without coverage
+    """Poison `smol` for every test here except the opt-in live tier, where smolmachines is installed."""
+    # The live tier, and jobs without smolmachines, where only the `smolvm` CLI's tests run, have no `smol` to poison.
+    if 'smol_live' in request.keywords or not _HAS_SMOL:  # pragma: lax no cover
         yield
         return
     poisoned = _PoisonedSmol('smol')
@@ -68,3 +71,9 @@ if _HAS_SMOL:  # pragma: no branch - the fixture cannot be defined without its S
         for module in _SMOL_MODULES:
             monkeypatch.setattr(f'{module}.smol', control.module)
         yield control
+
+
+@pytest.fixture
+def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeSmolvm:
+    """Inject the fake `smolvm` CLI, in an absolute `PATH` directory, and return its control surface."""
+    return install_fake_smolvm(monkeypatch, tmp_path)
