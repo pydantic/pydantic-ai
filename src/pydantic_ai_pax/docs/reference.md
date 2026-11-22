@@ -3006,8 +3006,8 @@ Without a `gh` login, the sandbox has no GitHub access, and its copy has no `ori
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
-| `local smol` | `pydantic-ai-pax[local]` on macOS and Linux; on Windows, `smolvm` on `PATH` | none | in the VM | anything run in the VM |
-| `local boxlite` | `pydantic-ai-pax[local]` on macOS and Linux, with Python 3.14 or older; not on Windows | none | in the VM | anything run in the VM |
+| `local smol` | `pydantic-ai-pax[local]` on macOS (Apple silicon) and Linux; on Windows, `smolvm` on `PATH` | none | in the VM | anything run in the VM |
+| `local boxlite` | `pydantic-ai-pax[local]` on macOS (Apple silicon) and Linux, with Python 3.14 or older; not on Windows | none | in the VM | anything run in the VM |
 | `e2b` | `pydantic-ai-pax[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own |
 | `boxd` | `pydantic-ai-pax[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below |
 | `daytona` | `pydantic-ai-pax[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token |
@@ -3072,7 +3072,8 @@ which macOS and Linux do too when the extra is not installed. That way of runnin
 Windows host yet.
 
 How long a sandbox lasts differs. A `local smol` or `local boxlite` VM keeps its files until `/sandbox delete`; it stops when CLAI
-does, and starts again when the conversation is reopened. An `e2b` sandbox that times out is paused, and Daytona stops an idle
+does, and starts again when the conversation is reopened. Where CLAI drives the `smolvm` CLI, closing a session
+stops its VM, so a command another CLAI session is running there fails; run it again. An `e2b` sandbox that times out is paused, and Daytona stops an idle
 one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.

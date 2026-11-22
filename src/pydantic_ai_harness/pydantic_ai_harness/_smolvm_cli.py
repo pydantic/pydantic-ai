@@ -5,7 +5,8 @@ silicon and Linux only. smolvm itself also runs on Windows x86_64, with the Wind
 backend drives its CLI instead, as the smol Rust SDK's local transport does:
 https://github.com/smol-machines/smol/blob/main/sdk/rust/src/transport/local.rs
 
-CLI behavior, from smolvm 1.36's `smolvm machine --help` and that transport:
+CLI behavior, from smolvm 1.36's `smolvm machine --help` and that transport, and verified 2026-11-22 by the live
+tier (`TestLiveSmolvmCliBackend`) against smolvm 1.36.1 on GitHub's `ubuntu-latest` with KVM; not yet on Windows:
 
 - `machine create` records a machine and `machine start` boots it; it keeps running after the CLI exits.
   `machine stop` of a stopped machine exits 0, and smolvm's own failures name a missing machine `NOT_FOUND`.
@@ -235,8 +236,8 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
     ) -> CommandResult:
         """Run a command in the VM; on timeout or cancellation, or past the output cap, the CLI is killed.
 
-        With a `timeout`, smolvm also kills the command itself shortly after. Without one, the command ends only if
-        smolvm ends a command whose CLI went away, which the live tier checks but no recorded run has confirmed yet.
+        With a `timeout`, smolvm also kills the command itself shortly after. Without one, smolvm ends a command
+        whose CLI went away: the live tier's cancellation rule passed against smolvm 1.36.1 on Linux.
         """
         argv = command_argv(command, shell)
         check_timeout(timeout)

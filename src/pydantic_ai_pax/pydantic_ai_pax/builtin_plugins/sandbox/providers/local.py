@@ -9,8 +9,8 @@ access, from this machine's network, to clone and push.
 SmolVM: where smolmachines is installed, which has wheels for macOS and Linux only, the VM runs through it in
 CLAI's process (harness `SmolSandboxBackend`), and it ends with that process, so `close` runs `sync`: smolmachines
 writes a VM's disk back only then or on a stop. Elsewhere, Windows included, CLAI drives the `smolvm` CLI on
-`PATH`, whose VM would outlive CLAI, so `close` stops it. That path has run only against a fake CLI and smolvm
-1.36's Linux build, not yet on a Windows host. Either way the next command starts the VM again, and a conversation
+`PATH`, whose VM would outlive CLAI, so `close` stops it. That path has passed the workspace conformance suite against
+smolvm 1.36.1 on Linux, but not yet run on a Windows host. Either way the next command starts the VM again, and a conversation
 resumed later finds its files.
 
 BoxLite: the box runs in CLAI's process (harness `BoxLiteSandboxBackend`) and stops when CLAI exits, keeping its
