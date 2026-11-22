@@ -468,15 +468,19 @@ async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() 
     assert output.getvalue() == '  ⎿ deploy · failed\n\n'
 
 
-async def test_a_narrow_detached_row_keeps_its_exit_code() -> None:
+@pytest.mark.parametrize(
+    ('line_count', 'expected'),
+    [(0, '  ⎿ echo exa… · exit 123\n\n'), (1, '  ⎿ echo ex… · exit 123…\n\n')],
+)
+async def test_a_narrow_detached_row_keeps_its_exit_code(line_count: int, expected: str) -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=24), stop_loading=lambda: None)
     for call_id in ('a', 'b'):
         await renderer.on_stream_event(
             FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo example'}, tool_call_id=call_id))
         )
-    await renderer.on_stream_event(_finished('a', exit_code=123, line_count=0))
-    assert output.getvalue().endswith('  ⎿ echo exa… · exit 123\n\n')
+    await renderer.on_stream_event(_finished('a', exit_code=123, line_count=line_count))
+    assert output.getvalue().endswith(expected)
 
 
 async def test_a_row_under_another_calls_header_names_its_command() -> None:
@@ -517,3 +521,15 @@ async def test_a_failed_command_with_output_on_repeats_only_unseen_last_lines(sh
     await renderer.on_stream_event(CommandOutputEvent(tool_call_id='m', text='one\ntwo\nthree\nfour'))
     await renderer.on_stream_event(_finished('m', exit_code=2, line_count=4))
     assert output.getvalue() == '● shell make\n' + expected
+
+
+async def test_a_preview_line_cut_at_the_terminal_edge_keeps_the_log_path() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=40), stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'cat wide'}, tool_call_id='w'))
+    )
+    await renderer.on_stream_event(CommandOutputEvent(tool_call_id='w', text='x' * 60 + '\n'))
+    await renderer.on_stream_event(_finished('w', exit_code=0, line_count=1))
+    assert output.getvalue().endswith('  ⎿ exit 0 · 1 line · log /tmp/out\n\n')
+

@@ -169,6 +169,8 @@ class ShellPreview:
     completed_lines: int = 0
     shown: int = 0
     """Lines printed as the output preview."""
+    cut: bool = False
+    """Whether a preview line was wider than the terminal and lost its end."""
     pending: str = ''
     carriage_return: bool = False
     tail: deque[str] = field(default_factory=lambda: deque[str](maxlen=FAILURE_TAIL_LINES))
@@ -262,8 +264,14 @@ class ToolOutput:
         if not under_header and label:
             call = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
             half = self.console.width // 2
-            # A short result keeps all of itself; a long reason gives the name half the row.
-            room = self.console.width - row.cell_len - result.cell_len - 3 if result.cell_len <= half else half
+            # A short result keeps all of itself. A long one gives the name at most half the row,
+            # less if its first part (a shell call's exit status) would not fit, leaving a cell for the ellipsis.
+            head = Text(text.split(' · ')[0]).cell_len if ' · ' in text else 0
+            room = (
+                self.console.width - row.cell_len - result.cell_len - 3
+                if result.cell_len <= half
+                else min(half, self.console.width - row.cell_len - head - 4)
+            )
             call.truncate(max(room, 1), overflow='ellipsis')
             row.append_text(call)
             row.append(' · ', style=theme.color(theme.MUTED))
@@ -341,8 +349,10 @@ class ToolOutput:
             if not (self._blank_owed and self._owed == tool_call_id):
                 # Output under another call's header starts its own block.
                 self.separate()
+            line = shell_text(preview.pending, preview.decoder)
+            preview.cut = preview.cut or line.cell_len > self.console.width
             self.console.print(
-                shell_text(preview.pending, preview.decoder),
+                line,
                 style=theme.color(theme.MUTED),
                 markup=False,
                 highlight=False,
@@ -371,7 +381,7 @@ class ToolOutput:
                 lines += f', {preview.shown} shown'
             parts.append(lines)
         style = theme.color(theme.ERROR if failed else theme.MUTED)
-        clipped = self.show_output and preview.shown < (event.line_count or 0)
+        clipped = self.show_output and (preview.cut or preview.shown < (event.line_count or 0))
         log = event.output_path if event.truncated or event.exit_code is None or clipped else None
         self._row(event.tool_call_id, ' · '.join(parts), style=style, log=log)
         # The tail of a cut preview is not the end of the output, so the log is the place to look.
@@ -422,6 +432,8 @@ class ToolOutput:
             case CommandFinishedEvent():
                 if self.tool_calls == 'detailed':
                     self._shell_finished(event)
+                else:
+                    self._shells.pop(event.tool_call_id, None)
             case FileChangeRequestedEvent():
                 if event.operation == 'write':
                     self._writes[event.tool_call_id, event.root_dir, event.path] = event
@@ -434,7 +446,8 @@ class ToolOutput:
         return True
 
     def _shell_started(self, event: CommandStartedEvent) -> None:
-        self._shells[event.tool_call_id] = ShellPreview()
+        if self.show_output:
+            self._shells[event.tool_call_id] = ShellPreview()
         key = (event.tool_call_id, 'shell')
         if key not in self._headers and self.tool_calls == 'detailed':
             self.header(event.tool_call_id, name='shell', argument=event.command)
