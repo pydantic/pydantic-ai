@@ -567,3 +567,22 @@ async def test_a_live_read_row_under_another_calls_header_names_its_call() -> No
     surface.toggle_details()
     rows = [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=24).rows]
     assert rows[rows.index("  ⎿ read_file 'a.py'") + 1] == '    one'
+
+
+async def test_a_live_failed_row_takes_the_new_themes_error_colour() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    selected = ['default']
+    with theme.use(lambda: selected[0]):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+        )
+        await renderer.on_stream_event(_finished('m', exit_code=2, line_count=4))
+        selected[0] = 'tokyo_night'
+        row = next(
+            Text.from_ansi(row)
+            for row in surface.transcript.frame(width=80, height=24).rows
+            if 'exit 2' in Text.from_ansi(row).plain
+        )
+        assert _color(console, row, 'exit 2') == console.get_style(theme.color(theme.ERROR)).color

@@ -174,17 +174,18 @@ def _draw_row(
     hint: bool,
     tail: Sequence[str],
     text: str,
-    style: str,
+    role: str,
     label: str,
     log: str | None,
 ) -> None:
     """Print a result row at `console`'s width, naming `label`'s call first, then the `tail` lines under it.
 
-    The call's name gets the room a short result leaves, or half the row beside a long one.
+    The call's name gets the room a short result leaves, or half the row beside a long one. `role`, the
+    result's theme role, resolves as it draws, so a row rendered again for a new theme takes its colours.
     """
     muted = theme.color(theme.MUTED)
     row = Text('  ⎿ ', style=muted)
-    result = Text(terminal_text(text, keep=''), style=style)
+    result = Text(terminal_text(text, keep=''), style=theme.color(role))
     if label:
         call = Text(terminal_text(label, keep=''), style=muted)
         half = console.width // 2
@@ -204,7 +205,8 @@ def _draw_row(
     shown = bool(text or label)
     if hint:
         more = Text(f' · {EXPAND_HINT}' if shown else EXPAND_HINT, style=muted)
-        if row.cell_len + more.cell_len <= console.width:
+        # A row with nothing else keeps its hint, clipped, so the result never takes no rows.
+        if row.cell_len + more.cell_len <= console.width or not shown:
             row.append_text(more)
             shown = True
     if not shown:
@@ -337,13 +339,13 @@ class ToolOutput:
         tool_call_id: str | None,
         text: str,
         *,
-        style: str,
+        role: str,
         log: str | None = None,
         name: str = '',
         tail: Sequence[str] = (),
         output: str | None = None,
     ) -> MarkdownBlock | None:
-        """Print one result row under the call's header, naming the call first when another header is in between.
+        """Print one result row in theme `role` under the call's header, naming the call first when another header is in between.
 
         `name` stands in for a call whose header this renderer did not print. `tail` lines follow the row.
         With `output`, the live prompt keeps the row as a transcript item that Ctrl+O expands to that
@@ -353,7 +355,7 @@ class ToolOutput:
         if not under_header:
             self.separate()
         label = '' if under_header else self._labels.get(tool_call_id, name)
-        draw = partial(_draw_row, text=text, style=style, label=label, log=log)
+        draw = partial(_draw_row, text=text, role=role, label=label, log=log)
         self._blank_owed = False
         self._owed = None
         surface = self.console.file
@@ -432,7 +434,7 @@ class ToolOutput:
             request = self._changes.get(event.part.tool_call_id)
             reason = f'refused: {request.cancel_reason or "not approved"}' if request and request.cancelled else ''
         if reason:
-            self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
+            self._row(event.part.tool_call_id, reason, role=theme.ERROR, name=event.part.tool_name)
             self.console.print()
         elif (
             event.part.tool_name in ('read_file', 'list_files')
@@ -440,9 +442,7 @@ class ToolOutput:
             and isinstance(content, str)
             and content.strip()
         ):
-            self._row(
-                event.part.tool_call_id, '', style=theme.color(theme.MUTED), name=event.part.tool_name, output=content
-            )
+            self._row(event.part.tool_call_id, '', role=theme.MUTED, name=event.part.tool_name, output=content)
             self.console.print()
 
     def _shell_chunk(self, event: CommandOutputEvent) -> None:
@@ -496,16 +496,19 @@ class ToolOutput:
             if self.show_output and preview.shown < event.line_count:
                 lines += f', {preview.shown} shown'
             parts.append(lines)
-        style = theme.color(theme.ERROR if failed else theme.MUTED)
+        role = theme.ERROR if failed else theme.MUTED
         clipped = self.show_output and (preview.cut or preview.shown < (event.line_count or 0))
         log = event.output_path if event.truncated or event.exit_code is None or clipped else None
         # The tail of a cut preview is not the end of the output, so the log is the place to look.
         unseen = preview.completed_lines - preview.shown
         tail = list(preview.tail)[-unseen:] if failed and not event.truncated and unseen and self.shell_lines else []
-        # Its output comes with the tool result, so the row waits for it.
-        hidden = event.line_count is None or event.line_count > preview.shown
+        # Its output comes with the tool result, so the row waits for it. A command still running
+        # returns no output, only its log.
+        hidden = event.exit_code is not None and (
+            event.line_count is None or event.line_count > preview.shown or preview.cut
+        )
         block = self._row(
-            event.tool_call_id, ' · '.join(parts), style=style, log=log, tail=tail, output='' if hidden else None
+            event.tool_call_id, ' · '.join(parts), role=role, log=log, tail=tail, output='' if hidden else None
         )
         if block is not None:
             self._outputs[event.tool_call_id] = (block, event.pid)
