@@ -159,7 +159,7 @@ READ_LIMIT = 2000
 """Coder's default and largest `read_file` limit, which a header leaves out."""
 
 FAILURE_TAIL_LINES = 3
-"""Last output lines shown under a failed command, so the reason is on screen."""
+"""Last output lines a failed command repeats when its preview left them out, so the reason is on screen."""
 
 
 @dataclass
@@ -223,21 +223,27 @@ class ToolOutput:
             label = argument.strip().split('\n', 1)[0]
         else:
             self.console.print(tool_header(name=name, argument=argument))
-            label = name
+            label = f'{name} {argument.plain if isinstance(argument, Text) else argument}'.rstrip()
         self._labels[tool_call_id] = label
         self._owed = tool_call_id
         self._blank_owed = True
 
     def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None) -> None:
-        """Print one result row under the call's header, naming the call when another header is in between."""
+        """Print one result row under the call's header, naming the call first when another header is in between.
+
+        The name takes at most half the row, so the result stays visible.
+        """
         under_header = self._blank_owed and tool_call_id is not None and self._owed == tool_call_id
         if not under_header:
             self.separate()
         row = Text('  ⎿ ', style=theme.color(theme.MUTED))
-        row.append(terminal_text(text, keep=''), style=style)
         label = self._labels.get(tool_call_id)
         if not under_header and label:
-            row.append(f' · {terminal_text(label, keep="")}', style=theme.color(theme.MUTED))
+            name = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
+            name.truncate(max(self.console.width // 2, 1), overflow='ellipsis')
+            row.append_text(name)
+            row.append(' · ', style=theme.color(theme.MUTED))
+        row.append(terminal_text(text, keep=''), style=style)
         if log is None:
             self.console.print(row, overflow='ellipsis', no_wrap=True)
         else:
@@ -339,7 +345,11 @@ class ToolOutput:
         preview.completed_lines += 1
 
     def _shell_finished(self, event: CommandFinishedEvent) -> None:
-        """One row: the exit status and line count, the log when output was cut, and a failure's last lines."""
+        """One row: the exit status and line count, and the log when output was cut or keeps coming.
+
+        With `show_output`, a failure also repeats the last lines its preview left out. Without it no
+        output is shown: the events carry the raw output, before the harness masks secrets.
+        """
         preview = self._shells.pop(event.tool_call_id, ShellPreview())
         if preview.pending:
             self._shell_line(event.tool_call_id, preview)
@@ -351,9 +361,9 @@ class ToolOutput:
                 lines += f', {preview.shown} shown'
             parts.append(lines)
         style = theme.color(theme.ERROR if failed else theme.MUTED)
-        self._row(
-            event.tool_call_id, ' · '.join(parts), style=style, log=event.output_path if event.truncated else None
-        )
+        clipped = self.show_output and preview.shown < (event.line_count or 0)
+        log = event.output_path if event.truncated or event.exit_code is None or clipped else None
+        self._row(event.tool_call_id, ' · '.join(parts), style=style, log=log)
         # The tail of a cut preview is not the end of the output, so the log is the place to look.
         unseen = preview.completed_lines - preview.shown
         if failed and not event.truncated and unseen:
@@ -397,7 +407,7 @@ class ToolOutput:
             case CommandStartedEvent():
                 self._shell_started(event)
             case CommandOutputEvent():
-                if self.tool_calls == 'detailed':
+                if self.show_output:
                     self._shell_chunk(event)
             case CommandFinishedEvent():
                 if self.tool_calls == 'detailed':

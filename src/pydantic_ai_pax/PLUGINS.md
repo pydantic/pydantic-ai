@@ -3133,7 +3133,7 @@ Built-in tool rendering shows one summary line per call by default, clipped to
 the terminal width and followed by a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
 diffs even with `display.tool_output` off. A finished shell command always adds one result row
-(`⎿ exit 0 · 23 lines`; red, with its last lines, when it fails), and a failed or refused call
+(`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call
 of any tool a renderer does not claim gets a red row with the reason. Other shell output and grep
 results are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control

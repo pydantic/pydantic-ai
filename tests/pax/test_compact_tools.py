@@ -20,8 +20,10 @@ from pydantic_ai_pax.ui.rendering import theme
     ('exit_code', 'truncated', 'rows'),
     [
         (0, False, ['  ⎿ exit 0 · 100 lines']),
-        (1, False, ['  ⎿ exit 1 · 100 lines', '    hidden output', '    hidden output', '    last line']),
-        (None, False, ['  ⎿ running in background · 100 lines']),
+        # The events carry output before the harness masks secrets, so none of it is shown.
+        (1, False, ['  ⎿ exit 1 · 100 lines']),
+        # A background command keeps writing, so its row points at the log.
+        (None, False, ['  ⎿ running in background · 100 lines · log /tmp/out']),
         # A cut preview's tail is not the end of the output, so the row points at the log instead.
         (0, True, ['  ⎿ exit 0 · 100 lines · log /tmp/out']),
         (1, True, ['  ⎿ exit 1 · 100 lines · log /tmp/out']),
@@ -52,6 +54,7 @@ async def test_shell_shows_one_result_row_without_its_output(
     await renderer.on_stream_event(FunctionToolResultEvent(part=part))
     await renderer.finish()
     assert part.content == 'full model result'
+    assert 'hidden output' not in output.getvalue()
     assert output.getvalue() == '\n'.join(['● shell echo secret', *rows, '', ''])
 
 

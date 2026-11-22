@@ -1570,12 +1570,12 @@ Tool calls show a single-line summary followed by a blank line by default.
 Tool and argument names are pink; argument values and bullet markers are muted grey.
 Successful file writes and edits also show their diffs, even with `display.tool_output` off.
 A finished shell command always adds one result row under its header, such as
-`⎿ exit 0 · 23 lines`, or `⎿ running in background` for a background command. A nonzero
-exit is red and is followed by the last 3 lines of output, so the reason is on screen. When
-the output was too long to preview in full, the row ends with the path of the command's log.
-A call of any tool that fails, is refused, or has to be retried gets a red row with the first
-line of the reason. When calls run in parallel, a row that does not sit under its own header
-ends with the command or tool name it belongs to. Other shell output and grep results stay
+`⎿ exit 0 · 23 lines`, or `⎿ running in background · log PATH` for a background command.
+A nonzero exit is red; with `display.tool_output` on, its last lines follow, so the reason is
+on screen. The row ends with the path of the command's log when the command keeps
+running or its output was cut. A call of any tool that fails, is refused, or has to be retried
+gets a red row with the first line of the reason. When calls run in parallel, a row that does
+not sit under its own header starts with the command or call it belongs to. Other shell output and grep results stay
 out of the terminal; the model still receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
@@ -1687,8 +1687,9 @@ Shell output defaults to the first 20 logical lines per command. Change it with
 to the next prompt. After the command returns, its result row counts the lines in the
 log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown`,
 including an unterminated final line. A failed command repeats only the last lines the preview
-left out. The capability's 16 KB event preview cap can shorten the preview further; then the row
-ends with the log path, where the full output remains. Background commands can keep writing
+left out (the last 3 at most), so the reason is on screen. When the preview is cut, by this limit
+or by the capability's 16 KB event preview cap, the row ends with the log path, where the full
+output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
 Read headers show the path, plus the offset and line limit only when the call sets them

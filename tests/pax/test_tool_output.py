@@ -138,7 +138,7 @@ async def test_shell_line_limit_across_chunks(limit: int) -> None:
         )
     )
     text = output.getvalue()
-    assert f'  ⎿ exit 0 · 4 lines, {limit} shown\n' in text
+    assert f'  ⎿ exit 0 · 4 lines, {limit} shown · log /tmp/out\n' in text
     assert ('first' in text) == (limit >= 1)
     assert ('second' in text) == (limit >= 2)
     assert 'third' not in text and 'fourth' not in text
@@ -479,8 +479,8 @@ async def test_a_row_under_another_calls_header_names_its_command() -> None:
     await renderer.on_stream_event(_finished('b', exit_code=0, line_count=1))
     await renderer.finish()
     assert output.getvalue() == (
-        '● shell git status\n\n● shell git log -1\n\n  ⎿ exit 0 · 2 lines · git status\n\n'
-        '  ⎿ exit 0 · 1 line · git log -1\n\n'
+        '● shell git status\n\n● shell git log -1\n\n  ⎿ git status · exit 0 · 2 lines\n\n'
+        '  ⎿ git log -1 · exit 0 · 1 line\n\n'
     )
 
 
@@ -490,7 +490,7 @@ async def test_a_row_under_another_calls_header_names_its_command() -> None:
         # Every line is already on screen, so the failure adds no tail.
         (20, 'one\ntwo\nthree\nfour\n  ⎿ exit 2 · 4 lines\n\n'),
         # Only the lines the preview left out are repeated.
-        (2, 'one\ntwo\n  ⎿ exit 2 · 4 lines, 2 shown\n    three\n    four\n\n'),
+        (2, 'one\ntwo\n  ⎿ exit 2 · 4 lines, 2 shown · log /tmp/out\n    three\n    four\n\n'),
     ],
 )
 async def test_a_failed_command_with_output_on_repeats_only_unseen_last_lines(shell_lines: int, expected: str) -> None:
