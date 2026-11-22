@@ -172,22 +172,25 @@ class PartWriter(SmoothWriter):
     ) -> None:
         """Termflow's pause hook writes the whole queue at once, so the writer pauses itself when the part closes."""
         self._ending = False
+        self._polled = False
         super().__init__(
             target,
             tick_interval=tick_interval,
             catch_up_seconds=catch_up_seconds,
             min_chars_per_tick=min_chars_per_tick,
-            is_paused=lambda: self._ending,
+            is_paused=self._paused_for_end,
         )
+
+    def _paused_for_end(self) -> bool:
+        # Termflow flushes when a pause begins, and its first poll only records the starting state. A part that
+        # closes before that poll would look paused from the start and never flush, so the first poll is never paused.
+        if not self._polled:
+            self._polled = True
+            return False
+        return self._ending
 
     async def close(self) -> None:
         """Write the queued rest on the next tick, so the next tool line or the prompt does not wait for it to be typed."""
-        # A writer that pauses before its first tick never flushes, so let it start first.
-        try:
-            await anyio.sleep(0)
-        except anyio.get_cancelled_exc_class():
-            self.abort()
-            raise
         self._ending = True
         await super().close()
 

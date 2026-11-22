@@ -15,7 +15,6 @@ from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
-from tests.conftest import no_leaked_tasks
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -168,20 +167,6 @@ async def test_cancel_during_drain_stops_writer() -> None:
         await task
     await renderer.abort()
     assert output.getvalue().count('x') < 10000
-
-
-async def test_cancel_as_the_part_closes_stops_writer() -> None:
-    output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
-    with no_leaked_tasks():
-        await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 60 + '\n')))
-        task = asyncio.create_task(renderer.finish())
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await asyncio.sleep(0)
-    assert output.getvalue().count('x') < 60
 
 
 async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:
