@@ -26,6 +26,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
 | [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
 | [Cohere](cohere.md) | Model developer | `cohere:` |
+| [CrowLLM](crowllm.md) | Gateway | `crowllm:` |
 | [Crusoe](crusoe.md) | Inference platform | `crusoe:` |
 | [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
 | [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
