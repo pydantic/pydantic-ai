@@ -22,7 +22,7 @@ from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.capabilities import ImageGeneration, NativeOrLocalTool, XSearch
 from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
 from pydantic_ai.common_tools.x_search import XSearchSubagentTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     FilePart,
     ModelMessage,
@@ -37,6 +37,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools import AbstractNativeTool, ImageGenerationTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import UsageLimits
 
 from .capability_models import build_run_context
 
@@ -239,6 +240,47 @@ def _recording_subagent_model(case: Case, seen_native_tools: list[AbstractNative
         return case.make_fallback_response()
 
     return FunctionModel(subagent_model_fn, profile=case.fallback_profile)
+
+
+def _agent_with_fallback_subagent(case: Case) -> Agent[str, str]:
+    capability = case.with_deps_factory(_recording_subagent_model(case, []))
+    return Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+
+async def test_x_search_fallback_usage_counts_in_parent_run_usage(allow_model_requests: None):
+    agent = _agent_with_fallback_subagent(XSEARCH_CASE)
+    result = await agent.run(XSEARCH_CASE.prompt, deps=XSEARCH_CASE.deps)
+
+    assert result.usage.requests == 3
+
+
+async def test_x_search_fallback_covered_by_parent_usage_limits(allow_model_requests: None):
+    agent = _agent_with_fallback_subagent(XSEARCH_CASE)
+
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run(
+            XSEARCH_CASE.prompt,
+            deps=XSEARCH_CASE.deps,
+            usage_limits=UsageLimits(request_limit=2),
+        )
+
+
+async def test_image_generation_fallback_usage_counts_in_parent_run_usage(allow_model_requests: None):
+    agent = _agent_with_fallback_subagent(IMAGE_GENERATION_CASE)
+    result = await agent.run(IMAGE_GENERATION_CASE.prompt, deps=IMAGE_GENERATION_CASE.deps)
+
+    assert result.usage.requests == 3
+
+
+async def test_image_generation_fallback_covered_by_parent_usage_limits(allow_model_requests: None):
+    agent = _agent_with_fallback_subagent(IMAGE_GENERATION_CASE)
+
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run(
+            IMAGE_GENERATION_CASE.prompt,
+            deps=IMAGE_GENERATION_CASE.deps,
+            usage_limits=UsageLimits(request_limit=2),
+        )
 
 
 @case_param

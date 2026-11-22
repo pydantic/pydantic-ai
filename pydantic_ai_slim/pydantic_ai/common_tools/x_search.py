@@ -87,7 +87,7 @@ class XSearchSubagentTool:
             instructions=self.instructions,
         )
         try:
-            result = await agent.run(query)
+            result = await agent.run(query, usage=ctx.usage, usage_limits=ctx.usage_limits)
         except UnexpectedModelBehavior as e:
             raise ModelRetry(str(e)) from e
         return result.output

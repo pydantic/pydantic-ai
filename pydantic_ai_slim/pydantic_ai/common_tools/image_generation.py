@@ -131,7 +131,7 @@ class ImageGenerationSubagentTool:
             instructions=self.instructions,
         )
         try:
-            result = await agent.run(prompt)
+            result = await agent.run(prompt, usage=ctx.usage, usage_limits=ctx.usage_limits)
         except UnexpectedModelBehavior as e:
             # `ContentFilterError` is an `UnexpectedModelBehavior`, so a moderation block becomes a
             # retry prompt too, and the outer model gets to rephrase the prompt rather than the run failing.
