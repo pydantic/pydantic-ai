@@ -567,8 +567,8 @@ An idle session must cost next to no CPU, since users keep dozens open. The
 editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
 turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise,
 sleeping in between; a read wakes it, since the work it starts animates.
-`PromptSurface.paint` skips a frame identical to the last one. Input, output,
-and resizes paint at once; output inside a frame interval paints when it ends
+`PromptSurface.paint` skips a frame identical to the last one. Input and output
+paint at once, and a resize to a new width once the width has held for `RESIZE_SETTLE`; output inside a frame interval paints when it ends
 (`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
 repaints unconditionally, or one that wakes an idle editor more than once a second.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
@@ -578,6 +578,8 @@ selects painted cells in `PromptSurface` and its release copies them through
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+A `MarkdownBlock` shows its streamed rows until its writer calls `end`, and renders its source
+again only after that: rendering a streaming part again per frame costs the whole part every frame.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)` and pin the question text in their rows, not the
 transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
