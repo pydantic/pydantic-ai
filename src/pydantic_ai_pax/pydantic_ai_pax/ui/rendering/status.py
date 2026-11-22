@@ -164,8 +164,11 @@ class Status:
         painted = self.toolbar()
         return (frame + ' ' if frame else '', *(text for _, text in painted))
 
-    def _fields(self) -> dict[FooterField, list[tuple[str, str]]]:
-        """Style each field by meaning, before applying the main conversation's layout."""
+    def _fields(self) -> tuple[dict[FooterField, list[tuple[str, str]]], dict[FooterField, list[tuple[str, str]]]]:
+        """Style each field by meaning, before applying the main conversation's layout.
+
+        Also returns the shorter form of each field `FIT_ORDER` shortens before hiding it.
+        """
         shown = self.subagent() or self
         estimated = '~' if shown.context_estimated else ''
         context = f'{estimated}{_compact_tokens(shown.context_tokens)}/{_compact_tokens(shown.window)}'
@@ -188,15 +191,18 @@ class Status:
             else ''
         )
         queued = self.queued()
+        # A POSIX path can contain terminal controls; sanitize it on every painter.
+        path = _short_path(terminal_text(shown.workspace, keep=''))
+        folder = f'…/{PurePath(path).name}'
+        figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
+        shorter: dict[FooterField, list[tuple[str, str]]] = {
+            'workspace': [(theme.MUTED, folder if cell_len(folder) < cell_len(path) else path)],
+            'context': [figure],
+        }
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            # A POSIX path can contain terminal controls; sanitize it on every painter.
-            'workspace': [(theme.MUTED, _short_path(terminal_text(shown.workspace, keep='')))],
-            'context': [
-                (theme.MUTED, 'context: '),
-                (theme.WARNING if shown.context_alert else theme.MUTED, context),
-                (theme.MUTED, ' tokens'),
-            ],
+            'workspace': [(theme.MUTED, path)],
+            'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
             'activity': activity,
@@ -205,7 +211,7 @@ class Status:
             'live': [(theme.MUTED, self.live())],
             'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
             'assistant_age': [(theme.MUTED, age)],
-        }
+        }, shorter
 
     def _plugin_text(self) -> str:
         """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
@@ -234,11 +240,10 @@ class Status:
         With `width`, take `FIT_ORDER`'s steps until the row fits in that many cells, keeping the
         configured order of what is left; a row that still does not fit is the painter's to cut.
         """
-        fields, order = self._fields(), self.fields()
+        (fields, shorter), order = self._fields(), self.fields()
         row = _join(fields, order)
         if width is None:
             return row
-        shorter = _shortened(fields)
         for name in FIT_ORDER:
             if _cells(row) <= width:
                 break
@@ -385,16 +390,6 @@ def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[Foot
                 painted.append((theme.MUTED, ' | '))
             painted.extend(fragments)
     return painted
-
-
-def _shortened(fields: dict[FooterField, list[tuple[str, str]]]) -> dict[FooterField, list[tuple[str, str]]]:
-    """The shorter form of each field `FIT_ORDER` shortens before hiding it."""
-    role, path = fields['workspace'][0]
-    folder = f'…/{PurePath(path).name}'
-    return {
-        'workspace': [(role, folder if cell_len(folder) < cell_len(path) else path)],
-        'context': fields['context'][1:2],
-    }
 
 
 def _cells(row: Sequence[tuple[str, str]]) -> int:
