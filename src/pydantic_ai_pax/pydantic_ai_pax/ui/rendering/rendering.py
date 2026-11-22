@@ -165,13 +165,30 @@ class LinkOutput(io.StringIO):
 
 
 class PartWriter(SmoothWriter):
-    """Types a streaming part out smoothly, and writes what is still queued in one tick once the part ends."""
+    """Types a streaming part out smoothly, and writes what is still queued in one go once the part ends."""
+
+    def __init__(
+        self, target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
+    ) -> None:
+        """Termflow's pause hook writes the whole queue at once, so the writer pauses itself when the part closes."""
+        self._ending = False
+        super().__init__(
+            target,
+            tick_interval=tick_interval,
+            catch_up_seconds=catch_up_seconds,
+            min_chars_per_tick=min_chars_per_tick,
+            is_paused=lambda: self._ending,
+        )
 
     async def close(self) -> None:
         """Write the queued rest on the next tick, so the next tool line or the prompt does not wait for it to be typed."""
-        # Termflow has no fast close; its drain loop sizes each tick from this window, so one tick writes the rest.
-        # test_part_end_writes_queued_text_at_once fails if a Termflow release stops reading it.
-        self._catch_up_ticks = 1
+        # A writer that pauses before its first tick never flushes, so let it start first.
+        try:
+            await anyio.sleep(0)
+        except anyio.get_cancelled_exc_class():
+            self.abort()
+            raise
+        self._ending = True
         await super().close()
 
 
