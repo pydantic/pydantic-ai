@@ -5210,9 +5210,11 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         async with agent.run_stream(prompt) as streamed_result:
             output = await streamed_result.get_output()
         messages = streamed_result.all_messages()
+        run_usage = streamed_result.usage
     else:
         result = await agent.run(prompt)
         output, messages = result.output, result.all_messages()
+        run_usage = result.usage
 
     expected_output = {
         False: snapshot(
@@ -5221,6 +5223,9 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
     }
     assert output == expected_output[stream]
+    assert run_usage.input_tokens == 223
+    assert run_usage.output_tokens == (56 if stream else 63)
+    assert run_usage.requests == 2
     taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
     assert messages[1].parts == snapshot(
         [
@@ -8190,6 +8195,53 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None, om
         )
 
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_stream_with_cumulative_usage_profile(allow_model_requests: None):
+    """When a model profile declares openai_chat_streaming_cumulative_usage, streamed usage replaces rather than sums."""
+    stream: list[chat.ChatCompletionChunk] = [
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')],
+            completion_tokens=5,
+            prompt_tokens=10,
+            total_tokens=15,
+        ),
+        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
+        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25),
+    ]
+
+    # 1. Model using Gemini profile automatically gets cumulative usage handling
+    mock_client_gemini = MockOpenAI.create_mock_stream(stream)
+    m_gemini = OpenAIChatModel('gemini-2.5-flash', provider=OpenAIProvider(openai_client=mock_client_gemini))
+    agent_gemini = Agent(m_gemini)
+    async with agent_gemini.run_stream('') as result_gemini:
+        async for _ in result_gemini.stream_text():
+            pass
+    assert result_gemini.usage == RunUsage(requests=1, input_tokens=10, output_tokens=15)
+
+    # 2. Custom model with explicit profile flag
+    mock_client_custom = MockOpenAI.create_mock_stream(stream)
+    m_custom = OpenAIChatModel(
+        'custom-model',
+        provider=OpenAIProvider(openai_client=mock_client_custom),
+        profile=OpenAIModelProfile(openai_chat_streaming_cumulative_usage=True),
+    )
+    agent_custom = Agent(m_custom)
+    async with agent_custom.run_stream('') as result_custom:
+        async for _ in result_custom.stream_text():
+            pass
+    assert result_custom.usage == RunUsage(requests=1, input_tokens=10, output_tokens=15)
+
+    # 3. Model without cumulative flag and without settings sums the chunk usages
+    mock_client_standard = MockOpenAI.create_mock_stream(stream)
+    m_standard = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client_standard))
+    agent_standard = Agent(m_standard)
+    async with agent_standard.run_stream('') as result_standard:
+        async for _ in result_standard.stream_text():
+            pass
+    # 4 chunks each with prompt_tokens=10 -> 40, and completion_tokens: 5 + 10 + 15 + 15 = 45
+    assert result_standard.usage == RunUsage(requests=1, input_tokens=40, output_tokens=45)
 
 
 async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):

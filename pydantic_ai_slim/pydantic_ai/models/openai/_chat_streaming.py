@@ -140,9 +140,12 @@ class OpenAIStreamedResponse(StreamedResponse):
                 'timestamp': self._provider_timestamp,
             }
 
-        # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-        # so we replace rather than increment to avoid double-counting.
-        cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+        # When continuous_usage_stats is enabled, or the model profile specifies cumulative usage,
+        # each chunk contains cumulative usage, so we replace rather than increment to avoid double-counting.
+        cumulative = bool(
+            (self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+            or self._model_profile.get('openai_chat_streaming_cumulative_usage')
+        )
         if chunk.usage is not None or not cumulative:
             self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
 

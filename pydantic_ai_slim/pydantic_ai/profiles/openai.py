@@ -354,6 +354,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
+    openai_chat_streaming_cumulative_usage: bool
+    """Whether the Chat Completions API always emits cumulative usage on streamed chunks. Default: `False`.
+
+    Some OpenAI-compatible providers (like Gemini's OpenAI-compatible endpoint) repeat the running
+    cumulative usage on every streamed chunk rather than deltas or a final-chunk-only usage summary.
+    When `True`, streamed usage is replaced rather than incremented, avoiding double-counting
+    without requiring `openai_continuous_usage_stats` to be explicitly set in model settings.
+    """
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
@@ -726,6 +735,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # it gets the announcement from the first request (see the field's docstring). Here rather than in
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
+    if model_name.startswith('gemini'):
+        profile['openai_chat_streaming_cumulative_usage'] = True
     return profile
 
 
