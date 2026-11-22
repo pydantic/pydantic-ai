@@ -18,7 +18,7 @@ from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
 
 from pydantic_ai_pax.commands import Commands, expand_bare_command, is_command_input
-from pydantic_ai_pax.ui import telemetry
+from pydantic_ai_pax.ui import first_frame, telemetry
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
 from pydantic_ai_pax.ui.prompt.image_input import ATTACHED, ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
@@ -718,7 +718,13 @@ class LivePrompt:
         self.console.file = self.output
         try:
             with resize_notifications(resized), holding_output(self.output.held):
+                rows, errors = first_frame.current.adopt()
+                self.output.adopt(rows)
+                if errors:
+                    self.output.write(errors)
                 self.paint()
+                first_frame.current.save(self.output.startup_frame())
+                first_frame.current.restore_input()
                 self.keys.start()
                 async with anyio.create_task_group() as tasks:
                     tasks.start_soon(refresh)

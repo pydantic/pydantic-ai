@@ -15,6 +15,7 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length
 
+from pydantic_ai_pax.ui import first_frame
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.recolor import recolor
 
@@ -113,8 +114,13 @@ class TranscriptOutput(io.StringIO):
         self.output, self.transcript = output, transcript
 
     def write(self, text: str) -> int:
-        """Record and forward a console chunk once; it is already in the terminal's own scrollback."""
+        """Record and forward a console chunk once; it is already in the terminal's own scrollback.
+
+        While the launch's early frame shows, the chunk waits in the transcript: the panel paints it over that frame.
+        """
         self.transcript.write(text)
+        if first_frame.current.holding:
+            return len(text)
         self.transcript.mark_printed()
         return self.output.write(text)
 

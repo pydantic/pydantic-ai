@@ -14,6 +14,7 @@ from termflow.live import Rect, ScreenBuffer, render_diff
 from termflow.tui.layout import truncate
 
 from pydantic_ai_pax.ui.browser import open_browser
+from pydantic_ai_pax.ui.first_frame import INLINE_OFF, INLINE_ON
 from pydantic_ai_pax.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP, Selection, mouse_report, url_at
 from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.text_clipboard import copy_text
@@ -34,9 +35,6 @@ MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1002h\x1b[?1006h'
 Kitty keeps a flag stack per screen, so these are pushed after `ENTER` and popped before `LEAVE`.
 """
 MODES_OFF = '\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[<u\x1b[>4;0m\x1b[?2004l'
-INLINE_ON = '\x1b[?25l\x1b[?7l'
-"""Hidden cursor and no autowrap for the inline panel, so each row takes exactly one terminal row."""
-INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
@@ -332,6 +330,21 @@ class PromptSurface(io.StringIO):
             self._live = True
             if not unchanged:
                 self._paint(modes=True)
+
+    def adopt(self, rows: int) -> None:
+        """Paint the first frame over `rows` inline rows a frame painted before this surface existed left."""
+        with self._lock:
+            self._inline_rows = rows
+            self._painted_as = (*self._geometry(), theme.name())
+
+    def startup_frame(self) -> list[str] | None:
+        """Every row the inline panel shows from launch on, for the next launch to paint first; `None` once full screen."""
+        with self._lock:
+            if self._screen:
+                return None
+            width, height = self._geometry()
+            rows = [row for item in self.transcript.ids() for row in self.transcript.rows(item, width=width)]
+            return [*rows, *self._rows[-(height - 2) :]] if height > 2 else rows
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()

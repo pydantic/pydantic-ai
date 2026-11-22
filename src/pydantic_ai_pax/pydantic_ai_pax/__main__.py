@@ -35,7 +35,7 @@ def quiet_telemetry_logs() -> Generator[None]:
 
 
 def main() -> None:
-    """Load the project environment, then cover heavyweight imports with the splash."""
+    """Load the project environment, then paint the last launch's first frame or cover heavyweight imports with the splash."""
     dotenv_path = '.env'
     try:
         dotenv_path = find_dotenv(usecwd=True)
@@ -45,12 +45,25 @@ def main() -> None:
     except (OSError, UnicodeDecodeError) as exc:
         print(f'Ignoring `.env` at {dotenv_path!r}: {exc}', file=sys.stderr)
 
+    from pydantic_ai_pax.ui import first_frame
+
+    database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
+    bare = len(sys.argv) == 1
+    if bare:
+        first_frame.current.paint(database.with_name('first-frame.json'))
+    try:
+        _main(database, animate=bare and not first_frame.current.holding)
+    finally:
+        first_frame.current.close()
+
+
+def _main(database: Path, *, animate: bool) -> None:
+    """Cover heavyweight imports with the splash when `animate`, then run the CLI."""
     # Splash imports configuration, which must see the loaded environment.
     from pydantic_ai_pax.ui.rendering.splash import Splash
 
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
-    enabled = len(sys.argv) == 1 and not os.getenv('CLAI_NO_SPLASH')
-    database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
+    enabled = animate and not os.getenv('CLAI_NO_SPLASH')
     if enabled and database.exists():
         try:
             connection = sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)
