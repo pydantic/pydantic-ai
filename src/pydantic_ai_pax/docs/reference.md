@@ -190,6 +190,17 @@ Below it, CLAI prints its version, or the short commit for a `bleeding` build.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+A bare `pax` in a terminal also saves the first frame of its prompt to
+`first-frame` in CLAI's folder. The next bare `pax` in a terminal of the same
+size and colour settings paints that frame within a few milliseconds of starting,
+instead of the splash, and the prompt takes it over once it loads. Keys you type
+meanwhile are not echoed and land in the prompt. A frame that fills the terminal,
+or a prompt that moves to full screen, is not saved. Deleting the file only brings
+back the splash for one start.
+
+On Python 3.15, startup also defers the imports in CLAI's own packages until they
+are first used, then loads the rest in the background once the prompt is ready.
+
 ### File access and safety
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
