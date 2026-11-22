@@ -1146,7 +1146,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                         self.editor.wake()
                     # The first window lookup imports the model's provider SDK, a fifth of a second for OpenAI's.
                     # Done here on a worker thread, keys typed at the new prompt echo meanwhile.
-                    await to_thread.run_sync(infer_model_profile, self._window_model())
+                    if (profiled := self._window_model()) is not None:
+                        await to_thread.run_sync(infer_model_profile, profiled)
                     reason = await self._read_loop()
                     return reason
         finally:
@@ -1321,15 +1322,21 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if self.status.context_tokens is not None and model == self._measured_model:
             # A request left the window unresolved, as for a fallback model: the selected one's would be a guess.
             self.status.model_window = None
-        elif self.session.model is None and isinstance(agent_model, Model):
-            self.status.model_window = agent_model.context_window
+        elif (profiled := self._window_model()) is not None:
+            self.status.model_window = infer_model_profile(profiled).get('context_window')
         else:
-            self.status.model_window = infer_model_profile(self._window_model()).get('context_window')
+            assert isinstance(agent_model, Model), "only the agent's own `Model` gives no model to profile"
+            self.status.model_window = agent_model.context_window
         if self.status.context_tokens is None:
             self.status.context_tokens = _last_context_tokens(self.session.messages)
 
-    def _window_model(self) -> str:
-        """The model whose profile gives the selected model's window: a plugin model's `settings_from` one."""
+    def _window_model(self) -> str | None:
+        """The model whose profile gives the selected model's window, a plugin model's `settings_from` one.
+
+        `None` when the agent's own `Model` runs the prompt and knows its window.
+        """
+        if self.session.model is None and isinstance(self.agent.model, Model):
+            return None
         return base_model(self.loader.settings_model(self.session.model or _model_label(self.agent)))
 
     def _show_status_segments(self) -> None:
