@@ -40,9 +40,10 @@ def table_lines(
     """
     # The cap Termflow's own table renderer applies, so every layout stays within it.
     try:
-        width = min(width, int(os.environ['TERMFLOW_MAX_TABLE_WIDTH']) - visible_length(margin))
+        cap = int(os.environ['TERMFLOW_MAX_TABLE_WIDTH']) - visible_length(margin)
     except (KeyError, ValueError):
-        pass
+        cap = width
+    width = min(width, cap) if cap > 0 else width
     natural: list[int] = []
     words: list[int] = []
     for row in (header, *rows):
@@ -51,7 +52,8 @@ def table_lines(
                 natural.append(0)
                 words.append(0)
             natural[i] = max(natural[i], visible_length(cell.strip()))
-            words[i] = max(words[i], *(visible_length(word) for word in _BREAKS.split(visible(cell))))
+            # Termflow's wrap adds up each code point's width, so a joined emoji counts as all its parts.
+            words[i] = max(words[i], *(sum(map(visible_length, word)) for word in _BREAKS.split(visible(cell))))
     columns = len(natural)
     # Each cell is padded by a space on either side, and every column has a border on its left plus one on the right.
     room = width - (3 * columns + 1)
@@ -59,7 +61,10 @@ def table_lines(
         return render_table_complete(header, rows, alignments, width, margin, style)
     if sum(words) > room:
         return _stacked(header=header, rows=rows, width=width, margin=margin, style=style)
-    state = TableRenderState(column_widths=_share(natural=natural, words=words, room=room), alignments=list(alignments))
+    state = TableRenderState(
+        column_widths=_share(natural=[max(pair) for pair in zip(natural, words)], words=words, room=room),
+        alignments=list(alignments),
+    )
     lines = [render_table_top(state, margin, style)]
     lines += render_table_row(header, state, width, margin, style, is_header=True)
     lines.append(render_table_separator(state, margin, style))

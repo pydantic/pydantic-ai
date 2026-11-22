@@ -60,9 +60,10 @@ def test_a_header_only_table_too_narrow_for_its_words_keeps_them() -> None:
     assert lines == ['Variant', 'InvalidCodePoint(u16)']
 
 
-def test_wide_characters_join_the_word_around_them() -> None:
-    lines = Text.from_ansi(_render('| Name | Code |\n|---|---|\n| 東京hello | 12345678 |', 20)).plain.splitlines()
-    assert any('東京hello' in line for line in lines)
+@pytest.mark.parametrize('word', ['東京hello', 'a👩\u200d💻b'])
+def test_wide_characters_join_the_word_around_them(word: str) -> None:
+    source = f'| Name | Code |\n|---|---|\n| {word} next | 12345678 |'
+    assert any(word in line for line in Text.from_ansi(_render(source, 20)).plain.splitlines())
 
 
 @pytest.mark.parametrize('cap', ['40', ' +40 '])
@@ -71,6 +72,12 @@ def test_termflow_table_width_cap_applies_to_every_layout(monkeypatch: pytest.Mo
     lines = Text.from_ansi(_render(ERRORS, 80)).plain.splitlines()
     assert lines[0] == 'Variant: UnexpectedEof'
     assert max(len(line) for line in lines) == 40
+
+
+def test_a_table_width_cap_with_no_room_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    uncapped = _render(ERRORS, 80)
+    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', '0')
+    assert _render(ERRORS, 80) == uncapped
 
 
 def test_a_stacked_row_names_the_cells_it_lacks(monkeypatch: pytest.MonkeyPatch) -> None:
