@@ -123,6 +123,52 @@ async def test_alt_enter_steers_the_typed_draft_ahead_of_the_queue(sequence: str
         assert await live.read() == 'queued follow up'
 
 
+@pytest.mark.parametrize('sequence', ['\x1b[110;5u'])
+async def test_ctrl_n_promotes_oldest_queued_with_nonempty_draft(sequence: str) -> None:
+    accepted: list[str] = []
+    delivered = anyio.Event()
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        delivered.set()
+        return True
+
+    async with editor() as (live, pipe, _):
+        live.steer = steer
+        queue(live, 'first', 'second')
+        live.buffer.replace('preserve this draft')
+        pipe.send_text(sequence)
+        await delivered.wait()
+        assert accepted == ['first']
+        assert live.buffer.text == 'preserve this draft'
+        assert live.queued_messages == ('second',)
+
+
+@pytest.mark.parametrize('head', ['/help', '!git status', KeyboardInterrupt(), EOFError(), 'follow up'])
+@pytest.mark.parametrize('available', [False, True])
+async def test_ctrl_n_respects_steering_eligibility_rules(
+    head: str | KeyboardInterrupt | EOFError, available: bool
+) -> None:
+    attempted: list[str] = []
+
+    def steer(text: str) -> bool:
+        attempted.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer if available else None
+        live.submit(head)
+        live.submit('second')
+        live.feed('ctrl-n')
+        assert attempted == (['follow up'] if available and head == 'follow up' else [])
+        if isinstance(head, str):
+            expected = 'second' if available and head == 'follow up' else head
+            assert await live.read() == expected
+        else:
+            with pytest.raises(type(head)):
+                await live.read()
+
+
 async def test_steering_an_edited_queued_prompt_takes_it_out_of_the_queue() -> None:
     accepted: list[str] = []
 

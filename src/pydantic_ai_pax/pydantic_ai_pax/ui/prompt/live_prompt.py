@@ -257,10 +257,7 @@ class LivePrompt:
             case 'escape':
                 self.escape()
             case 'ctrl-d':
-                if self.buffer.text:
-                    self.buffer.edit('delete')
-                else:
-                    self.submit(EOFError())
+                self._delete_or_eof()
             case 'ctrl-l':
                 # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
                 self.output.clear(keep_current=self.interrupts.active)
@@ -272,6 +269,8 @@ class LivePrompt:
                 self.complete(backwards=key == 'backtab')
             case 'enter':
                 self.accept()
+            case 'ctrl-n':
+                self.steer_queued()
             case 'alt-enter':
                 self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
             case 'shift-enter' | 'ctrl-j':
@@ -284,6 +283,13 @@ class LivePrompt:
                 self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
+
+    def _delete_or_eof(self) -> None:
+        """Delete forward in the draft; on an empty draft, end the input stream."""
+        if self.buffer.text:
+            self.buffer.edit('delete')
+        else:
+            self.submit(EOFError())
 
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""
@@ -582,15 +588,7 @@ class LivePrompt:
             for entry in self.queued_prompts()
         ]
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
-        title = ''
-        if self.interrupts.active:
-            head, glyph = '─ Working ', self.spinner().frame(self.clock())
-            # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
-            chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
-            hints = f'| Enter: queue | {chord}: steer ' if self.queued_messages or self.buffer.text.strip() else ''
-            title = truncate(f'{head}{glyph} {hints}', width)
-            if title.startswith(head + glyph):
-                title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
+        title = self._active_title(width=width, muted=muted, reset=reset)
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
         # The box has no side borders: the draft and the suggestions are rows between the top and
         # bottom rules, so no row can drift out of alignment with the corners. The draft wraps two
@@ -616,6 +614,21 @@ class LivePrompt:
             rows.append(truncate(pinned, width) + reset)
         rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
         return tuple(rows)
+
+    def _active_title(self, *, width: int, muted: str, reset: str) -> str:
+        """The active-run title; empty when nothing is running."""
+        if not self.interrupts.active:
+            return ''
+        head, glyph = '─ Working ', self.spinner().frame(self.clock())
+        # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
+        chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
+        hints = f'| Enter: queue | {chord}: steer' if self.queued_messages or self.buffer.text.strip() else ''
+        if self.queued_messages:
+            hints += ' | Ctrl+N: promote'
+        title = truncate(f'{head}{glyph} {hints}', width)
+        if title.startswith(head + glyph):
+            return f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
+        return title
 
     def _footer(self, *, muted: str) -> str:
         """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""

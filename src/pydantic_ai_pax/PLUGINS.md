@@ -3177,7 +3177,9 @@ editor's input reader, and restores the editor and its draft when the block exit
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
-through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
+through core's `RunContext.enqueue(priority='asap')`. Ctrl+N in the terminal prompt
+promotes the oldest queued follow-up while preserving the draft, and its hint
+appears only when queued input exists. Accepted steering messages
 appear immediately in the transcript and are enqueued for the next model request,
 without starting another turn, interrupting the current response, or cancelling
 tools. Each press sends one message. Slash commands, `!` shell
