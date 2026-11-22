@@ -12,7 +12,6 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai_pax.app import DEFAULT_PLUGINS
 from pydantic_ai_pax.cli import cli, headless
 from pydantic_ai_pax.cli.agent_import import import_agent
@@ -174,13 +173,8 @@ def test_agent_model_window_needs_no_profile_lookup(
 ) -> None:
     """The agent's own `Model` knows its window, so its name is never looked up as a provider's model."""
     looked_up: list[str] = []
-
-    def recorded(model: str) -> ModelProfile:
-        looked_up.append(model)  # pragma: no cover -- only when the agent's window is looked up by name
-        return DEFAULT_PROFILE  # pragma: no cover
-
     monkeypatch.delenv('CLAI_MODEL', raising=False)
-    monkeypatch.setattr(session_runtime, 'infer_model_profile', recorded)
+    monkeypatch.setattr(session_runtime, 'infer_model_profile', looked_up.append)
     result = run_cli('--database', str(fixture_module / 'config.db'), '--agent', f'{_MODULE}:agent')
     assert result.returncode == 0, result.stderr
     assert looked_up == []
