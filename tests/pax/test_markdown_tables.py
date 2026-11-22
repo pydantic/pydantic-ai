@@ -65,8 +65,15 @@ def test_wide_characters_join_the_word_around_them() -> None:
     assert any('東京hello' in line for line in lines)
 
 
-def test_termflow_table_width_cap_applies_to_every_layout(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', '40')
+@pytest.mark.parametrize('cap', ['40', ' +40 '])
+def test_termflow_table_width_cap_applies_to_every_layout(monkeypatch: pytest.MonkeyPatch, cap: str) -> None:
+    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', cap)
     lines = Text.from_ansi(_render(ERRORS, 80)).plain.splitlines()
     assert lines[0] == 'Variant: UnexpectedEof'
     assert max(len(line) for line in lines) == 40
+
+
+def test_a_stacked_row_names_the_cells_it_lacks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', 'wide')  # Not a number, so no cap.
+    lines = Text.from_ansi(_render('| Variant | InvalidCodePoint(u16) |\n|---|---|\n| UnexpectedEof |', 24)).plain
+    assert lines.splitlines() == ['Variant: UnexpectedEof', 'InvalidCodePoint(u16):']

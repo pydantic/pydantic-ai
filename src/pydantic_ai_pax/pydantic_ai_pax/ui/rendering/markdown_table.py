@@ -3,6 +3,7 @@
 import os
 import re
 from collections.abc import Sequence
+from itertools import zip_longest
 
 from termflow.ansi import BOLD_OFF, BOLD_ON, RESET, fg_color, visible_length, wrap_ansi
 from termflow.ansi.utils import visible
@@ -38,9 +39,10 @@ def table_lines(
     width becomes one block of `Header: value` lines per row, so no word is cut in half.
     """
     # The cap Termflow's own table renderer applies, so every layout stays within it.
-    cap = os.environ.get('TERMFLOW_MAX_TABLE_WIDTH', '')
-    if cap.isdigit():
-        width = min(width, int(cap) - visible_length(margin))
+    try:
+        width = min(width, int(os.environ['TERMFLOW_MAX_TABLE_WIDTH']) - visible_length(margin))
+    except (KeyError, ValueError):
+        pass
     natural: list[int] = []
     words: list[int] = []
     for row in (header, *rows):
@@ -97,8 +99,7 @@ def _stacked(
     for index, row in enumerate(rows):
         if index:
             lines.append(rule)
-        for i, cell in enumerate(row):
-            label = header[i].strip() if i < len(header) else ''
-            line = f'{BOLD_ON}{label}:{BOLD_OFF} {cell.strip()}'
+        for label, cell in zip_longest(header, row, fillvalue=''):
+            line = f'{BOLD_ON}{label.strip()}:{BOLD_OFF} {cell.strip()}'
             lines += [margin + part for part in wrap_ansi(line, width)]
     return lines
