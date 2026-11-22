@@ -371,7 +371,7 @@ class TranscriptBuffer:
         self._discard_until_newline = False
         self._decoder = TranscriptDecoder()
         self.keep_rows = False
-        """Markdown parts keep the rows they last showed instead of building them again; the panel sets it while a resize goes on."""
+        """Markdown parts keep the rows they last built instead of building them again; the panel sets it while a resize goes on."""
 
     @classmethod
     def rebind(cls, transcript: 'TranscriptBuffer') -> 'TranscriptBuffer':

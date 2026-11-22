@@ -124,6 +124,7 @@ class PromptSurface(io.StringIO):
         """The geometry and theme of the last frame; transcript rows wrap and colour by both."""
         self._width_since = (0, -math.inf)
         """The width of the last frame, and when a frame first had it."""
+        self._settle_scheduled = False
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -348,15 +349,27 @@ class PromptSurface(io.StringIO):
             # The first frame has no earlier width to settle from.
             self._width_since = (width, now if self._painted_as is not None else -math.inf)
         wait = RESIZE_SETTLE - (now - self._width_since[1])
+        # Scrolling and clicks read the rows too, so they stay kept until a frame at a held width.
         self.transcript.keep_rows = wait > 0
-        try:
-            self._draw(modes=modes)
-        finally:
-            self.transcript.keep_rows = False
+        self._draw(modes=modes)
         if wait > 0:
             # The frame once the width holds renders every part at it.
             self._dirty = True
-            self._paint_later(wait)
+            self._settle_later(wait)
+
+    def _settle_later(self, delay: float) -> None:
+        """Paint after `delay` seconds, apart from `_paint_later`, so output still paints at its frame's end."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if not self._settle_scheduled:
+            self._settle_scheduled = True
+            loop.call_later(delay, self._settled)
+
+    def _settled(self) -> None:
+        self._settle_scheduled = False
+        self.refresh()
 
     def _draw(self, *, modes: bool) -> None:
         width, height = self._geometry()
