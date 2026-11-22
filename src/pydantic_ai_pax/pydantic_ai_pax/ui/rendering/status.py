@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path, PurePath
-from typing import Self, cast
+from typing import ClassVar, Self, cast
 
 import anyio
 from rich.cells import cell_len, set_cell_size
@@ -78,6 +78,27 @@ class Status:
     """The subagent these figures belong to, painted before the model; empty for the main conversation."""
     subagent: 'Callable[[], Status | None]' = lambda: None
     """The running subagent whose figures replace these on the row until it settles; see `Tasks.focused`."""
+
+    FIT_ORDER: ClassVar[tuple[FooterField, ...]] = (
+        'workspace',
+        'assistant_age',
+        'output',
+        'cost',
+        'queued',
+        'updates',
+        'live',
+        'workspace',
+        'plugins',
+        'context',
+        'model',
+    )
+    """How a footer too wide for the terminal gives way, first step first.
+
+    The first step on a field shortens it, as `workspace` to its last folder and `context` to its bare
+    figure; a step on a field with no shorter form left hides it. `activity` is never hidden, nor is
+    `context`'s figure: they say whether CLAI is working and how full the conversation is. `model` goes
+    last because it names a focused subagent whose figures are shown.
+    """
 
     def clear_conversation(self) -> None:
         """Forget the figures of a conversation the shell switched away from."""
@@ -244,8 +265,8 @@ class Status:
         row = _join(fields, order)
         if width is None:
             return row
-        for name in FIT_ORDER:
-            if _cells(row) <= width:
+        for name in self.FIT_ORDER:
+            if sum(cell_len(text) for _, text in row) <= width:
                 break
             fields[name] = shorter.pop(name, [])
             row = _join(fields, order)
@@ -358,28 +379,6 @@ class StatusLine:
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
 
 
-FIT_ORDER: tuple[FooterField, ...] = (
-    'workspace',
-    'assistant_age',
-    'output',
-    'cost',
-    'queued',
-    'updates',
-    'live',
-    'workspace',
-    'plugins',
-    'context',
-    'model',
-)
-"""How a footer too wide for the terminal gives way, first step first.
-
-The first step on a field shortens it, as `workspace` to its last folder and `context` to its bare
-figure; a step on a field with no shorter form left hides it. `activity` is never hidden, nor is
-`context`'s figure: they say whether CLAI is working and how full the conversation is. `model` goes
-last because it names a focused subagent whose figures are shown.
-"""
-
-
 def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:
     """The fields of `order` that have text, joined by separators."""
     painted: list[tuple[str, str]] = []
@@ -390,10 +389,6 @@ def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[Foot
                 painted.append((theme.MUTED, ' | '))
             painted.extend(fragments)
     return painted
-
-
-def _cells(row: Sequence[tuple[str, str]]) -> int:
-    return sum(cell_len(text) for _, text in row)
 
 
 def _compact_tokens(count: int | None) -> str:
