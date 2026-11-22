@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Awaitable, Callable
+import subprocess
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,47 @@ class TestFakeSmolvmCliBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def attach_backend(self, working_dir: str) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return lambda ref: SmolvmCliBackend(ref=ref, working_dir=working_dir)
+
+    @pytest.fixture
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        return _delete
+
+
+def _delete_now(ref: WorkspaceRef | None) -> None:  # pragma: no cover - live tier
+    # Blocking, because a class-scoped fixture outlives each test's event loop.
+    cli = find_cli()
+    if ref is not None and cli is not None:
+        subprocess.run([cli, 'machine', 'delete', '--name', ref.id, '--force'], check=False, capture_output=True)
+
+
+# The live tier runs without coverage; in CI only its gate runs, to skip it. It needs the real `smolvm` on `PATH`.
+@pytest.mark.smol_live
+class TestLiveSmolvmCliBackend(WorkspaceBackendSuite):  # pragma: lax no cover
+    # Class-scoped so the rules share one VM instead of booting one each.
+    @pytest.fixture(scope='class')
+    @classmethod
+    def backend(cls) -> Iterator[SmolvmCliBackend]:
+        backend = SmolvmCliBackend()
+        yield backend
+        _delete_now(backend.ref)
+
+    @pytest.fixture
+    async def fresh_backend(self) -> AsyncIterator[Callable[[], WorkspaceBackend]]:
+        created: list[SmolvmCliBackend] = []
+
+        def factory() -> SmolvmCliBackend:
+            backend = SmolvmCliBackend()
+            created.append(backend)
+            return backend
+
+        yield factory
+        for backend in created:
+            if backend.ref is not None:
+                await delete_machine(backend.ref.id)
+
+    @pytest.fixture
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return lambda ref: SmolvmCliBackend(ref=ref)
 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
