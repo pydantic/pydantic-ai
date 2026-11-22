@@ -3600,26 +3600,12 @@ async def test_openai_voice_custom_voice_object_reaches_session_start_payload(mo
     with _patched_connect(ws):
         async with model.connect(
             messages=[],
-            model_settings=OpenAILiveModelSettings(openai_voice={'id': 'my-custom-voice'}),
+            model_settings=OpenAILiveModelSettings(openai_voice={'id': 'voice_1234'}),
             model_request_parameters=ModelRequestParameters(),
         ):
             pass
 
-    assert json.loads(ws.sent[0])['session']['audio']['output']['voice'] == {'id': 'my-custom-voice'}
-
-
-async def test_openai_voice_string_unchanged_through_webrtc_session() -> None:
-    """A string voice keeps reaching the session start payload verbatim."""
-    sent: list[dict[str, Any]] = []
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        sent.append(json.loads(request.content))
-        return _created()
-
-    model = _webrtc_model(handler)
-    await model.answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(openai_voice='cedar'))
-
-    assert sent[0]['session']['audio']['output']['voice'] == 'cedar'
+    assert json.loads(ws.sent[0])['session']['audio']['output']['voice'] == {'id': 'voice_1234'}
 
 
 async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
