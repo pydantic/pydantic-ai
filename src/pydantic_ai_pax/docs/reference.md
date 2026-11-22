@@ -1863,8 +1863,8 @@ terminal palette untouched. On a light terminal background, `default` darkens ea
 colour, keeping its hue, until text reaches WCAG AA contrast (4.5:1), and shows diffs
 on light green and red lines. CLAI finds the background at startup by asking the
 terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark one.
-It does not ask when stdin or stdout is not a terminal, with `-p` or `--web`, or when
-keys you typed ahead are waiting. The logo keeps its brand colours. The default preview has no forced background.
+It does not ask when stdin or stdout is not a terminal, or with `-p` or `--web`; keys typed
+during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
 All other choices come from Termflow's bundled registry, including

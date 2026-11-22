@@ -209,7 +209,7 @@ async def chat(
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
     use_stock_defaults = builtin_plugins is STOCK_PLUGINS
     # Before the banner, the first output painted in the theme's colours.
-    background = terminal_background()
+    background = _terminal_background(console)
     shell = _create_home_shell(
         agent,
         deps=deps,
@@ -319,6 +319,11 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
+
+
+def _terminal_background(console: Console) -> str | None:
+    """The terminal's background, asked only when `console` is that terminal, as `theme.use(output=...)` is gated."""
+    return terminal_background() if console.is_terminal else None
 
 
 def _create_home_shell(
