@@ -1,4 +1,4 @@
-"""`WrapUpAtLimits` under `PrefectDurability`: the time trigger runs in flow code."""
+"""`GracefulLimits` under `PrefectDurability`: the time trigger runs in flow code."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits
+from pydantic_ai_harness.graceful_limits import DEFAULT_WRAP_UP_PROMPT, GracefulLimits
 from tests.conftest import try_import
 
 from ._messages import wrap_ups
@@ -37,7 +37,7 @@ async def test_flow_wraps_up_for_timeout(prefect_test_server: None, tmp_path: Pa
     agent = Agent(
         FunctionModel(_model),
         name='wrap_up_prefect',
-        capabilities=[WrapUpAtLimits(timeout_margin=60), PrefectDurability()],
+        capabilities=[GracefulLimits(timeout_margin=60), PrefectDurability()],
     )
 
     @agent.tool_plain

@@ -1,4 +1,4 @@
-"""`WrapUpAtLimits` under `TemporalDurability`: the time trigger reads the workflow clock and decides the same on replay."""
+"""`GracefulLimits` under `TemporalDurability`: the time trigger reads the workflow clock and decides the same on replay."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits
+from pydantic_ai_harness.graceful_limits import DEFAULT_WRAP_UP_PROMPT, GracefulLimits
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -49,7 +49,7 @@ agent = Agent(
     FunctionModel(_model),
     name='wrap_up_temporal',
     tools=[look_up],
-    capabilities=[WrapUpAtLimits(timeout_margin=60), TemporalDurability()],
+    capabilities=[GracefulLimits(timeout_margin=60), TemporalDurability()],
 )
 
 
@@ -70,11 +70,11 @@ async def test_timeout_wraps_up_in_workflow_code_and_survives_replay() -> None:
     async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         workflow_id = uuid4().hex
-        async with Worker(client, task_queue='wrap-up-at-limits', workflows=[WrapUpWorkflow], workflow_runner=runner):
+        async with Worker(client, task_queue='graceful-limits', workflows=[WrapUpWorkflow], workflow_runner=runner):
             dumped = await client.execute_workflow(
                 WrapUpWorkflow.run,
                 id=workflow_id,
-                task_queue='wrap-up-at-limits',
+                task_queue='graceful-limits',
                 execution_timeout=timedelta(seconds=60),
             )
         history = await client.get_workflow_handle(workflow_id).fetch_history()

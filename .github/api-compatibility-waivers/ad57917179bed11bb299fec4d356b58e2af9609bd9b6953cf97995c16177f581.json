@@ -1,5 +1,0 @@
-{
-  "against": "v2.71.0",
-  "reason": "Rewords `WrapUpAtLimits`'s default final prompt so it no longer tells a structured-output run that tools are unavailable while it has to call the output tool (#14163).",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14164"
-}

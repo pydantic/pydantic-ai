@@ -212,7 +212,7 @@ _CAPABILITY_PAGE_META = {
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
     'require-verification.md': ('require_verification', 'Require Verification'),
-    'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
+    'graceful-limits.md': ('graceful_limits', 'Graceful Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'goal.md': ('goal', 'Goal'),

@@ -772,9 +772,10 @@ CASES: dict[str, CapabilityCase] = {
             LocalWorkspace(tmp_path),
         ],
     ),
-    'WrapUpAtLimits': CapabilityCase(
+    'GracefulLimits': CapabilityCase(
         Anonymous('only hooks; several on one agent each add their prompt to the final request')
     ),
+    'WrapUpAtLimits': CapabilityCase(Anonymous('deprecated alias of `GracefulLimits`, and combines the same way')),
     'RenderWorkflows': CapabilityCase(
         Rejected('Only one durability capability can be attached to an agent.'),
         build=Unbuildable('Durable engine: needs a Render Workflows app.'),

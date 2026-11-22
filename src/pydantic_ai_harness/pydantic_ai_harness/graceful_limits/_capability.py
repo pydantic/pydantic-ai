@@ -1,4 +1,4 @@
-"""End a run with a final answer instead of `UsageLimitExceeded` when a usage limit is reached."""
+"""End a run with a final answer instead of raising when a usage limit or the run's timeout would stop it."""
 
 from __future__ import annotations
 
@@ -43,14 +43,14 @@ DEFAULT_WRAP_UP_PROMPT = (
     "This run's budget allows only this one last response, so you can't call any more tools to do further work. "
     'Give your final answer now with what you have, and say what is left unfinished.'
 )
-"""What `WrapUpAtLimits` tells the model on the final request, unless `prompt` is set."""
+"""What `GracefulLimits` tells the model on the final request, unless `prompt` is set."""
 
 _Amount = TypeVar('_Amount', int, Decimal)
 
 
 @dataclass(kw_only=True)
 class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up_at_limits', name='wrap_up'):
-    """The request-scoped prompt `WrapUpAtLimits` adds to the final request.
+    """The request-scoped prompt `GracefulLimits` adds to the final request.
 
     Its `content` is the capability's `prompt`, in the application's voice. Find it in history by this type.
     """
@@ -60,22 +60,23 @@ class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up_at_limits', name=
 
 
 @dataclass
-class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
+class GracefulLimits(AbstractCapability[AgentDepsT]):
     """End the run with a final answer instead of raising when a usage limit or the run's timeout would stop it.
 
     When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for only one more model
     request, or the time left before the run's `timeout=` deadline is projected to fit this request's step
-    but not a final response after it, that request is made the last: it keeps the tool definitions, so the cached tools and instructions still
-    match, but lets the model call none of the function tools, only the run's output tools if it has
-    any, and gets a request-scoped instruction asking the model to answer now. That prompt is a
-    [`WrapUpPart`][pydantic_ai_harness.wrap_up_at_limits.WrapUpPart] carrying the `limit` that triggered it, which
-    [`wrapped_up_by`][pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by] reads back.
+    but not a final response after it, that request is made the last: it keeps the tool definitions, so
+    the cached tools and instructions still match, but lets the model call none of the function tools,
+    only the run's output tools if it has any, and gets a request-scoped instruction asking the model to
+    answer now. That prompt is a
+    [`WrapUpPart`][pydantic_ai_harness.graceful_limits.WrapUpPart] carrying the `limit` that triggered it, which
+    [`wrapped_up_by`][pydantic_ai_harness.graceful_limits.wrapped_up_by] reads back.
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai_harness import WrapUpAtLimits
+    from pydantic_ai_harness import GracefulLimits
 
-    agent = Agent('anthropic:claude-opus-5-5', capabilities=[WrapUpAtLimits()])
+    agent = Agent('anthropic:claude-opus-5-5', capabilities=[GracefulLimits()])
     ```
     """
 
@@ -95,9 +96,9 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     """The seconds the run's slowest model response took, counted from its request."""
 
     def __post_init__(self) -> None:
-        check_operator_text(self.prompt, what='`WrapUpAtLimits.prompt`')
+        check_operator_text(self.prompt, what='`GracefulLimits.prompt`')
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> WrapUpAtLimits[AgentDepsT]:
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> GracefulLimits[AgentDepsT]:
         """Return a fresh capability, so each run measures its own steps."""
         return replace(self)
 
@@ -160,7 +161,7 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
 
 
 def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
-    """The limit that made `WrapUpAtLimits` cut a run short, given the run's `new_messages()`, or `None`."""
+    """The limit that made `GracefulLimits` cut a run short, given the run's `new_messages()`, or `None`."""
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:

@@ -39,7 +39,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 | Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
 | Send a coding agent back to run its checks before it finishes after an edit | `RequireVerification` |
-| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit or timeout | `WrapUpAtLimits` |
+| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit or timeout | `GracefulLimits` |
 
 ## RepairToolArguments
 
@@ -1048,7 +1048,7 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
 
 - Rejections share the `retries={'output': n}` budget with other output validation, and exhaustion
   raises `UnexpectedModelBehavior`; `UsageLimits` still end the run. For a final tool-less answer at the
-  limit add `WrapUpAtLimits`: its answer still goes through `verify`, and a rejection there raises
+  limit add `GracefulLimits`: its answer still goes through `verify`, and a rejection there raises
   `UsageLimitExceeded` since no request is left for the retry.
 - Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
   inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
@@ -1101,12 +1101,15 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 - Emits `verification required` (`require_verification.attempt`) and `completion unverified`
   (`require_verification.attempts`) spans.
 
-## WrapUpAtLimits
+## GracefulLimits
+
+Formerly `WrapUpAtLimits`, which still imports from `pydantic_ai_harness` and `pydantic_ai_harness.wrap_up_at_limits`
+with a `HarnessDeprecationWarning`; use `GracefulLimits` from `pydantic_ai_harness.graceful_limits` in new code.
 
 When the run's `UsageLimits` leave room for one more model request but not another, or the time left
 before the run's `timeout=` deadline fits its longest step but not also its slowest response, makes that request
 the last: no function tools callable, with the tool definitions kept (cached tools and instructions match), plus a
-request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
+request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.graceful_limits`)
 with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
 run's output instead of `UsageLimitExceeded`.
 
@@ -1116,7 +1119,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 
-from pydantic_ai_harness import WrapUpAtLimits
+from pydantic_ai_harness import GracefulLimits
 
 
 def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1125,7 +1128,7 @@ def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
 
 
-agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits()])
+agent = Agent(FunctionModel(research), capabilities=[GracefulLimits()])
 
 
 @agent.tool_plain
@@ -1170,5 +1173,5 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - https://pydantic.dev/docs/ai/harness/refine-output/
 - https://pydantic.dev/docs/ai/harness/report-tool-errors/
 - https://pydantic.dev/docs/ai/harness/require-verification/
-- https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
+- https://pydantic.dev/docs/ai/harness/graceful-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

@@ -1,8 +1,8 @@
-# Wrap Up At Limits
+# Graceful Limits
 
 End a run with a final answer when a [usage limit](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) would otherwise stop it with `UsageLimitExceeded`, or when the run's `timeout=` would stop it with `RunTimedOut`. Use it where the work done before the limit is worth returning, such as a research or coding agent running on a request, tool-call, token, cost or time budget.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/wrap_up_at_limits/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/graceful_limits/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
@@ -23,9 +23,9 @@ pip install pydantic-ai-harness
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness import WrapUpAtLimits
+from pydantic_ai_harness import GracefulLimits
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[WrapUpAtLimits()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[GracefulLimits()])
 
 
 async def research(topic: str) -> str:
@@ -33,7 +33,7 @@ async def research(topic: str) -> str:
     return result.output
 ```
 
-When the run's `UsageLimits` leave room for one more model request but not for another after it, or the time left before the run's [`timeout=`](https://pydantic.dev/docs/ai/core-concepts/timeouts/#bounding-a-whole-run) deadline is projected to fit only one more, `WrapUpAtLimits` makes that request the last:
+When the run's `UsageLimits` leave room for one more model request but not for another after it, or the time left before the run's [`timeout=`](https://pydantic.dev/docs/ai/core-concepts/timeouts/#bounding-a-whole-run) deadline is projected to fit only one more, `GracefulLimits` makes that request the last:
 
 - It keeps the tool definitions and lets the model call none of the function tools, so the cached tools and instructions still match. Some providers still miss part of the cache: Anthropic caches messages per `tool_choice`, and [some cases](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-choice-caching) send a trimmed tool list.
 - The run's output stays available. With [tool output](https://pydantic.dev/docs/ai/core-concepts/output/#tool-output), the default for a structured `output_type`, it sets `tool_choice` to `ToolOrOutput(function_tools=[])`, which sends only the output tools, so the model can still give the structured result. Otherwise it sets `tool_choice='none'`: text output is answered in text, and [native](https://pydantic.dev/docs/ai/core-concepts/output/#native-output) and [prompted](https://pydantic.dev/docs/ai/core-concepts/output/#prompted-output) output answer in text that is validated against the schema as usual.
@@ -44,7 +44,7 @@ When the run's `UsageLimits` leave room for one more model request but not for a
 | `prompt` | `DEFAULT_WRAP_UP_PROMPT` | What the model is told on the final request |
 | `timeout_margin` | `0.0` | Seconds to keep in reserve before the run's `timeout=` deadline, on top of the projected time; `None` doesn't wrap up for time |
 
-`WrapUpAtLimits` is opt-in: a run without it raises at its limits as before.
+`GracefulLimits` is opt-in: a run without it raises at its limits as before.
 
 ## When the final request is made
 
@@ -80,11 +80,11 @@ def report(result: AgentRunResult[str]) -> str:
 
 ## Durable execution
 
-`WrapUpAtLimits` decides from the run's usage and message history, and from the time left before the run's deadline at each of its requests, which it keeps for the run. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) its hooks run in workflow code, so when Temporal, DBOS or Prefect replays a run, they make the same request the last. On Temporal, the time left is read from the workflow's replay-safe clock, so this holds for `timeout=` too; DBOS and Prefect measure it against the system clock from the run's recorded start, so a recovered run counts the time that passed before recovery, and its time trigger can fire at a different request.
+`GracefulLimits` decides from the run's usage and message history, and from the time left before the run's deadline at each of its requests, which it keeps for the run. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) its hooks run in workflow code, so when Temporal, DBOS or Prefect replays a run, they make the same request the last. On Temporal, the time left is read from the workflow's replay-safe clock, so this holds for `timeout=` too; DBOS and Prefect measure it against the system clock from the run's recorded start, so a recovered run counts the time that passed before recovery, and its time trigger can fire at a different request.
 
 ## Telemetry
 
-`WrapUpAtLimits` marks its decision with a zero-duration span on an [instrumented](https://pydantic.dev/docs/ai/integrations/logfire/) agent:
+`GracefulLimits` marks its decision with a zero-duration span on an [instrumented](https://pydantic.dev/docs/ai/integrations/logfire/) agent:
 
 | Span | Attribute | Meaning |
 |---|---|---|
@@ -94,9 +94,15 @@ The span carries no prompt text. The final request itself shows as an ordinary m
 
 ## Composition
 
-- [`WarnNearLimits`](../compaction/) warns the model as limits approach. `WrapUpAtLimits` acts on the last request. Use both to have the model wind down first.
+- [`WarnNearLimits`](../compaction/) warns the model as limits approach. `GracefulLimits` acts on the last request. Use both to have the model wind down first.
 - It decides on the usage when its hook runs. List it after capabilities that spend from the run's usage before a request, such as `SummarizingCompaction`, so it sees what they spent.
 - [Compaction](../compaction/) still runs on the final request. A strategy that makes a model request of its own, such as `SummarizingCompaction`, has no request left there and raises `UsageLimitExceeded`; wrap it in `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded))` with a strategy that makes no model requests. Skipping compaction on the final request needs a core ordering hook ([#11454](https://github.com/pydantic/pydantic-ai/pull/11454)).
-- In [Subagents](../sub_agents/), give a sub-agent its own `SubAgent.usage_limits` and add `WrapUpAtLimits` to its capabilities: it returns a wrapped-up answer to the parent instead of reaching its budget. A sub-agent that shares the parent's budget (no `usage_limits` of its own) would spend the parent's last request on its answer, so the parent then raises.
+- In [Subagents](../sub_agents/), give a sub-agent its own `SubAgent.usage_limits` and add `GracefulLimits` to its capabilities: it returns a wrapped-up answer to the parent instead of reaching its budget. A sub-agent that shares the parent's budget (no `usage_limits` of its own) would spend the parent's last request on its answer, so the parent then raises.
 
-See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/wrap_up_at_limits/).
+## Renamed from `WrapUpAtLimits`
+
+This capability was `WrapUpAtLimits`, in `pydantic_ai_harness.wrap_up_at_limits`. It was renamed when it started ending runs gracefully at their `timeout=` too, not only at usage limits. The old name still imports from there and from `pydantic_ai_harness`, with a `HarnessDeprecationWarning`, until a future release removes it. `WrapUpPart`, `wrapped_up_by`, `LimitName` and `DEFAULT_WRAP_UP_PROMPT` keep their names, and so do the `WrapUpPart` namespace in saved message histories and the `wrap_up_at_limits.limit` span attribute, so existing histories and dashboards keep working.
+
+To load specs saved before the rename, pass the deprecated `WrapUpAtLimits` class in `custom_capability_types`. To migrate a spec, rename its `WrapUpAtLimits` block to `GracefulLimits`. The options are unchanged.
+
+See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/graceful_limits/).
