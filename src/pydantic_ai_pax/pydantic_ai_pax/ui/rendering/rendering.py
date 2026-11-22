@@ -167,9 +167,15 @@ class LinkOutput(io.StringIO):
 class PartWriter(SmoothWriter):
     """Types a streaming part out smoothly, then writes what is still queued at once when the part ends."""
 
-    def write_queued(self) -> None:
-        """Write the queued rest in one go, so the next tool line or the prompt does not wait for it to be typed."""
-        self._flush_all()
+    def stop(self) -> None:
+        """Write the queued rest in one go and stop typing, so the next tool line or the prompt does not wait for it.
+
+        The typing task stops even if the write fails, and drops whatever the write did not take.
+        """
+        try:
+            self._flush_all()
+        finally:
+            self.abort()
 
 
 def thinking_heading(console: Console) -> str:
@@ -545,8 +551,8 @@ class StreamRenderer:
         visible = self._heading_printed
         self._reset()
         if writer is not None:
-            writer.write_queued()
-            await writer.close()
+            writer.stop()
+            await anyio.sleep(0)  # Let the cancelled typing task end.
         if visible:
             self.console.print()
         self.console.file.flush()
@@ -557,8 +563,7 @@ class StreamRenderer:
         self._close_group()
         writer, self._writer = self._writer, None
         if writer is not None:
-            writer.write_queued()
-            writer.abort()
+            writer.stop()
         if self._block is not None:
             self._block.freeze()
         self._reset()
