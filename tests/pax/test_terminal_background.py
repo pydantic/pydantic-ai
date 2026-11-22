@@ -106,10 +106,10 @@ def test_keys_typed_during_the_query_are_kept_for_the_prompt() -> None:
     """Keys typed before the reply (here, before pax even asked) are read with it and stored for the prompt."""
     with on_a_terminal() as leader:
         os.write(leader, b'hi')
-        responder, _ = answer(leader, b'\x1b]11;rgb:ffff/ffff/ffff\x07' + DA1)
+        responder, _ = answer(leader, b'\r\x1b]11;rgb:ffff/ffff/ffff\x07' + DA1)  # Enter, as the reply comes.
         assert terminal_background() == '#FFFFFF'
         responder.join()
-    assert [key.data for key in get_typeahead(get_app_session().input)] == ['h', 'i']
+    assert [key.data for key in get_typeahead(get_app_session().input)] == ['h', 'i', '\r']
 
 
 def test_not_asked_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:

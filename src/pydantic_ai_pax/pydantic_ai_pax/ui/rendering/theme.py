@@ -66,6 +66,10 @@ def light_background() -> str | None:
     return _LIGHT_BACKGROUND.get()
 
 
+_LIGHT_SURFACE = 'github_light'
+"""The bundled palette whose ANSI colours the default theme's code and diffs use on a light terminal."""
+
+
 def _surface() -> TerminalPalette | None:
     """The palette code and diff colours come from: the selected one, or a light one on a light terminal."""
     palette = current()
@@ -74,11 +78,8 @@ def _surface() -> TerminalPalette | None:
         return palette
     from termflow.themes import PALETTES
 
-    return replace(PALETTES[_LIGHT_SURFACE], bg=background)
-
-
-_LIGHT_SURFACE = 'github_light'
-"""The bundled palette whose ANSI colours the default theme's code and diffs use on a light terminal."""
+    # Black text, so code is raised to 4.5:1 even where the palette's own text would read worse.
+    return replace(PALETTES[_LIGHT_SURFACE], bg=background, fg='#000000')
 
 
 def color(role: str) -> str:

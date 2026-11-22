@@ -18,6 +18,8 @@ Terminals that do not report their background still answer DA1, so its reply end
 _BACKGROUND_REPLY = re.compile(
     rb'\x1b\]11;rgba?:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})[^\x07\x1b]*(?:\x07|\x1b\\)'
 )
+_ANY_BACKGROUND_REPLY = re.compile(rb'\x1b\]11;[^\x07\x1b]*(?:\x07|\x1b\\)?')
+"""Any background reply, also in a form `_BACKGROUND_REPLY` does not read, which must not reach the prompt."""
 _ATTRIBUTES_REPLY = re.compile(rb'\x1b\[\?[0-9;]*c')
 _TIMEOUT = 0.5
 """How long to wait for a terminal that answers neither query, such as one behind a slow SSH link."""
@@ -37,6 +39,7 @@ def _reported() -> str | None:
     saved = termios.tcgetattr(0)
     modes = termios.tcgetattr(0)
     modes[3] &= ~(termios.ICANON | termios.ECHO)  # The reply is read as it comes, and is not echoed.
+    modes[0] &= ~termios.ICRNL  # Enter typed meanwhile stays Enter for the prompt, not Ctrl-J.
     termios.tcsetattr(0, termios.TCSANOW, modes)
     try:
         os.write(1, _QUERY)
@@ -52,7 +55,7 @@ def _reported() -> str | None:
     finally:
         termios.tcsetattr(0, termios.TCSANOW, saved)  # Not `TCSAFLUSH`, which would drop keys typed meanwhile.
     background = _BACKGROUND_REPLY.search(received)
-    if typed := _ATTRIBUTES_REPLY.sub(b'', _BACKGROUND_REPLY.sub(b'', received)):
+    if typed := _ATTRIBUTES_REPLY.sub(b'', _ANY_BACKGROUND_REPLY.sub(b'', received)):
         _keep_for_the_prompt(typed)
     if background is None:
         return None
