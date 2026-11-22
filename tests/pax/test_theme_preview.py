@@ -209,7 +209,7 @@ async def _render_sample() -> str:
             path='demo.py',
             root_dir='/tmp',
             content_hash='hash',
-            diff='--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-x = "old"\n+x = "new"\n',
+            diff='--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-return "old"  # was\n+return "new"  # now\n',
             truncated=False,
         )
     )
@@ -275,6 +275,32 @@ async def test_default_theme_reads_on_a_light_background(background: str) -> Non
     assert unreadable == set()
     assert {bg for _, bg in painted} >= {diff.addition.upper(), diff.deletion.upper()}
     assert all(_luminance_of(shade) > 0.4 for shade in (diff.addition, diff.deletion))  # Light tints, not dark lines
+
+
+@pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3'])
+def test_raw_ansi_reads_on_a_light_background_without_truecolor(
+    background: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without `COLORTERM`, surfaces that bypass Rich still get the raised shade, as a 256-colour code."""
+    monkeypatch.delenv('COLORTERM', raising=False)
+    roles = (theme.ACCENT, theme.INFO, theme.SUCCESS, theme.WARNING, theme.ERROR, theme.MUTED, theme.THINKING)
+    with theme.use(lambda: 'default', background=background):
+        codes = {role: theme.sgr(role) for role in roles}
+    shades = {
+        role: Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex for role, code in codes.items()
+    }
+    assert {role: shade for role, shade in shades.items() if _contrast(shade, background) < 4.5} == {}
+
+
+async def test_default_preview_over_a_dark_palette_paints_the_light_background() -> None:
+    """Browsing `/theme` on a light terminal with a dark palette applied previews `default` on the terminal's white."""
+    with theme.use(lambda: 'tokyo_night', background='#FFFFFF'):
+        preview = theme_preview('default', width=60)
+    painted = _hex_colours(preview)
+    assert {bg for _, bg in painted} == {'#FFFFFF'}
+    assert {(fg, bg) for fg, bg in painted if _contrast(fg, bg) < 4.5} <= {
+        (theme.LOGO.removeprefix('bold '), '#FFFFFF')
+    }
 
 
 def _luminance_of(colour: str) -> float:

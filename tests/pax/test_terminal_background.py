@@ -11,6 +11,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import pytest
+from prompt_toolkit.application.current import get_app_session
+from prompt_toolkit.input.typeahead import get_typeahead
 
 from pydantic_ai_pax.ui import terminal_background as background_module
 from pydantic_ai_pax.ui.terminal_background import terminal_background
@@ -100,15 +102,14 @@ def test_a_silent_terminal_is_waited_on_briefly(monkeypatch: pytest.MonkeyPatch)
         assert terminal_background() is None
 
 
-def test_keys_typed_ahead_are_left_for_the_prompt() -> None:
-    """Keys typed before Enter, which line mode holds back from `select`, are not read, and no query is sent."""
+def test_keys_typed_during_the_query_are_kept_for_the_prompt() -> None:
+    """Keys typed before the reply (here, before pax even asked) are read with it and stored for the prompt."""
     with on_a_terminal() as leader:
         os.write(leader, b'hi')
-        assert terminal_background() is None
-        os.write(leader, b'\n')
-        assert os.read(0, 1024) == b'hi\n'
-        echoed = os.read(leader, 1024) if select.select([leader], [], [], 0)[0] else b''
-        assert b'\x1b]11' not in echoed
+        responder, _ = answer(leader, b'\x1b]11;rgb:ffff/ffff/ffff\x07' + DA1)
+        assert terminal_background() == '#FFFFFF'
+        responder.join()
+    assert [key.data for key in get_typeahead(get_app_session().input)] == ['h', 'i']
 
 
 def test_not_asked_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:

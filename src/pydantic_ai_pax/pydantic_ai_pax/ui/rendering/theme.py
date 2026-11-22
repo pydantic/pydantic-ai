@@ -92,6 +92,8 @@ def color(role: str) -> str:
         resolved = _readable(palette.ansi[_SLOTS[shade]], palette.bg, palette.fg)
     elif background is not None:
         resolved = _readable(shade, background, '#000000')
+        if not truecolor():
+            resolved = _nearest_eight_bit(resolved, background)
     else:
         return role
     return ('bold ' if role.startswith('bold ') else '') + resolved
@@ -109,6 +111,18 @@ def _readable(colour: str, bg: str, fg: str) -> str:
     floor = min(_MIN_CONTRAST, _contrast(fg, bg))
     end = max('#000000', '#FFFFFF', key=lambda extreme: _contrast(extreme, bg))
     return next(blended for step in range(21) if _contrast(blended := blend_hex(colour, end, step / 20), bg) >= floor)
+
+
+@cache
+def _nearest_eight_bit(colour: str, bg: str) -> str:
+    """The 256-colour shade closest to `colour` that still reads on `bg`, since the nearest one may not."""
+    from rich.color import Color
+
+    def distance(shade: str) -> int:
+        return sum((int(shade[index : index + 2], 16) - int(colour[index : index + 2], 16)) ** 2 for index in (1, 3, 5))
+
+    shades = (Color.from_ansi(number).get_truecolor().hex.upper() for number in range(16, 256))
+    return min((shade for shade in shades if _contrast(shade, bg) >= _MIN_CONTRAST), key=distance)
 
 
 def _luminance(colour: str) -> float:
@@ -192,7 +206,8 @@ def diff_renderer() -> DiffRenderer:
     return DiffRenderer(highlighter=_readable_highlighter(darker, palette.fg), theme=colours)
 
 
-_TRUECOLOR_FOREGROUND = re.compile(r'\x1b\[38;2;(\d+);(\d+);(\d+)m')
+_TRUECOLOR_FOREGROUND = re.compile(r'(?<=[\[;])38;2;(\d+);(\d+);(\d+)(?=[;m])')
+"""A 24-bit foreground in an SGR sequence, which may also carry bold or italic."""
 
 
 def _readable_highlighter(bg: str, fg: str) -> Highlighter:
@@ -201,7 +216,7 @@ def _readable_highlighter(bg: str, fg: str) -> Highlighter:
 
     def raised(match: re.Match[str]) -> str:
         colour = _readable('#' + ''.join(f'{int(channel):02X}' for channel in match.groups()), bg, fg)
-        return '\x1b[38;2;' + ';'.join(str(int(colour[index : index + 2], 16)) for index in (1, 3, 5)) + 'm'
+        return '38;2;' + ';'.join(str(int(colour[index : index + 2], 16)) for index in (1, 3, 5))
 
     class Readable(Highlighter):
         def highlight_line(self, line: str, language: str = 'text') -> str:
@@ -356,7 +371,12 @@ def sgr(role: str, *, bold: bool = False) -> str:
     shade = role.removeprefix('bold ')
     if current() is not None and shade in _SLOTS:
         slot = _SLOTS[shade]
-        code = 30 + slot if slot < 8 else 90 + slot - 8
+        code = str(30 + slot if slot < 8 else 90 + slot - 8)
+    elif light_background() is not None:
+        from rich.color import Color, ColorSystem
+
+        # The bright 16 colours are tuned for dark terminals; `color` picked a readable 256-colour shade.
+        code = ';'.join(Color.parse(resolved).downgrade(ColorSystem.EIGHT_BIT).get_ansi_codes())
     else:
-        code = _BASIC[shade]  # The terminal's own 16 colours, which a light terminal theme already suits.
+        code = str(_BASIC[shade])
     return f'\x1b[{prefix}{code}m'
