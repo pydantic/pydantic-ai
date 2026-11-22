@@ -1104,7 +1104,7 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 ## WrapUpAtLimits
 
 When the run's `UsageLimits` leave room for one more model request but not another, or the time left
-before the run's `timeout=` deadline fits only two more steps as long as its longest, makes that request
+before the run's `timeout=` deadline fits its longest step but not also its slowest response, makes that request
 the last: no function tools callable, with the tool definitions kept (cached tools and instructions match), plus a
 request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
 with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
@@ -1151,7 +1151,7 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 - For a sub-agent, give it its own `SubAgent.usage_limits`; sharing the parent's budget spends the parent's
   last request.
 - Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
-  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Keeps per-run timing state (via `for_run`); under Temporal the time trigger replays the same, see the docs for DBOS and Prefect. Span: `run wrapped up`
   (`wrap_up_at_limits.limit`).
 
 ## See also

@@ -50,7 +50,7 @@ _TRIGGERS: list[tuple[UsageLimits | None, float | None, str]] = [
     (UsageLimits(request_limit=2), None, 'request_limit'),
     # 0.01 a response: after two, a final pair is projected to reach 0.04.
     (UsageLimits(cost_limit=Decimal('0.035')), None, 'cost_limit'),
-    # 20s a step: at the fourth request 30s are left, less than two more steps.
+    # 20s a step and instant responses: at the fifth request 10s are left, less than another step.
     (None, 90, 'timeout'),
 ]
 """The `usage_limits`, `timeout` and expected `wrapped_up_by` of a run for each kind of wrap-up trigger."""
@@ -59,6 +59,12 @@ _TRIGGERS: list[tuple[UsageLimits | None, float | None, str]] = [
 @dataclass
 class _Clock(AbstractCapability[None]):
     """The run's clock, which only moves when `advance` is called, so a test sets how long each step takes."""
+
+    model_seconds: float = 0.0
+    """How long each of `_Researcher`'s responses takes."""
+
+    tool_seconds: Callable[[str], float] = lambda topic: 10.0
+    """How long `look_up` takes for a topic: by default 10s a call, so 20s a step."""
 
     now: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=UTC))
 
@@ -79,11 +85,15 @@ def _wrap_up_prompted(messages: list[ModelMessage]) -> bool:
 class _Researcher:
     """A model that calls `look_up` twice per response until it's told to stop calling tools."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: _Clock | None = None) -> None:
         self.requests: list[tuple[ToolChoice, list[ToolDefinition], bool]] = []
         """Per request: the `tool_choice`, the function tools, and whether the wrap-up prompt was sent with it."""
+        self.clock = clock
+        """The run's clock, which the model and `look_up` move on, if the test times the run."""
 
     def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if self.clock:
+            self.clock.advance(self.clock.model_seconds)
         tool_choice = info.model_settings.get('tool_choice') if info.model_settings else None
         # The request-scoped prompt reaches the model as the final request's own framed text.
         prompted = any(
@@ -113,11 +123,9 @@ class _Researcher:
 
 
 def _agent(
-    model: _Researcher,
-    looked_up: list[str],
-    capability: WrapUpAtLimits[None] | None = None,
-    clock: _Clock | None = None,
+    model: _Researcher, looked_up: list[str], capability: WrapUpAtLimits[None] | None = None
 ) -> Agent[None, str]:
+    clock = model.clock
     agent = Agent(
         FunctionModel(model, stream_function=model.stream),
         deps_type=type(None),
@@ -127,9 +135,8 @@ def _agent(
     @agent.tool_plain
     def look_up(topic: str) -> str:
         looked_up.append(topic)
-        # Two calls a step: 20s a step.
         if clock:
-            clock.advance(10)
+            clock.advance(clock.tool_seconds(topic))
         return f'notes on {topic}'
 
     return agent
@@ -289,12 +296,12 @@ class TestWrapUpAtLimits:
         assert result.usage.cost == Decimal('0.03')
         assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, 'cost_limit')]
 
-    async def test_timeout_wraps_up_when_two_more_steps_do_not_fit(self) -> None:
-        model = _Researcher()
+    async def test_timeout_wraps_up_when_a_step_and_a_final_response_do_not_fit(self) -> None:
+        model = _Researcher(_Clock(model_seconds=5))
         looked_up: list[str] = []
 
-        # 20s a step: 70s and 50s left still fit two more, 30s at the fourth request doesn't.
-        result = await _agent(model, looked_up, clock=_Clock()).run('Research', timeout=90)
+        # 25s a step, 5s a response: 75s and 50s left still fit both, 25s at the fourth request doesn't.
+        result = await _agent(model, looked_up).run('Research', timeout=100)
 
         assert result.output == 'what I found so far'
         assert sorted(looked_up) == ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
@@ -304,13 +311,26 @@ class TestWrapUpAtLimits:
     async def test_timeout_margin_keeps_time_in_reserve(self) -> None:
         looked_up: list[str] = []
 
-        # With 30s in reserve, the third request's 50s left are less than two steps and the margin.
-        result = await _agent(_Researcher(), looked_up, WrapUpAtLimits(timeout_margin=30), _Clock()).run(
-            'Research', timeout=90
+        # With 30s in reserve, the third request's 50s left are less than a step, a response and the margin.
+        result = await _agent(_Researcher(_Clock(model_seconds=5)), looked_up, WrapUpAtLimits(timeout_margin=30)).run(
+            'Research', timeout=100
         )
 
         assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
         assert wrapped_up_by(result.new_messages()) == 'timeout'
+
+    async def test_one_slow_tool_step_is_not_projected_onto_the_final_response(self) -> None:
+        # The first step's tools take 240s, as an approval wait might; responses take 5s.
+        clock = _Clock(model_seconds=5, tool_seconds=lambda topic: 120.0 if topic.endswith('1') else 0.0)
+        looked_up: list[str] = []
+
+        # 355s are left after it: enough for another such step and a 5s final response.
+        result = await _agent(_Researcher(clock), looked_up).run(
+            'Research', usage_limits=UsageLimits(request_limit=4), timeout=600
+        )
+
+        assert sorted(looked_up) == ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']
+        assert wrapped_up_by(result.new_messages()) == 'request_limit'
 
     async def test_short_timeout_still_calls_tools(self) -> None:
         looked_up: list[str] = []
@@ -324,7 +344,7 @@ class TestWrapUpAtLimits:
         assert wrapped_up_by(result.new_messages()) == 'request_limit'
 
     async def test_timeout_margin_none_does_not_wrap_up_for_time(self) -> None:
-        result = await _agent(_Researcher(), [], WrapUpAtLimits(timeout_margin=None), _Clock()).run(
+        result = await _agent(_Researcher(_Clock()), [], WrapUpAtLimits(timeout_margin=None)).run(
             'Research', usage_limits=UsageLimits(request_limit=5), timeout=90
         )
 

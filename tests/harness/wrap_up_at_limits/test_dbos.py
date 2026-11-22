@@ -94,3 +94,36 @@ def test_recovery_wraps_up_at_the_same_request(dbos: DBOS) -> None:
     assert wrap_ups(first) == wrap_ups(recovered) == expected
     # Recovery read the model responses from the journal; the hooks ran again over them.
     assert _model_calls == [None, None, 'none']
+
+
+def test_recovery_wraps_up_for_timeout(dbos: DBOS) -> None:
+    # A 60s reserve on a 30s timeout makes the first request the last, on the first attempt and on recovery.
+    agent = Agent(
+        FunctionModel(_model),
+        name='wrap_up_dbos_timeout',
+        capabilities=[WrapUpAtLimits(timeout_margin=60), DBOSDurability()],
+    )
+
+    @agent.tool_plain
+    def look_up(topic: str) -> str:  # pragma: no cover
+        return f'notes on {topic}'
+
+    attempts: list[list[ModelMessage]] = []
+
+    @DBOS.workflow(name='wrap_up_dbos_timeout')
+    def workflow() -> None:
+        attempts.append(agent.run_sync('Research', timeout=30).all_messages())
+        if len(attempts) == 1:
+            raise _Crash
+        asyncio.get_event_loop().close()
+
+    _model_calls.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_Crash):
+        workflow()
+
+    DBOS.resume_workflow(workflow_id).get_result()
+
+    first, recovered = attempts
+    assert wrap_ups(first) == wrap_ups(recovered) == [(DEFAULT_WRAP_UP_PROMPT, 'timeout')]
+    assert _model_calls == ['none']
