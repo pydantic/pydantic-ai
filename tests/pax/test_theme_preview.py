@@ -6,7 +6,7 @@ import re
 
 import pytest
 from pygments.token import Keyword
-from rich.color import Color
+from rich.color import Color, ColorSystem
 from rich.console import Console
 from rich.syntax import ANSI_LIGHT
 from rich.text import Text
@@ -209,7 +209,7 @@ async def _render_sample() -> str:
             path='demo.py',
             root_dir='/tmp',
             content_hash='hash',
-            diff='--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-return "old"  # was\n+return "new"  # now\n',
+            diff='--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-return "old"  # was\n+return "[38;2;1;2;3m"  # now\n',
             truncated=False,
         )
     )
@@ -273,6 +273,7 @@ async def test_default_theme_reads_on_a_light_background(background: str) -> Non
     markers = {diff.addition_marker.upper(), diff.deletion_marker.upper()}
     unreadable = {(fg, bg) for fg, bg in painted if fg not in markers and _contrast(fg, bg or background) < 4.5}
     assert unreadable == set()
+    assert '[38;2;1;2;3m' in re.sub(r'\x1b\[[0-9;]*m', '', rendered)  # Code that looks like an escape stays as written.
     assert {bg for _, bg in painted} >= {diff.addition.upper(), diff.deletion.upper()}
     assert all(_luminance_of(shade) > 0.4 for shade in (diff.addition, diff.deletion))  # Light tints, not dark lines
 
@@ -286,9 +287,13 @@ def test_raw_ansi_reads_on_a_light_background_without_truecolor(
     roles = (theme.ACCENT, theme.INFO, theme.SUCCESS, theme.WARNING, theme.ERROR, theme.MUTED, theme.THINKING)
     with theme.use(lambda: 'default', background=background):
         codes = {role: theme.sgr(role) for role in roles}
+        syntax = theme.syntax_theme()
     shades = {
         role: Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex for role, code in codes.items()
     }
+    for token in ANSI_LIGHT:
+        if (color := syntax.get_style_for_token(token).color) is not None:
+            shades[str(token)] = color.downgrade(ColorSystem.EIGHT_BIT).get_truecolor().hex
     assert {role: shade for role, shade in shades.items() if _contrast(shade, background) < 4.5} == {}
 
 

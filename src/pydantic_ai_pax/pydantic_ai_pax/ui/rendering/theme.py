@@ -155,7 +155,10 @@ def syntax_theme() -> SyntaxTheme:
             color = style.color
             if color is not None:
                 assert color.number is not None
-                styles[token] = style + Style(color=_readable(palette.ansi[color.number], palette.bg, palette.fg))
+                shade = _readable(palette.ansi[color.number], palette.bg, palette.fg)
+                if current() is None and not truecolor():  # The adaptive default on a light terminal.
+                    shade = _nearest_eight_bit(shade, palette.bg)
+                styles[token] = style + Style(color=shade)
     return ANSISyntaxTheme(styles)
 
 
@@ -196,18 +199,23 @@ def diff_theme() -> DiffTheme:
 def diff_renderer() -> DiffRenderer:
     """Render diffs in `diff_theme()` colours, with code that stays readable on light palettes."""
     from termflow.diff import DiffRenderer
+    from termflow.syntax import Highlighter
 
     palette = _surface()
     colours = diff_theme()
     if palette is None or not _is_light(palette):
         return DiffRenderer(highlighter=None, theme=colours)
+    if current() is not None:
+        # Monokai's near-white text vanishes on a light line; `default` leaves names in the palette's foreground.
+        return DiffRenderer(highlighter=Highlighter(style='default'), theme=colours)
     # Monokai's near-white text vanishes on a light line, and `default`'s strings and comments fade on the red one.
     darker = min(colours.addition, colours.deletion, key=_luminance)
     return DiffRenderer(highlighter=_readable_highlighter(darker, palette.fg), theme=colours)
 
 
+_SGR = re.compile(r'\x1b\[[0-9;]*m')
 _TRUECOLOR_FOREGROUND = re.compile(r'(?<=[\[;])38;2;(\d+);(\d+);(\d+)(?=[;m])')
-"""A 24-bit foreground in an SGR sequence, which may also carry bold or italic."""
+"""A 24-bit foreground inside an `_SGR` sequence, which may also carry bold or italic."""
 
 
 def _readable_highlighter(bg: str, fg: str) -> Highlighter:
@@ -220,7 +228,8 @@ def _readable_highlighter(bg: str, fg: str) -> Highlighter:
 
     class Readable(Highlighter):
         def highlight_line(self, line: str, language: str = 'text') -> str:
-            return _TRUECOLOR_FOREGROUND.sub(raised, super().highlight_line(line, language))
+            line = super().highlight_line(line, language)
+            return _SGR.sub(lambda sgr: _TRUECOLOR_FOREGROUND.sub(raised, sgr.group()), line)
 
     return Readable(style='default')
 
