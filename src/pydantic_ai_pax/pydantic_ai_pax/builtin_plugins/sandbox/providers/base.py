@@ -87,7 +87,11 @@ class SandboxProvider(Protocol):
         ...
 
     async def close(self, backend: SandboxBackend) -> None:
-        """Close what `create` or `reopen` opened for `backend`, such as an API client; the sandbox keeps running."""
+        """Close what `create` or `reopen` opened for `backend`, such as an API client; the sandbox keeps its files.
+
+        It keeps running too, except one that would otherwise outlive this process, such as a `local` VM run through
+        the `smolvm` CLI: that one may be stopped, and its next command starts it again.
+        """
         ...
 
 
