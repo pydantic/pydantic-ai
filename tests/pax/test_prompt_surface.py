@@ -493,7 +493,7 @@ def test_a_drag_resize_renders_markdown_again_once_the_width_holds() -> None:
         screen.terminal.resize(width=width, height=24)
         screen.surface.resize_notice()
         screen.surface.paint(ROWS)
-        assert screen.lines()[0] == 'answer', 'Markdown shows its streamed rows while the width changes'
+        assert screen.lines()[0] == 'answer', 'Markdown keeps its rows while the width changes'
     assert screen.lines()[1:3] == ['x' * 34, 'xx'], 'other output wraps to each width'
     assert calls == []
     screen.settle()

@@ -40,10 +40,10 @@ INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
 RESIZE_SETTLE = 0.1
-"""Markdown renders again at a new width once the width has held this long; until then frames wrap its streamed rows.
+"""Markdown builds its rows again at a new width once the width has held this long; until then it keeps its last rows.
 
-Rendering every visible reply again takes about 1 s for a 10,000-line reply, and dragging a window
-edge changes the width many times a second.
+Rendering a 10,000-line reply again takes about 1 s, and wrapping it again about 0.25 s, while
+dragging a window edge changes the width many times a second.
 """
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
 _TERMINAL_OSC = re.compile(r'\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)')
@@ -348,11 +348,11 @@ class PromptSurface(io.StringIO):
             # The first frame has no earlier width to settle from.
             self._width_since = (width, now if self._painted_as is not None else -math.inf)
         wait = RESIZE_SETTLE - (now - self._width_since[1])
-        self.transcript.rewrap_only = wait > 0
+        self.transcript.keep_rows = wait > 0
         try:
             self._draw(modes=modes)
         finally:
-            self.transcript.rewrap_only = False
+            self.transcript.keep_rows = False
         if wait > 0:
             # The frame once the width holds renders every part at it.
             self._dirty = True
