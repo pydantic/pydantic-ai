@@ -209,7 +209,7 @@ async def chat(
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
     use_stock_defaults = builtin_plugins is STOCK_PLUGINS
     # Before the banner, the first output painted in the theme's colours.
-    background = terminal_background() if console.is_terminal else None
+    background = terminal_background()
     shell = _create_home_shell(
         agent,
         deps=deps,
