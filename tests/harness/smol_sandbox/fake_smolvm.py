@@ -3,11 +3,13 @@
 It answers as smolvm 1.36 does (see `pydantic_ai_harness._smolvm_cli`'s module docstring): `machine exec` runs the
 script it reads on its stdin in `sh`, and smolvm's own failures end with a `--error-format json` report on stderr.
 A command runs in its own process group, which killing the CLI kills, as smolvm ends a command whose CLI goes.
+Every other answer is canned, in this process: only a command needs a process of its own.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import signal
@@ -19,12 +21,12 @@ from pathlib import Path
 import anyio
 import anyio.abc
 import pytest
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 _EXEC = (
     # `sh -s`, keeping what it read. A machine deleted meanwhile is reported as smolvm reports it.
     'cat > "$1"; sh "$1"; code=$?; if [ -e "$2" ]; then printf "%s\\n" "$3" >&2; exit 1; fi; exit "$code"'
 )
-_REPLY = 'printf %s "$1"; printf %s "$2" >&2; exit "$3"'
 
 
 @dataclass
@@ -56,6 +58,40 @@ class FakeProcess:
         await self.process.aclose()
 
 
+class CannedProcess:
+    """An answer of smolvm's that runs nothing, such as `machine ls`: its output, already written, and its exit code."""
+
+    def __init__(self, code: int, stdout: bytes, stderr: bytes, *, stdin: bool) -> None:
+        self._code = code
+        self.stdout = _written(stdout)
+        self.stderr = _written(stderr)
+        # Takes whatever `machine exec` is sent and drops it, as smolvm does when it fails before running anything.
+        self.stdin: MemoryObjectSendStream[bytes] | None = None
+        self._unread: MemoryObjectReceiveStream[bytes] | None = None
+        if stdin:
+            self.stdin, self._unread = anyio.create_memory_object_stream[bytes](math.inf)
+
+    # Nothing kills an answer that is already written.
+    def kill(self) -> None:  # pragma: no cover
+        pass
+
+    async def wait(self) -> int:
+        return self._code
+
+    async def aclose(self) -> None:
+        for stream in (self.stdout, self.stderr, self.stdin, self._unread):
+            if stream is not None:
+                await stream.aclose()
+
+
+def _written(data: bytes) -> MemoryObjectReceiveStream[bytes]:
+    send, receive = anyio.create_memory_object_stream[bytes](1)
+    if data:
+        send.send_nowait(data)
+    send.close()
+    return receive
+
+
 @dataclass
 class FakeSmolvm:
     """The control surface: machines and their states, the calls made, and failures to inject."""
@@ -78,7 +114,7 @@ class FakeSmolvm:
         """What each `machine exec` read on its stdin."""
         return [path.read_text() for path in sorted(self.scratch.glob('*.sh'))]
 
-    async def open_process(self, command: list[str], *, stdin: int) -> FakeProcess:
+    async def open_process(self, command: list[str], *, stdin: int) -> FakeProcess | CannedProcess:
         self.commands.append(command)
         executable, group, action, *args = command
         # Found in an absolute `PATH` directory, never in the current one.
@@ -125,11 +161,10 @@ class FakeSmolvm:
         env = {'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']}
         return FakeProcess(await anyio.open_process(run, stdin=stdin, cwd=workdir, env=env, start_new_session=True))
 
-    async def _reply(self, stdin: int, code: int, stdout: str = '', stderr: str = '') -> FakeProcess:
-        emit = ['sh', '-c', _REPLY, 'sh', stdout, stderr, str(code)]
-        return FakeProcess(await anyio.open_process(emit, stdin=stdin, start_new_session=True))
+    async def _reply(self, stdin: int, code: int, stdout: str = '', stderr: str = '') -> CannedProcess:
+        return CannedProcess(code, stdout.encode(), stderr.encode(), stdin=stdin == subprocess.PIPE)
 
-    async def _error(self, stdin: int, code: str, message: str) -> FakeProcess:
+    async def _error(self, stdin: int, code: str, message: str) -> CannedProcess:
         report = json.dumps({'error': {'code': code, 'message': message}})
         return await self._reply(stdin, 1, stderr=f'Error: failed\n{report}')
 
