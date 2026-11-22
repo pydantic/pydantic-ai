@@ -62,6 +62,8 @@ class ToolCallGroup:
         name = terminal_text(name, keep='')
         if not self._rows[-1] and self.console.is_terminal and isinstance(self.console.file, PromptSurface):
             self._block = self.console.file.markdown(render=self._render, width=self.console.width)
+            # The group renders again from its call names at a new width, even while open: it is short.
+            self._block.end()
         if self._block is not None:
             # One `+name` line per call, so an empty name stays distinct from the empty line `close` adds.
             self._block.extend(f'+{name}\n')
@@ -82,7 +84,6 @@ class ToolCallGroup:
                 # The blank line stays part of the group, above anything printed while it was open.
                 self._block.extend('\n')
                 self._write('\n')
-                self._block.end()
             self._rows = [[]]
             self._block = None
 

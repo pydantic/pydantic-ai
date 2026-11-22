@@ -310,9 +310,9 @@ class MarkdownBlock(io.StringIO):
         self.source = None
         self._changed()
 
-    def _lines(self, *, width: int) -> list[_Line]:
+    def _lines(self, *, width: int, render: bool = True) -> list[_Line]:
         key = (width, theme.name())
-        if self.source is None or self.streaming or key == self._key:
+        if self.source is None or self.streaming or not render or key == self._key:
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(self._render(source=self.source, width=width))
@@ -323,13 +323,14 @@ class MarkdownBlock(io.StringIO):
 
         Without `render`, the rows last built stay, at their width and with their content, so a frame
         costs nothing while a resize goes on. Wrapping a long part again costs about as much as rendering it.
+        A part with no rows yet wraps its streamed rows instead.
         """
         if not render and self._rows[0]:
             return self._rows[1]
         source = None if self.source is None else len(self.source)
-        key = (width, theme.name(), source, self._stream.revision, self.streaming)
+        key = (width, theme.name(), source, self._stream.revision, self.streaming or not render)
         if self._rows[0] != key:
-            lines = self._lines(width=width)
+            lines = self._lines(width=width, render=render)
             self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
             self._continued = tuple(flag for line in lines for flag in line.continued(width=width))
         return self._rows[1]

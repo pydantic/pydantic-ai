@@ -266,6 +266,9 @@ class PromptSurface(io.StringIO):
 
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
+        if self.transcript.keep_rows:
+            # Until the width holds, Markdown rows may be cut off at the right edge.
+            return None
         # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
         rows = self._transcript_rows - (self.view.anchor is not None)
         return url_at(self._frame, cell, rows=rows, joins=self.view.joins())

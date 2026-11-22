@@ -497,11 +497,17 @@ def test_a_drag_resize_renders_markdown_again_once_the_width_holds() -> None:
     assert screen.lines()[1:3] == ['x' * 34, 'xx'], 'other output wraps to each width'
     screen.surface.scroll(1)
     screen.surface.scroll(-1)
-    assert calls == [], 'scrolling meanwhile reads the kept rows too'
+    late = screen.surface.markdown(render=render, width=40)
+    late.extend('late')
+    late.write('late\n')
+    late.end()
+    screen.surface.paint(ROWS)
+    assert 'late' in screen.lines(), 'a part with no rows yet shows its streamed rows'
+    assert calls == [], 'scrolling and new parts meanwhile do not render'
     screen.settle()
     screen.surface.refresh()
     assert screen.lines()[0] == '34: answer'
-    assert calls == [34]
+    assert calls == [34, 34]
 
 
 async def test_a_resize_renders_markdown_once_it_settles_without_waiting_for_the_editor(
@@ -826,6 +832,12 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
     assert click(screen, 2, 4) == []
+    screen.terminal.resize(width=10, height=12)
+    screen.surface.paint(ROWS)
+    assert click(screen, 3, 2) == [], 'rows kept while a resize settles may be cut off'
+    screen.settle()
+    screen.surface.paint(ROWS)
+    assert click(screen, 3, 2) == [url]
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
