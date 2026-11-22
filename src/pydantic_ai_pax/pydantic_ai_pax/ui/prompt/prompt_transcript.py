@@ -310,27 +310,30 @@ class MarkdownBlock(io.StringIO):
         self.source = None
         self._changed()
 
-    def _lines(self, *, width: int) -> list[_Line]:
+    def _lines(self, *, width: int, render: bool = True) -> list[_Line]:
         key = (width, theme.name())
-        if self.source is None or self.streaming or key == self._key:
+        if self.source is None or self.streaming or not render or key == self._key:
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(self._render(source=self.source, width=width))
         return rendered.all()
 
-    def rows(self, *, width: int) -> tuple[str, ...]:
-        """Rows at `width`; the cache follows theme and source, not just width."""
+    def rows(self, *, width: int, render: bool = True) -> tuple[str, ...]:
+        """Rows at `width`; the cache follows theme and source, not just width.
+
+        Without `render`, the streamed rows show wrapped to `width` rather than the source rendering again.
+        """
         source = None if self.source is None else len(self.source)
-        key = (width, theme.name(), source, self._stream.revision, self.streaming)
+        key = (width, theme.name(), source, self._stream.revision, self.streaming, render)
         if self._rows[0] != key:
-            lines = self._lines(width=width)
+            lines = self._lines(width=width, render=render)
             self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
             self._continued = tuple(flag for line in lines for flag in line.continued(width=width))
         return self._rows[1]
 
-    def continued(self, *, width: int) -> tuple[bool, ...]:
+    def continued(self, *, width: int, render: bool = True) -> tuple[bool, ...]:
         """Per row at `width`, whether it wraps on from the row above rather than starting a line."""
-        self.rows(width=width)
+        self.rows(width=width, render=render)
         return self._continued
 
     def printed(self, *, width: int) -> str:
@@ -364,6 +367,8 @@ class TranscriptBuffer:
         """The theme the unfinished line started in, which its completion keeps."""
         self._discard_until_newline = False
         self._decoder = TranscriptDecoder()
+        self.rewrap_only = False
+        """Markdown parts wrap their streamed rows instead of rendering again; the panel sets it while a resize goes on."""
 
     @classmethod
     def rebind(cls, transcript: 'TranscriptBuffer') -> 'TranscriptBuffer':
@@ -387,6 +392,7 @@ class TranscriptBuffer:
         transcript.__class__ = cls
         transcript._decoder.__class__ = TranscriptDecoder
         vars(transcript).setdefault('_pending_theme', theme.name())
+        vars(transcript).setdefault('rewrap_only', False)
         for item in transcript._items:
             # StringIO is a stable dependency type across CLAI reloads.
             if isinstance(item, io.StringIO):
@@ -518,13 +524,19 @@ class TranscriptBuffer:
         """One item's rows; the unfinished line always has one, the writer's position."""
         if item == self.end:
             return _Line(self._tail(), theme_name=self._pending_theme).rows(width=width)
-        return self._items[item - self._first].rows(width=width)
+        found = self._items[item - self._first]
+        if isinstance(found, MarkdownBlock):
+            return found.rows(width=width, render=not self.rewrap_only)
+        return found.rows(width=width)
 
     def continued(self, item: int, *, width: int) -> tuple[bool, ...]:
         """Per row of one item, whether it wraps on from the row above rather than starting a line."""
         if item == self.end:
             return _Line(self._tail(), theme_name=self._pending_theme).continued(width=width)
-        return self._items[item - self._first].continued(width=width)
+        found = self._items[item - self._first]
+        if isinstance(found, MarkdownBlock):
+            return found.continued(width=width, render=not self.rewrap_only)
+        return found.continued(width=width)
 
     def _tail(self) -> Text:
         decoder = TranscriptDecoder()
