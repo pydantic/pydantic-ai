@@ -4,7 +4,7 @@ import io
 import json
 import re
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Literal
@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
 from rich.console import Console, Group
+from rich.padding import Padding
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent
@@ -19,6 +20,7 @@ from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEdited
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_pax.config import ToolCallDisplay
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.command_syntax import highlight_command
 
@@ -162,6 +164,82 @@ READ_LIMIT = 2000
 FAILURE_TAIL_LINES = 3
 """Last output lines a failed command repeats when its preview left them out, so the reason is on screen."""
 
+EXPAND_HINT = 'ctrl+o to expand'
+"""Ends a live result row whose output Ctrl+O shows, when the row has room for it."""
+
+
+def _draw_row(
+    console: Console,
+    *,
+    hint: bool,
+    tail: Sequence[str],
+    text: str,
+    style: str,
+    label: str,
+    log: str | None,
+) -> None:
+    """Print a result row at `console`'s width, naming `label`'s call first, then the `tail` lines under it.
+
+    The call's name gets the room a short result leaves, or half the row beside a long one.
+    """
+    muted = theme.color(theme.MUTED)
+    row = Text('  ⎿ ', style=muted)
+    result = Text(terminal_text(text, keep=''), style=style)
+    if label:
+        call = Text(terminal_text(label, keep=''), style=muted)
+        half = console.width // 2
+        # A short result keeps all of itself. A long one gives the name at most half the row,
+        # less if its first part (a shell call's exit status) would not fit, leaving a cell for the ellipsis.
+        head = Text(text.split(' · ')[0]).cell_len if ' · ' in text else 0
+        room = (
+            console.width - row.cell_len - result.cell_len - 3
+            if result.cell_len <= half
+            else min(half, console.width - row.cell_len - head - 4)
+        )
+        call.truncate(max(room, 1), overflow='ellipsis')
+        row.append_text(call)
+        if text:
+            row.append(' · ', style=muted)
+    row.append_text(result)
+    shown = bool(text or label)
+    if hint:
+        more = Text(f' · {EXPAND_HINT}' if shown else EXPAND_HINT, style=muted)
+        if row.cell_len + more.cell_len <= console.width:
+            row.append_text(more)
+            shown = True
+    if not shown:
+        # A read under its own header says nothing but the hint, so expanded its output follows the header.
+        pass
+    elif log is None:
+        console.print(row, overflow='ellipsis', no_wrap=True)
+    else:
+        row.truncate(console.width, overflow='ellipsis')
+        # The path wraps rather than clips, so it stays usable.
+        console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=muted))
+    for line in tail:
+        console.print(Text('    ') + shell_text(line, AnsiDecoder()), style=muted, overflow='ellipsis', no_wrap=True)
+
+
+def _row_ansi(
+    *, source: str, width: int, draw: Callable[..., None], colors: ColorSystemName | None, expanded: bool
+) -> str:
+    """A live result row at `width`: with its hint and tail, or `expanded` with the output in `source` under it.
+
+    `colors` must be the stream console's colour system; see `render_markdown`.
+    """
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system=colors, width=width)
+    draw(console, hint=not expanded)
+    if expanded:
+        decoder = AnsiDecoder()
+        for line in source.splitlines():
+            text = shell_text(line, decoder)
+            # Rich measures a tab as one cell, so expand them first.
+            text.expand_tabs(8)
+            # Wrapped rather than clipped, and indented under the row, so every character shows.
+            console.print(Padding(text, (0, 0, 0, 4), expand=False), style=theme.color(theme.MUTED))
+    return output.getvalue()
+
 
 @dataclass
 class ShellPreview:
@@ -231,6 +309,8 @@ class ToolOutput:
         self._owed: str | None = None
         """The call whose header still owes its blank line."""
         self._blank_owed = False
+        self._outputs: dict[str | None, tuple[MarkdownBlock, int]] = {}
+        """Live rows of commands whose output their tool result brings, with each command's PID."""
 
     def separate(self) -> None:
         """Print the blank line a header still owes, before other output follows it."""
@@ -252,41 +332,47 @@ class ToolOutput:
         self._owed = tool_call_id
         self._blank_owed = True
 
-    def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None, name: str = '') -> None:
+    def _row(
+        self,
+        tool_call_id: str | None,
+        text: str,
+        *,
+        style: str,
+        log: str | None = None,
+        name: str = '',
+        tail: Sequence[str] = (),
+        output: str | None = None,
+    ) -> MarkdownBlock | None:
         """Print one result row under the call's header, naming the call first when another header is in between.
 
-        The call's name gets the room a short result leaves, or half the row beside a long one.
-        `name` stands in for a call whose header this renderer did not print.
+        `name` stands in for a call whose header this renderer did not print. `tail` lines follow the row.
+        With `output`, the live prompt keeps the row as a transcript item that Ctrl+O expands to that
+        output, in place of the tail, and returns it so output that arrives later can extend it.
         """
         under_header = self._blank_owed and tool_call_id is not None and self._owed == tool_call_id
         if not under_header:
             self.separate()
-        row = Text('  ⎿ ', style=theme.color(theme.MUTED))
-        result = Text(terminal_text(text, keep=''), style=style)
-        label = self._labels.get(tool_call_id, name)
-        if not under_header and label:
-            call = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
-            half = self.console.width // 2
-            # A short result keeps all of itself. A long one gives the name at most half the row,
-            # less if its first part (a shell call's exit status) would not fit, leaving a cell for the ellipsis.
-            head = Text(text.split(' · ')[0]).cell_len if ' · ' in text else 0
-            room = (
-                self.console.width - row.cell_len - result.cell_len - 3
-                if result.cell_len <= half
-                else min(half, self.console.width - row.cell_len - head - 4)
-            )
-            call.truncate(max(room, 1), overflow='ellipsis')
-            row.append_text(call)
-            row.append(' · ', style=theme.color(theme.MUTED))
-        row.append_text(result)
-        if log is None:
-            self.console.print(row, overflow='ellipsis', no_wrap=True)
-        else:
-            row.truncate(self.console.width, overflow='ellipsis')
-            # The path wraps rather than clips, so it stays usable.
-            self.console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED)))
+        label = '' if under_header else self._labels.get(tool_call_id, name)
+        draw = partial(_draw_row, text=text, style=style, label=label, log=log)
         self._blank_owed = False
         self._owed = None
+        surface = self.console.file
+        if output is None or not self._live:
+            draw(self.console, hint=False, tail=tail)
+            return None
+        assert isinstance(surface, PromptSurface)
+        colors = color_system(self.console)
+        collapsed = partial(_row_ansi, draw=partial(draw, tail=tail), colors=colors, expanded=False)
+        expanded = partial(_row_ansi, draw=partial(draw, tail=()), colors=colors, expanded=True)
+        block = surface.markdown(render=collapsed, width=self.console.width, expanded=expanded)
+        block.extend(output)
+        block.write(collapsed(source=output, width=self.console.width))
+        return block
+
+    @property
+    def _live(self) -> bool:
+        """Whether output goes to the live prompt's transcript, where Ctrl+O expands result rows."""
+        return self.console.is_terminal and isinstance(self.console.file, PromptSurface)
 
     def prints_diff(self, event: AgentStreamEvent) -> bool:
         """Whether `event` is a file's diff, or a call to a tool that prints one, in every tool-call style."""
@@ -324,7 +410,17 @@ class ToolOutput:
         return True
 
     def render_result(self, event: FunctionToolResultEvent) -> None:
-        """Mark a call that failed, was refused, was interrupted, or has to be retried; a success shows nothing more."""
+        """Mark a call that failed, was refused, was interrupted, or has to be retried.
+
+        A success adds a command's output to its live row. A read or listing gets a live row whose
+        output, the text the tool returned, Ctrl+O shows; elsewhere a success shows nothing more.
+        """
+        content = event.part.content
+        if (pending := self._outputs.pop(event.part.tool_call_id, None)) is not None and isinstance(content, str):
+            block, pid = pending
+            # The model's copy, with secrets masked, ends with the command's handles, which the row already gives.
+            output, handles, _ = content.rpartition(f'PID: {pid} (')
+            block.extend(output if handles else content)
         if event.part.outcome != 'success':
             lines = event.part.model_response_str(wrap_if_error=False).strip().splitlines()
             reason = lines[0] if lines else event.part.outcome
@@ -337,6 +433,16 @@ class ToolOutput:
             reason = f'refused: {request.cancel_reason or "not approved"}' if request and request.cancelled else ''
         if reason:
             self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
+            self.console.print()
+        elif (
+            event.part.tool_name in ('read_file', 'list_files')
+            and self._live
+            and isinstance(content, str)
+            and content.strip()
+        ):
+            self._row(
+                event.part.tool_call_id, '', style=theme.color(theme.MUTED), name=event.part.tool_name, output=content
+            )
             self.console.print()
 
     def _shell_chunk(self, event: CommandOutputEvent) -> None:
@@ -393,17 +499,16 @@ class ToolOutput:
         style = theme.color(theme.ERROR if failed else theme.MUTED)
         clipped = self.show_output and (preview.cut or preview.shown < (event.line_count or 0))
         log = event.output_path if event.truncated or event.exit_code is None or clipped else None
-        self._row(event.tool_call_id, ' · '.join(parts), style=style, log=log)
         # The tail of a cut preview is not the end of the output, so the log is the place to look.
         unseen = preview.completed_lines - preview.shown
-        if failed and not event.truncated and unseen and self.shell_lines:
-            for line in list(preview.tail)[-unseen:]:
-                self.console.print(
-                    Text('    ') + shell_text(line, AnsiDecoder()),
-                    style=theme.color(theme.MUTED),
-                    overflow='ellipsis',
-                    no_wrap=True,
-                )
+        tail = list(preview.tail)[-unseen:] if failed and not event.truncated and unseen and self.shell_lines else []
+        # Its output comes with the tool result, so the row waits for it.
+        hidden = event.line_count is None or event.line_count > preview.shown
+        block = self._row(
+            event.tool_call_id, ' · '.join(parts), style=style, log=log, tail=tail, output='' if hidden else None
+        )
+        if block is not None:
+            self._outputs[event.tool_call_id] = (block, event.pid)
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
@@ -426,6 +531,7 @@ class ToolOutput:
         self._headers.clear()
         self._shells.clear()
         self._labels.clear()
+        self._outputs.clear()
 
     def discard_call(self, tool_call_id: str) -> None:
         """Release proposed diffs and the header label after a tool result, including refusals and retries."""

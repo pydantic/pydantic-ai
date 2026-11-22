@@ -199,10 +199,18 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def markdown(self, *, render: Render, width: int) -> MarkdownBlock:
-        """Start a Markdown part that renders again for a new width or theme."""
+    def markdown(self, *, render: Render, width: int, expanded: Render | None = None) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock` for `expanded`."""
         with self._lock:
-            return self.transcript.markdown(render=render, width=width, changed=self.changed)
+            return self.transcript.markdown(render=render, width=width, changed=self.changed, expanded=expanded)
+
+    def toggle_details(self) -> bool:
+        """Expand or collapse every tool result in the transcript, for Ctrl+O; returns whether they are expanded."""
+        with self._lock:
+            expanded = self.transcript.toggle_details()
+            self.selection.clear()
+            self._dirty = True
+        return expanded
 
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""

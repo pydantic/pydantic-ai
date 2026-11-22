@@ -549,3 +549,21 @@ async def test_a_preview_line_cut_at_the_terminal_edge_keeps_the_log_path() -> N
     await renderer.on_stream_event(CommandOutputEvent(tool_call_id='w', text='x' * 60 + '\n'))
     await renderer.on_stream_event(_finished('w', exit_code=0, line_count=1))
     assert output.getvalue().endswith('  ⎿ exit 0 · 1 line · log /tmp/out\n\n')
+
+
+async def test_a_live_read_row_under_another_calls_header_names_its_call() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+    for call_id, path in (('a', 'a.py'), ('b', 'b.py')):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('read_file', {'path': path}, tool_call_id=call_id))
+        )
+    await renderer.on_stream_event(FunctionToolResultEvent(part=ToolReturnPart('read_file', 'one', tool_call_id='a')))
+    await renderer.finish()
+    rows = [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=24).rows]
+    assert "  ⎿ read_file 'a.py' · ctrl+o to expand" in rows
+    surface.toggle_details()
+    rows = [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=24).rows]
+    assert rows[rows.index("  ⎿ read_file 'a.py'") + 1] == '    one'

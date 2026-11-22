@@ -1240,7 +1240,8 @@ there instead, from the next start. The rest of this section describes that pane
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+bottom or submitting follows new output again. Ctrl+O shows or hides the full output of tool
+calls in place (see [How tool calls look](#how-tool-calls-look)). Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
@@ -1579,6 +1580,14 @@ arguments did not validate says `invalid arguments`. When calls run in parallel,
 does not sit under its own header starts with the command or call it belongs to. Other shell
 output and grep results stay out of the terminal; the model still receives full tool results.
 Long summaries are clipped to the terminal width.
+
+In the interactive prompt, Ctrl+O shows the output of every command, read, and listing in
+the transcript under its row, and hides it again. A row whose output is hidden ends with
+`ctrl+o to expand` when the row has room. A command shows the output the tool returned to the model,
+with secrets masked: the end of a long output (about 16 KB), marked where earlier output was
+left out, and the full output stays in its log. A read shows the numbered lines the model got, and a listing its paths. Results that
+arrive later, while the output is shown, open shown too. Output is wrapped to the terminal's
+width and rendered again when it changes. `pax -p` and redirected output are unchanged.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
@@ -1700,7 +1709,8 @@ Read headers show the path, plus the offset and line limit only when the call se
 (Coder's default offset is 0, and its default and largest limit 2000 lines). Listing
 headers show the directory, plus `recursive=false`, a result limit, or a glob only when
 the call sets them. Coder listings recurse using ripgrep and honor ignore rules. These
-defaults describe Coder tools. Read and listing calls add no result row on success.
+defaults describe Coder tools. Read and listing calls add no result row on success, except in the
+interactive prompt, where a `⎿ ctrl+o to expand` row lets you see what the tool returned.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no

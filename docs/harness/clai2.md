@@ -98,6 +98,7 @@ A few keys to know:
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of tool calls. |
 | <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
 
@@ -244,8 +245,9 @@ Each tool call gets one line: the tool and what it worked on, as in the screensh
 the top. When CLAI edits or writes a file, you see the diff. A shell command adds one row
 with its exit code and line count, such as `⎿ exit 0 · 23 lines`, in red when the
 command fails. A failed or refused call of any tool gets a red row with the reason.
-The rest of the shell output stays out of the way unless you ask for it with
-`/set display.tool_output true`; the model always gets the full output. To list fewer
+The rest of the shell output stays out of the way: press <kbd>Ctrl</kbd>+<kbd>O</kbd> to show
+it under the row, or `/set display.tool_output true` to always print a preview; the model
+always gets the full output. To list fewer
 lines, `/set display.tool_calls grouped` counts calls in a row instead, such as
 `● shell 4, grep 2`. That style prints no result rows.
 

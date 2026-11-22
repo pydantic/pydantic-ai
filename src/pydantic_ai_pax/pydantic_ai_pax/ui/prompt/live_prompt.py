@@ -99,7 +99,7 @@ class LivePrompt:
         self.steer = steer
         self.run_now = run_now
         self.clock = clock
-        self.chords = dict(chords or {})
+        self.chords = {'ctrl-o': self.toggle_details, **(chords or {})}
         self.pinned = pinned
         self.spinner = spinner
         self.panel = panel
@@ -284,6 +284,10 @@ class LivePrompt:
                 self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
+
+    def toggle_details(self) -> str:
+        """Expand or collapse the output of every tool result in the transcript, for Ctrl+O."""
+        return 'Showing tool output.' if self.output.toggle_details() else 'Hiding tool output.'
 
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""

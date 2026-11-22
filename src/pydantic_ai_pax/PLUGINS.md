@@ -3135,7 +3135,8 @@ and bullet markers are muted grey. Successful file writes and edits show their
 diffs even with `display.tool_output` off. A finished shell command always adds one result row
 (`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call
 of any tool a renderer does not claim gets a red row with the reason. Other shell output and grep
-results are hidden from the terminal, not from the model. Set `/set display.tool_output true`
+results are hidden from the terminal, not from the model; in the interactive prompt, Ctrl+O shows
+a command's, read's, or listing's returned output under its row. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
 diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,

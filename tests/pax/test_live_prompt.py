@@ -22,8 +22,17 @@ from rich.text import Text
 from termflow.ansi import make_clipboard_copy
 from termflow.tui.completion import Completion
 
-from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+)
+from pydantic_ai.messages import BinaryContent, ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.shell import CommandFinishedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.commands import Command, Commands
 from pydantic_ai_pax.ui.prompt.image_input import ImageInput
@@ -1102,3 +1111,68 @@ async def test_the_full_screen_editor_takes_the_terminal_from_the_start() -> Non
         assert terminal.alternate
         assert terminal.lines()[0] == ''
         assert terminal.lines()[-1].strip() == 'ready', 'the editor sits at the bottom of the terminal'
+
+
+@pytest.mark.parametrize('inline', [False, True])
+async def test_ctrl_o_expands_tool_results_in_place_and_keeps_them_across_a_resize(inline: bool) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, inline=inline) as (live, _, _):
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        shell = ToolCallPart('shell', {'command': 'make test'}, tool_call_id='s')
+        await renderer.on_stream_event(FunctionToolCallEvent(part=shell))
+        await renderer.on_stream_event(
+            CommandFinishedEvent(
+                tool_call_id='s',
+                pid=7,
+                output_path='/tmp/out',
+                status_path='/tmp/status',
+                exit_code=0,
+                truncated=False,
+                line_count=2,
+            )
+        )
+        result = (
+            'passed one\npassed two\nPID: 7 (supervisor; use `kill` to stop)\nOutput: /tmp/out\nStatus: /tmp/status'
+        )
+        await renderer.on_stream_event(FunctionToolResultEvent(part=ToolReturnPart('shell', result, tool_call_id='s')))
+        read = ToolCallPart('read_file', {'path': 'app.py'}, tool_call_id='r')
+        await renderer.on_stream_event(FunctionToolCallEvent(part=read))
+        content = '[app.py | 1 lines]\n     1\tprint("hi")\n'
+        await renderer.on_stream_event(
+            FunctionToolResultEvent(part=ToolReturnPart('read_file', content, tool_call_id='r'))
+        )
+        await renderer.finish()
+
+        def shown() -> list[str]:
+            live.output.refresh()
+            live.paint()
+            return [line for line in terminal.lines() if line][:8]
+
+        collapsed = [
+            '● shell make test',
+            '  ⎿ exit 0 · 2 lines · ctrl+o to expand',
+            "● read_file 'app.py'",
+            '  ⎿ ctrl+o to expand',
+        ]
+        assert shown()[:4] == collapsed
+        live.feed('ctrl-o')
+        assert live.notice == 'Showing tool output.'
+        expanded = [
+            '● shell make test',
+            '  ⎿ exit 0 · 2 lines',
+            '    passed one',
+            '    passed two',
+            "● read_file 'app.py'",
+            '    [app.py | 1 lines]',
+            '         1  print("hi")',
+        ]
+        assert shown()[:7] == expanded
+        assert live.output.full_screen or inline, 'inline output that still fits stays inline'
+        terminal.resize(width=30, height=24)
+        live.console.size = (30, 24)
+        live.output.resize_notice()
+        assert shown()[:4] == ['● shell make test', '  ⎿ exit 0 · 2 lines', '    passed one', '    passed two']
+        live.feed('ctrl-o')
+        assert live.notice == 'Hiding tool output.'
+        # The hint is left out where it does not fit.
+        assert shown()[:4] == [collapsed[0], '  ⎿ exit 0 · 2 lines', *collapsed[2:]]
