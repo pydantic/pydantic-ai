@@ -21,6 +21,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import (
     MAX_HELD_OSC,
     MODES_OFF,
     MODES_ON,
+    RESIZE_SETTLE,
     WHEEL_ROWS,
     PromptSurface,
     open_in_browser,
@@ -182,6 +183,7 @@ def test_resize_rewraps_the_transcript_from_the_retained_output() -> None:
     assert screen.lines()[:2] == ['x' * 40, 'x' * 20]
     screen.terminal.resize(width=80, height=30)
     screen.surface.resize_notice()
+    screen.now += RESIZE_SETTLE
     screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'x' * 60
     assert screen.lines()[-4:] == list(ROWS)
@@ -420,6 +422,7 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     block.write('streamed bold\n')
     screen.surface.refresh()
     assert screen.lines()[0] == 'streamed bold'
+    block.end()
     assert calls == []
     screen.terminal.resize(width=60, height=24)
     screen.surface.paint(ROWS)
@@ -432,6 +435,83 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     block.freeze()
     screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'streamed bold', 'an aborted part keeps what it showed'
+
+
+def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> None:
+    """Rendering the whole part again on every frame made each frame cost the whole part."""
+    calls: list[int] = []
+
+    def render(*, source: str, width: int) -> str:
+        calls.append(width)
+        return f'rendered at {width}: {source}\n'
+
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend('one')
+    block.write('one ')
+    screen.terminal.resize(width=10, height=24)
+    for word in ('two', 'three', 'four'):
+        screen.now += RESIZE_SETTLE
+        block.extend(f' {word}')
+        block.write(f'{word} ')
+        screen.surface.paint(ROWS)
+    assert screen.lines()[:2] == ['one two th', 'ree four'], 'the streamed rows wrap to the new width'
+    assert calls == []
+    block.end()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:3] == ['rendered a', 't 10: one', 'two three']
+    screen.surface.paint(ROWS)
+    assert calls == [10]
+
+
+def test_a_drag_resize_paints_once_the_width_holds() -> None:
+    """Each width a drag passes would render every visible reply again; only the one it stops at does."""
+    calls: list[int] = []
+
+    def render(*, source: str, width: int) -> str:
+        calls.append(width)
+        return f'{width}: {source}\n'
+
+    screen = Screen(width=40)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend('answer')
+    block.write('answer\n')
+    block.end()
+    screen.surface.paint(ROWS)
+    for width in (38, 36, 34):
+        screen.now += FRAME_INTERVAL
+        screen.terminal.resize(width=width, height=24)
+        screen.surface.resize_notice()
+        screen.surface.paint(ROWS)
+        assert screen.lines()[0] == 'answer', 'the last frame stays while the width changes'
+    screen.terminal.resize(width=34, height=20)
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert calls == []
+    screen.now += RESIZE_SETTLE
+    screen.surface.refresh()
+    assert screen.lines()[0] == '34: answer'
+    assert calls == [34]
+    screen.terminal.resize(width=34, height=24)
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[-4:] == list(ROWS), 'a new height alone paints at once'
+
+
+async def test_a_resize_paints_once_it_settles_without_waiting_for_the_editor(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A short wait stands in for the real one, so waiting it out costs a millisecond.
+    monkeypatch.setattr(prompt_surface, 'RESIZE_SETTLE', 0.001)
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    screen.write('x' * 30 + '\n')
+    screen.terminal.resize(width=20, height=24)
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:2] != ['x' * 20, 'x' * 10]
+    screen.now += 0.001
+    await asyncio.sleep(0.01)  # real-wait: the delayed frame is the claim
+    assert screen.lines()[:2] == ['x' * 20, 'x' * 10]
 
 
 def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
@@ -726,7 +806,9 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
 
     screen = Screen(width=20, height=12)
     screen.surface.paint(ROWS)
-    screen.surface.markdown(render=render, width=40).extend(url)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend(url)
+    block.end()
     screen.surface.paint(ROWS)
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
@@ -924,6 +1006,7 @@ def test_a_width_change_moves_the_inline_panel_to_full_screen() -> None:
     assert not screen.terminal.alternate
     screen.terminal.resize(width=30, height=10)
     screen.surface.resize_notice()
+    screen.now += RESIZE_SETTLE
     screen.surface.paint(ROWS)
     assert screen.terminal.alternate
     assert screen.lines()[-4:] == list(ROWS)

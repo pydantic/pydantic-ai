@@ -262,6 +262,10 @@ def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
     block.flush()
     buffer.write('after\n')
     assert plain(buffer, width=40) == ['tool header', 'streamed', 'partial', 'after', '']
+    assert plain(buffer, width=7) == ['tool he', 'ader', 'streame', 'd', 'partial', 'after', ''], (
+        'a part still streaming wraps its streamed rows at a new width'
+    )
+    block.end()
     assert plain(buffer, width=30) == ['tool header', 'rendered at 30: **hi**', 'after', '']
     assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
 
@@ -396,6 +400,7 @@ def test_markdown_repaint_respects_configured_character_and_line_limits(repaint:
     block = transcript.markdown(render=render, width=40, changed=lambda: None)
     block.extend('x')
     block.write('ok\n')
+    block.end()
     assert plain(transcript, width=40) == ['ok', '']
     with theme.use(lambda: 'github_light' if repaint == 'theme' else 'default'):
         assert plain(transcript, width=20 if repaint == 'width' else 40) == ['three', '']

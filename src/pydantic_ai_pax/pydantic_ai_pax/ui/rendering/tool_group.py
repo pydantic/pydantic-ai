@@ -82,6 +82,7 @@ class ToolCallGroup:
                 # The blank line stays part of the group, above anything printed while it was open.
                 self._block.extend('\n')
                 self._write('\n')
+                self._block.end()
             self._rows = [[]]
             self._block = None
 

@@ -534,10 +534,12 @@ class StreamRenderer:
         if self._markdown is not None:
             self._markdown.finish()
         writer, self._writer = self._writer, None
-        visible = self._heading_printed
+        visible, block = self._heading_printed, self._block
         self._reset()
         if writer is not None:
             await writer.close()
+        if block is not None:
+            block.end()
         if visible:
             self.console.print()
         self.console.file.flush()

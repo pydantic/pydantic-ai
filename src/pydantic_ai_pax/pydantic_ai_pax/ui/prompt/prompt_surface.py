@@ -39,6 +39,12 @@ INLINE_ON = '\x1b[?25l\x1b[?7l'
 INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
+RESIZE_SETTLE = 0.1
+"""A frame at a new width waits until the width has held this long.
+
+Wrapping the transcript again at a new width renders every visible reply in full, about 1 s for a
+10,000-line reply, and dragging a window edge changes the width many times a second.
+"""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
 _TERMINAL_OSC = re.compile(r'\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)')
 _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
@@ -116,6 +122,8 @@ class PromptSurface(io.StringIO):
         """A paint waits for the frame interval to end; see `changed`."""
         self._painted_as: tuple[int, int, str] | None = None
         """The geometry and theme of the last frame; transcript rows wrap and colour by both."""
+        self._resized_at = -math.inf
+        """When the terminal last reported a resize."""
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -123,6 +131,7 @@ class PromptSurface(io.StringIO):
 
     def resize_notice(self) -> None:
         """Repaint every cell next frame; signal handlers must not draw."""
+        self._resized_at = self.clock()
         self._previous = None
         self.selection.clear()
 
@@ -335,6 +344,8 @@ class PromptSurface(io.StringIO):
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
+        if self._settling(width):
+            return
         if not self.full_screen and self._paint_compact(modes=modes, width=width, height=height):
             return
         self.full_screen = True
@@ -366,6 +377,15 @@ class PromptSurface(io.StringIO):
         if text := ''.join(parts):
             self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
             self.output.flush()
+
+    def _settling(self, width: int) -> bool:
+        """Whether a resize to a new width came less than `RESIZE_SETTLE` ago, so the last frame stays until it holds."""
+        wait = RESIZE_SETTLE - (self.clock() - self._resized_at)
+        if wait <= 0 or self._painted_as is None or self._painted_as[0] == width:
+            return False
+        self._dirty = True
+        self._paint_later(wait)
+        return True
 
     def _paint_compact(self, *, modes: bool, width: int, height: int) -> bool:
         """Paint the inline panel, or print a released one, unless it has to move to the alternate screen."""

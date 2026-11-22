@@ -246,7 +246,8 @@ class MarkdownBlock(io.StringIO):
     """One assistant text or thinking part, kept as Markdown so a new width or theme renders it again.
 
     The stream writes its incrementally rendered ANSI here, which is shown while the width and theme
-    still match. Otherwise the whole source renders again, once per width, theme, and length.
+    still match, and until the part ends. After that the whole source renders again, once per width and
+    theme. Rendering a part that is still streaming again per frame made each frame cost the whole part.
     """
 
     def __init__(
@@ -259,6 +260,8 @@ class MarkdownBlock(io.StringIO):
         self._key = (width, theme.name())
         self._stream = _Lines(max_chars=max_chars, max_lines=max_lines)
         self._changed = changed
+        self.streaming = True
+        """Until `end`, the stream's own rows show at every width, wrapped again if it changed."""
         self._rows: tuple[object, tuple[str, ...]] = ((), ())
         self._continued: tuple[bool, ...] = ()
         """Per cached row, whether it wraps on from the row above."""
@@ -267,6 +270,8 @@ class MarkdownBlock(io.StringIO):
     def rebind(cls, block: 'MarkdownBlock') -> 'MarkdownBlock':
         block.__class__ = cls
         block._stream = _Lines.rebind(block._stream)
+        # A reload happens between turns, so a block from before it has ended.
+        vars(block).setdefault('streaming', False)
         # Blocks from before a reload have no wrap flags, so render their rows again.
         block._rows, block._continued = ((), ()), ()
         return block
@@ -295,6 +300,11 @@ class MarkdownBlock(io.StringIO):
     def flush(self) -> None:
         """Painting is the panel's job."""
 
+    def end(self) -> None:
+        """The part is complete, so a new width or theme renders its whole source once."""
+        self.streaming = False
+        self._changed()
+
     def freeze(self) -> None:
         """Keep only what was shown, as an aborted stream never rendered the rest of its source."""
         self.source = None
@@ -302,7 +312,7 @@ class MarkdownBlock(io.StringIO):
 
     def _lines(self, *, width: int) -> list[_Line]:
         key = (width, theme.name())
-        if self.source is None or key == self._key:
+        if self.source is None or self.streaming or key == self._key:
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(self._render(source=self.source, width=width))
@@ -311,7 +321,7 @@ class MarkdownBlock(io.StringIO):
     def rows(self, *, width: int) -> tuple[str, ...]:
         """Rows at `width`; the cache follows theme and source, not just width."""
         source = None if self.source is None else len(self.source)
-        key = (width, theme.name(), source, self._stream.revision)
+        key = (width, theme.name(), source, self._stream.revision, self.streaming)
         if self._rows[0] != key:
             lines = self._lines(width=width)
             self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
