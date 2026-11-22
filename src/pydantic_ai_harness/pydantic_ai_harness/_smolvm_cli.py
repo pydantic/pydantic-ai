@@ -233,7 +233,11 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        """Run a command in the VM; on timeout or cancellation the CLI is killed, and smolvm kills the command."""
+        """Run a command in the VM; on timeout or cancellation, or past the output cap, the CLI is killed.
+
+        With a `timeout`, smolvm also kills the command itself shortly after. Without one, the command ends only if
+        smolvm ends a command whose CLI went away, which the live tier checks but no recorded run has confirmed yet.
+        """
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
