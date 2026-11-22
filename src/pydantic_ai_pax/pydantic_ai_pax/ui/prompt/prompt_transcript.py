@@ -327,6 +327,7 @@ class MarkdownBlock(io.StringIO):
 
         Without `render`, the rows last built stay, at their width and with their content, so a frame
         costs nothing while a resize goes on. Wrapping a long part again costs about as much as rendering it.
+        A part still streaming holds back its new text until the width holds too.
         A part with no rows yet wraps its streamed rows instead.
         """
         if not render and self._rows[0]:

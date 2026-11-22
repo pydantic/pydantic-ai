@@ -601,9 +601,9 @@ def test_transcript_scrolls_rows_within_one_wrapped_item_and_skips_empty_parts()
         assert (source, width) == ('', 4)
         return ''
 
-    buffer.markdown(render=render, width=1, changed=lambda: None)
+    buffer.markdown(render=render, width=1, changed=lambda: None).end()
     buffer.write('abcdefghijklmnopqrstuvwxyz\n')
-    buffer.markdown(render=render, width=1, changed=lambda: None)
+    buffer.markdown(render=render, width=1, changed=lambda: None).end()
     assert view.window(width=4, height=3) == ['uvwx', 'yz', '']
     view.scroll(3)
     assert view.window(width=4, height=3) == ['ijkl', 'mnop', 'qrst']

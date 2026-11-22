@@ -380,8 +380,8 @@ def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output(
     block = _block(transcript)
     block.extend('answer')
     block.write('answer\n')
-    # Blocks from before parts ended had no `streaming`; a reload happens between turns.
-    del vars(block)['streaming']
+    # Objects from before resizes settled had no `streaming` or `keep_rows`; a reload happens between turns.
+    del vars(block)['streaming'], vars(transcript)['keep_rows']
     for _ in range(2):
         assert TranscriptBuffer.rebind(transcript) is transcript
         assert plain(transcript, width=40) == ['notice', 'answer', '']
