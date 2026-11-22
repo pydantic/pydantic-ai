@@ -9,6 +9,7 @@ for the editor. Standard library only: this runs before the heavy imports it cov
 import io
 import os
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import TextIO
 
@@ -78,13 +79,11 @@ class FirstFrame:
         path, self.path = self.path, None
         if path is None:
             return
-        try:
+        with suppress(OSError):
             if rows is None:
                 path.unlink(missing_ok=True)
             else:
                 path.write_text('\n'.join([_key(), *rows]), encoding='utf-8')
-        except OSError:
-            pass
 
     def restore_input(self) -> None:
         """Give the terminal back its input modes, before the editor's raw mode saves them."""
@@ -109,8 +108,7 @@ class FirstFrame:
         original, self._stderr = self._stderr, None
         if original is None:
             return ''
-        if sys.stderr is self._held:
-            sys.stderr = original
+        sys.stderr = original
         held, self._held = self._held.getvalue(), io.StringIO()
         return held
 

@@ -12,8 +12,8 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-LAZY_IMPORTERS = frozenset({'pydantic_ai', 'pydantic_ai_harness', 'pydantic_ai_pax', 'pydantic_graph'})
-"""Packages whose module-level imports Python 3.15 makes lazy for a launch: this repository's, not a dependency's."""
+from pydantic_ai_pax.warm_imports import LAZY_IMPORTERS
+
 TELEMETRY_LOGGERS = ('logfire', 'opentelemetry')
 """Loggers of the telemetry SDKs, whose export retries, timeouts, and batch failures run on background threads."""
 
@@ -68,20 +68,21 @@ def _lazy_imports() -> Generator[None]:
     modules only for their side effects. Only in a fresh process: one that imported Pydantic AI already, such as a
     test run, keeps its imports as they are.
     """
-    if sys.version_info < (3, 15) or 'pydantic_ai' in sys.modules:
+    # Coverage is collected on older Pythons only.
+    if sys.version_info >= (3, 15) and 'pydantic_ai' not in sys.modules:  # pragma: no cover
+        # Typeshed has no stubs for PEP 810's functions yet.
+        sys.set_lazy_imports_filter(_lazy_import)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+        sys.set_lazy_imports('all')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+        try:
+            yield
+        finally:
+            sys.set_lazy_imports('normal')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+            sys.set_lazy_imports_filter(None)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+    else:
         yield
-        return
-    # Typeshed has no stubs for PEP 810's functions yet.
-    sys.set_lazy_imports_filter(_lazy_import)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-    sys.set_lazy_imports('all')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-    try:
-        yield
-    finally:
-        sys.set_lazy_imports('normal')  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
-        sys.set_lazy_imports_filter(None)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
 
-def _lazy_import(importer: str, name: str, fromlist: tuple[str, ...] | None) -> bool:
+def _lazy_import(importer: str, name: str, fromlist: tuple[str, ...] | None) -> bool:  # pragma: no cover
     """Whether an import may bind on first use: only in our own packages, never in a dependency.
 
     `from .name import name` stays eager: a lazy `name` would be replaced by the submodule `name` once that loads.

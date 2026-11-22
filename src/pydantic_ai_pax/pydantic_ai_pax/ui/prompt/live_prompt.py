@@ -720,8 +720,7 @@ class LivePrompt:
             with resize_notifications(resized), holding_output(self.output.held):
                 rows, errors = first_frame.current.adopt()
                 self.output.adopt(rows)
-                if errors:
-                    self.output.write(errors)
+                self.output.write(errors)
                 self.paint()
                 first_frame.current.save(self.output.startup_frame())
                 first_frame.current.restore_input()
