@@ -296,32 +296,8 @@ class MarkdownPipeline:
             self._rendered.write(DROP)
             self._partial = 0
         for event in events:
-            if isinstance(event, CodeBlockStartEvent):
-                self._code_language = (event.language or 'text').split()[0]
-                self._code_lines = []
-                self._continued_fence = False
-                if self.preview:
-                    self._show_code_rule()
-            elif isinstance(event, CodeBlockLineEvent):
-                self._code_lines.append(event.line)
-                if self.preview:
-                    if not self._code_shown:
-                        self._show_code_rule()
-                    # Lexed alone, a line inside a multiline string may be off until the fence lexes the block.
-                    self._rendered.write(self._code(event.line))
-            elif isinstance(event, CodeBlockEndEvent):
-                # Steering immediately before the closing fence has no code left to display.
-                if self._continued_fence and not self._code_lines:
-                    self._continued_fence = False
-                    continue
-                self._continued_fence = False
-                if self._code_shown:
-                    self._rendered.write(DROP)
-                    self._code_shown = False
-                self._rendered.write(
-                    self._code_rule() + self._code('\n'.join(self._code_lines)) + self._code_rule(end=True)
-                )
-                self._code_lines = []
+            if isinstance(event, (CodeBlockStartEvent, CodeBlockLineEvent, CodeBlockEndEvent)):
+                self._render_code(event)
             else:
                 self._renderer.render(event)
         text = self._rendered.getvalue()
@@ -331,6 +307,34 @@ class MarkdownPipeline:
             self.output.commit(text)
         elif text:
             self.output.write(text)
+            self.output.flush()
+
+    def _render_code(self, event: CodeBlockStartEvent | CodeBlockLineEvent | CodeBlockEndEvent) -> None:
+        if isinstance(event, CodeBlockStartEvent):
+            self._code_language = (event.language or 'text').split()[0]
+            self._code_lines = []
+            self._continued_fence = False
+            if self.preview:
+                self._show_code_rule()
+        elif isinstance(event, CodeBlockLineEvent):
+            self._code_lines.append(event.line)
+            if self.preview:
+                if not self._code_shown:
+                    self._show_code_rule()
+                # Lexed alone, a line inside a multiline string may be off until the fence lexes the block.
+                self._rendered.write(self._code(event.line))
+        elif self._continued_fence and not self._code_lines:
+            # Steering immediately before the closing fence has no code left to display.
+            self._continued_fence = False
+        else:
+            self._continued_fence = False
+            if self._code_shown:
+                self._rendered.write(DROP)
+                self._code_shown = False
+            self._rendered.write(
+                self._code_rule() + self._code('\n'.join(self._code_lines)) + self._code_rule(end=True)
+            )
+            self._code_lines = []
 
     def _show_code_rule(self) -> None:
         self._rendered.write(PREVIEW + self._code_rule())

@@ -285,7 +285,7 @@ async def test_live_panel_shows_the_unfinished_line_then_renders_it_in_place() -
     assert '| a | b' in _rows(surface, width=40)
 
 
-async def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None:
+def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None:
     """Retyping a finished line from its first character would blank the preview the user was reading."""
     writes: list[str] = []
 
@@ -294,12 +294,15 @@ async def test_smoothing_types_previews_but_writes_their_replacement_at_once() -
             writes.append(text)
             return super().write(text)
 
-    writer = PartWriter(ObservedOutput(), tick_interval=0.001, catch_up_seconds=0.01, min_chars_per_tick=1)
-    writer.write('preview ' * 4)
+    class Ticks(PartWriter):
+        def tick(self) -> None:
+            """What one drain tick releases, without waiting on the drainer's timer."""
+            self._drain_units(3)
+
+    writer = Ticks(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
+    writer.write('preview')
     writer.commit('the rendered line\n')
-    writer.write('next ' * 4)
-    writer.start()
-    await writer.close()
-    assert ''.join(writes) == 'preview ' * 4 + 'the rendered line\n' + 'next ' * 4
-    assert any('the rendered line\n' in text for text in writes)
-    assert len(writes) > 3
+    writer.write('next')
+    for _ in range(4):
+        writer.tick()
+    assert writes == ['pre', 'vie', 'wthe rendered line\nn', 'ext']

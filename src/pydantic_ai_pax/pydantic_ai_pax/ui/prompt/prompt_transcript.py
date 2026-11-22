@@ -92,6 +92,12 @@ def _encode(text: Text) -> str:
     )
 
 
+def _moves_word(plain: str, *, start: int, space: int, width: int) -> bool:
+    """Whether the word after `space` moves to the next row; one wider than a row is split where it is, as Termflow does."""
+    end = plain.find(' ', space)
+    return space > start and visible_length(plain[space : len(plain) if end < 0 else end]) <= width
+
+
 def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
     """Split a styled line into rows of at most `width` cells, counting wide characters as two.
 
@@ -110,7 +116,7 @@ def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
             # A space past the width is cropped from the end of its row.
             space = index + 1
         elif cells and cells + size > width:
-            start = space if words and space > start else index
+            start = space if words and _moves_word(text.plain, start=start, space=space, width=width) else index
             offsets.append(start)
             cells = visible_length(text.plain[start:index])
         cells += size
@@ -222,17 +228,14 @@ class _Lines:
         self.pending_theme = theme.painted_in()
         """The theme the unfinished line started in, which its completion keeps."""
         self._decoder = TranscriptDecoder()
-        self._pruned = 0
-        """Lines dropped from the start for the limits, so a saved position still finds its line."""
         self._saved: tuple[int, str, str | None, Style] | None = None
-        """At the last `PREVIEW`: lines so far counting pruned ones, the unfinished line, its theme, and the decoder style."""
+        """At the last `PREVIEW`: the number of lines, the unfinished line, its theme, and the decoder style."""
 
     @classmethod
     def rebind(cls, stream: '_Lines') -> '_Lines':
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
         vars(stream).setdefault('pending_theme', theme.name())
-        vars(stream).setdefault('_pruned', 0)
         vars(stream).setdefault('_saved', None)
         for line in stream.lines:
             _Line.rebind(line)
@@ -242,7 +245,7 @@ class _Lines:
         self.revision += 1
         for part in _MARKS.split(text):
             if part == PREVIEW:
-                self._saved = (self._pruned + len(self.lines), self.pending, self.pending_theme, self._decoder.style)
+                self._saved = (len(self.lines), self.pending, self.pending_theme, self._decoder.style)
             elif part == DROP:
                 self._drop()
             elif part:
@@ -250,9 +253,8 @@ class _Lines:
 
     def _drop(self) -> None:
         assert self._saved is not None
-        count, self.pending, self.pending_theme, self._decoder.style = self._saved
+        kept, self.pending, self.pending_theme, self._decoder.style = self._saved
         self._saved = None
-        kept = max(0, count - self._pruned)
         self.chars -= sum(len(line.text) for line in self.lines[kept:])
         del self.lines[kept:]
 
@@ -267,9 +269,11 @@ class _Lines:
             started = theme.painted_in()
         self.pending_theme = started
         self.pending = self.pending[-self.max_chars :]
-        while len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars:
+        # A preview is replaced, so it must not evict the lines before it; its replacement prunes.
+        while self._saved is None and (
+            len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars
+        ):
             self.chars -= len(self.lines.pop(0).text)
-            self._pruned += 1
 
     def tail(self) -> Text:
         decoder = TranscriptDecoder()
