@@ -15,10 +15,14 @@ from rich.text import Text
 from termflow import Parser, Renderer
 from termflow.ansi import UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
 from termflow.parser.events import (
+    BlockquoteEndEvent,
     CodeBlockEndEvent,
     CodeBlockLineEvent,
     CodeBlockStartEvent,
+    EmptyLineEvent,
     HeadingEvent,
+    ListEndEvent,
+    ListItemEndEvent,
     ParseEvent,
 )
 from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
@@ -64,9 +68,35 @@ def prompt_line(text: str) -> Text:
 
 
 def print_prompt(console: Console, text: str) -> None:
-    """Echo a submitted prompt, then a blank line."""
-    console.print(prompt_line(text), highlight=False)
+    """Echo a submitted prompt, wrapped rows indented under its first, then a blank line.
+
+    In the live prompt the prompt is its own transcript item, so a new width or theme wraps it again.
+    """
+    surface = console.file
+    if console.is_terminal and isinstance(surface, PromptSurface):
+        render = partial(_prompt_ansi, colors=color_system(console))
+        block = surface.markdown(render=render, width=console.width)
+        # Rows first: a repaint between the two calls would otherwise count an empty prompt as shown.
+        block.write(render(source=text, width=console.width))
+        block.extend(text)
+    else:
+        _print_prompt_rows(console, text)
     console.print()
+
+
+def _prompt_ansi(*, source: str, width: int, colors: ColorSystemName | None) -> str:
+    """The prompt's rows at `width`; `colors` must be the stream console's colour system, see `render_markdown`."""
+    output = io.StringIO()
+    _print_prompt_rows(Console(file=output, force_terminal=True, color_system=colors, width=width), source)
+    return output.getvalue()
+
+
+def _print_prompt_rows(console: Console, text: str) -> None:
+    marker, body = prompt_line(text).divide([2])
+    indent = Text(' ' * marker.cell_len)
+    for index, row in enumerate(body.wrap(console, max(console.width - marker.cell_len, 1))):
+        row.rstrip()
+        console.print((marker if index == 0 else indent) + row, highlight=False, no_wrap=True)
 
 
 def markdown_style() -> RenderStyle:
@@ -200,6 +230,8 @@ class MarkdownPipeline:
         if continuation is not None:
             self._parser, self._code_language = deepcopy(continuation)
         self._continued_fence = continuation is not None and self._parser.state.is_in_code()
+        self._spaced = True
+        """Whether a block starting now would follow a blank row, or nothing of this part."""
 
     def continuation(self) -> tuple[Parser, str]:
         """Snapshot parsing context before finishing this display segment."""
@@ -207,11 +239,23 @@ class MarkdownPipeline:
 
     def line(self, line: str) -> None:
         """Render one complete source line."""
-        self._render_events(self._parser.parse_line(line))
+        self._render_events(self._space_code(self._parser.parse_line(line)))
 
     def finish(self) -> None:
         """Close any open block, such as an unterminated fence."""
-        self._render_events(self._parser.finalize())
+        self._render_events(self._space_code(self._parser.finalize()))
+
+    def _space_code(self, events: list[ParseEvent]) -> list[ParseEvent]:
+        """Add the blank row a code block needs when its source starts right under other text."""
+        spaced: list[ParseEvent] = []
+        for event in events:
+            if isinstance(event, CodeBlockStartEvent) and not self._spaced:
+                spaced.append(EmptyLineEvent())
+            spaced.append(event)
+            # Closing a list or quote paints no row, so a blank row before it still spaces what follows.
+            if not isinstance(event, (ListItemEndEvent, ListEndEvent, BlockquoteEndEvent)):
+                self._spaced = isinstance(event, EmptyLineEvent)
+        return spaced
 
     def _render_events(self, events: list[ParseEvent]) -> None:
         for event in events:

@@ -81,6 +81,24 @@ async def test_code_wraps_without_losing_content_or_interpreting_controls() -> N
     assert '\x07' not in output.getvalue()
 
 
+@pytest.mark.parametrize(
+    'lead',
+    ['instead of Ok:\n', 'instead of Ok:\n\n', '- instead of Ok\n\n'],
+    ids=['fence-under-prose', 'blank-line-in-source', 'blank-line-after-list'],
+)
+async def test_one_blank_row_separates_prose_from_a_code_block(lead: str) -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=24), stop_loading=lambda: None)
+    content = f'{lead}```rust\nOk(())\n```\n```rust\nErr(e)\n```\n'
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content)))
+    await renderer.finish()
+    rule = 'rust ' + '─' * 19
+    assert output.getvalue().splitlines()[1:] == [
+        *['', rule, 'Ok(())', '─' * 24],
+        *['', rule, 'Err(e)', '─' * 24, ''],
+    ]
+
+
 async def test_cancelled_fence_does_not_leak_into_next_part() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)

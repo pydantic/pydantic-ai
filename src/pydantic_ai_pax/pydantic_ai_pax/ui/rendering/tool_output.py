@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
+from rich.cells import cell_len, chop_cells
 from rich.console import Console, Group
 from rich.text import Text
 
@@ -93,6 +94,52 @@ def _shell_header_ansi(*, source: str, width: int, colors: ColorSystemName | Non
     return output.getvalue()
 
 
+def _wrap_command(command: Text, width: int) -> list[Text]:
+    """Word-wrap each line to `width` cells as Rich does, but break a word too long for a row after a `/` first.
+
+    A path too long for a row then breaks between its names, and folds mid-name only for a name longer than the row.
+    """
+    rows: list[Text] = []
+    for line in command.split('\n', allow_blank=True):
+        # Printing expands tabs, so measure the row as it will show.
+        line.expand_tabs()
+        rows += line.divide(_break_offsets(line.plain, width))
+    return rows
+
+
+_WORD = re.compile(r'\s*\S+\s*')
+"""A word and the spaces around it, as `rich._wrap` splits text."""
+
+
+def _break_offsets(plain: str, width: int) -> list[int]:
+    """Rich's greedy word fill (`rich._wrap.divide_line`), taking a long word's `/`-ended names as its words."""
+    offsets: list[int] = []
+    used = position = 0
+    # Each match starts where the last ended, as in Rich, so a long run of spaces is scanned once.
+    while word := _WORD.match(plain, position):
+        position = word.end()
+        if cell_len(word[0].rstrip()) <= width:
+            names = [(word.start(), word[0])]
+        else:
+            names = [(word.start() + name.start(), name[0]) for name in re.finditer(r'[^/]*/+|.+', word[0])]
+        for start, text in names:
+            shown = text.rstrip()
+            if used + cell_len(shown) <= width:
+                used += cell_len(text)
+                continue
+            if used and start:
+                offsets.append(start)
+            used = cell_len(text)
+            if cell_len(shown) > width:
+                # A name longer than a row folds at the row's end, as Rich does; its trailing spaces stay on the last row.
+                *full, last = chop_cells(shown, width)
+                for chunk in full:
+                    start += len(chunk)
+                    offsets.append(start)
+                used = cell_len(last) + len(text) - len(shown)
+    return offsets
+
+
 def _print_shell_header(console: Console, command: str) -> None:
     muted = theme.color(theme.MUTED)
     # Spans, not a base style, so the command's unstyled names keep the terminal foreground.
@@ -105,8 +152,8 @@ def _print_shell_header(console: Console, command: str) -> None:
     # shown rows reach. One row of slack keeps the last shown word whole.
     shown = len('\n'.join(command.split('\n')[:SHELL_COMMAND_ROWS]))
     end = min(shown, (SHELL_COMMAND_ROWS + 1) * width)
-    rows = highlight_command(command, end=end).wrap(console, width, overflow='fold')
-    total = len(Text(command).wrap(console, width, overflow='fold'))
+    rows = _wrap_command(highlight_command(command, end=end), width)
+    total = len(_wrap_command(Text(command), width))
     for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
         row.rstrip()
         console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
@@ -299,7 +346,8 @@ class ToolOutput:
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
-                self.console.file.write(theme.diff_renderer().render(safe_diff))
+                # The rendered diff has no trailing newline; without one the blank line below only ended its last row.
+                self.console.file.write(theme.diff_renderer().render(safe_diff) + '\n')
                 self.console.file.flush()
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)

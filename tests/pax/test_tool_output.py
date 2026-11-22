@@ -188,6 +188,30 @@ async def test_shell_command_wraps_rather_than_clips_on_a_narrow_console() -> No
     assert output.getvalue() == '● shell echo\n        abcdefgh\n        ijkl\n\n'
 
 
+async def test_shell_command_breaks_a_long_path_between_its_names() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=40), stop_loading=lambda: None)
+    command = 'cd /home/user/projects/json-parser/src/parser && cargo test'
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='path'))
+    )
+    assert output.getvalue().splitlines() == [
+        '● shell cd /home/user/projects/',
+        '        json-parser/src/parser && cargo',
+        '        test',
+        '',
+    ]
+
+
+async def test_shell_command_tab_keeps_every_character_on_a_narrow_row() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=16), stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo\tabcdefgh'}, tool_call_id='tab'))
+    )
+    assert output.getvalue().splitlines() == ['● shell echo', '        abcdefgh', '']
+
+
 async def test_shell_command_rows_beyond_the_limit_are_counted() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
@@ -220,6 +244,11 @@ async def test_edit_uses_termflow_diff_renderer() -> None:
     assert 'old' in text and 'new' in text
     assert '\x1b[48;2;34;92;43m' in text  # addition rows: green
     assert '\x1b[48;2;122;41;54m' in text  # deletion rows: red
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'cargo test'}, tool_call_id='next'))
+    )
+    rows = Text.from_ansi(output.getvalue()).plain.splitlines()
+    assert rows[-3:] == ['+ new', '', '● shell cargo test'], 'one blank row between the diff and the next call'
 
 
 async def _print_shell_call(console: Console, command: str) -> None:

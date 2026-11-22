@@ -358,15 +358,18 @@ async def test_palette_reset_reaches_the_terminal_unsplit_on_a_slow_runner() -> 
 
 def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -> None:
     screen = Screen(height=10)
-    screen.surface.paint(ROWS)
+    rule = '─' * 80
+    screen.surface.paint((rule, 'DRAFT', rule, 'FOOTER'))
     for index in range(20):
         screen.write(f'line {index}\n')
     assert screen.lines()[:6] == [f'line {index}' for index in range(15, 20)] + ['']
     assert screen.surface.page == 5
     screen.surface.scroll(screen.surface.page)
     view = screen.lines()[:6]
-    assert view[:5] == [f'line {index}' for index in range(10, 15)]
-    assert view[5].endswith(SCROLLED_HINT.rstrip())
+    assert view == [f'line {index}' for index in range(10, 16)], 'the hint covers no transcript row'
+    assert screen.lines()[6:9] == [rule, 'DRAFT', rule[len(SCROLLED_HINT) :] + SCROLLED_HINT.rstrip()], (
+        'it sits in the rule below the draft'
+    )
     screen.write('line 20\n')
     assert screen.lines()[:5] == view[:5]
     screen.surface.scroll(100)
@@ -374,6 +377,15 @@ def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -
     screen.surface.scroll(-100)
     assert screen.surface.view.anchor is None
     assert screen.lines()[:6] == [f'line {index}' for index in range(16, 21)] + ['']
+
+
+def test_scrolled_hint_without_an_editor_rule_marks_the_last_transcript_row() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(('Sign-in code:', 'ANSWER'))
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    screen.surface.scroll(screen.surface.page)
+    assert screen.lines()[7].endswith(SCROLLED_HINT.rstrip())
 
 
 def test_short_transcripts_do_not_scroll() -> None:
@@ -709,13 +721,6 @@ def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
     screen.surface.transcript_key('pageup')
     assert screen.lines()[:2] == [outer, inner], 'once all of it shows'
     assert click(screen, 3, 2) == [outer + inner]
-    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
-    screen = Screen(width=20, height=8)
-    screen.surface.paint(ROWS)
-    screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
-    screen.surface.scroll(2)
-    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'the hint covers the rest of the URL'
-    assert click(screen, 3, 3) == []
 
 
 def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
