@@ -281,8 +281,20 @@ async def test_live_panel_shows_the_unfinished_line_then_renders_it_in_place() -
         # A table row would vanish into its table once complete, so it shows only then.
         '',
     ]
+    # Nor does the table's separator, or text after it before the table ends and renders above it.
+    rows = await feed(' |\n--- | ---\n| 1 | 2 |\nAfter')
+    assert rows[4:] == ['bold done', '', '']
     await renderer.finish()
-    assert '| a | b' in _rows(surface, width=40)
+    assert [row.rstrip() for row in _rows(surface, width=40)][6:] == [
+        '┌───┬───┐',
+        '│ a │ b │',
+        '├───┼───┤',
+        '│ 1 │ 2 │',
+        '└───┴───┘',
+        'After',
+        '',
+        '',
+    ]
 
 
 def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None:

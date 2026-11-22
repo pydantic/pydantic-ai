@@ -284,9 +284,19 @@ class MarkdownPipeline:
         self._partial = len(line)
 
     def _previews(self, line: str) -> bool:
-        """Whether to start showing `line`; leading spaces wait for the text that says whether it is a table row."""
+        """Whether to start showing `line`; leading spaces wait for the text that says whether it is a table row.
+
+        A table renders only once it ends, so its rows, and text arriving while it is still open, are not shown early.
+        """
         stripped = line.lstrip()
-        return self.preview and bool(stripped) and not stripped.startswith('|') and not self._parser.state.is_in_code()
+        state = self._parser.state
+        return (
+            self.preview
+            and bool(stripped)
+            and not stripped.startswith('|')
+            and not state.is_in_code()
+            and not state.is_in_table()
+        )
 
     def line(self, line: str) -> None:
         """Render one complete source line."""

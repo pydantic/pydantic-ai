@@ -92,10 +92,10 @@ def _encode(text: Text) -> str:
     )
 
 
-def _moves_word(plain: str, *, start: int, space: int, width: int) -> bool:
+def _moves_word(plain: str, *, space: int, width: int) -> bool:
     """Whether the word after `space` moves to the next row; one wider than a row is split where it is, as Termflow does."""
     end = plain.find(' ', space)
-    return space > start and visible_length(plain[space : len(plain) if end < 0 else end]) <= width
+    return visible_length(plain[space : len(plain) if end < 0 else end]) <= width
 
 
 def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
@@ -116,7 +116,7 @@ def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
             # A space past the width is cropped from the end of its row.
             space = index + 1
         elif cells and cells + size > width:
-            start = space if words and _moves_word(text.plain, start=start, space=space, width=width) else index
+            start = space if words and space > start and _moves_word(text.plain, space=space, width=width) else index
             offsets.append(start)
             cells = visible_length(text.plain[start:index])
         cells += size
@@ -217,7 +217,7 @@ class _Lines:
     """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one.
 
     What follows `PREVIEW` goes to `preview`, shown after the lines until `DROP` discards it. A preview
-    has the same limits of its own, so it never evicts the lines it is shown after.
+    is bounded by the room the lines leave, so it never evicts them and the two keep to the limits.
     """
 
     def __init__(self, *, max_chars: int = 4_000_000, max_lines: int = 10_000) -> None:
@@ -247,13 +247,16 @@ class _Lines:
         for part in _MARKS.split(text):
             if part == PREVIEW:
                 # The preview goes on from the unfinished line, as a reasoning heading's text does.
-                self.preview = _Lines(max_chars=self.max_chars, max_lines=self.max_lines)
+                # Only the room the lines leave, so with its lines the part keeps to its limits.
+                self.preview = _Lines(max_chars=self.max_chars - self.chars, max_lines=self.max_lines - len(self.lines))
                 self.preview.pending, self.preview.pending_theme = self.pending, self.pending_theme
                 self.preview._decoder.style = self._decoder.style
             elif part == DROP:
                 self.preview = None
-            elif part:
-                (self if self.preview is None else self.preview)._write(part)
+            elif self.preview is None:
+                self._write(part)
+            elif self.preview.max_chars:
+                self.preview._write(part)
 
     def _write(self, text: str) -> None:
         started = self.pending_theme if self.pending else theme.painted_in()

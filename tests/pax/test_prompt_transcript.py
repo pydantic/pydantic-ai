@@ -311,15 +311,26 @@ def test_oversized_markdown_keeps_a_bounded_tail_and_does_not_evict_itself() -> 
     assert plain(buffer, width=40) == ['new', 'next', '']
 
 
-def test_a_long_preview_cannot_evict_the_lines_it_is_shown_after() -> None:
+@pytest.mark.parametrize(
+    ('limits', 'preview', 'shown', 'after'),
+    [
+        ({'max_lines': 4}, '1\n2\n3\n4\n5\n6', ['6', ''], ['a', 'b', 'c', '']),
+        ({'max_chars': 12}, 'p' * 20, ['a', 'b', 'p' * 10, ''], ['a', 'b', 'c', '']),
+        # With no room left, the preview shows nothing rather than push the lines out.
+        ({'max_chars': 2}, 'pp', ['a', 'b', ''], ['b', 'c', '']),
+    ],
+)
+def test_a_long_preview_cannot_evict_the_lines_it_is_shown_after(
+    *, limits: dict[str, int], preview: str, shown: list[str], after: list[str]
+) -> None:
     """A preview is replaced at its newline or fence, so only what replaces it may push lines out."""
-    buffer = TranscriptBuffer(max_lines=4)
+    buffer = TranscriptBuffer(**limits)
     block = _block(buffer)
     block.write('a\nb\n')
-    block.write(f'{PREVIEW}1\n2\n3\n4\n5\n6')
-    assert plain(buffer, width=40)[-3:] == ['5', '6', '']
+    block.write(f'{PREVIEW}{preview}')
+    assert plain(buffer, width=40)[-len(shown) :] == shown
     block.write(f'{DROP}c\n')
-    assert plain(buffer, width=40) == ['a', 'b', 'c', '']
+    assert plain(buffer, width=40) == after
 
 
 def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
