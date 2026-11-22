@@ -1,21 +1,25 @@
-"""CLAI's existing brand colours, with opt-in Termflow palettes."""
+"""CLAI's brand colours, raised to read on a light terminal background, with opt-in Termflow palettes."""
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from functools import cache
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rich.syntax import SyntaxTheme
     from termflow.diff import DiffRenderer, DiffTheme
+    from termflow.syntax import Highlighter
     from termflow.themes import TerminalPalette
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
 _BRANDED: ContextVar[bool] = ContextVar('clai_branded', default=False)
+_LIGHT_BACKGROUND: ContextVar[str | None] = ContextVar('clai_light_background', default=None)
 
 
 def names() -> tuple[str, ...]:
@@ -57,15 +61,40 @@ def current() -> TerminalPalette | None:
     return PALETTES[name]
 
 
-def color(role: str) -> str:
-    """Resolve a brand colour against the selected palette at render time."""
+def light_background() -> str | None:
+    """The terminal's background when the default theme paints for a light one, else `None`."""
+    return _LIGHT_BACKGROUND.get()
+
+
+def _surface() -> TerminalPalette | None:
+    """The palette code and diff colours come from: the selected one, or a light one on a light terminal."""
     palette = current()
+    background = _LIGHT_BACKGROUND.get()
+    if palette is not None or background is None:
+        return palette
+    from termflow.themes import PALETTES
+
+    return replace(PALETTES[_LIGHT_SURFACE], bg=background)
+
+
+_LIGHT_SURFACE = 'github_light'
+"""The bundled palette whose ANSI colours the default theme's code and diffs use on a light terminal."""
+
+
+def color(role: str) -> str:
+    """Resolve a brand colour against the selected palette, or the light terminal background, at render time."""
+    palette = current()
+    background = _LIGHT_BACKGROUND.get()
     shade = role.removeprefix('bold ')
-    if palette is None or shade not in _SLOTS:
+    if shade not in _SLOTS:
         return role
-    return ('bold ' if role.startswith('bold ') else '') + _readable(
-        palette.ansi[_SLOTS[shade]], palette.bg, palette.fg
-    )
+    if palette is not None:
+        resolved = _readable(palette.ansi[_SLOTS[shade]], palette.bg, palette.fg)
+    elif background is not None:
+        resolved = _readable(shade, background, '#000000')
+    else:
+        return role
+    return ('bold ' if role.startswith('bold ') else '') + resolved
 
 
 _MIN_CONTRAST = 4.5
@@ -105,7 +134,7 @@ def syntax_theme() -> SyntaxTheme:
     from rich.style import Style
     from rich.syntax import ANSI_LIGHT, ANSISyntaxTheme
 
-    palette = current()
+    palette = _surface()
     styles = ANSI_LIGHT.copy()
     if palette is not None:
         for token, style in styles.items():
@@ -129,7 +158,7 @@ def diff_theme() -> DiffTheme:
     from termflow.diff import DiffTheme
     from termflow.themes.palette import blend_hex
 
-    palette = current()
+    palette = _surface()
     if palette is None:
         return DiffTheme(addition=DIFF_ADDITION, deletion=DIFF_DELETION, marker_brighten=2.0)
     pairs = [
@@ -153,16 +182,40 @@ def diff_theme() -> DiffTheme:
 def diff_renderer() -> DiffRenderer:
     """Render diffs in `diff_theme()` colours, with code that stays readable on light palettes."""
     from termflow.diff import DiffRenderer
+
+    palette = _surface()
+    colours = diff_theme()
+    if palette is None or not _is_light(palette):
+        return DiffRenderer(highlighter=None, theme=colours)
+    # Monokai's near-white text vanishes on a light line, and `default`'s strings and comments fade on the red one.
+    darker = min(colours.addition, colours.deletion, key=_luminance)
+    return DiffRenderer(highlighter=_readable_highlighter(darker, palette.fg), theme=colours)
+
+
+_TRUECOLOR_FOREGROUND = re.compile(r'\x1b\[38;2;(\d+);(\d+);(\d+)m')
+
+
+def _readable_highlighter(bg: str, fg: str) -> Highlighter:
+    """Pygments' `default` style, each colour raised to read on `bg` as `_readable` raises a palette's."""
     from termflow.syntax import Highlighter
 
-    palette = current()
-    # Monokai's near-white text vanishes on a light line; `default` leaves names in the palette's foreground.
-    highlighter = Highlighter(style='default') if palette is not None and _is_light(palette) else None
-    return DiffRenderer(highlighter=highlighter, theme=diff_theme())
+    def raised(match: re.Match[str]) -> str:
+        colour = _readable('#' + ''.join(f'{int(channel):02X}' for channel in match.groups()), bg, fg)
+        return '\x1b[38;2;' + ';'.join(str(int(colour[index : index + 2], 16)) for index in (1, 3, 5)) + 'm'
+
+    class Readable(Highlighter):
+        def highlight_line(self, line: str, language: str = 'text') -> str:
+            return _TRUECOLOR_FOREGROUND.sub(raised, super().highlight_line(line, language))
+
+    return Readable(style='default')
 
 
 def _is_light(palette: TerminalPalette) -> bool:
-    red, green, blue = (int(palette.bg[index : index + 2], 16) for index in (1, 3, 5))
+    return _is_light_colour(palette.bg)
+
+
+def _is_light_colour(colour: str) -> bool:
+    red, green, blue = (int(colour[index : index + 2], 16) for index in (1, 3, 5))
     return 0.299 * red + 0.587 * green + 0.114 * blue > 128
 
 
@@ -175,6 +228,7 @@ def roles(name: str) -> tuple[tuple[str, str], ...]:
     """
     with use(lambda: name):
         palette = current()
+        slots = _surface()
         diff = diff_theme()
         brands = tuple((f'brand {brand}', color(brand)) for brand in _SLOTS)
     surface = (palette.bg, palette.fg) if palette is not None else ('default', 'default')
@@ -186,7 +240,7 @@ def roles(name: str) -> tuple[tuple[str, str], ...]:
         ('diff addition marker', diff.addition_marker),
         ('diff deletion marker', diff.deletion_marker),
         *brands,
-        *((f'ansi {slot}', palette.ansi[slot] if palette is not None else f'color({slot})') for slot in range(16)),
+        *((f'ansi {slot}', slots.ansi[slot] if slots is not None else f'color({slot})') for slot in range(16)),
     )
 
 
@@ -205,10 +259,21 @@ def apply(name: str, *, output: IO[str]) -> None:
 
 
 @contextmanager
-def use(get_name: Callable[[], str], *, output: IO[str] | None = None) -> Generator[None]:
-    """Scope colours to a shell, leaving the terminal untouched when no palette is chosen."""
+def use(
+    get_name: Callable[[], str], *, output: IO[str] | None = None, background: str | None = None
+) -> Generator[None]:
+    """Scope colours to a shell, leaving the terminal untouched when no palette is chosen.
+
+    `background` is the terminal's background colour (`#RRGGBB`); `None` keeps the enclosing scope's. On a
+    light one the default theme raises its colours to WCAG AA contrast against it and uses light code and
+    diff colours; on a dark or unknown one it keeps its original colours.
+    """
     active = _ACTIVE
     token = active.set(get_name)
+    if background is not None:
+        light = _LIGHT_BACKGROUND.set(background if _is_light_colour(background) else None)
+    else:
+        light = _LIGHT_BACKGROUND.set(_LIGHT_BACKGROUND.get())
     try:
         if output is not None and get_name() != 'default':
             apply(get_name(), output=output)
@@ -216,6 +281,7 @@ def use(get_name: Callable[[], str], *, output: IO[str] | None = None) -> Genera
     finally:
         if output is not None and get_name() != 'default':
             apply('default', output=output)
+        _LIGHT_BACKGROUND.reset(light)
         active.reset(token)
 
 
@@ -241,7 +307,7 @@ THINKING = PURPLE
 # The logo keeps Pydantic's brand colours under every palette; do not pass these through `color()`.
 LOGO = f'bold {LITHIUM}'
 BANNER = (LITHIUM, PURPLE, AI_CYAN)
-# Claude Code's dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
+# Dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
 DIFF_ADDITION = '#225C2B'
 DIFF_DELETION = '#7A2936'
 
@@ -287,9 +353,10 @@ def sgr(role: str, *, bold: bool = False) -> str:
     if truecolor():
         red, green, blue = (int(resolved[index : index + 2], 16) for index in (1, 3, 5))
         return f'\x1b[{prefix}38;2;{red};{green};{blue}m'
-    if current() is not None and (shade := role.removeprefix('bold ')) in _SLOTS:
+    shade = role.removeprefix('bold ')
+    if current() is not None and shade in _SLOTS:
         slot = _SLOTS[shade]
         code = 30 + slot if slot < 8 else 90 + slot - 8
     else:
-        code = _BASIC[resolved]
+        code = _BASIC[shade]  # The terminal's own 16 colours, which a light terminal theme already suits.
     return f'\x1b[{prefix}{code}m'

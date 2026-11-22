@@ -2,6 +2,7 @@
 
 import io
 import math
+import re
 
 import pytest
 from pygments.token import Keyword
@@ -188,3 +189,93 @@ async def test_selected_theme_reaches_markdown_and_diffs() -> None:
     assert '\x1b[48;2;229;244;233m' in output.getvalue()
     assert '\x1b[48;2;237;168;175m' in output.getvalue()
     assert text.get_style_at_offset(console, text.plain.index('new')).color is None
+
+
+async def _render_sample() -> str:
+    """A heading, a link, a code fence, and a diff, as the default theme streams them."""
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        PartStartEvent(
+            index=0,
+            part=TextPart(
+                content='# Heading\n\nSee https://example.com\n\n```python\ndef add(a, b):\n    return a\n```\n'
+            ),
+        )
+    )
+    await renderer.on_stream_event(
+        FileEditedEvent(
+            path='demo.py',
+            root_dir='/tmp',
+            content_hash='hash',
+            diff='--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-x = "old"\n+x = "new"\n',
+            truncated=False,
+        )
+    )
+    await renderer.finish()
+    return output.getvalue()
+
+
+@pytest.mark.parametrize('background', ['#000000', '#1E1E2E', '#808080'])
+async def test_default_theme_is_unchanged_on_a_dark_background(background: str) -> None:
+    with theme.use(lambda: 'default'):
+        unknown = (await _render_sample(), theme.roles('default'), theme.sgr(theme.INFO))
+    with theme.use(lambda: 'default', background=background):
+        assert theme.light_background() is None
+        dark = (await _render_sample(), theme.roles('default'), theme.sgr(theme.INFO))
+        assert theme.color(theme.INFO) == theme.INFO
+        assert theme.diff_theme().addition == theme.DIFF_ADDITION
+    assert dark == unknown
+
+
+def _hex_colours(rendered: str) -> set[tuple[str, str]]:
+    """Each truecolor foreground in `rendered` with the truecolor background it sits on, `''` for none."""
+    colours: set[tuple[str, str]] = set()
+    foreground = background = ''
+    for codes, text in re.findall(r'\x1b\[([0-9;]*)m([^\x1b]*)', rendered):
+        parts = codes.split(';')
+        index = 0
+        while index < len(parts):
+            if parts[index] in ('38', '48') and parts[index + 1 : index + 2] == ['2']:
+                shade = '#' + ''.join(f'{int(channel):02X}' for channel in parts[index + 2 : index + 5])
+                foreground, background = (shade, background) if parts[index] == '38' else (foreground, shade)
+                index += 5
+                continue
+            if parts[index] in ('', '0'):
+                foreground = background = ''
+            elif parts[index] == '39':
+                foreground = ''
+            elif parts[index] == '49':
+                background = ''
+            index += 1
+        if foreground and text.strip():
+            colours.add((foreground, background))
+    return colours
+
+
+@pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3', '#EEEEEE'])
+async def test_default_theme_reads_on_a_light_background(background: str) -> None:
+    """On a light terminal every role, the code, and the diff text reach WCAG AA (4.5:1)."""
+    roles = (theme.ACCENT, theme.INFO, theme.SUCCESS, theme.WARNING, theme.ERROR, theme.MUTED, theme.THINKING)
+    with theme.use(lambda: 'default', background=background):
+        assert theme.light_background() == background
+        colours = {role: theme.color(role).removeprefix('bold ') for role in roles}
+        syntax = theme.syntax_theme()
+        rendered = await _render_sample()
+        diff = theme.diff_theme()
+    for token in ANSI_LIGHT:
+        if (color := syntax.get_style_for_token(token).color) is not None:
+            colours[str(token)] = color.get_truecolor().hex
+    assert {role: colour for role, colour in colours.items() if _contrast(colour, background) < 4.5} == {}
+    painted = _hex_colours(rendered)
+    # Diff markers are tinted from their line, like a light palette's.
+    markers = {diff.addition_marker.upper(), diff.deletion_marker.upper()}
+    unreadable = {(fg, bg) for fg, bg in painted if fg not in markers and _contrast(fg, bg or background) < 4.5}
+    assert unreadable == set()
+    assert {bg for _, bg in painted} >= {diff.addition.upper(), diff.deletion.upper()}
+    assert all(_luminance_of(shade) > 0.4 for shade in (diff.addition, diff.deletion))  # Light tints, not dark lines
+
+
+def _luminance_of(colour: str) -> float:
+    return sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), _linear(colour)))

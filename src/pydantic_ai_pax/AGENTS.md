@@ -398,9 +398,12 @@ Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
 streamed fences, shell command headers, and theme previews. Shell command headers
 add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
-a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
-green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use a dark green and red;
+bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette until their lightness differs, so colour-blind readers can tell them apart.
+On a light terminal (`app.chat` asks for the background once, `ui/terminal_background.py`, and
+passes it to `theme.use(background=...)`), `default` raises brand roles against that background and
+takes code and diff colours from `github_light` over it; on a dark or unknown one it is unchanged.
 `theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
 (or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 

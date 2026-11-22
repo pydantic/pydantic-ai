@@ -4311,7 +4311,8 @@ including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
 or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves CLAI's existing appearance without changing terminal colours
-on startup or exit. `/theme default` restores it after a palette selection.
+on startup or exit; on a light terminal background, which CLAI asks the terminal for
+at startup, it raises each role to WCAG AA contrast. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
 validation. A project override takes precedence again on the next startup.
 
@@ -4326,7 +4327,8 @@ Resolve the `ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`, and `THINKING` roles
 through `theme.color(role)` at render time. The constants retain their brand
 values; the resolver reads the active palette. `theme.sgr(role)` resolves raw
 ANSI surfaces itself. `theme.current()` returns the selected Termflow
-`TerminalPalette`, or `None` for the existing default appearance.
+`TerminalPalette`, or `None` for the existing default appearance, and
+`theme.light_background()` the terminal's background when `default` paints for a light one.
 
 Selecting a bundled palette changes terminal foreground, background, and ANSI
 slots via Termflow's OSC sequences. CLAI resets them to terminal defaults when

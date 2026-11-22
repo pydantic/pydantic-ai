@@ -70,20 +70,20 @@ def print_prompt(console: Console, text: str) -> None:
 
 
 def markdown_style() -> RenderStyle:
-    """Keep the existing Markdown colours unless a Termflow palette is selected."""
+    """Keep the existing Markdown colours, readable on a light terminal, unless a Termflow palette is selected."""
     palette = theme.current()
     if palette is not None:
         return palette.to_render_style()
     return RenderStyle(
-        bright=theme.LITHIUM,
-        head=theme.PURPLE,
-        symbol=theme.CALCIUM,
-        grey=theme.GREY,
+        bright=theme.color(theme.LITHIUM),
+        head=theme.color(theme.PURPLE),
+        symbol=theme.color(theme.CALCIUM),
+        grey=theme.color(theme.GREY),
         dark=theme.DARK_PURPLE,
         mid=theme.ELEMENT_PURPLE,
-        light=theme.GREY,
-        link=theme.AQUA,
-        error=theme.CALCIUM,
+        light=theme.color(theme.GREY),
+        link=theme.color(theme.AQUA),
+        error=theme.color(theme.CALCIUM),
     )
 
 
