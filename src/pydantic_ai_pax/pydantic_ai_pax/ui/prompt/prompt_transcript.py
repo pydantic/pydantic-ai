@@ -20,6 +20,12 @@ from pydantic_ai_pax.ui.rendering.recolor import recolor
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
 _OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')
+PREVIEW, DROP = '\ufdd2', '\ufdd3'
+"""Marks in a Markdown part's stream: what follows `PREVIEW` shows until `DROP` removes it.
+
+Model text cannot forge them: `terminal_text` escapes these noncharacters.
+"""
+_MARKS = re.compile(f'([{PREVIEW}{DROP}])')
 _CONSOLE = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor')
 """Only decodes recorded styling into segments; it never writes to a terminal."""
 
@@ -86,16 +92,27 @@ def _encode(text: Text) -> str:
     )
 
 
-def wrap(line: Text, *, width: int) -> tuple[str, ...]:
-    """Split a styled line into rows of at most `width` cells, counting wide characters as two."""
+def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
+    """Split a styled line into rows of at most `width` cells, counting wide characters as two.
+
+    `words` breaks after the last space that fits, as Termflow wraps prose, so a previewed line keeps its
+    rows once it renders.
+    """
     text = _clean(line)
     offsets: list[int] = []
-    cells = 0
+    cells = start = 0
+    space = -1
+    """The index after the last space, where a row may break."""
     for index, char in enumerate(text.plain):
-        size = visible_length(char)
-        if cells and cells + size > width:
-            offsets.append(index)
-            cells = 0
+        # `_clean` replaced control characters, so ASCII takes one cell; the streaming line wraps every frame.
+        size = 1 if char.isascii() else visible_length(char)
+        if words and char == ' ':
+            # A space past the width is cropped from the end of its row.
+            space = index + 1
+        elif cells and cells + size > width:
+            start = space if words and space > start else index
+            offsets.append(start)
+            cells = visible_length(text.plain[start:index])
         cells += size
     rows: list[str] = []
     for piece in text.divide(offsets):
@@ -155,9 +172,10 @@ class _Line:
     `theme_name` is `None` for branding, which no theme recolours.
     """
 
-    def __init__(self, text: Text, *, theme_name: str | None) -> None:
+    def __init__(self, text: Text, *, theme_name: str | None, words: bool = False) -> None:
         self.text = text
         self.theme_name = theme_name
+        self.words = words
         self._rows: tuple[tuple[int, str], tuple[str, ...]] = ((0, ''), ())
 
     @classmethod
@@ -165,6 +183,7 @@ class _Line:
         line.__class__ = cls
         # Lines retained before themes were recorded were painted in the theme of the reload.
         vars(line).setdefault('theme_name', theme.name())
+        vars(line).setdefault('words', False)
         return line
 
     def _themed(self) -> Text:
@@ -177,7 +196,7 @@ class _Line:
     def rows(self, *, width: int) -> tuple[str, ...]:
         key = (width, theme.name())
         if self._rows[0] != key:
-            self._rows = (key, wrap(self._themed(), width=width))
+            self._rows = (key, wrap(self._themed(), width=width, words=self.words))
         return self._rows[1]
 
     def continued(self, *, width: int) -> tuple[bool, ...]:
@@ -189,7 +208,10 @@ class _Line:
 
 
 class _Lines:
-    """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one."""
+    """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one.
+
+    `PREVIEW` saves the stream as it is and `DROP` goes back to it, removing what came between.
+    """
 
     def __init__(self, *, max_chars: int = 4_000_000, max_lines: int = 10_000) -> None:
         self.max_chars, self.max_lines = max_chars, max_lines
@@ -200,18 +222,41 @@ class _Lines:
         self.pending_theme = theme.painted_in()
         """The theme the unfinished line started in, which its completion keeps."""
         self._decoder = TranscriptDecoder()
+        self._pruned = 0
+        """Lines dropped from the start for the limits, so a saved position still finds its line."""
+        self._saved: tuple[int, str, str, Style] | None = None
+        """At the last `PREVIEW`: lines so far counting pruned ones, the unfinished line, its theme, and the decoder style."""
 
     @classmethod
     def rebind(cls, stream: '_Lines') -> '_Lines':
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
         vars(stream).setdefault('pending_theme', theme.name())
+        vars(stream).setdefault('_pruned', 0)
+        vars(stream).setdefault('_saved', None)
         for line in stream.lines:
             _Line.rebind(line)
         return stream
 
     def write(self, text: str) -> None:
         self.revision += 1
+        for part in _MARKS.split(text):
+            if part == PREVIEW:
+                self._saved = (self._pruned + len(self.lines), self.pending, self.pending_theme, self._decoder.style)
+            elif part == DROP:
+                self._drop()
+            elif part:
+                self._write(part)
+
+    def _drop(self) -> None:
+        assert self._saved is not None
+        count, self.pending, self.pending_theme, self._decoder.style = self._saved
+        self._saved = None
+        kept = max(0, count - self._pruned)
+        self.chars -= sum(len(line.text) for line in self.lines[kept:])
+        del self.lines[kept:]
+
+    def _write(self, text: str) -> None:
         started = self.pending_theme if self.pending else theme.painted_in()
         self.pending = _OSC.sub(replay_osc, self.pending + text)
         *done, self.pending = self.pending.split('\n')
@@ -224,6 +269,7 @@ class _Lines:
         self.pending = self.pending[-self.max_chars :]
         while len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars:
             self.chars -= len(self.lines.pop(0).text)
+            self._pruned += 1
 
     def tail(self) -> Text:
         decoder = TranscriptDecoder()
@@ -233,7 +279,9 @@ class _Lines:
         return decoder.decode_line(complete if escape < 0 else complete[:escape])
 
     def all(self) -> list[_Line]:
-        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme)] if self.pending else self.lines
+        if not self.pending:
+            return self.lines
+        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme, words=True)]
 
 
 class Render(Protocol):
