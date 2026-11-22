@@ -2529,6 +2529,21 @@ class TestLocalCli:
         await provider.delete(ref)
         assert windows.machines == {}
 
+    async def test_a_failed_stop_does_not_stop_closing(
+        self, windows: 'FakeSmolvm', tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        provider = local_provider.SmolProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        (first, first_backend), (second, second_backend) = [await provider.create(github=None) for _ in range(2)]
+        windows.failures['stop'] = ('SMOLVM_ERROR', 'stuck')
+        # As when a session ends: one VM that will not stop leaves the next to close, and says so.
+        await provider.close(first_backend)
+        assert 'Could not stop or sync SmolVM sandbox' in caplog.text
+        del windows.failures['stop']
+        await provider.close(second_backend)
+        assert windows.machines == {first.id: 'running', second.id: 'stopped'}
+        await provider.delete(first)
+        await provider.delete(second)
+
     async def test_without_smolvm(self, windows: 'FakeSmolvm', tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Never one in the current directory, such as a checkout's, nor on a relative `PATH` entry: Windows would run it.
         monkeypatch.chdir(tmp_path)

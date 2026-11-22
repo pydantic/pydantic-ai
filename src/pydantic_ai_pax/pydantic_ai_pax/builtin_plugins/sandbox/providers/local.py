@@ -17,10 +17,10 @@ BoxLite: the box runs in CLAI's process (harness `BoxLiteSandboxBackend`) and st
 disk, writes included, so `close` has nothing to do. One process at a time can use BoxLite's home directory.
 """
 
+import logging
 import platform
 import sys
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from importlib.util import find_spec
 
@@ -31,6 +31,7 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
@@ -41,6 +42,8 @@ IMAGE = 'python:3.13'
 """Debian with bash and git, which the copy of the checkout needs; the engine pulls it the first time."""
 
 _SYNC_TIMEOUT = 60.0
+
+logger = logging.getLogger(__name__)
 
 _INSTALL = "Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
 
@@ -116,8 +119,7 @@ class SmolProvider:
     async def close(self, backend: SandboxBackend) -> None:
         from pydantic_ai_harness._smolvm_cli import SmolvmCliBackend
 
-        # One deleted already, as by `/sandbox delete`, has nothing to write back.
-        with suppress(WorkspaceUnavailableError):
+        try:
             if isinstance(backend, SmolvmCliBackend):
                 await backend.stop()
             else:
@@ -125,6 +127,12 @@ class SmolProvider:
                 # Not one that never reached its VM, which `sync` would boot for nothing.
                 if backend.reached:
                     await backend.run(['sync'], timeout=_SYNC_TIMEOUT)
+        except WorkspaceUnavailableError:
+            # One deleted already, as by `/sandbox delete`, has nothing to write back.
+            pass
+        except WorkspaceError:
+            # Best effort, so the session's other sandboxes still close, and `/sandbox delete` still reports success.
+            logger.warning('Could not stop or sync SmolVM sandbox %s', backend.ref, exc_info=True)
 
     async def delete(self, ref: WorkspaceRef) -> None:
         """Delete the VM `ref` names; the harness's ref, or `/sandbox`'s, as only the id is read."""
