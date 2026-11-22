@@ -622,6 +622,7 @@ class LivePrompt:
         if self.queued_messages or self.buffer.text.strip():
             keys = ['Enter to queue', f'{"Ctrl+Enter" if self.ctrl_enter_steers else "Alt+Enter"} to steer']
             candidates = [[*candidates[0], *keys], [candidates[0][0], *keys], keys]
+        candidates.append(['Esc to interrupt'])
         title = ''
         for parts in candidates:
             title = f'{head}{glyph} {" · ".join(parts)} '
