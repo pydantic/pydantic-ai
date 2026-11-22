@@ -1218,7 +1218,8 @@ paste to reveal it for editing; recalled history shows the full text.
 While a turn or command runs, the rule above the draft shows the working animation,
 the time it has run, and that Esc interrupts it (`─ Working ⠋ 12s · Esc to interrupt`).
 Ctrl-C interrupts too, and a second Ctrl-C within two seconds quits; Esc never quits.
-With a draft or a queued message, the rule adds `Enter to queue` and the steer key.
+With a draft or a queued message, the rule adds `Enter to queue` and the steer key,
+which take the Esc hint's place when the row is too narrow for both.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold. This keeps your prompts apart from
 answers. Steering messages, commands entered during a turn, and prompts restored by
