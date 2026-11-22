@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
+from decimal import Decimal
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -10,7 +12,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, capture_run_messages
+from pydantic_ai import Agent, NativeOutput, PromptedOutput, RunContext, ToolOutput, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -25,13 +27,38 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.settings import ToolChoice
+from pydantic_ai.output import OutputSpec
+from pydantic_ai.settings import ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents, WrapUpAtLimits
 from pydantic_ai_harness.wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, wrapped_up_by
 
 from ._messages import wrap_ups
+
+
+class _Report(BaseModel):
+    summary: str
+
+
+_PRICED = RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.01'))
+"""Each response's usage in the cost and output-mode tests, so `cost_limit` has a cost to count."""
+
+_TRIGGERS: list[tuple[UsageLimits | None, float | None, str]] = [
+    (UsageLimits(request_limit=2), None, 'request_limit'),
+    # 0.01 a response: after two, a final pair is projected to reach 0.04.
+    (UsageLimits(cost_limit=Decimal('0.035')), None, 'cost_limit'),
+    # Less than `timeout_margin` (60s) is left from the start, so the first request is the last.
+    (None, 30, 'timeout'),
+]
+"""The `usage_limits`, `timeout` and expected `wrapped_up_by` of a run for each kind of wrap-up trigger."""
+
+
+def _wrap_up_prompted(messages: list[ModelMessage]) -> bool:
+    return any(
+        isinstance(part, UserPromptPart) and isinstance(part.content, str) and DEFAULT_WRAP_UP_PROMPT in part.content
+        for part in messages[-1].parts
+    )
 
 
 class _Researcher:
@@ -220,7 +247,90 @@ class TestWrapUpAtLimits:
             assert wrap_ups(result.new_messages()) == []
             assert wrapped_up_by(result.new_messages()) is None
 
-    @pytest.mark.moves_cache_prefix(reason="with tool output, `tool_choice='none'` sends only the output tools")
+    async def test_cost_limit_wraps_up_before_it_is_exceeded(self) -> None:
+        model = _Researcher()
+        looked_up: list[str] = []
+
+        def priced(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return replace(model(messages, info), usage=_PRICED)
+
+        agent = Agent(FunctionModel(priced), capabilities=[WrapUpAtLimits()])
+
+        @agent.tool_plain
+        def look_up(topic: str) -> str:
+            looked_up.append(topic)
+            return topic
+
+        result = await agent.run('Research', usage_limits=UsageLimits(cost_limit=Decimal('0.035')))
+
+        assert result.output == 'what I found so far'
+        assert sorted(looked_up) == ['a1', 'a2', 'b1', 'b2']
+        assert result.usage.cost == Decimal('0.03')
+        assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, 'cost_limit')]
+
+    async def test_timeout_wraps_up_with_time_left(self) -> None:
+        model = _Researcher()
+        looked_up: list[str] = []
+
+        result = await _agent(model, looked_up).run('Research', timeout=30)
+
+        assert result.output == 'what I found so far'
+        assert looked_up == []
+        assert wrap_ups(result.new_messages()) == [(DEFAULT_WRAP_UP_PROMPT, 'timeout')]
+        assert [(choice, prompted) for choice, _, prompted in model.requests] == [('none', True)]
+
+    async def test_timeout_margin_none_does_not_wrap_up_for_time(self) -> None:
+        result = await _agent(_Researcher(), [], WrapUpAtLimits(timeout_margin=None)).run(
+            'Research', usage_limits=UsageLimits(request_limit=2), timeout=30
+        )
+
+        assert wrapped_up_by(result.new_messages()) == 'request_limit'
+
+    async def test_timeout_far_off_is_unchanged(self) -> None:
+        result = await _agent(_Researcher(), [], WrapUpAtLimits(timeout_margin=5)).run(
+            'Research', usage_limits=UsageLimits(request_limit=2), timeout=30
+        )
+
+        assert wrapped_up_by(result.new_messages()) == 'request_limit'
+
+    @pytest.mark.moves_cache_prefix(reason='with tool output, the final request sends only the output tools')
+    @pytest.mark.parametrize(
+        'output_type',
+        [_Report, ToolOutput(_Report), [str, _Report], NativeOutput(_Report), PromptedOutput(_Report)],
+        ids=['output_type', 'ToolOutput', 'str_or_tool', 'NativeOutput', 'PromptedOutput'],
+    )
+    @pytest.mark.parametrize(('limits', 'timeout', 'limit'), _TRIGGERS, ids=[trigger[2] for trigger in _TRIGGERS])
+    async def test_every_output_mode_gives_a_valid_result(
+        self, output_type: OutputSpec[_Report | str], limits: UsageLimits | None, timeout: float | None, limit: str
+    ) -> None:
+        final_tool_choices: list[ToolChoice] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if not _wrap_up_prompted(messages):
+                return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'a'})], usage=_PRICED)
+            final_tool_choices.append(info.model_settings.get('tool_choice') if info.model_settings else None)
+            if info.output_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(info.output_tools[0].name, {'summary': 'partial'})], usage=_PRICED
+                )
+            # Native and prompted output answer in text that is parsed against the schema.
+            return ModelResponse(parts=[TextPart('{"summary": "partial"}')], usage=_PRICED)
+
+        agent = Agent(FunctionModel(model), output_type=output_type, capabilities=[WrapUpAtLimits()])
+
+        @agent.tool_plain
+        def look_up(topic: str) -> str:
+            return topic
+
+        result = await agent.run('Research', usage_limits=limits, timeout=timeout)
+
+        assert result.output == _Report(summary='partial')
+        assert wrapped_up_by(result.new_messages()) == limit
+        # Function tools are off; output tools, where the output mode uses them, stay callable.
+        uses_output_tools = not isinstance(output_type, NativeOutput | PromptedOutput)
+        assert final_tool_choices == [ToolOrOutput(function_tools=[]) if uses_output_tools else 'none']
+
+    @pytest.mark.moves_cache_prefix(reason='with tool output, the final request sends only the output tools')
     # With `tool_calls_limit`, the output call comes on the final request, after the budget is used up.
     @pytest.mark.parametrize('limits', [UsageLimits(request_limit=2), UsageLimits(tool_calls_limit=1)])
     async def test_structured_output_is_still_produced(self, limits: UsageLimits) -> None:
@@ -228,7 +338,7 @@ class TestWrapUpAtLimits:
             summary: str
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if info.model_settings and info.model_settings.get('tool_choice') == 'none':
+            if _wrap_up_prompted(messages):
                 return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'summary': 'partial'})])
             return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'a'})])
 
@@ -276,6 +386,18 @@ class TestWrapUpAtLimits:
         request_context = ModelRequestContext(
             model=TestModel(),
             messages=[ModelRequest.user_text_prompt('Research'), ModelResponse(parts=[TextPart('partial')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        assert await WrapUpAtLimits[None]().before_model_request(ctx, request_context) is request_context
+
+    async def test_context_without_limits_or_deadline_is_left_alone(self) -> None:
+        """Calls the hook directly: a run always has `usage_limits`, only a bare `RunContext` has none."""
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        request_context = ModelRequestContext(
+            model=TestModel(),
+            messages=[ModelRequest.user_text_prompt('Research')],
             model_settings=None,
             model_request_parameters=ModelRequestParameters(),
         )

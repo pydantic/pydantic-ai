@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from decimal import Decimal
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
 
 from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai.capabilities import AbstractCapability
@@ -16,7 +17,7 @@ from pydantic_ai.messages import (
     OperatorSource,
     OperatorText,
 )
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
@@ -26,15 +27,24 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 LimitName: TypeAlias = Literal[
-    'request_limit', 'tool_calls_limit', 'input_tokens_limit', 'output_tokens_limit', 'total_tokens_limit'
+    'request_limit',
+    'tool_calls_limit',
+    'input_tokens_limit',
+    'output_tokens_limit',
+    'total_tokens_limit',
+    'cost_limit',
+    'timeout',
 ]
-"""The [`UsageLimits`][pydantic_ai.usage.UsageLimits] field that made a request the run's last."""
+"""What made a request the run's last: a [`UsageLimits`][pydantic_ai.usage.UsageLimits] field, or `'timeout'` for the
+run's `timeout=` deadline."""
 
 DEFAULT_WRAP_UP_PROMPT = (
-    "This run's budget allows only this one last response, and tools are unavailable. "
+    "This run's budget allows only this one last response, so you can't call any more tools to do further work. "
     'Give your final answer now with what you have, and say what is left unfinished.'
 )
 """What `WrapUpAtLimits` tells the model on the final request, unless `prompt` is set."""
+
+_Amount = TypeVar('_Amount', int, Decimal)
 
 
 @dataclass(kw_only=True)
@@ -50,12 +60,13 @@ class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up_at_limits', name=
 
 @dataclass
 class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
-    """End the run with a final answer instead of raising when a usage limit would stop it.
+    """End the run with a final answer instead of raising when a usage limit or the run's timeout would stop it.
 
     When the run's [`UsageLimits`][pydantic_ai.usage.UsageLimits] leave room for only one more model
-    request, that request is made the last: it keeps the tool definitions with `tool_choice='none'`, so
-    the cached tools and instructions still match, and gets a request-scoped instruction asking the
-    model to answer now. That prompt is a
+    request, or less than `timeout_margin` seconds are left before the run's `timeout=` deadline, that
+    request is made the last: it keeps the tool definitions, so the cached tools and instructions still
+    match, but lets the model call none of the function tools, only the run's output tools if it has
+    any, and gets a request-scoped instruction asking the model to answer now. That prompt is a
     [`WrapUpPart`][pydantic_ai_harness.wrap_up_at_limits.WrapUpPart] carrying the `limit` that triggered it, which
     [`wrapped_up_by`][pydantic_ai_harness.wrap_up_at_limits.wrapped_up_by] reads back.
 
@@ -70,6 +81,12 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     prompt: str = DEFAULT_WRAP_UP_PROMPT
     """What the model is told on the final request."""
 
+    timeout_margin: float | None = 60.0
+    """How many seconds before the run's `timeout=` deadline a request is made the last.
+
+    `None` doesn't wrap up for time. A run whose `timeout=` is shorter than this wraps up on its first request.
+    """
+
     def __post_init__(self) -> None:
         check_operator_text(self.prompt, what='`WrapUpAtLimits.prompt`')
 
@@ -79,13 +96,11 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Make this request the last when the limits leave no room for another one."""
-        limits = ctx.usage_limits
         messages = request_context.messages
         # A provider-resume turn ends in a suspended `ModelResponse` and continues the request before it.
-        if limits is None or not messages or not isinstance(messages[-1], ModelRequest):
+        if not messages or not isinstance(messages[-1], ModelRequest):
             return request_context
-        prompt_tokens = len(self.prompt) // CHARS_PER_TOKEN
-        limit = _limit_reached(ctx.usage, limits, _run_responses(messages, ctx.run_id), prompt_tokens)
+        limit = self._limit_reached(ctx, messages)
         if limit is None:
             return request_context
         ctx.tracer.start_span('run wrapped up', attributes={'wrap_up_at_limits.limit': limit}).end()
@@ -93,8 +108,26 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
             WrapUpPart(content=OperatorText(self.prompt), source=OperatorSource(), scope='request', limit=limit)
         )
         settings = ModelSettings(**(request_context.model_settings or {}))
-        settings['tool_choice'] = 'none'
+        # With output tools, only they stay callable, so a structured output can still be given; with none, the
+        # output is text, which native and prompted output parse against the schema.
+        if request_context.model_request_parameters.output_tools:
+            settings['tool_choice'] = ToolOrOutput(function_tools=[])
+        else:
+            settings['tool_choice'] = 'none'
         return replace(request_context, model_settings=settings)
+
+    def _limit_reached(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> LimitName | None:
+        if ctx.usage_limits is not None:
+            prompt_tokens = len(self.prompt) // CHARS_PER_TOKEN
+            limit = _usage_limit_reached(
+                ctx.usage, ctx.usage_limits, _run_responses(messages, ctx.run_id), prompt_tokens
+            )
+            if limit is not None:
+                return limit
+        remaining = ctx.remaining_time()
+        if self.timeout_margin is not None and remaining is not None and remaining < self.timeout_margin:
+            return 'timeout'
+        return None
 
 
 def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
@@ -111,14 +144,14 @@ def _run_responses(messages: list[ModelMessage], run_id: str | None) -> list[Mod
     return [message for message in messages if isinstance(message, ModelResponse) and message.run_id == run_id]
 
 
-def _limit_reached(
+def _usage_limit_reached(
     usage: RunUsage, limits: UsageLimits, responses: list[ModelResponse], prompt_tokens: int
 ) -> LimitName | None:
     """The limit that leaves room for this request but not for a final one after it, if any.
 
-    A batch of tool calls is assumed to be as large as the largest so far, and the token use of both
-    requests is projected from `responses`, the run's responses so far, plus the final request's
-    `prompt_tokens`. Input grows with the history; each response's output is its own.
+    A batch of tool calls is assumed to be as large as the largest so far, and the token use and cost
+    of both requests are projected from `responses`, the run's responses so far, plus the final
+    request's `prompt_tokens`. Input grows with the history; each response's output is its own.
     """
     reserved = reserved_usage_limits(limits)
     if reserved is not None and reserved.request_limit is not None and usage.requests >= reserved.request_limit:
@@ -149,12 +182,16 @@ def _limit_reached(
     for name, limit, used, projected in projections:
         if limit is not None and used + projected > limit:
             return name
+    if limits.cost_limit is not None and usage.cost is not None:
+        costs = [r.usage.cost for r in responses if r.usage.cost is not None]
+        if usage.cost + _next_two_requests(costs) > limits.cost_limit:
+            return 'cost_limit'
     return None
 
 
-def _next_two_requests(counts: list[int]) -> int:
-    """The tokens of two more requests, each growing by as much as the last response grew over the one before."""
-    if not counts:
+def _next_two_requests(amounts: list[_Amount]) -> _Amount | int:
+    """The tokens or cost of two more requests, each growing by as much as the last response grew over the one before."""
+    if not amounts:
         return 0
-    growth = max(0, counts[-1] - counts[-2]) if len(counts) > 1 else 0
-    return 2 * counts[-1] + 3 * growth
+    growth = max(amounts[-1] - amounts[-2], 0) if len(amounts) > 1 else 0
+    return 2 * amounts[-1] + 3 * growth
