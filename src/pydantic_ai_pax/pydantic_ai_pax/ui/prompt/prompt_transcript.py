@@ -500,6 +500,11 @@ class TranscriptBuffer:
                 item.details = self.details
         return self.details
 
+    def printed_details(self) -> bool:
+        """Whether a block with an expanded rendering is already in the terminal's own scrollback."""
+        printed = list(self._items)[: max(0, self._printed - self._first)]
+        return any(isinstance(item, MarkdownBlock) and item.expanded is not None for item in printed)
+
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget all retained output, as a fresh terminal has none; ids keep growing.
 

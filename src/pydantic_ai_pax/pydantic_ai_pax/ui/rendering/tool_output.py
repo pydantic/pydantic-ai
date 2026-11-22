@@ -12,7 +12,6 @@ from typing import Literal
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
 from rich.console import Console, Group
-from rich.padding import Padding
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent
@@ -156,6 +155,8 @@ class DisplayArgs(BaseModel):
     limit: int | None = None
     glob: str | None = None
     recursive: bool = True
+    mode: str = 'foreground'
+    """A shell call's; a background one returns only its handles, no output."""
 
 
 READ_LIMIT = 2000
@@ -235,11 +236,14 @@ def _row_ansi(
     if expanded:
         decoder = AnsiDecoder()
         for line in source.splitlines():
-            text = shell_text(line, decoder)
-            # Rich measures a tab as one cell, so expand them first.
-            text.expand_tabs(8)
-            # Wrapped rather than clipped, and indented under the row, so every character shows.
-            console.print(Padding(text, (0, 0, 0, 4), expand=False), style=theme.color(theme.MUTED))
+            # Printed whole: the transcript wraps it, so a wrapped URL still opens in full.
+            console.print(
+                Text('    ') + shell_text(line, decoder),
+                style=theme.color(theme.MUTED),
+                no_wrap=True,
+                overflow='ignore',
+                crop=False,
+            )
     return output.getvalue()
 
 
@@ -313,6 +317,8 @@ class ToolOutput:
         self._blank_owed = False
         self._outputs: dict[str | None, tuple[MarkdownBlock, int]] = {}
         """Live rows of commands whose output their tool result brings, with each command's PID."""
+        self._background: set[str | None] = set()
+        """Shell calls in the background, whose tool result brings no output to expand."""
 
     def separate(self) -> None:
         """Print the blank line a header still owes, before other output follows it."""
@@ -396,6 +402,8 @@ class ToolOutput:
         argument = args.command if name == 'shell' else args.path
         if argument is None:
             return False
+        if args.mode == 'background':
+            self._background.add(event.part.tool_call_id)
         self.header(event.part.tool_call_id, name=name, argument=argument)
         self._headers.add((event.part.tool_call_id, name))
         return True
@@ -502,9 +510,8 @@ class ToolOutput:
         # The tail of a cut preview is not the end of the output, so the log is the place to look.
         unseen = preview.completed_lines - preview.shown
         tail = list(preview.tail)[-unseen:] if failed and not event.truncated and unseen and self.shell_lines else []
-        # Its output comes with the tool result, so the row waits for it. A command still running
-        # returns no output, only its log.
-        hidden = event.exit_code is not None and (
+        # Its output comes with the tool result, so the row waits for it.
+        hidden = event.tool_call_id not in self._background and (
             event.line_count is None or event.line_count > preview.shown or preview.cut
         )
         block = self._row(
@@ -535,12 +542,14 @@ class ToolOutput:
         self._shells.clear()
         self._labels.clear()
         self._outputs.clear()
+        self._background.clear()
 
     def discard_call(self, tool_call_id: str) -> None:
         """Release proposed diffs and the header label after a tool result, including refusals and retries."""
         self._writes = {key: value for key, value in self._writes.items() if key[0] != tool_call_id}
         self._changes.pop(tool_call_id, None)
         self._labels.pop(tool_call_id, None)
+        self._background.discard(tool_call_id)
 
     def render(self, event: AgentStreamEvent) -> bool:
         """Return whether this event belongs to the specialized tool display."""

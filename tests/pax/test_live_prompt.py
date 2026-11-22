@@ -1164,7 +1164,7 @@ async def test_ctrl_o_expands_tool_results_in_place_and_keeps_them_across_a_resi
             '    passed two',
             "● read_file 'app.py'",
             '    [app.py | 1 lines]',
-            '         1  print("hi")',
+            '         1      print("hi")',
         ]
         assert shown()[:7] == expanded
         assert live.output.full_screen or inline, 'inline output that still fits stays inline'
@@ -1176,3 +1176,23 @@ async def test_ctrl_o_expands_tool_results_in_place_and_keeps_them_across_a_resi
         assert live.notice == 'Hiding tool output.'
         # The hint is left out where it does not fit.
         assert shown()[:4] == [collapsed[0], '  ⎿ exit 0 · 2 lines', *collapsed[2:]]
+
+
+async def test_ctrl_o_shows_results_already_printed_to_scrollback_on_the_alternate_screen() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, inline=True) as (live, _, _):
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('list_files', {'path': 'src'}, tool_call_id='l'))
+        )
+        await renderer.on_stream_event(
+            FunctionToolResultEvent(part=ToolReturnPart('list_files', 'src/app.py\nsrc/util.py', tool_call_id='l'))
+        )
+        await renderer.finish()
+        # A menu or command between turns prints the inline rows into the terminal's scrollback.
+        live.output.release()
+        live.paint()
+        assert not live.output.full_screen
+        live.feed('ctrl-o')
+        assert live.output.full_screen
+        assert '    src/util.py' in terminal.lines()

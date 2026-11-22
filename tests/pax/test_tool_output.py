@@ -586,3 +586,15 @@ async def test_a_live_failed_row_takes_the_new_themes_error_colour() -> None:
             if 'exit 2' in Text.from_ansi(row).plain
         )
         assert _color(console, row, 'exit 2') == console.get_style(theme.color(theme.ERROR)).color
+
+
+async def test_a_live_background_command_row_offers_nothing_to_expand() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+    call = ToolCallPart('shell', {'command': 'npm run dev', 'mode': 'background'}, tool_call_id='b')
+    await renderer.on_stream_event(FunctionToolCallEvent(part=call))
+    await renderer.on_stream_event(_finished('b', exit_code=None, line_count=3))
+    rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
+    assert '  ⎿ running in background · 3 lines · log /tmp/out' in rows
