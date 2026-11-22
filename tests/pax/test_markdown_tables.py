@@ -67,7 +67,7 @@ def test_wide_characters_join_the_word_around_them(word: str) -> None:
 
 
 @pytest.mark.parametrize('cap', ['40', ' +40 '])
-def test_termflow_table_width_cap_applies_to_every_layout(monkeypatch: pytest.MonkeyPatch, cap: str) -> None:
+def test_termflow_table_width_cap_stacks_a_table_that_no_longer_fits(monkeypatch: pytest.MonkeyPatch, cap: str) -> None:
     monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', cap)
     lines = Text.from_ansi(_render(ERRORS, 80)).plain.splitlines()
     assert lines[0] == 'Variant: UnexpectedEof'
