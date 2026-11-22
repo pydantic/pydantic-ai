@@ -721,6 +721,13 @@ def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
     screen.surface.transcript_key('pageup')
     assert screen.lines()[:2] == [outer, inner], 'once all of it shows'
     assert click(screen, 3, 2) == [outer + inner]
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
+    screen.surface.scroll(2)
+    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'with no editor rule, the hint covers the URL'
+    assert click(screen, 3, 3) == []
 
 
 def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
