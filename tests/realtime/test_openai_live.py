@@ -3594,6 +3594,34 @@ async def test_an_offer_ignores_the_profiles_sample_rates() -> None:
     assert 'audio' not in sent[0]['session']
 
 
+async def test_openai_voice_custom_voice_object_reaches_session_start_payload(model: OpenAILiveModel) -> None:
+    """A custom voice object is passed through verbatim as the session's output voice."""
+    ws = _FakeWebSocket([_started_frame()])
+    with _patched_connect(ws):
+        async with model.connect(
+            messages=[],
+            model_settings=OpenAILiveModelSettings(openai_voice={'id': 'my-custom-voice'}),
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass
+
+    assert json.loads(ws.sent[0])['session']['audio']['output']['voice'] == {'id': 'my-custom-voice'}
+
+
+async def test_openai_voice_string_unchanged_through_webrtc_session() -> None:
+    """A string voice keeps reaching the session start payload verbatim."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler)
+    await model.answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(openai_voice='cedar'))
+
+    assert sent[0]['session']['audio']['output']['voice'] == 'cedar'
+
+
 async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('no HTTP request expected')  # pragma: no cover

@@ -158,6 +158,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        CustomVoiceParam,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -412,7 +413,7 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     entirely, and voice, audio format and instructions are immutable once the session has started.
     """
 
-    openai_voice: str
+    openai_voice: str | CustomVoiceParam
     """The voice used for Live speech, e.g. `marin` (the provider default). Immutable after startup."""
 
     openai_live_instructions: str
