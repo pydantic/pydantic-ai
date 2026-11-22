@@ -169,6 +169,8 @@ class PartWriter(SmoothWriter):
 
     async def close(self) -> None:
         """Write the queued rest on the next tick, so the next tool line or the prompt does not wait for it to be typed."""
+        # Termflow has no fast close; its drain loop sizes each tick from this window, so one tick writes the rest.
+        # test_part_end_writes_queued_text_at_once fails if a Termflow release stops reading it.
         self._catch_up_ticks = 1
         await super().close()
 
