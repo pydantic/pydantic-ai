@@ -175,6 +175,25 @@ class ShellPreview:
     decoder: AnsiDecoder = field(default_factory=AnsiDecoder)
 
 
+def _read_details(args: DisplayArgs) -> list[str]:
+    details = [f'offset={args.offset}'] if args.offset else []
+    if args.limit is not None:
+        limit = f'limit={min(args.limit, READ_LIMIT)} lines'
+        if args.limit > READ_LIMIT:
+            limit += f' (requested {args.limit})'
+        details.append(limit)
+    return details
+
+
+def _list_details(args: DisplayArgs) -> list[str]:
+    details = [] if args.recursive else ['recursive=false']
+    if args.limit is not None:
+        details.append(f'limit={args.limit}')
+    if args.glob is not None:
+        details.append(f'glob={args.glob!r}')
+    return details
+
+
 class ToolOutput:
     """Present bounded shell chunks, Termflow-highlighted file diffs, and one result row per command or failure.
 
@@ -228,22 +247,27 @@ class ToolOutput:
         self._owed = tool_call_id
         self._blank_owed = True
 
-    def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None) -> None:
+    def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None, name: str = '') -> None:
         """Print one result row under the call's header, naming the call first when another header is in between.
 
-        The name takes at most half the row, so the result stays visible.
+        The call's name gets the room a short result leaves, or half the row beside a long one.
+        `name` stands in for a call whose header this renderer did not print.
         """
         under_header = self._blank_owed and tool_call_id is not None and self._owed == tool_call_id
         if not under_header:
             self.separate()
         row = Text('  ⎿ ', style=theme.color(theme.MUTED))
-        label = self._labels.get(tool_call_id)
+        result = Text(terminal_text(text, keep=''), style=style)
+        label = self._labels.get(tool_call_id, name)
         if not under_header and label:
-            name = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
-            name.truncate(max(self.console.width // 2, 1), overflow='ellipsis')
-            row.append_text(name)
+            call = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
+            half = self.console.width // 2
+            # A short result keeps all of itself; a long reason gives the name half the row.
+            room = self.console.width - row.cell_len - result.cell_len - 3 if result.cell_len <= half else half
+            call.truncate(max(room, 1), overflow='ellipsis')
+            row.append_text(call)
             row.append(' · ', style=theme.color(theme.MUTED))
-        row.append(terminal_text(text, keep=''), style=style)
+        row.append_text(result)
         if log is None:
             self.console.print(row, overflow='ellipsis', no_wrap=True)
         else:
@@ -279,26 +303,12 @@ class ToolOutput:
 
     def _inspection_header(self, tool_call_id: str, name: str, args: DisplayArgs) -> bool:
         """Show the path and only the arguments that differ from Coder's defaults."""
-        details: list[str] = []
         if name == 'read_file':
             if args.path is None:
                 return False
-            path = args.path
-            if args.offset:
-                details.append(f'offset={args.offset}')
-            if args.limit is not None:
-                limit = f'limit={min(args.limit, READ_LIMIT)} lines'
-                if args.limit > READ_LIMIT:
-                    limit += f' (requested {args.limit})'
-                details.append(limit)
+            path, details = args.path, _read_details(args)
         else:
-            path = args.path or '.'
-            if not args.recursive:
-                details.append('recursive=false')
-            if args.limit is not None:
-                details.append(f'limit={args.limit}')
-            if args.glob is not None:
-                details.append(f'glob={args.glob!r}')
+            path, details = args.path or '.', _list_details(args)
         self.header(tool_call_id, name=name, argument=' '.join([repr(path), *details]))
         return True
 
@@ -307,7 +317,7 @@ class ToolOutput:
         if event.part.outcome != 'success':
             lines = event.part.model_response_str(wrap_if_error=False).strip().splitlines()
             reason = lines[0] if lines else event.part.outcome
-            self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR))
+            self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
             self.console.print()
         self.discard_call(event.part.tool_call_id)
 
@@ -366,7 +376,7 @@ class ToolOutput:
         self._row(event.tool_call_id, ' · '.join(parts), style=style, log=log)
         # The tail of a cut preview is not the end of the output, so the log is the place to look.
         unseen = preview.completed_lines - preview.shown
-        if failed and not event.truncated and unseen:
+        if failed and not event.truncated and unseen and self.shell_lines:
             for line in list(preview.tail)[-unseen:]:
                 self.console.print(
                     Text('    ') + shell_text(line, AnsiDecoder()),

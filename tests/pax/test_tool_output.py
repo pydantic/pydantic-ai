@@ -465,7 +465,18 @@ async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() 
     renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
     part = ToolReturnPart('deploy', '', tool_call_id='d', outcome='failed')
     await renderer.on_stream_event(FunctionToolResultEvent(part=part))
-    assert output.getvalue() == '  ⎿ failed\n\n'
+    assert output.getvalue() == '  ⎿ deploy · failed\n\n'
+
+
+async def test_a_narrow_detached_row_keeps_its_exit_code() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=24), stop_loading=lambda: None)
+    for call_id in ('a', 'b'):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo example'}, tool_call_id=call_id))
+        )
+    await renderer.on_stream_event(_finished('a', exit_code=123, line_count=0))
+    assert output.getvalue().endswith('  ⎿ echo exa… · exit 123\n\n')
 
 
 async def test_a_row_under_another_calls_header_names_its_command() -> None:
@@ -491,6 +502,8 @@ async def test_a_row_under_another_calls_header_names_its_command() -> None:
         (20, 'one\ntwo\nthree\nfour\n  ⎿ exit 2 · 4 lines\n\n'),
         # Only the lines the preview left out are repeated.
         (2, 'one\ntwo\n  ⎿ exit 2 · 4 lines, 2 shown · log /tmp/out\n    three\n    four\n\n'),
+        # Zero lines hides all output, failures included.
+        (0, '  ⎿ exit 2 · 4 lines, 0 shown · log /tmp/out\n\n'),
     ],
 )
 async def test_a_failed_command_with_output_on_repeats_only_unseen_last_lines(shell_lines: int, expected: str) -> None:

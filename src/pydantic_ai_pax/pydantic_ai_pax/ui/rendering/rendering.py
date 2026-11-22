@@ -405,13 +405,20 @@ class StreamRenderer:
         self._render_tool_event(event)
 
     def _render_tool_event(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
-        if isinstance(event, DelegationToolCallEvent):
-            return
-        if isinstance(event, FunctionToolResultEvent) and self._group is not None:
-            self._tool_output.discard_call(event.part.tool_call_id)
+        if isinstance(event, FunctionToolResultEvent):
+            self._render_result(event)
+        elif not isinstance(event, DelegationToolCallEvent):
+            self._render_call(event)
+
+    def _render_result(self, event: FunctionToolResultEvent) -> None:
+        """A grouped style counts calls only; otherwise a failure gets its row."""
         if self._group is not None:
-            if not isinstance(event, FunctionToolCallEvent):
-                return
+            self._tool_output.discard_call(event.part.tool_call_id)
+        elif not self._grep_output.render(event):
+            self._tool_output.render_result(event)
+
+    def _render_call(self, event: FunctionToolCallEvent) -> None:
+        if self._group is not None:
             if not self._tool_output.prints_diff(event):
                 self._tool_output.separate()
                 self._group.add(event.part.tool_name)
@@ -420,9 +427,7 @@ class StreamRenderer:
             self._group.close()
         if self._grep_output.render(event):
             return
-        if isinstance(event, FunctionToolResultEvent):
-            self._tool_output.render_result(event)
-        elif not self._tool_output.render_call(event):
+        if not self._tool_output.render_call(event):
             name = ''.join(char if char.isprintable() else ' ' for char in event.part.tool_name)
             arguments = tool_arguments_text(event.part.args_as_dict(), max_chars=self.tool_arg_chars)
             self._tool_output.header(event.part.tool_call_id, name=name, argument=arguments)
