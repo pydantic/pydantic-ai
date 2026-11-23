@@ -1051,7 +1051,10 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
 
 
 def _claims_provider_scope(failure: Failure) -> bool:
-    return failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+    # AWF's API proxy sends the `cache_miss_limit` 403 itself, so Z.ai never saw the refused request.
+    return failure.kind != 'cache_miss_limit' and (
+        failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+    )
 
 
 def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
