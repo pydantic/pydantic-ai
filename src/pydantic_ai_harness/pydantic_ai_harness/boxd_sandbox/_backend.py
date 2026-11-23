@@ -291,7 +291,8 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
     try:
         if org is None:
             return await client.machines.get(name)
-        # boxd's `RegionalList` subclasses an unparameterized `list`, which hides its item type from Pyright.
+        # boxd 0.3.4's `RegionalList` subclasses an unparameterized `list`, which hides its item type from Pyright
+        # (https://github.com/boxd-sh/sdk/issues/3, 2026-11-23).
         machines: list[Machine] = list(await client.machines.list(org=org))
         return next((m for m in machines if m.name == name), None)
     except boxd.BoxdError:
