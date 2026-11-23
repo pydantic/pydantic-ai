@@ -13,7 +13,6 @@ import sys
 import unicodedata
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -57,6 +56,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.profiles import ModelProfile
+
+from ._source_roots import REPO_ROOT, shipped_packages
 
 
 @pytest.mark.parametrize(
@@ -373,12 +374,16 @@ _HAND_BUILT_TAG = re.compile(
     rf'<\s*/?\s*(?:{"|".join(re.escape(tag) for tag in get_args(FramingTag))})(?=[\s/>{_INTERPOLATION}]|$)',
     re.IGNORECASE,
 )
-_SOURCE_ROOT = Path(__file__).parents[1] / 'pydantic_ai_slim' / 'pydantic_ai'
 
 
 _HAND_BUILT_TAG_ALLOWLIST = {
     # Prose that names the tag for the model, explaining how a later `<pyai:context>` element applies. It builds none.
-    ('messages.py', 'A later <{CONTEXT_TAG}> element with the same id replaces'),
+    ('pydantic_ai/messages.py', 'A later <{CONTEXT_TAG}> element with the same id replaces'),
+    # Prose that tells the judge model its snippet arrives in a `<tool_result>` element `wrap` builds. It builds none.
+    (
+        'pydantic_ai_harness/smart_search/_judge.py',
+        'The text is a snippet of source code from a repository, in a `<tool_result>`',
+    ),
 }
 
 
@@ -413,9 +418,12 @@ def _hand_built_framing_tags_in(relative: str, source: str) -> list[tuple[str, i
 def _hand_built_framing_tags() -> list[tuple[str, int, str]]:
     return [
         found
-        for path in sorted(_SOURCE_ROOT.rglob('*.py'))
-        if path.name != '_framing.py'
-        for found in _hand_built_framing_tags_in(path.relative_to(_SOURCE_ROOT).as_posix(), path.read_text())
+        for package in shipped_packages()
+        for path in sorted((REPO_ROOT / package.path).rglob('*.py'))
+        if path != REPO_ROOT / 'pydantic_ai_slim/pydantic_ai/_framing.py'
+        for found in _hand_built_framing_tags_in(
+            path.relative_to(REPO_ROOT / package.member).as_posix(), path.read_text(encoding='utf-8')
+        )
     ]
 
 

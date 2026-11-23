@@ -774,14 +774,20 @@ def _function_names(path: str) -> tuple[str, ...]:
     return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
+BLOCKBUSTER_PACKAGES = (
+    'pydantic_ai',
+    'pydantic_ai_harness',
+    'pydantic_ai_pax',
+    'pydantic_graph',
+    'pydantic_evals',
+    'clai',
+)
+"""The shipped packages the detector scans. `tests/test_tool_scopes.py` checks that it names every workspace member."""
+
+
 def _blockbuster_packages() -> list[str]:
-    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
-    optional = [
-        package
-        for package in ('pydantic_ai_harness', 'pydantic_ai_pax')
-        if importlib.util.find_spec(package) is not None
-    ]
-    return ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai']
+    """The `BLOCKBUSTER_PACKAGES` this lane installs. Not every CI lane installs the harness or CLAI (`pydantic-evals`)."""
+    return [package for package in BLOCKBUSTER_PACKAGES if importlib.util.find_spec(package) is not None]
 
 
 def _configure_blockbuster(

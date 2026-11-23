@@ -392,3 +392,73 @@ def test_pull_requests_keep_every_leg_a_coverage_or_report_step_runs_on(job_name
         for leg in _expand(job_name, 'merge_group', route):
             if _truthy(_Expression(condition, {**_context('merge_group', route), 'matrix': leg}).evaluate()):
                 assert _identity(leg) in reduced, f'{job_name}: {step.get("name")!r} runs on {leg}, which a PR skips'
+
+
+# The suites each reduced route's `coverage report` step measures, in the `coverage` job.
+ROUTE_SUITES = {'clai2_only': ('tests/pax',), 'harness_only': ('tests/harness', 'tests/pax')}
+
+
+def _pull_request_env(job_name: str, leg: Leg, route: str) -> dict[str, str]:
+    context = {**_context('pull_request', route), 'matrix': leg}
+    return {name: _text(_render(value, context)) for name, value in _mapping(_job(job_name).get('env', {})).items()}
+
+
+@pytest.mark.parametrize('route', ROUTE_SUITES)
+def test_reduced_routes_collect_coverage_of_their_suites_with_every_extra_installed(route: str):
+    """A suite gated on an extra skips where the extra is missing, so its route's coverage misses lines it never ran.
+
+    The reduced routes run only on later PRs confined to them, so the PR that leaves an extra out passes
+    (https://github.com/pydantic/pydantic-ai/pull/8983, https://github.com/pydantic/pydantic-ai/pull/13872).
+    """
+    covered: set[str] = set()
+    for leg in _expand('test', 'pull_request', route):
+        env = _pull_request_env('test', leg, route)
+        if env['COLLECT_COVERAGE'] == 'true' and env.get('CLAI2_ALL_EXTRAS') == 'true':
+            covered.update(_text(_mapping(leg['install']).get('paths')).split() or ['tests'])
+    condition = _job('test-all-extras')['if']
+    assert isinstance(condition, str)
+    if _truthy(_Expression(condition, _context('pull_request', route)).evaluate()):
+        for leg in _expand('test-all-extras', 'pull_request', route):
+            env = _pull_request_env('test-all-extras', leg, route)
+            if env['COLLECT_COVERAGE'] == 'true':
+                covered.update(env['TEST_PATHS'].split() or ['tests'])
+
+    missing = [suite for suite in ROUTE_SUITES[route] if not any(Path(suite).is_relative_to(path) for path in covered)]
+    assert missing == [], f'{route}: no coverage leg runs {missing} with every extra installed'
+
+
+PRE_COMMIT_CONFIG = Path(__file__).parents[2] / '.pre-commit-config.yaml'
+# The action that installs the program each `system` hook's `entry` runs. `make` targets run `uv`.
+HOOK_PROGRAM_SETUP = {'uv': 'astral-sh/setup-uv@', 'make': 'astral-sh/setup-uv@'}
+
+
+def test_every_pre_commit_job_skips_or_installs_each_system_hook():
+    """A `system` hook runs a program from the job's environment, which a job that doesn't install it lacks.
+
+    Such a job fails on every PR that triggers it, which the PR adding the hook may not
+    (https://github.com/pydantic/pydantic-ai/pull/12322).
+    """
+    config = _mapping(yaml.safe_load(PRE_COMMIT_CONFIG.read_text(encoding='utf-8')))
+    hooks = [
+        hook
+        for repo in map(_mapping, _list(config['repos']))
+        for hook in map(_mapping, _list(repo['hooks']))
+        if hook.get('language') == 'system'
+    ]
+    programs = {_text(hook['id']): _text(hook['entry']).split()[0] for hook in hooks}
+    assert programs.keys() and set(programs.values()) <= HOOK_PROGRAM_SETUP.keys(), programs
+
+    missing: list[str] = []
+    for job_name, job in _mapping(_workflow()['jobs']).items():
+        steps = [_mapping(step) for step in _list(_mapping(job).get('steps', []))]
+        for index, step in enumerate(steps):
+            if not _text(step.get('uses')).startswith('pre-commit/action@'):
+                continue
+            skipped = set(_text(_mapping(step.get('env', {})).get('SKIP')).split(','))
+            installed = {_text(earlier.get('uses')).split('@')[0] + '@' for earlier in steps[:index]}
+            missing += [
+                f'{job_name}: {hook} runs `{program}`'
+                for hook, program in programs.items()
+                if hook not in skipped and HOOK_PROGRAM_SETUP[program] not in installed
+            ]
+    assert missing == [], "add each hook to the step's `SKIP`, or install its program first:\n" + '\n'.join(missing)
