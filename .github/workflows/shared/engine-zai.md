@@ -18,7 +18,7 @@
 #
 # Required repo variable:
 #   GH_AW_ZAI_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
-# Keep GH_AW_MODEL on glm-5.3-flash. Locks in open PRs' merge refs still read it, without GLM-5.4's pricing and effort.
+# `.github/workflows/AGENTS.md` says why GH_AW_MODEL stays set.
 # Required secret:
 #   ZAI_API_KEY — primary Coding Plan API key injected by the AWF api-proxy.
 # Optional secret:
