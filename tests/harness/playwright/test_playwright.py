@@ -3531,6 +3531,13 @@ class TestPlaywrightBrowserLifecycle:
                 id='userinfo-password',
             ),
             pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?browser=chromium&x-api-key=SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid x-api-key SUPERSECRET for chromium"}\n',
+                ('"error": "invalid x-api-key REDACTED for REDACTED"',),
+                id='any-parameter-name',
+            ),
+            pytest.param(
                 'ws://127.0.0.1:9222/devtools/browser?headless=true&profile=default&token=MYSECRET',
                 'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
                 '{"error": "invalid token MYSECRET", "headless": true, "profile": "default"}\n',
