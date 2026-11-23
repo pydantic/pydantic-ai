@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import warnings
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -63,11 +64,11 @@ from .realtime import ws_cassettes
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    # The plugin imports `httpx`, `groq`, `anthropic`, `boto3` and `starlette`; the `REQUESTS` sessions import `openai`
-    # too, and the `UI` sessions `ag_ui`.
+    # The plugin imports `httpx`, `groq`, `anthropic`, `boto3`, `starlette` and `mcp`; the `REQUESTS` sessions import
+    # `openai` too, and the `UI` sessions `ag_ui`.
     pytest.mark.skipif(
         not imports_successful() or any(importlib.util.find_spec(name) is None for name in ('openai', 'ag_ui')),
-        reason='`httpx`, `groq`, `anthropic`, `boto3`, `starlette`, `openai` or `ag_ui` not installed',
+        reason='`httpx`, `groq`, `anthropic`, `boto3`, `starlette`, `mcp`, `openai` or `ag_ui` not installed',
     ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
@@ -684,11 +685,131 @@ def test_infer_realtime_model(monkeypatch):
         infer_realtime_model('openai')
 """
 
+TOOL_PLUMBING = """
+import asyncio
+import warnings
+from dataclasses import dataclass
+from unittest.mock import AsyncMock
+
+import pytest
+from mcp.types import CreateMessageResult, TextContent
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+
+class Rewrites(AbstractCapability[None]):
+    async def before_tool_execute(self, ctx, *, call, tool_def, args):
+        return {{'n': args['n'] + 1}}
+
+    async def on_tool_execute_error(self, ctx, *, call, tool_def, args, error):
+        return f'recovered from {{error}}'
+
+
+class Untouched(AbstractCapability[None]):
+    pass
+
+
+def call_add(messages, info):
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('add', {{'n': 1}}, tool_call_id='big')])
+    if len(messages) == 3:
+        return ModelResponse(parts=[ToolCallPart('add', {{'n': 'x'}}, tool_call_id='invalid')])
+    return ModelResponse(parts=[TextPart({text!r})])
+
+
+def test_tool_hooks():
+    agent = Agent(FunctionModel(call_add), capabilities=[Rewrites(), Untouched()])
+
+    @agent.tool_plain
+    def add(n: int) -> int:
+        if n > 1:
+            raise RuntimeError('too big')
+        return n
+
+    agent.run_sync('add')
+    # Outside a run, the call on `Rewrites` itself is the outermost.
+    call = ToolCallPart('add', tool_call_id='direct')
+    asyncio.run(Rewrites().before_tool_execute(None, call=call, tool_def=None, args={{'n': 0}}))
+
+
+@dataclass
+class FakeSession:
+    create_message: AsyncMock
+
+
+class ScriptedSession:
+    async def create_message(self, messages, **kwargs):
+        return CreateMessageResult(role='assistant', content=TextContent(type='text', text={text!r}), model='scripted')
+
+
+def test_sampling():
+    result = CreateMessageResult(role='assistant', content=TextContent(type='text', text={text!r}), model='sampler')
+    model = MCPSamplingModel(FakeSession(AsyncMock(return_value=result)))
+    assert Agent(model, instructions='Be brief.').run_sync('hi', model_settings={{'max_tokens': 5}}).output == {text!r}
+
+
+def test_sampling_through_a_session():
+    assert Agent(MCPSamplingModel(ScriptedSession())).run_sync('hi').output == {text!r}
+
+
+def test_sampling_fails():
+    result = CreateMessageResult(role='user', content=TextContent(type='text', text='?'), model='sampler')
+    with pytest.raises(UnexpectedModelBehavior):
+        Agent(MCPSamplingModel(FakeSession(AsyncMock(return_value=result)))).run_sync('hi')
+
+
+def raise_noted():
+    noted = LookupError('noted')
+    noted.add_note('a note')
+    raise noted
+
+
+def test_raises():
+    with pytest.raises(ValueError, match='outer'):
+        try:
+            raise KeyError('inner')
+        except KeyError as e:
+            raise ValueError('outer') from e
+    with pytest.raises(TypeError):
+        try:
+            raise KeyError('handled')
+        except KeyError:
+            raise TypeError('replaced') from None
+    pytest.raises(LookupError, raise_noted)
+    with pytest.RaisesGroup(ValueError, RuntimeError):
+        raise ExceptionGroup('both', [ValueError('a'), RuntimeError('b')])
+
+
+def warn_from_here():
+    warnings.warn('reported in the test module', UserWarning, stacklevel=2)
+
+
+async def warn_from_the_model(messages, info):
+    warnings.warn('reported in the model', DeprecationWarning, stacklevel=2)
+    return ModelResponse(parts=[TextPart({text!r})])
+
+
+def test_warnings():
+    with pytest.warns(UserWarning):
+        warn_from_here()
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter('always')
+        Agent(FunctionModel(warn_from_the_model)).run_sync('hi')
+        warnings.warn_explicit('reported where told', RuntimeWarning, 'elsewhere.py', 7)
+        warnings.simplefilter('ignore')
+        warnings.warn('filtered out')
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI`, `REALTIME` or `SESSION`, carrying
-    `text`, into `capture_dir`.
+    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI`, `REALTIME`, `SESSION` or
+    `TOOL_PLUMBING`, carrying `text`, into `capture_dir`.
 
     It runs as `main` runs each side.
     """
@@ -702,6 +823,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
         ui: bool = False,
         realtime: bool = False,
         session: bool = False,
+        tool_plumbing: bool = False,
     ) -> pytest.RunResult:
         pytester.makeconftest(CONFTEST)
         if ui:
@@ -710,6 +832,8 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
             pytester.makepyfile(test_realtime=REALTIME.format(text=text))
         elif session:
             pytester.makepyfile(test_session=SESSION.format(text=text))
+        elif tool_plumbing:
+            pytester.makepyfile(test_tool_plumbing=TOOL_PLUMBING.format(text=text))
         else:
             pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
@@ -1679,6 +1803,305 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
     )
 
 
+def test_capture_records_tool_hooks_sampling_exceptions_and_warnings(run: RunCapture, tmp_path: Path):
+    """Each tool hook the tool manager calls, each `MCPSamplingModel` request and the calls its mocked session gets,
+    each exception `pytest.raises` or `pytest.RaisesGroup` catches, and each warning the filters let through.
+
+    The agent combines `Rewrites`, a capability defined once the capture started, with `Untouched`; the calls the
+    combined capability makes on them aren't recorded again, and the one the test makes on `Rewrites` directly is. The
+    first tool call fails once `Rewrites` raised its argument, and `Rewrites` recovers it; the second fails validation.
+    A session that isn't a mock keeps no calls to record.
+    """
+    run(tmp_path, tool_plumbing=True).assert_outcomes(passed=6)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        (
+            record['target'].rsplit('.', 2)[-2] + '.' + record['target'].rsplit('.', 1)[-1],
+            record['kwargs']['call']['tool_call_id'],
+            sorted(record['kwargs']),
+            record['kwargs']['args'],
+            record.get('result'),
+            record.get('error'),
+        )
+        for record in records
+        if record['kind'] == 'hook'
+    ] == snapshot(
+        [
+            ('CombinedCapability.wrap_tool_validate', 'big', ['args', 'call', 'tool_def'], {'n': 1}, {'n': 1}, None),
+            ('CombinedCapability.before_tool_validate', 'big', ['args', 'call', 'tool_def'], {'n': 1}, {'n': 1}, None),
+            ('CombinedCapability.after_tool_validate', 'big', ['args', 'call', 'tool_def'], {'n': 1}, {'n': 1}, None),
+            (
+                'CombinedCapability.wrap_tool_execute',
+                'big',
+                ['args', 'call', 'tool_def'],
+                {'n': 1},
+                'recovered from too big',
+                None,
+            ),
+            ('CombinedCapability.before_tool_execute', 'big', ['args', 'call', 'tool_def'], {'n': 1}, {'n': 2}, None),
+            (
+                'CombinedCapability.on_tool_execute_error',
+                'big',
+                ['args', 'call', 'error', 'tool_def'],
+                {'n': 2},
+                'recovered from too big',
+                None,
+            ),
+            (
+                'CombinedCapability.after_tool_execute',
+                'big',
+                ['args', 'call', 'result', 'tool_def'],
+                {'n': 2},
+                'recovered from too big',
+                None,
+            ),
+            (
+                'CombinedCapability.wrap_tool_validate',
+                'invalid',
+                ['args', 'call', 'tool_def'],
+                {'n': 'x'},
+                None,
+                """\
+ValidationError: 1 validation error for add
+n
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='x', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/int_parsing\
+""",
+            ),
+            (
+                'CombinedCapability.before_tool_validate',
+                'invalid',
+                ['args', 'call', 'tool_def'],
+                {'n': 'x'},
+                {'n': 'x'},
+                None,
+            ),
+            (
+                'CombinedCapability.on_tool_validate_error',
+                'invalid',
+                ['args', 'call', 'error', 'tool_def'],
+                {'n': 'x'},
+                None,
+                """\
+ValidationError: 1 validation error for add
+n
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='x', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/int_parsing\
+""",
+            ),
+            ('Rewrites.before_tool_execute', 'direct', ['args', 'call', 'tool_def'], {'n': 0}, {'n': 1}, None),
+        ]
+    )
+    assert [
+        {key: value for key, value in record.items() if key not in ('kind', 'messages', 'model_request_parameters')}
+        for record in records
+        if record['kind'] == 'request' and 'sampling' in record['node']
+    ] == snapshot(
+        [
+            {
+                'node': 'test_tool_plumbing.py::test_sampling',
+                'target': 'pydantic_ai.models.mcp_sampling.MCPSamplingModel.request',
+                'model_settings': {'max_tokens': 5},
+                'response': {
+                    'parts': [
+                        {
+                            'content': 'hello',
+                            'id': None,
+                            'provider_name': None,
+                            'provider_details': None,
+                            'citations': None,
+                            'part_kind': 'text',
+                        }
+                    ],
+                    'usage': {
+                        'input_tokens': 0,
+                        'cache_write_tokens': 0,
+                        'cache_write_1h_tokens': 0,
+                        'cache_read_tokens': 0,
+                        'output_tokens': 0,
+                        'output_reasoning_tokens': 0,
+                        'input_audio_tokens': 0,
+                        'cache_audio_read_tokens': 0,
+                        'output_audio_tokens': 0,
+                        'audio_seconds': 0.0,
+                        'details': {},
+                        'cost': None,
+                    },
+                    'model_name': 'sampler',
+                    'model_id': None,
+                    'timestamp': 'NOW',
+                    'kind': 'response',
+                    'provider_name': None,
+                    'provider_url': None,
+                    'canonical_system': None,
+                    'provider_details': None,
+                    'provider_response_id': None,
+                    'finish_reason': None,
+                    'run_id': None,
+                    'conversation_id': None,
+                    'metadata': None,
+                    'workspace_ref': None,
+                    'history_digest': None,
+                    'failed_attempts': None,
+                    'state': 'complete',
+                },
+            },
+            {
+                'node': 'test_tool_plumbing.py::test_sampling',
+                'target': 'test_tool_plumbing.FakeSession.create_message',
+                'args': [
+                    [
+                        {
+                            'role': 'user',
+                            'content': {'type': 'text', 'text': 'hi', 'annotations': None, '_meta': None},
+                            '_meta': None,
+                        }
+                    ]
+                ],
+                'kwargs': {
+                    'max_tokens': 5,
+                    'system_prompt': 'Be brief.',
+                    'temperature': None,
+                    'model_preferences': None,
+                    'stop_sequences': None,
+                },
+            },
+            {
+                'node': 'test_tool_plumbing.py::test_sampling_through_a_session',
+                'target': 'pydantic_ai.models.mcp_sampling.MCPSamplingModel.request',
+                'model_settings': None,
+                'response': {
+                    'parts': [
+                        {
+                            'content': 'hello',
+                            'id': None,
+                            'provider_name': None,
+                            'provider_details': None,
+                            'citations': None,
+                            'part_kind': 'text',
+                        }
+                    ],
+                    'usage': {
+                        'input_tokens': 0,
+                        'cache_write_tokens': 0,
+                        'cache_write_1h_tokens': 0,
+                        'cache_read_tokens': 0,
+                        'output_tokens': 0,
+                        'output_reasoning_tokens': 0,
+                        'input_audio_tokens': 0,
+                        'cache_audio_read_tokens': 0,
+                        'output_audio_tokens': 0,
+                        'audio_seconds': 0.0,
+                        'details': {},
+                        'cost': None,
+                    },
+                    'model_name': 'scripted',
+                    'model_id': None,
+                    'timestamp': 'NOW',
+                    'kind': 'response',
+                    'provider_name': None,
+                    'provider_url': None,
+                    'canonical_system': None,
+                    'provider_details': None,
+                    'provider_response_id': None,
+                    'finish_reason': None,
+                    'run_id': None,
+                    'conversation_id': None,
+                    'metadata': None,
+                    'workspace_ref': None,
+                    'history_digest': None,
+                    'failed_attempts': None,
+                    'state': 'complete',
+                },
+            },
+            {
+                'node': 'test_tool_plumbing.py::test_sampling_fails',
+                'target': 'pydantic_ai.models.mcp_sampling.MCPSamplingModel.request',
+                'model_settings': None,
+                'error': 'UnexpectedModelBehavior: Unexpected result from MCP sampling, expected "assistant" role, got user.',
+            },
+            {
+                'node': 'test_tool_plumbing.py::test_sampling_fails',
+                'target': 'test_tool_plumbing.FakeSession.create_message',
+                'args': [
+                    [
+                        {
+                            'role': 'user',
+                            'content': {'type': 'text', 'text': 'hi', 'annotations': None, '_meta': None},
+                            '_meta': None,
+                        }
+                    ]
+                ],
+                'kwargs': {
+                    'max_tokens': 16384,
+                    'system_prompt': '',
+                    'temperature': None,
+                    'model_preferences': None,
+                    'stop_sequences': None,
+                },
+            },
+        ]
+    )
+    assert [record['exception'] for record in records if record['kind'] == 'exception'] == snapshot(
+        [
+            {
+                'type': 'pydantic_ai.exceptions.UnexpectedModelBehavior',
+                'message': 'Unexpected result from MCP sampling, expected "assistant" role, got user.',
+                'suppress_context': True,
+            },
+            {
+                'type': 'builtins.ValueError',
+                'message': 'outer',
+                'cause': {'type': 'builtins.KeyError', 'message': "'inner'"},
+                'context': 'cause',
+                'suppress_context': True,
+            },
+            {
+                'type': 'builtins.TypeError',
+                'message': 'replaced',
+                'context': {'type': 'builtins.KeyError', 'message': "'handled'"},
+                'suppress_context': True,
+            },
+            {'type': 'builtins.LookupError', 'message': 'noted', 'notes': ['a note']},
+            {
+                'type': 'builtins.ExceptionGroup',
+                'message': 'both (2 sub-exceptions)',
+                'exceptions': [
+                    {'type': 'builtins.ValueError', 'message': 'a'},
+                    {'type': 'builtins.RuntimeError', 'message': 'b'},
+                ],
+            },
+        ]
+    )
+    assert [
+        {key: value for key, value in record.items() if key != 'kind'}
+        for record in records
+        if record['kind'] == 'warning'
+    ] == snapshot(
+        [
+            {
+                'node': 'test_tool_plumbing.py::test_warnings',
+                'category': 'builtins.UserWarning',
+                'message': 'reported in the test module',
+                'frame': {'module': 'test_tool_plumbing', 'function': 'test_warnings', 'line': 111},
+            },
+            {
+                'node': 'test_tool_plumbing.py::test_warnings',
+                'category': 'builtins.DeprecationWarning',
+                'message': 'reported in the model',
+                'frame': {'module': 'pydantic_ai._utils', 'function': 'await_maybe'},
+            },
+            {
+                'node': 'test_tool_plumbing.py::test_warnings',
+                'category': 'builtins.RuntimeWarning',
+                'message': 'reported where told',
+                'frame': {'file': 'elsewhere.py', 'line': 7},
+            },
+        ]
+    )
+
+
 async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
     """A subclass defined once the capture started keeps its type parameters, and its abstract methods."""
     capture = RefactorCapture(tmp_path)
@@ -1847,6 +2270,21 @@ async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_s
     assert [record['target'] for record in capture.records] == snapshot(['GET http://127.0.0.1:PORT/api/health'])
 
 
+def test_capture_records_no_warning_while_no_test_runs(tmp_path: Path):
+    """A warning raised outside a test, like one an import during collection raises, belongs to no test node."""
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        with warnings.catch_warnings(record=True) as shown:
+            warnings.simplefilter('always')
+            warnings.warn('outside a test', UserWarning)
+    finally:
+        capture.pytest_unconfigure()
+
+    assert [str(warning.message) for warning in shown] == ['outside a test']
+    assert capture.records == []
+
+
 async def test_capture_normalizes_the_custom_id_of_an_in_memory_batch_request(tmp_path: Path):
     """`TestModel`'s batches encode each request as a random token, which the `custom_id` it's sent with hashes."""
     agent = Agent(TestModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
@@ -1943,12 +2381,15 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
 nodes: base 10, head 10
-records: base 14, head 14
+records: base 22, head 22
 stream events: head 11
 requests: head 10
 ui records: head 0
 realtime records: head 0
 session records: head 0
+hook records: head 6
+exception records: head 1
+warning records: head 1
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
@@ -1962,17 +2403,27 @@ nodes per request target, head:
 nodes per ui target, head:
 nodes per realtime target, head:
 nodes per session target, head:
+nodes per hook target, head:
+  pydantic_ai.capabilities.combined.CombinedCapability.after_tool_execute: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.after_tool_validate: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.before_tool_execute: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.before_tool_validate: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_execute: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_validate: 1
 nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
 only in base: 0, only in head: 0, differing: 0
 nodes: base 10, head 9
-records: base 14, head 12
+records: base 22, head 19
 stream events: head 9
 requests: head 9
 ui records: head 0
 realtime records: head 0
 session records: head 0
+hook records: head 6
+exception records: head 0
+warning records: head 1
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
@@ -1986,6 +2437,13 @@ nodes per request target, head:
 nodes per ui target, head:
 nodes per realtime target, head:
 nodes per session target, head:
+nodes per hook target, head:
+  pydantic_ai.capabilities.combined.CombinedCapability.after_tool_execute: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.after_tool_validate: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.before_tool_execute: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.before_tool_validate: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_execute: 1
+  pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_validate: 1
 nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
@@ -2005,7 +2463,12 @@ def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path,
     base, head = tmp_path / 'base', tmp_path / 'head'
     run(base, '-k', 'anthropic_beta', text='files-api-2025-04-14').assert_outcomes(passed=1, deselected=10)
     run(head, '-k', 'anthropic_beta', text='code-execution-2025-08-25').assert_outcomes(passed=1, deselected=10)
-    (record,) = [json.loads(line) for line in (base / 'main.jsonl').read_text().splitlines()]
+    # The model's deprecation warning is recorded too.
+    (record,) = [
+        record
+        for line in (base / 'main.jsonl').read_text().splitlines()
+        if (record := json.loads(line))['kind'] == 'request'
+    ]
     assert record['headers']['anthropic-beta'] == snapshot('files-api-2025-04-14')
     assert {'x-api-key', 'authorization'}.isdisjoint(record['headers'])
     (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
@@ -2070,12 +2533,16 @@ requests: head 0
 ui records: head 1
 realtime records: head 0
 session records: head 0
+hook records: head 0
+exception records: head 0
+warning records: head 0
 nodes per stream module, head:
 nodes per request target, head:
 nodes per ui target, head:
   test_ui.MediaTypeAdapter.load_messages: 1
 nodes per realtime target, head:
 nodes per session target, head:
+nodes per hook target, head:
 nodes that recorded no request, realtime or session record, head: 1
   test_ui.py::test_media_type_set_or_implied
 only in base: 0, only in head: 0, differing: 1
@@ -2132,6 +2599,25 @@ def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, mo
         ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
     ]
     assert os.path.realpath(out) == str(out)
+
+
+def test_described_exception_stops_where_a_chain_loops():
+    """A chain set by hand can loop back to an exception already described, which is then described without its own."""
+    first, second = ValueError('first'), KeyError('second')
+    first.__cause__, second.__cause__ = second, first
+    assert refactor_capture.described_exception(first) == snapshot(
+        {
+            'type': 'builtins.ValueError',
+            'message': 'first',
+            'cause': {
+                'type': 'builtins.KeyError',
+                'message': "'second'",
+                'cause': {'type': 'builtins.ValueError', 'message': 'first'},
+                'suppress_context': True,
+            },
+            'suppress_context': True,
+        }
+    )
 
 
 def test_recorded_sorts_a_set():
