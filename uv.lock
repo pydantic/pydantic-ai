@@ -5645,7 +5645,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "3.31.0"
+version = "3.50.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -5655,9 +5655,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/99/d0c5b9e60eb131bfe5f6f818e9b25650b64004ff84512c0f7e00a246b826/openai-3.31.0.tar.gz", hash = "sha256:58110edba9acaf29cb2a675a1cbcccdd9f2fdb4932baed474dc847a7639e5d02", size = 2117207, upload-time = "2026-10-14T05:39:33.445Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/b4/ba46d04d1835d979d89ed7c0d7d94b4ca341b1333e9423c26d97962f6f98/openai-3.50.0.tar.gz", hash = "sha256:ff094ba851ce512e0682f259e8c5bdc4802c7ef5373f68e7fd261261bb4496f2", size = 2411290, upload-time = "2026-11-12T19:26:54.812Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/22/66014c8fede0aa2b3381cf80c5102219b78657b3e61776cdab8f0b78675a/openai-3.31.0-py3-none-any.whl", hash = "sha256:e5839f6670483f368de40ce3422f524c1afaf12ff8660539f53489e200db8d78", size = 2235454, upload-time = "2026-10-14T05:39:31.197Z" },
+    { url = "https://files.pythonhosted.org/packages/12/68/a1d793a10e8a5fe9d5710544475d686e90ed20848dd224b126e6bc64c1a6/openai-3.50.0-py3-none-any.whl", hash = "sha256:7002115247cacb167154a3da4c668d074e61014a661d2c1ac02583da24e2ce19", size = 2442350, upload-time = "2026-11-12T19:26:52.57Z" },
 ]
 
 [[package]]
@@ -7631,6 +7631,9 @@ e2b = [
 kubernetes = [
     { name = "pydantic-ai-harness", extra = ["kubernetes"] },
 ]
+local = [
+    { name = "pydantic-ai-harness", extra = ["boxlite", "smol"] },
+]
 modal = [
     { name = "pydantic-ai-harness", extra = ["modal"] },
 ]
@@ -7660,6 +7663,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic-ai-harness", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["boxlite", "smol"], marker = "extra == 'local'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_harness" },
@@ -7679,7 +7683,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets", specifier = ">=15.0" },
 ]
-provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites", "typesafe"]
+provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "local", "modal", "opensandbox", "render", "sprites", "typesafe"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -7870,16 +7874,16 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0,<4" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'elevenlabs-realtime'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.31.0,<4" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.31.0,<4" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'elevenlabs-realtime'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.50.0,<4" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.50.0,<4" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.9.0" },
@@ -7938,6 +7942,9 @@ e2b = [
 kubernetes = [
     { name = "pydantic-ai-pax", extra = ["kubernetes"] },
 ]
+local = [
+    { name = "pydantic-ai-pax", extra = ["local"] },
+]
 modal = [
     { name = "pydantic-ai-pax", extra = ["modal"] },
 ]
@@ -7961,13 +7968,14 @@ requires-dist = [
     { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["local"], marker = "extra == 'local'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "src/pydantic_ai_pax" },
 ]
-provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites", "typesafe"]
+provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "local", "modal", "opensandbox", "render", "sprites", "typesafe"]
 
 [[package]]
 name = "pydantic-core"
