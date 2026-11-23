@@ -337,11 +337,11 @@ The suite's `filterwarnings` ignores no `ResourceWarning`, so an unclosed socket
 
 ## Text encoding
 
-CI runs the tests with `PYTHONWARNDEFAULTENCODING=1`, and `filterwarnings` turns the `EncodingWarning` into an error when library code (`pydantic_ai*`, `pydantic_graph`, `pydantic_evals`, `clai`) made the call. A text-mode `open()`, `Path.read_text()`, `Path.write_text()` or `subprocess` call without `encoding=` uses the locale's encoding, which isn't UTF-8 on Windows. Pass `encoding='utf-8'`, or `encoding='locale'` where the platform's encoding is what the code means. Reproduce a failure locally with `PYTHONWARNDEFAULTENCODING=1 uv run pytest <test>`.
+CI runs the tests with `PYTHONWARNDEFAULTENCODING=1`, and `filterwarnings` turns the `EncodingWarning` into an error when library code (`pydantic_ai*`, `pydantic_graph`, `pydantic_evals`, `pydantic_clai2`, `clai`) made the call. A text-mode `open()`, `Path.read_text()`, `Path.write_text()` or `subprocess` call without `encoding=` uses the locale's encoding, which isn't UTF-8 on Windows. Pass `encoding='utf-8'`, or `encoding='locale'` where the platform's encoding is what the code means. Reproduce a failure locally with `PYTHONWARNDEFAULTENCODING=1 uv run pytest <test>`.
 
 ## Home directory
 
-`tests/home_isolation.py` gives each pytest process, every xdist worker included, its own temporary home directory before collection. `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `IPYTHONDIR` point into it, and subprocesses inherit them. Caches (`XDG_CACHE_HOME`) and the credential files live recordings read (`_CREDENTIAL_PATHS`) keep their real paths.
+`tests/home_isolation.py` gives each pytest process, every xdist worker included, its own temporary home directory before collection. `HOME` (and `USERPROFILE` on Windows), `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `IPYTHONDIR` point into it, and subprocesses inherit them. Caches (`XDG_CACHE_HOME`) and the credential files live recordings read (`_CREDENTIAL_PATHS`) keep their real paths.
 
 - Don't point a tool's state at a path outside it to share that state between workers. A test that needs state of its own sets it with `monkeypatch.setenv`, as `tests/pax/conftest.py` does.
 - When a tool reads credentials from a new path under the home directory, add the variable that overrides that path to `_CREDENTIAL_PATHS`, so live recordings still find them.

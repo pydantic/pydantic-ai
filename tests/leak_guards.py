@@ -26,6 +26,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import itertools
 import os
 import threading
 import traceback
@@ -49,7 +50,7 @@ _AGENT_GRAPH = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / '_agent_graph.py
 
 GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
     {
-        # Each is left suspended when its consumer stops early and nothing closes it; R22 tracks fixing them.
+        # Each is left suspended when its consumer stops early and nothing closes it; fixing each is product work.
         'pydantic_ai_slim/pydantic_ai/_tool_execution.py:_iter_completed_or_buffered',
         'pydantic_ai_slim/pydantic_ai/durable_exec/_base.py:BaseDurabilityCapability._single_event_stream',
         'pydantic_ai_slim/pydantic_ai/models/__init__.py:StreamedResponse.__aiter__.<locals>.iterator_with_cancel_guard',
@@ -82,7 +83,7 @@ class _State:
     test_running: bool = False
     shared_fixture_depth: int = 0
     generation: int = 0
-    """Counts tests, so a loop finalized in a later test is not blamed on that one."""
+    """Numbers the running test, so a loop finalized in a later test is not blamed on that one."""
     loops: weakref.WeakSet[asyncio.AbstractEventLoop] = field(
         default_factory=weakref.WeakSet[asyncio.AbstractEventLoop]
     )
@@ -100,6 +101,8 @@ class _State:
 
 
 _state = _State()
+"""The running test's state; a test that runs a nested pytest session (`pytester`) gets its own back afterwards."""
+_generations = itertools.count(1)
 
 
 def _first_party_creator() -> str | None:
@@ -162,7 +165,7 @@ setattr(asyncio.BaseEventLoop, '__del__', _tracking_del)
 setattr(asyncio.BaseEventLoop, '_asyncgen_finalizer_hook', _tracking_finalizer_hook)
 
 
-def track_http_client(client: object) -> None:
+def note_client_created(client: object) -> None:
     """Note the HTTP client that `track_httpx_clients`' factory just created, if an agent run built it.
 
     A run built it when an `Agent.iter` or agent graph frame asked for it with no test code in between.
@@ -181,7 +184,7 @@ def track_http_client(client: object) -> None:
         frame = frame.f_back
 
 
-def left_open(client: object) -> None:
+def note_client_left_open(client: object) -> None:
     """Note that `track_httpx_clients` is closing a client the test left open."""
     if (site := _state.run_built_clients.get(client)) is not None:
         _state.clients_left_open.append(site)
@@ -199,17 +202,12 @@ def pytest_fixture_setup(fixturedef: pytest.FixtureDef[Any]) -> Generator[None, 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, object, object]:
-    _state.test_running = True
-    _state.generation += 1
+    global _state
+    outer, _state = _state, _State(test_running=True, generation=next(_generations))
     try:
         return (yield)
     finally:
-        _state.test_running = False
-        _state.loops.clear()
-        _state.finalized_open.clear()
-        _state.run_built_clients.clear()
-        _state.clients_left_open.clear()
-        _state.finalized_generators.clear()
+        _state = outer
 
 
 @pytest.hookimpl(wrapper=True)

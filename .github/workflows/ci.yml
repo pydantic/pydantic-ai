@@ -36,8 +36,8 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
   GIT_CONFIG_VALUE_0: https://github.com/
-  # Warn on every text-mode `open()` and `subprocess` call that falls back to the locale's encoding
-  # (R22), which is not UTF-8 on Windows. `filterwarnings` in `pyproject.toml` makes the test fail
+  # Warn on every text-mode `open()` and `subprocess` call that falls back to the locale's encoding,
+  # which is not UTF-8 on Windows. `filterwarnings` in `pyproject.toml` makes the test fail
   # when library code made the call.
   PYTHONWARNDEFAULTENCODING: "1"
 

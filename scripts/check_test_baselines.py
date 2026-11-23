@@ -15,7 +15,7 @@ import ast
 import sys
 from collections.abc import Sequence
 
-from _ratchet import Change, escape, merge_head, parse_args, read_changes, read_objects
+from _ratchet import Change, escape, git, merge_head, parse_args, read_changes, read_objects
 
 BASELINES: dict[str, tuple[str, ...]] = {
     'tests/leak_guards.py': ('GC_FINALIZED_BASELINE',),
@@ -53,7 +53,8 @@ def added(changes: list[Change], theirs: str | None = None) -> list[tuple[str, s
         path = change.new_path
         if path not in BASELINES:
             continue
-        merged = read_objects([f'{theirs}:{path}'])[0] if theirs else None
+        # `git cat-file --batch` reports a path the merged commit lacks as missing, which `read_objects` can't parse.
+        merged = read_objects([f'{theirs}:{path}'])[0] if theirs and git('ls-tree', theirs, '--', path) else None
         for name in BASELINES[path]:
             ours, theirs_entries = entries(change.old_source, name), entries(merged, name)
             if ours is None and theirs_entries is None:

@@ -97,3 +97,26 @@ def test_a_merge_may_bring_in_the_entries_the_merged_branch_has(repo: Path, caps
     _git(repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', 'merge', '--no-commit', '--no-ff', 'other')
 
     assert _check(capsys, '--staged') == (0, '')
+
+
+def test_a_merge_of_a_commit_without_the_baseline_still_checks_it(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _git(repo, 'branch', '-m', 'mine')
+    _git(repo, 'checkout', '--quiet', '--orphan', 'other')
+    _git(repo, 'rm', '-r', '--quiet', '--cached', '.')
+    (repo / _BASELINE).unlink()
+    (repo / 'theirs.py').write_text('', encoding='utf-8')
+    _commit(repo)
+    _git(repo, 'checkout', '--quiet', 'mine')
+    _git(
+        repo,
+        *('-c', 'user.name=test', '-c', 'user.email=test@example.com'),
+        *('merge', '--no-commit', '--no-ff', '--allow-unrelated-histories', 'other'),
+    )
+    _write(repo, _source('a.py:first', 'a.py:second', 'a.py:third'))
+    _git(repo, 'add', '--all')
+
+    assert _check(capsys, '--staged') == (
+        1,
+        'tests/leak_guards.py: `GC_FINALIZED_BASELINE` gained `a.py:third`: fix the violation instead; a baseline only '
+        'shrinks\n',
+    )

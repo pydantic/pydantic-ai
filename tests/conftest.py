@@ -1488,7 +1488,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
             key = (family, repr(sorted(kwargs.items())))
             if key not in cache or cache[key].is_closed:
                 cache[key] = factory(**kwargs)
-                leak_guards.track_http_client(cache[key])
+                leak_guards.note_client_created(cache[key])
             client = cache[key]
             assert isinstance(client, expected)
             return client
@@ -1516,7 +1516,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
 
         async def _close_all() -> None:
             for client in unclosed:
-                leak_guards.left_open(client)
+                leak_guards.note_client_left_open(client)
                 await client.aclose()
 
         asyncio.run(_close_all())
@@ -1528,7 +1528,7 @@ async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClie
     yield
     for client in track_httpx_clients.values():
         if not client.is_closed:
-            leak_guards.left_open(client)
+            leak_guards.note_client_left_open(client)
             await client.aclose()
 
 
