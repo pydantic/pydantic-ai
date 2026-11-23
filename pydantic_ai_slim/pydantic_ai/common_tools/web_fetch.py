@@ -682,11 +682,7 @@ class _MarkdownConverter(MarkdownConverter):
                 if isinstance(child, Tag) and child.name == 'li':
                     self._ol_indexes[id(child)] = index
                     index += 1
-        start_attr = parent.get('start')
-        # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²` and on too
-        # many digits; treat those as no start rather than letting the page abort the run.
-        start = int(start_attr) if isinstance(start_attr, str) and _is_parsable_decimal(start_attr) else 1
-        bullet = f'{start + self._ol_indexes[id(el)]}. '
+        bullet = self._ordered_list_bullet(el, parent)
         bullet_indent = ' ' * len(bullet)
         if len(bullet_indent) * text.count('\n') > _MAX_HTML_CONVERSION_COST:
             raise ModelRetry('the document is too complex')
@@ -697,6 +693,19 @@ class _MarkdownConverter(MarkdownConverter):
 
         text = _LINE_WITH_CONTENT_RE.sub(indent_line, text)
         return f'{bullet}{text[len(bullet) :]}\n'
+
+    def _ordered_list_bullet(self, el: Tag, parent: Tag) -> str:
+        index = self._ol_indexes[id(el)]
+        start_attr = parent.get('start')
+        # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²` and on too
+        # many digits; treat those as no start rather than letting the page abort the run.
+        start = int(start_attr) if isinstance(start_attr, str) and _is_parsable_decimal(start_attr) else 1
+        try:
+            return f'{start + index}. '
+        except ValueError:
+            # A start `int()` parses can still take an item's number past the digits `str()` writes;
+            # number that item as if the list had no start.
+            return f'{index + 1}. '
 
     def convert_td(self, el: Tag, text: str, parent_tags: set[str]) -> str:
         self._drop_unparsable_colspan(el)

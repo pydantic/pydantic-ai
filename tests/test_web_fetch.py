@@ -1256,6 +1256,8 @@ _BUDGET_CHECK_CASES = [
 class TestMarkdownConverter:
     # One digit more than `int()` parses.
     _TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
+    # The largest number `int()` parses and `str()` writes.
+    _LARGEST_NUMBER = '9' * sys.get_int_max_str_digits()
 
     def test_large_well_formed_reference_list_passes_markup_budgets(self):
         """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
@@ -1497,6 +1499,18 @@ class TestMarkdownConverter:
                 '1. one\n2. two',
                 id='list-start-too-long',
             ),
+            # The second item's number has one digit too many for `str()`.
+            pytest.param(
+                f'<ol start="{_LARGEST_NUMBER}"><li>one</li><li>two</li></ol>',
+                f'{_LARGEST_NUMBER}. one\n2. two',
+                id='list-start-at-limit',
+            ),
+            # An empty item renders no number, so it converts as it does on `main`.
+            pytest.param(
+                f'<ol start="{_LARGEST_NUMBER}"><li>one</li><li></li></ol>',
+                f'{_LARGEST_NUMBER}. one',
+                id='list-start-at-limit-empty-item',
+            ),
             pytest.param(
                 '<table><tr><td>x</td><td colspan="²">y</td></tr></table>',
                 '|  |  |\n| --- | --- |\n| x | y |',
@@ -1525,7 +1539,8 @@ class TestMarkdownConverter:
         """A number `int()` rejects counts as absent instead of raising: a list `start`, a cell `colspan`, an `<hN>` level.
 
         `markdownify` checks `isnumeric()` or `isdigit()` and then calls `int()`, which raises on digits like `²` and
-        on more digits than `sys.get_int_max_str_digits()`.
+        on more digits than `sys.get_int_max_str_digits()`. A list item whose number `str()` can't write for that
+        limit is numbered as if the list had no `start`.
         """
         assert _convert_html(html)[1] == expected
 
