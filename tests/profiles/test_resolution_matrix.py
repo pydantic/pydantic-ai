@@ -4830,7 +4830,7 @@ def test_minimax_unmatched(model_name: str):
         (stepfun_model_profile, 'step-3.7-flash', {'supports_thinking': True, 'thinking_always_enabled': True}),
     ],
 )
-def test_open_weight_family_thinking(family_profile: ModelProfileFunc, model_name: str, expected: dict[str, Any]):
+def test_open_weight_family_thinking(family_profile: ModelProfileFunc, model_name: str, expected: dict[str, bool]):
     """Thinking flags for the open-weight families, per OpenRouter's model catalog
     (https://openrouter.ai/api/v1/models), for ids as gateways and Hugging Face repos spell them.
 
