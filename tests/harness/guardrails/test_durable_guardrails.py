@@ -17,7 +17,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, DeferredToolRequests
@@ -30,6 +29,7 @@ from pydantic_ai_harness.guardrails import (
     GuardrailResult,
     InputGuardrail,
     OutputGuardrail,
+    OutputGuardrailFunc,
     ToolCallInfo,
     ToolGuardrail,
     ToolResultInfo,
@@ -334,12 +334,19 @@ async def _chain_workflow() -> str:
     return (await _chain_agent.run('go')).output
 
 
-async def test_dbos_replays_a_verdict_from_a_guard_the_chain_no_longer_has(
-    dbos: DBOS, instrumented: Instrumented
+@pytest.mark.parametrize(
+    ('changed_chain', 'named'),
+    [
+        pytest.param([_allow_output], {}, id='shortened'),
+        pytest.param([_block_output, _allow_output], {'guardrail.guard': '_allow_output'}, id='reordered'),
+    ],
+)
+async def test_dbos_replays_a_verdict_after_the_chain_changes(
+    dbos: DBOS, instrumented: Instrumented, changed_chain: list[OutputGuardrailFunc[object]], named: dict[str, str]
 ) -> None:
-    """A recorded verdict still applies after the chain is shortened below the position it came from.
+    """A recorded verdict still applies after the chain changes, and its span keeps the recorded position.
 
-    Its span keeps the recorded position, and names no guard, since none is left at that position.
+    The span names the guard now at that position: none in a shorter chain, another in a reordered one.
     """
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(OutputBlocked):
@@ -347,7 +354,7 @@ async def test_dbos_replays_a_verdict_from_a_guard_the_chain_no_longer_has(
     steps = await dbos.list_workflow_steps_async(workflow_id)
 
     instrumentation, exporter = instrumented(False)
-    _chain_guardrail.guard = _allow_output
+    _chain_guardrail.guard = changed_chain
     _chain_agent.instrument = instrumentation.settings
     try:
         handle = await DBOS.fork_workflow_async(workflow_id, len(steps) + 1)
@@ -358,6 +365,9 @@ async def test_dbos_replays_a_verdict_from_a_guard_the_chain_no_longer_has(
         _chain_agent.instrument = None
 
     [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail blocked output']
-    assert dict(span.attributes or {}) == snapshot(
-        {'guardrail.direction': 'output', 'guardrail.action': 'block', 'guardrail.position': 1}
-    )
+    assert dict(span.attributes or {}) == {
+        'guardrail.direction': 'output',
+        'guardrail.action': 'block',
+        'guardrail.position': 1,
+        **named,
+    }

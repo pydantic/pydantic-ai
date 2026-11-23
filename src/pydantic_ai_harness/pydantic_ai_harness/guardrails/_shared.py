@@ -19,7 +19,7 @@ from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
-from pydantic_ai._telemetry import record_decision
+from pydantic_ai._telemetry import record_decision, records_content
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
@@ -419,8 +419,9 @@ def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[Guardra
 def guard_at(guards: Sequence[GuardCallable], position: int) -> GuardCallable | None:
     """The guard at `position`, or `None` when a replayed verdict names a position the chain no longer has.
 
-    A durable run replays the position recorded with its verdict, and the chain can have been
-    shortened since. The verdict still applies as it did before; only the span loses the guard's name.
+    A durable run replays the position recorded with its verdict, not the guard, and the chain can have
+    changed since. The verdict still applies as it did before; the span names the guard now at that
+    position, which is a different one if the chain was reordered, or none if it is now shorter.
     """
     return guards[position] if position < len(guards) else None
 
@@ -514,7 +515,7 @@ def trace_redaction(
         ctx,
         f'guardrail redacted {direction}',
         attributes=decision_attributes(direction, 'replace', guard=None, position=None, tool_name=tool_name),
-        content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None,
+        content={'guardrail.replacement': str(replacement)} if records_content(ctx) else None,
     )
 
 
@@ -543,5 +544,5 @@ def trace_approval(
             **decision_attributes(direction, 'approve', guard=guard, position=position, tool_name=tool_name),
             'guardrail.tool_call_id': tool_call_id,
         },
-        content={'guardrail.arguments': str(args)} if ctx.trace_include_content else None,
+        content={'guardrail.arguments': str(args)} if records_content(ctx) else None,
     )
