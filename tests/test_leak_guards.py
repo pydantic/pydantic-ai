@@ -14,6 +14,7 @@ import pytest
 pytest_plugins = ['pytester']
 
 WORKER_LOOP = """
+import gc
 import threading
 
 from pydantic_ai._utils import get_event_loop
@@ -21,7 +22,14 @@ from pydantic_ai._utils import get_event_loop
 
 def on_worker_thread(close: bool) -> None:
     def run() -> None:
-        loop = get_event_loop()
+        # No automatic collection while the loop is built. One that ran after the loop was allocated and before its
+        # self-pipe was would leave the loop in an older generation than the pipe's sockets: a collection that finds
+        # them all garbage then finalizes the sockets first, and the loop's finalizer raises closing them again.
+        gc.disable()
+        try:
+            loop = get_event_loop()
+        finally:
+            gc.enable()
         if close:
             loop.close()
 

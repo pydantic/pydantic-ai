@@ -31,6 +31,7 @@ import os
 import threading
 import traceback
 import weakref
+from asyncio import proactor_events, selector_events
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,22 +177,6 @@ def _first_party_creator() -> str | None:
     return None  # pragma: no cover
 
 
-_original_init = asyncio.BaseEventLoop.__init__
-
-
-def _tracking_init(self: asyncio.BaseEventLoop, *args: Any, **kwargs: Any) -> None:
-    _original_init(self, *args, **kwargs)
-    on_worker_thread = threading.current_thread() is not threading.main_thread()
-    if (
-        on_worker_thread
-        and _state.test_running
-        and not _state.shared_fixture_depth
-        and (creator := _first_party_creator())
-    ):
-        setattr(self, _CREATOR, (_state.generation, creator))
-        _state.loops.add(self)
-
-
 _original_del = asyncio.BaseEventLoop.__del__
 
 
@@ -219,7 +204,27 @@ def _tracking_finalizer_hook(self: asyncio.BaseEventLoop, agen: AsyncGeneratorTy
 
 
 # Patched once, at import, so a nested pytest session (`pytester`) that registers this module too cannot undo it.
-setattr(asyncio.BaseEventLoop, '__init__', _tracking_init)
+# A loop is tracked once its own `__init__` has made its self-pipe. `BaseEventLoop.__init__` runs before that, and the
+# collections that `_first_party_creator`'s allocations trigger there would leave the loop in an older generation than
+# its self-pipe's sockets: a collection that finds them all garbage then finalizes the sockets first, and the loop's
+# finalizer, closing them again, raises on their closed file descriptors.
+for _loop_class in (selector_events.BaseSelectorEventLoop, proactor_events.BaseProactorEventLoop):
+
+    def _tracking_init(
+        self: asyncio.BaseEventLoop, *args: Any, _init: Callable[..., None] = _loop_class.__init__, **kwargs: Any
+    ) -> None:
+        _init(self, *args, **kwargs)
+        on_worker_thread = threading.current_thread() is not threading.main_thread()
+        if (
+            on_worker_thread
+            and _state.test_running
+            and not _state.shared_fixture_depth
+            and (creator := _first_party_creator())
+        ):
+            setattr(self, _CREATOR, (_state.generation, creator))
+            _state.loops.add(self)
+
+    setattr(_loop_class, '__init__', _tracking_init)
 setattr(asyncio.BaseEventLoop, '__del__', _tracking_del)
 setattr(asyncio.BaseEventLoop, '_asyncgen_finalizer_hook', _tracking_finalizer_hook)
 
