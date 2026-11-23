@@ -1258,8 +1258,7 @@ terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
 *Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
 Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
 terminals. On exit, CLAI prints the retained
-transcript into native terminal scrollback, without output cleared by Ctrl+L, then, for a saved
-conversation, the `pax --resume ID` command that reopens it, with any `--database`, `--agent`, `--model` or `--request-limit` it was launched with. Typing updates the draft row; a
+transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
