@@ -11,8 +11,8 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
 - teardown: runs under `blockbuster`, so a blocking call on the event loop fails the check, and after each of
   several runs no Chrome process started for that run is left and its profile directory is gone,
 - the private-address block against a real local server: the `navigate` pre-check, its decimal-IP spelling, a
-  navigation a page script starts, and an in-page `fetch`, each with a `block_private_addresses=False` control
-  that reaches the server,
+  navigation a page script starts, and an in-page `fetch`, with a `block_private_addresses=False` control that
+  reaches the server for the plain-address pre-check and the `fetch`,
 - the private-name block: a hostname resolving to loopback through a public wildcard DNS service (skipped when
   that name does not resolve),
 - the request guard in targets of their own: a cross-site iframe, a dedicated worker, a shared worker and a popup
@@ -173,7 +173,7 @@ async def _check_navigate_and_teardown() -> None:
 
 
 async def _check_private_address_block() -> None:
-    """The pre-check, a decimal IP, a script-started navigation and an in-page fetch, each with a control."""
+    """The pre-check, a decimal IP, a script navigation and a fetch; only the pre-check and fetch have controls."""
     async with (
         await _serve('127.0.0.1', _SECRET_ROUTES) as secret,
         await _serve('127.0.0.2', {'/': ('text/html', b'<title>start</title>')}) as start,
@@ -189,7 +189,7 @@ async def _check_private_address_block() -> None:
         assert not secret.hits, secret.hits
         await _run_tools(CDPBrowser[object](chrome_sandbox=_SANDBOX, block_private_addresses=False), [_navigate(url)])
         assert secret.hits, 'control failed, server unreachable'
-        print('navigate pre-check refuses a private address and its decimal spelling ok (control reached the server)')
+        print('navigate refuses a private address and its decimal spelling ok (plain-address control reached it)')
 
         # The start page is private too, so the policy refuses the secret's host by name instead.
         secret.hits.clear()
@@ -212,7 +212,7 @@ async def _check_private_address_block() -> None:
             [_navigate(start_url), _evaluate(fetch)],
         )
         assert _SECRET in open_results[-1], f'control failed, fetch never reached the server: {open_results}'
-        print('script-started navigation and in-page fetch to a refused host blocked ok (control reached the server)')
+        print('script navigation and in-page fetch to a refused host blocked ok (fetch control reached the server)')
 
 
 async def _check_private_name_block() -> None:
