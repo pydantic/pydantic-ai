@@ -335,6 +335,10 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 
 The suite's `filterwarnings` ignores no `ResourceWarning`, so an unclosed socket or event loop that the collector finalizes fails the test it lands in. Close the resource where it's created rather than adding an ignore.
 
+## Text encoding
+
+CI runs the tests with `PYTHONWARNDEFAULTENCODING=1`, and `filterwarnings` turns the `EncodingWarning` into an error when library code (`pydantic_ai*`, `pydantic_graph`, `pydantic_evals`, `clai`) made the call. A text-mode `open()`, `Path.read_text()`, `Path.write_text()` or `subprocess` call without `encoding=` uses the locale's encoding, which isn't UTF-8 on Windows. Pass `encoding='utf-8'`, or `encoding='locale'` where the platform's encoding is what the code means. Reproduce a failure locally with `PYTHONWARNDEFAULTENCODING=1 uv run pytest <test>`.
+
 ## Home directory
 
 `tests/home_isolation.py` gives each pytest process, every xdist worker included, its own temporary home directory before collection. `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `IPYTHONDIR` point into it, and subprocesses inherit them. Caches (`XDG_CACHE_HOME`) and the credential files live recordings read (`_CREDENTIAL_PATHS`) keep their real paths.

@@ -615,6 +615,11 @@ filterwarnings = [
     # TODO: Replace native cancellation in harness code (e.g. `asyncio.wait_for` in `SubAgents`) with
     # anyio cancel scopes, which only cancel started tasks: https://github.com/pydantic/pydantic-ai/issues/8824
     "ignore:coroutine '.*' was never awaited:RuntimeWarning",
+    # CI sets `PYTHONWARNDEFAULTENCODING=1` (R22), so text I/O that falls back to the locale's encoding, which isn't
+    # UTF-8 on Windows, warns. The warning fails the test only when this repository's library code made the call;
+    # test and third-party code are left to themselves.
+    "ignore::EncodingWarning",
+    "error::EncodingWarning:(pydantic_ai|pydantic_ai_harness|pydantic_ai_pax|pydantic_graph|pydantic_evals|pydantic_clai2|clai)(\\.|$)",
     # Tests hand the Google providers mock-transport clients with httpx's default timeout, which never waits on a
     # model; `tests/providers/test_google.py` asserts the warning where it matters.
     "ignore:The `http_client` passed to the Google provider has httpx's default 5-second timeout:UserWarning",
