@@ -48,22 +48,22 @@ The full-runtime scope requested by the user is **not finished**:
   emit GLM's native body shape. Gemini's separate thinking-enabled/level controls
   and Claude's separate clear-thinking control are still missing.
 - Code Puppy's numeric ranges, rounding/step hints, initial numeric input, and
-  display formatting. CLAI still uses its existing validated Pydantic bounds.
+  display formatting. Pax still uses its existing validated Pydantic bounds.
 - Catalog output-token defaults (catalog value, then 15% of context clamped to
-  2048-65536). CLAI still leaves the output cap unset without an override.
-- Complete provider/alias capability metadata. CLAI currently uses core profiles
+  2048-65536). Pax still leaves the output cap unset without an override.
+- Complete provider/alias capability metadata. Pax currently uses core profiles
   for native providers and conservative fallback rows for other providers, not
   Code Puppy's `supported_settings` catalog. Persisted unsupported rows remain
   visible for reset and can block validation until removed.
 - Protocol-specific equivalents for all seven requested GPT defaults on every
   provider. The defaults are resolved for every matching model identity, but
   an OpenAI-specific key does not make a non-OpenAI API support that feature.
-- Custom parameter parsing differs intentionally today: CLAI also accepts JSON
+- Custom parameter parsing differs intentionally today: Pax also accepts JSON
   arrays/objects/null; Code Puppy parses scalar booleans/numbers/text.
 
 ## Core recovery prerequisite
 
-Repository ownership rules prohibit implementing a second agent loop in CLAI.
+Repository ownership rules prohibit implementing a second agent loop in Pax.
 Code Puppy's recovery retries a whole run from completed-step checkpoints.
 A simple retry around core's `wrap_model_request` is not equivalent.
 
@@ -91,17 +91,17 @@ a completed tool step. Verify cancellation, usage limits, and nested runs.
 
 Then harness can own the reusable policy: per-role attempts (Code Puppy defaults
 5 main / 9 sub-agent), three named strategies, equal jitter with a 1-30 second
-bound, progress-aware budget reset and a 200-attempt backstop. CLAI should only
+bound, progress-aware budget reset and a 200-attempt backstop. Pax should only
 persist validated policy, bind the capability, and render recovery events.
 Retry policy must not be sent in provider request settings. Do not expose the
 four retry rows until both main and delegated runs consume their values.
 
 ## Verification
 
-- The full CLAI suite passed: 980 tests, one skipped. The final provider-fallback
+- The full Pax suite passed: 980 tests, one skipped. The final provider-fallback
   regression suite also passed (62 tests).
 - Repository Ruff check/format and strict Pyright on modified source/tests passed.
-- Combined full-suite and final regression coverage reached 100% of CLAI
+- Combined full-suite and final regression coverage reached 100% of Pax
   statements and branches using its own coverage configuration.
 - Fresh tmux sessions running `uv run pax` with isolated settings verified the
   model picker, GPT defaults, choice edits and reset, editing a different Claude

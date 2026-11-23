@@ -3,7 +3,7 @@
 The built-in `slack` plugin: harness `Slack`, set up in the settings menu that `/plugins configure slack` opens, or
 in the web UI's plugins panel.
 
-It connects as the user in one of two ways. A browser sign-in through the user's own CLAI Slack app (`slack_app`)
+It connects as the user in one of two ways. A browser sign-in through the user's own Pax Slack app (`slack_app`)
 keeps rotating tokens in the credential store. A user token from `/keys` is referenced by name only, so `/keys`
 refuses to rename it while Slack uses it. The plugin's settings hold only non-secret options and the app's public
 Client ID.
@@ -50,7 +50,7 @@ class SlackSettings(BaseModel):
     client_id: str | None = Field(
         default=None,
         pattern=slack_app.CLIENT_ID_PATTERN,
-        description="Your CLAI Slack app's Client ID, for browser sign-in. It is public, not a secret.",
+        description="Your Pax Slack app's Client ID, for browser sign-in. It is public, not a secret.",
     )
     read_only: bool = Field(
         default=True,
@@ -125,7 +125,7 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
             except webbrowser.Error:
                 pass  # The dialog shows the link either way.
         client_id = await dialogs.text(
-            title="Paste your CLAI Slack app's Client ID (Basic Information > App Credentials)",
+            title="Paste your Pax Slack app's Client ID (Basic Information > App Credentials)",
             label='Client ID',
             placeholder='Looks like 1234567890.1234567890',
             check=lambda text: source.problem(_APP, text),
@@ -174,7 +174,7 @@ def connected_token() -> str:
     connection = saved_connection()
     if connection is None:
         if os.environ.get(TOKEN_NAME):
-            raise UserError(f'CLAI does not read {TOKEN_NAME} from the environment. {SETUP}')
+            raise UserError(f'Pax does not read {TOKEN_NAME} from the environment. {SETUP}')
         raise _NotSetUpError(SETUP)
     return resolve_key(token=connection.token)
 
@@ -206,7 +206,7 @@ _AUTH = FieldRow(
     key='auth',
     label='Sign-in',
     description=(
-        'How Slack connects as you: a user token (xoxp-) from /keys, or a browser sign-in through your own CLAI '
+        'How Slack connects as you: a user token (xoxp-) from /keys, or a browser sign-in through your own Pax '
         'Slack app, which renews itself. Both act as you in the workspace they belong to.'
     ),
     default='key',
@@ -218,7 +218,7 @@ _APP = FieldRow(
     key='client_id',
     label='Slack app',
     description=(
-        "Enter opens Slack's create-app page filled in for CLAI. Pick the workspace, click Create, then paste the "
+        "Enter opens Slack's create-app page filled in for Pax. Pick the workspace, click Create, then paste the "
         "Client ID from the app's Basic Information page; the browser sign-in follows. The Client ID is not a "
         'secret, and no client secret is needed. R forgets the app and signs out.'
     ),
