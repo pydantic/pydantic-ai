@@ -116,8 +116,8 @@ MAX_READ_CHARS = 50_000
 MAX_IMAGE_SIDE = 1024
 """Longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to it.
 
-Providers reject images over their own dimension limits, or downscale them anyway
-at the cost of the tokens spent sending the full size.
+Providers reject images over their own size limits, or downscale them themselves
+after the full-size upload.
 """
 
 MAX_OUTPUT_CHARS = 64000

@@ -85,7 +85,8 @@ the smallest of 1/2, 1/4 or 1/8 scale that still covers the target size, so this
 bounds the decoded size, not the file's.
 """
 
-_PIL_FORMATS = {'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/gif': 'GIF', 'image/webp': 'WEBP'}
+PIL_FORMATS = {'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/gif': 'GIF', 'image/webp': 'WEBP'}
+"""The Pillow format of each media type `downscale_image` takes; any other is sent as it is."""
 
 
 @dataclass
@@ -122,7 +123,7 @@ def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledIm
     """
     from PIL import Image, ImageOps
 
-    image_format = _PIL_FORMATS[media_type]
+    image_format = PIL_FORMATS[media_type]
     try:
         with Image.open(BytesIO(data), formats=[image_format]) as image:
             if max(image.size) <= max_side:

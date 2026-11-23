@@ -45,6 +45,7 @@ from pydantic_ai_harness.file_system._content import (
     MAX_DECODE_PIXELS,
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
+    PIL_FORMATS,
     Replacement,
     TooLargeToDecode,
     apply_replacements,
@@ -1001,7 +1002,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + hex_preview(raw, self._body_budget(header + intro))
-        if self._max_image_side is not None and media_type.startswith('image/'):
+        if self._max_image_side is not None and media_type in PIL_FORMATS:
             downscaled = await anyio.to_thread.run_sync(
                 downscale_image, raw, media_type, self._max_image_side, abandon_on_cancel=True
             )
