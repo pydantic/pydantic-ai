@@ -97,8 +97,12 @@ pytestmark = [pytest.mark.vcr]
 
 
 def _post_bodies(vcr: Cassette) -> list[bytes | str | None]:
-    """Bodies of the POST requests recorded in `vcr`, in order."""
-    return [request.body for request in vcr.requests if request.method == 'POST']
+    """Bodies of the POST requests the code sent through `vcr`, in order.
+
+    Not `vcr.requests`: on replay that is what the cassette recorded, so a body the code stops sending the same way
+    would still compare equal.
+    """
+    return [request.body for request in vcr.sent_requests if request.method == 'POST']
 
 
 def _vercel_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
