@@ -204,11 +204,9 @@ def openai_without_token_counting(provider: Literal['openai-codex', 'openai-chat
             ),
         ]
     )
-    match provider:
-        case 'openai-codex':
-            return OpenAICodexModel('gpt-5.5', provider=OpenAICodexProvider(openai_client=client))
-        case 'openai-chatgpt':
-            return OpenAIResponsesModel('gpt-5.5', provider=OpenAIChatGPTProvider(openai_client=client))
+    if provider == 'openai-codex':
+        return OpenAICodexModel('gpt-5.5', provider=OpenAICodexProvider(openai_client=client))
+    return OpenAIResponsesModel('gpt-5.5', provider=OpenAIChatGPTProvider(openai_client=client))
 
 
 def agent_run_names(capfire: CaptureLogfire) -> list[str]:

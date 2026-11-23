@@ -20903,11 +20903,11 @@ async def test_codex_and_chatgpt_count_tokens_raise_user_error(
     """
     mock_client = MockOpenAIResponses()
     client = cast(AsyncOpenAI, mock_client)
-    match provider:
-        case 'openai-codex':
-            model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=client))
-        case 'openai-chatgpt':
-            model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIChatGPTProvider(openai_client=client))
+    model = (
+        OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=client))
+        if provider == 'openai-codex'
+        else OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIChatGPTProvider(openai_client=client))
+    )
     with pytest.raises(UserError, match='Server-side token counting is not available') as exc_info:
         await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
     assert isinstance(exc_info.value, NotImplementedError)

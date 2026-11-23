@@ -193,7 +193,7 @@ _sent_requests: list[str] = []
 """Each request the no-count-endpoint model's client was asked to send. Its transport sends none of them."""
 
 
-def _refuse_request(request: httpx2.Request) -> httpx2.Response:
+def _refuse_request(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover - no request is sent
     _sent_requests.append(str(request.url))
     return httpx2.Response(400)
 
