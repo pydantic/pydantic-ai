@@ -554,6 +554,22 @@ async def test_anthropic_batch_result_reports_inference_geo(allow_model_requests
     assert 'inference_geo' not in unreported
 
 
+async def test_anthropic_batch_results_line_that_isnt_json_raises_model_api_error(allow_model_requests: None) -> None:
+    """A line of the results file that isn't JSON, like a gateway's error page, raises `ModelAPIError`."""
+    api = _FakeBatchAPI(results=[{}])
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith('/results'):
+            return httpx2.Response(200, content=b'<html>Bad gateway</html>\n')
+        return api.handle(request)
+
+    client = AsyncAnthropic(api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)))
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    batch = await model.batch_create([await model.batch_encode(_request())])
+    with pytest.raises(ModelAPIError, match='Failed to decode response as JSON'):
+        await model.batch_results(await model.batch_status(batch))
+
+
 async def test_anthropic_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
     api = _FakeBatchAPI(status='paused')
     model = _fake_model(api)

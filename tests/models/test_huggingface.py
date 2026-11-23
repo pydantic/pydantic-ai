@@ -24,6 +24,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelOverloadedError,
     ModelRequest,
+    ModelRequestRejectedError,
     ModelResponse,
     ModelRetry,
     ModelTimeoutError,
@@ -744,6 +745,43 @@ async def test_model_transport_error(
     assert type(exc_info.value) is error_class
     assert exc_info.value.phase == phase
     assert type(exc_info.value.__cause__).__name__ == cause_name
+
+
+class _UnreadBody(httpx.AsyncByteStream):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": "Input validation error: `inputs` tokens + `max_new_tokens` must be <= 4096"}'
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_validation_error_status_keeps_its_cause_chain(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A 422 raises `ModelRequestRejectedError` from `huggingface_hub`'s error, itself raised from `httpx`'s, whether
+    streamed or not. For a stream, `huggingface_hub` reads the body of a 422 before anything has read it.
+
+    Not a VCR test: the body has to reach `huggingface_hub` unread, as a stream a mock transport serves.
+    """
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(422, stream=_UnreadBody()))
+        ),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+    with pytest.raises(ModelRequestRejectedError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('hello')
+
+    error = exc_info.value
+    assert isinstance(error, ModelHTTPError)
+    assert error.status_code == 422
+    assert isinstance(error.__cause__, HfHubHTTPError)
+    assert isinstance(error.__cause__.__cause__, httpx.HTTPStatusError)
 
 
 def _completion_body(message: dict[str, Any]) -> dict[str, Any]:

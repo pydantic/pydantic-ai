@@ -4,7 +4,8 @@ The classes, their builds and their entry points come from `tests/model_adapter_
 the provider's SDK is sent each fault below at the transport the SDK sends through: a refused connection, a read
 timeout, an error status the provider sent, one a retrying `httpx` transport gave up on, a 200 whose body isn't JSON
 or isn't JSON at all, a body that breaks off, and an error status whose body breaks off. A fault has one expected set
-of error categories, so it is raised the same way from every entry point of every class.
+of error categories, so it is raised the same way from every entry point of every class, except where
+`DECLARED_FAULT_ERRORS` names another error an entry point raises for it by design.
 
 A 200 that isn't JSON is sent only to the entry points that don't stream: a streamed request reads it as an event
 stream, which several SDKs end quietly with no events.
@@ -15,7 +16,7 @@ real SDK.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass
 
@@ -37,6 +38,7 @@ from pydantic_ai.exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     TransportPhase,
+    UnexpectedModelBehavior,
 )
 
 from .conftest import gave_up_on, try_import
@@ -288,6 +290,7 @@ HTTP_FAULTS = [
     _HttpFault('status-429', lambda: _status(429), _RATE_LIMITED),
     _HttpFault('status-503', lambda: _status(503), _UNAVAILABLE),
     _HttpFault('status-400', lambda: _status(400), _REJECTED),
+    _HttpFault('status-422', lambda: _status(422), _REJECTED),
     _HttpFault('gave-up-429', lambda: gave_up_on(_status(429)), _RATE_LIMITED, gave_up=True),
     _HttpFault('gave-up-503', lambda: gave_up_on(_status(503)), _UNAVAILABLE, gave_up=True),
     _HttpFault('gave-up-400', lambda: gave_up_on(_status(400)), _REJECTED, gave_up=True),
@@ -382,18 +385,9 @@ def _applies(fault: _HttpFault | _XaiFault, cell: SdkCell) -> bool:
     return isinstance(cell.case.transport, XaiTransport)
 
 
-_DECISIONS_INVALID_RESPONSE = (
-    "a 200 that isn't JSON raises `UnexpectedModelBehavior`, as the decision models raise for any body that doesn't "
-    'answer the questions, and as `test_invalid_response` in `tests/models/test_openai_decisions.py` and '
-    '`tests/models/test_google_decisions.py` pins; raising a `ModelAPIError` instead changes the type a caller catches'
-)
 _STREAMED_INTERNALLY = (
     "the request is streamed under the hood, so a 200 that isn't an event stream ends as `UnexpectedModelBehavior`, "
     'or with no error at all'
-)
-_CHAT_COMPLETIONS_TEXT = (
-    'a text 200 raises `UnexpectedModelBehavior`, as `test_text_response` in `tests/models/test_openai.py` pins; '
-    'raising a `ModelAPIError` instead changes the type a caller catches'
 )
 _CHAT_COMPLETIONS = (
     'BedrockMantleChatModel',
@@ -410,19 +404,55 @@ _NOT_JSON = ('non-json-200', 'text-plain-200')
 
 KNOWN_FAULT_GAPS: dict[tuple[str, str], str] = {
     **{
-        (f'{model}.request', fault): _DECISIONS_INVALID_RESPONSE
-        for model in ('GoogleDecisionsModel', 'OpenAIDecisionsModel', 'SystemOneModel', 'TypeSafeModel')
-        for fault in _NOT_JSON
-    },
-    **{
         (f'{model}.request', fault): _STREAMED_INTERNALLY
         for model in ('AnthropicModel', 'OpenAICodexModel')
         for fault in _NOT_JSON
     },
     ('BedrockConverseModel.request', 'non-json-200'): _STREAMED_INTERNALLY,
-    **{(f'{model}.request', 'text-plain-200'): _CHAT_COMPLETIONS_TEXT for model in _CHAT_COMPLETIONS},
 }
 """Faults an entry point doesn't raise as its `ModelAPIError` on `main` yet, each pinned as a strict expected failure."""
+
+
+@dataclass(frozen=True)
+class _DeclaredError:
+    error: type[Exception]
+    pinned_by: str
+    """The test that pins `error`, for this fault or for another body the same parse rejects."""
+
+
+DECLARED_FAULT_ERRORS: dict[tuple[str, str], _DeclaredError] = {
+    # The decision models raise `UnexpectedModelBehavior` for any body that doesn't answer the questions.
+    **{
+        (f'{model}.request', fault): _DeclaredError(UnexpectedModelBehavior, pinned_by)
+        for model, pinned_by in (
+            ('GoogleDecisionsModel', 'tests/models/test_google_decisions.py::test_invalid_response'),
+            ('OpenAIDecisionsModel', 'tests/models/test_openai_decisions.py::test_invalid_response'),
+            ('SystemOneModel', 'tests/models/test_system_one.py::test_invalid_response'),
+            ('TypeSafeModel', 'tests/models/test_typesafe.py::test_invalid_response_body'),
+        )
+        for fault in _NOT_JSON
+    },
+    **{
+        (f'{model}.request', 'text-plain-200'): _DeclaredError(
+            UnexpectedModelBehavior, 'tests/models/test_openai.py::test_text_response'
+        )
+        for model in _CHAT_COMPLETIONS
+    },
+}
+"""Faults an entry point raises another error than a `ModelAPIError` for, by design.
+
+Raising a `ModelAPIError` instead would change the type a caller catches, so each stays as its pinning test has it.
+"""
+
+UNKNOWN_PHASE_FAULTS: dict[tuple[str, str], str] = {
+    ('BedrockConverseModel.count_tokens', fault): (
+        'botocore raises `ConnectionClosedError` for a connection closed before the request was sent, as at the TLS '
+        'handshake, as well as for one closed while the response was read, so `phase` is `None`, as '
+        '`ModelConnectionError.phase` documents for a connection closed at an unknown point'
+    )
+    for fault in ('body-breaks-off', 'error-body-breaks-off')
+}
+"""Faults whose transport error doesn't say at what stage the connection closed, each with the reason."""
 
 
 def _known_gap(cell: SdkCell, fault_id: str) -> tuple[pytest.MarkDecorator, ...]:
@@ -430,25 +460,30 @@ def _known_gap(cell: SdkCell, fault_id: str) -> tuple[pytest.MarkDecorator, ...]
     return () if reason is None else (pytest.mark.xfail(strict=True, reason=reason),)
 
 
-def test_known_fault_gaps_name_real_cells():
-    """An entry in `KNOWN_FAULT_GAPS` names a cell that's sent that fault, so a renamed cell can't leave it behind."""
+def test_fault_tables_name_real_cells():
+    """An entry in `KNOWN_FAULT_GAPS`, `DECLARED_FAULT_ERRORS` or `UNKNOWN_PHASE_FAULTS` names a cell that's sent that
+    fault, so a renamed cell can't leave it behind, and no cell is in both of the first two."""
     cells = {
         (cell.id, fault.id) for cell in sdk_cells() for fault in [*HTTP_FAULTS, *XAI_FAULTS] if _applies(fault, cell)
     }
+    http_cells = {(cell.id, fault.id) for cell in sdk_cells() for fault in HTTP_FAULTS if _applies(fault, cell)}
     classes, skipped = shipped_model_classes()
-    if skipped:
-        installed = {f'{name}.' for name in classes}
-        known = {key for key in KNOWN_FAULT_GAPS if any(key[0].startswith(prefix) for prefix in installed)}
-    else:
-        known = set(KNOWN_FAULT_GAPS)
-    assert known <= cells, sorted(known - cells)
+    installed = {f'{name}.' for name in classes}
+
+    def named(table: Iterable[tuple[str, str]]) -> set[tuple[str, str]]:
+        return {key for key in table if not skipped or any(key[0].startswith(prefix) for prefix in installed)}
+
+    assert named(KNOWN_FAULT_GAPS) <= cells, sorted(named(KNOWN_FAULT_GAPS) - cells)
+    assert named(DECLARED_FAULT_ERRORS) <= http_cells, sorted(named(DECLARED_FAULT_ERRORS) - http_cells)
+    assert named(UNKNOWN_PHASE_FAULTS) <= http_cells, sorted(named(UNKNOWN_PHASE_FAULTS) - http_cells)
+    assert not KNOWN_FAULT_GAPS.keys() & DECLARED_FAULT_ERRORS.keys()
 
 
 def _fault_cells() -> list[object]:
     cells: list[object] = []
     for cell in sdk_cells():
         for fault in [*HTTP_FAULTS, *XAI_FAULTS]:
-            if _applies(fault, cell):
+            if _applies(fault, cell) and (cell.id, fault.id) not in DECLARED_FAULT_ERRORS:
                 cells.append(pytest.param(cell, fault, id=f'{cell.id}-{fault.id}', marks=_known_gap(cell, fault.id)))
     return cells
 
@@ -475,7 +510,25 @@ async def test_transport_fault_raises_model_api_error(
     assert _categories(error) == fault.categories
     if fault.phase is not None:
         assert isinstance(error, ModelConnectionError)
-        assert error.phase == fault.phase
+        assert error.phase == (None if (cell.id, fault.id) in UNKNOWN_PHASE_FAULTS else fault.phase)
+
+
+def _declared_cells() -> list[object]:
+    return [
+        pytest.param(cell, fault, declared, id=f'{cell.id}-{fault.id}')
+        for cell in sdk_cells()
+        for fault in HTTP_FAULTS
+        if _applies(fault, cell) and (declared := DECLARED_FAULT_ERRORS.get((cell.id, fault.id))) is not None
+    ]
+
+
+@pytest.mark.parametrize(('cell', 'fault', 'declared'), _declared_cells())
+async def test_transport_fault_raises_its_declared_error(
+    allow_model_requests: None, cell: SdkCell, fault: _HttpFault, declared: _DeclaredError
+):
+    async with _open(cell.case, fault.handler(), _XaiAnswer()) as model:
+        with pytest.raises(declared.error):
+            await invoke(model, cell.entry_point, cell.case.parameters)
 
 
 def _summary(error: ModelAPIError) -> tuple[object, ...]:
