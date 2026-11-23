@@ -5308,11 +5308,13 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
     — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4."""
 
     m = TestModel()
-    with pytest.raises(UserError, match='not supported by this model'):
+    with pytest.raises(UserError, match='not supported by this model') as exc_info:
         m.prepare_request(
             None,
             ModelRequestParameters(function_tools=[], native_tools=[ToolSearchTool(strategy='bm25')]),
         )
+    expected_supported = sorted(t.__name__ for t in m.profile.supported_native_tools)
+    assert f'Supported: {expected_supported}.' in str(exc_info.value)
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
