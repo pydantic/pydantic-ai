@@ -204,7 +204,7 @@ class WrapperModel(Model):
         *,
         instructions: str | None = None,
     ) -> ModelResponse:
-        return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
+        return await self.wrapped.compact_messages(request_context, instructions=instructions)
 
     @asynccontextmanager
     async def request_stream(
@@ -247,7 +247,7 @@ class WrapperModel(Model):
 
     @property
     def provider(self) -> Provider[Any] | None:
-        return self.wrapped.provider  # pragma: no cover
+        return self.wrapped.provider
 
     @property
     def model_name(self) -> str:
