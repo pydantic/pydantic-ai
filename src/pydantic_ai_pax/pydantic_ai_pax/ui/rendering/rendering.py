@@ -104,20 +104,20 @@ def _print_prompt_rows(console: Console, text: str) -> None:
 
 
 def markdown_style() -> RenderStyle:
-    """Keep the existing Markdown colours unless a Termflow palette is selected."""
+    """Keep the existing Markdown colours, readable on a light terminal, unless a Termflow palette is selected."""
     palette = theme.current()
     if palette is not None:
         return palette.to_render_style()
     return RenderStyle(
-        bright=theme.LITHIUM,
-        head=theme.PURPLE,
-        symbol=theme.CALCIUM,
-        grey=theme.GREY,
+        bright=theme.color(theme.LITHIUM),
+        head=theme.color(theme.PURPLE),
+        symbol=theme.color(theme.CALCIUM),
+        grey=theme.color(theme.GREY),
         dark=theme.DARK_PURPLE,
         mid=theme.ELEMENT_PURPLE,
-        light=theme.GREY,
-        link=theme.AQUA,
-        error=theme.CALCIUM,
+        light=theme.color(theme.GREY),
+        link=theme.color(theme.AQUA),
+        error=theme.color(theme.CALCIUM),
     )
 
 
@@ -133,11 +133,15 @@ HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
 _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 
 
+_CODE_SPAN_SGR_RE = re.compile(r'\x1b\[2m([^\x1b]*)\x1b\[22m')
+"""Termflow's inline code: dim on, the code, dim off (which is also bold off, so only this pair is matched)."""
+
+
 class MarkdownRenderer(Renderer):
     """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
 
     _enclosing = ''
-    """Codes that restore the style a link interrupts, for headings Termflow styles around the inline text."""
+    """Codes that restore the style a link or code span interrupts, for headings Termflow styles around the text."""
 
     def render(self, event: ParseEvent) -> None:
         """Render one event, remembering a heading's style for links inside it."""
@@ -172,7 +176,13 @@ class MarkdownRenderer(Renderer):
             rest = '' if match[1] else match[0][len(url) :]
             return f'{_URL_START}{url}{_URL_END}{rest}'
 
-        return _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+        formatted = _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+        if theme.current() is None and theme.light_background() is not None:
+            # Termflow dims inline code, which leaves black text near 3:1 on white; paint it muted instead,
+            # then restore a heading's colour, as after a link.
+            muted = theme.sgr(theme.MUTED)
+            formatted = _CODE_SPAN_SGR_RE.sub(lambda code: f'{muted}{code[1]}\x1b[39m{self._enclosing}', formatted)
+        return formatted
 
     def _link(self, match: re.Match[str]) -> str:
         url = match[1]
@@ -213,13 +223,21 @@ class LinkOutput(io.StringIO):
 
 
 class PartWriter(SmoothWriter):
-    """Types a streaming part out smoothly; a finished code block replaces its preview in one write."""
+    """Types a streaming part out smoothly; a finished code block replaces its preview in one write.
+
+    When the part ends, whatever is still being typed is written at once.
+    """
 
     def commit(self, text: str) -> None:
         """Write what is still being typed, then `text`, at once."""
         self._flush_all()
         self._target.write(text)
         self._target.flush()
+
+    async def close(self) -> None:
+        """Write what is still being typed at once, so the next tool line or the prompt does not wait for it."""
+        self._flush_all()
+        await super().close()
 
 
 def thinking_heading(console: Console) -> str:

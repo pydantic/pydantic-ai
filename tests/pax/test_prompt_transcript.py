@@ -516,6 +516,15 @@ def test_recolor_accepts_spans_styled_by_name() -> None:
     assert text.spans[0].style == f'bold {theme.GREY}', 'the retained line is unchanged'
 
 
+def test_recolor_to_default_follows_the_terminal_background() -> None:
+    text = Text('muted', spans=[Span(0, 5, TOKYO_MUTED)])
+    for background, shade in (('#FFFFFF', '#6c6c6c'), ('#000000', theme.GREY.lower())):
+        with theme.use(lambda: 'default', background=background):
+            style = recolor(text, source='tokyo_night', target='default').spans[0].style
+        assert isinstance(style, Style) and style.color is not None
+        assert style.color.name == shade
+
+
 def test_rebind_assumes_the_current_theme_for_lines_retained_without_one() -> None:
     transcript = _painted(_printed([Style(color=theme.color(theme.MUTED))]))
     block = _block(transcript)

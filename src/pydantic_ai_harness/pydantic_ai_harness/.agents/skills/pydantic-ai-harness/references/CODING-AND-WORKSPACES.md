@@ -53,9 +53,9 @@ except UserError as e:
   provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a section on it:
   - E2B: `E2BSandbox(network={'rules': {host: [{'transform': {'headers': {...}}}]}})`; HTTPS only.
   - boxd: `BoxdSandbox(secrets=['GH_TOKEN'])`, naming a secret made beforehand with
-    `secrets.set(name, value, scope='private-unattached', domains=[...])`; without `domains` the real value is set.
-    boxd also substitutes request bodies, so a command can store the value on a named host (a GitHub
-    issue or gist) and read it back: use a fine-grained token without Gists access.
+    `secrets.set(name, value, scope='private-unattached', domains=[...], replace_in=['headers'])`; without
+    `domains` the real value is set. Without `replace_in`, boxd also substitutes the URL and body, so a command
+    can store the value on a named host (a GitHub issue or gist) and read it back.
   - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
     `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
   - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`

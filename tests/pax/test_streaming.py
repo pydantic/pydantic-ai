@@ -5,6 +5,7 @@ import io
 import re
 from typing import IO, Literal
 
+import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
@@ -25,7 +26,14 @@ from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
+from pydantic_ai_pax.ui.rendering.rendering import (
+    LinkOutput,
+    PartWriter,
+    color_system,
+    render_markdown,
+    thinking_heading,
+)
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -210,6 +218,35 @@ async def test_burst_is_queued_then_drained() -> None:
     assert output.getvalue() == before
 
 
+@pytest.mark.parametrize('part', [TextPart(content='x' * 60 + '\n'), ThinkingPart(content='x' * 60 + '\n')])
+async def test_part_end_writes_queued_text_at_once(
+    part: TextPart | ThinkingPart, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tool line must not wait for the smoother to type out the rest of the part."""
+    writes: list[str] = []
+
+    # A tick an hour apart: only the first can run before the part ends, so the count does not depend on the clock.
+    def make_writer(self: StreamRenderer, output: IO[str]) -> PartWriter:
+        return PartWriter(LinkOutput(output=output), tick_interval=3600, catch_up_seconds=0.5, min_chars_per_tick=1)
+
+    monkeypatch.setattr(StreamRenderer, '_make_writer', make_writer)
+
+    class ObservedOutput(io.StringIO):
+        def write(self, text: str) -> int:
+            writes.append(text)
+            return super().write(text)
+
+    output = ObservedOutput()
+    renderer = StreamRenderer(Console(file=output, width=200, force_terminal=True), stop_loading=lambda: None)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await renderer.on_stream_event(PartStartEvent(index=0, part=part))
+        await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
+    counts = [text.count('x') for text in writes if 'x' in text]
+    # At most the writer's first tick, then the rest in one write.
+    assert sum(counts) == 60
+    assert len(counts) <= 2
+
+
 async def test_abort_discards_pending_output() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
@@ -219,7 +256,8 @@ async def test_abort_discards_pending_output() -> None:
     assert 'Discard this' not in output.getvalue()
 
 
-async def test_cancel_during_drain_stops_writer() -> None:
+async def test_abort_while_typing_stops_writer() -> None:
+    """Esc while a part is still being typed drops the rest; a part that ends writes it at once instead."""
     writing = asyncio.Event()
 
     class ObservedOutput(io.StringIO):
@@ -231,13 +269,11 @@ async def test_cancel_during_drain_stops_writer() -> None:
     output = ObservedOutput()
     renderer = StreamRenderer(Console(file=output, width=20000, force_terminal=True), stop_loading=lambda: None)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 10000 + '\n')))
-    task = asyncio.create_task(renderer.finish())
     await writing.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
     await renderer.abort()
-    assert output.getvalue().count('x') < 10000
+    shown = output.getvalue().count('x')
+    await renderer.finish()
+    assert 0 < shown == output.getvalue().count('x') < 10000
 
 
 async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:

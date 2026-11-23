@@ -3176,9 +3176,9 @@ streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
-has to wait for streamed text to finish and the editor and status row to
-get out of the way. `host.full_screen()` flushes pending output, suspends the
-editor's input reader, and restores the editor and its draft when the block exits.
+needs streamed text written out and the editor and status row out of the way.
+`host.full_screen()` writes pending streamed text at once, suspends the editor's
+input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
@@ -4318,7 +4318,8 @@ including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
 or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves CLAI's existing appearance without changing terminal colours
-on startup or exit. `/theme default` restores it after a palette selection.
+on startup or exit; on a light terminal background, which CLAI asks the terminal for
+at startup, it uses darker shades that reach WCAG AA contrast on white, cream and light grey. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
 validation. A project override takes precedence again on the next startup.
 
@@ -4333,7 +4334,8 @@ Resolve the `ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`, and `THINKING` roles
 through `theme.color(role)` at render time. The constants retain their brand
 values; the resolver reads the active palette. `theme.sgr(role)` resolves raw
 ANSI surfaces itself. `theme.current()` returns the selected Termflow
-`TerminalPalette`, or `None` for the existing default appearance.
+`TerminalPalette`, or `None` for the existing default appearance, and
+`theme.light_background()` the terminal's background when `default` paints for a light one.
 
 Selecting a bundled palette changes terminal foreground, background, and ANSI
 slots via Termflow's OSC sequences. CLAI resets them to terminal defaults when

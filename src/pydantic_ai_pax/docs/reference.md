@@ -93,7 +93,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
-| `display.theme` | `default` | Keep CLAI colours, or select a bundled Termflow palette with /theme. |
+| `display.theme` | `default` | Keep CLAI colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
 | `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
@@ -1603,7 +1603,8 @@ one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place an
 tool or other output follows. The `grouped` style shows only names and counts, so it ignores
 `display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and
 writes still print their summary and diff, which ends the line.
-`/set` previews the headers of both styles when you pick one, without result rows. The default is `detailed`, one line per call.
+`/set` previews the headers of both styles when you pick one, without result rows.
+The default is `detailed`, one line per call.
 
 ### Streaming
 
@@ -1618,7 +1619,8 @@ Streaming uses the defaults from [Code Puppy's smoothing adapters](https://githu
 - Both writers feed the live transcript panel. Output paints at up to 60 frames
   per second; changed cells do not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
-  written directly. Parts drain before the next heading, tool status, or prompt.
+  written directly. When a part ends, the text still queued is written at once,
+  so the next heading, tool status, or prompt does not wait for it to be typed.
 
 `/set display.smooth_seconds 0.5` restores the Code Puppy response catch-up
 window if you previously saved a slower preference. This response-only setting
@@ -1902,7 +1904,12 @@ searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
-terminal palette untouched. The default preview has no forced background.
+terminal palette untouched. On a light terminal background, `default` uses darker
+shades of its colours that reach WCAG AA contrast (4.5:1) on white, cream and light grey, and shows diffs
+on pale green and red lines. CLAI finds the background at startup by asking the
+terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark one.
+It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
+during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
 All other choices come from Termflow's bundled registry, including
@@ -3121,10 +3128,9 @@ one; both keep their files, so delete them when you are done. A `modal` or `rend
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
 
-With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token
-anywhere in a request to GitHub, the body included, so a command can save it in a GitHub file or
-issue and read it back ([boxd's docs](https://docs.boxd.sh/guides/env-secrets.md)). `e2b` only
-adds the token as a request header, so this can't happen there.
+With `boxd`, the real token goes only into request headers to GitHub, which `gh` and `git`
+use, not into a URL or body, so a command can't save it in a GitHub file or issue and read it back
+([boxd's docs](https://docs.boxd.sh/guides/env-secrets#host-bound-secrets)).
 
 A server started in a `boxd` machine is also public: boxd gives every machine an HTTPS address
 that forwards to ports such as 8000 and 3000, and has no setting to turn it off or require a
