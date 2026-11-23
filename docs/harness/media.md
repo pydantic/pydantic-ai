@@ -220,3 +220,15 @@ Source: [`pydantic_ai_harness/media/`](https://github.com/pydantic/pydantic-ai/t
 ## Related
 
 - [Step Persistence](step-persistence.md) -- the first consumer of these stores, externalizing large `BinaryContent` and text parts in run snapshots.
+
+## API reference
+
+::: pydantic_ai_harness.media.MediaStore
+
+::: pydantic_ai_harness.media.FileMediaStore
+
+::: pydantic_ai_harness.media.SqliteMediaStore
+
+::: pydantic_ai_harness.media.S3MediaStore
+
+::: pydantic_ai_harness.media.PostgresMediaStore
