@@ -6,7 +6,6 @@ import warnings
 from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pydantic_core
@@ -46,7 +45,6 @@ from anthropic.types.beta import (
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
-from ...computer_use import ComputerCallPart
 from ...messages import (
     CompactionPart,
     ModelResponse,
@@ -58,7 +56,7 @@ from ...messages import (
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
-from ._computer import ComputerBatch, ComputerBlock, NativeComputer, stop_computer_calls_unless_finished
+from ._computer import ComputerBlock, NativeComputer
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -121,22 +119,11 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
-    _after_computer_batch: list[ModelResponseStreamEvent] = field(
-        default_factory=list[ModelResponseStreamEvent], init=False
-    )
-    """Events that come after the batch's position, held until the response ends so the batch's call starts first."""
     _computer_input: list[str] = field(default_factory=list[str], init=False)
-
-    @cached_property
-    def _computer_batch(self) -> ComputerBatch:
-        # The batch's start event is sent when the response ends, once all its calls are known.
-        return ComputerBatch(self._native_computer, self.provider_name)
+    """The input JSON of the computer use call being streamed. Its `computer` call is sent once the input is complete."""
 
     def get(self) -> ModelResponse:
         response = super().get()
-        response.parts = stop_computer_calls_unless_finished(
-            response.parts, self.model_request_parameters, response.finish_reason
-        )
         if self._thread_record is None:
             return response
         return self._thread_record.stamp(response, from_fallback_model=self._from_fallback_model)
@@ -144,21 +131,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with map_api_errors(self._model_name, self._model_id_namespace):
             self._fetched_pages = list(self._history_fetched_pages)
-            batch_start: ModelResponseStreamEvent | None = None
-            try:
-                async for event in MapStreamDecodeErrors(self._response, self._model_name):
-                    for event_ in self._map_event(event):
-                        if self._computer_batch.blocks:
-                            self._after_computer_batch.append(event_)
-                        else:
-                            yield event_
-            finally:
-                # This runs even if the stream breaks off, so the response keeps every call the batch received.
-                if (part := self._computer_batch.call_part()) is not None:
-                    batch_start = self._parts_manager.handle_part(vendor_part_id=part.tool_call_id, part=part)
-            if batch_start is not None:
-                yield batch_start
-                for event_ in self._after_computer_batch:
+            async for event in MapStreamDecodeErrors(self._response, self._model_name):
+                for event_ in self._map_event(event):
                     yield event_
 
     def _map_event(self, event: BetaRawMessageStreamEvent) -> Iterator[ModelResponseStreamEvent]:
@@ -174,9 +148,6 @@ class AnthropicStreamedResponse(StreamedResponse):
             case BetaRawContentBlockStopEvent():
                 yield from self._map_content_block_stop(event)
             case BetaRawMessageStopEvent():
-                # A call cut off at `max_tokens` gets no block-stop event, so it is finished here.
-                if self._native_computer and self._native_computer.answers(self._current_block):
-                    yield from self._map_computer_block_stop(self._native_computer, self._current_block)
                 self._current_block = None
             case _:  # pragma: no cover
                 pass
@@ -215,12 +186,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._current_block = current_block = event.content_block
-        native_computer = self._native_computer
-        if native_computer and native_computer.answers(current_block):
+        if self._native_computer and self._native_computer.is_computer_call(current_block):
             self._computer_input = []
             return
-        if isinstance(current_block, BetaToolUseBlock):
-            self._computer_batch.note_other(current_block.name)
         match current_block:
             # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
             case BetaTextBlock() if current_block.type != 'text':
@@ -379,7 +347,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                     signature=delta.signature,
                     provider_name=self.provider_name,
                 )
-            case BetaInputJSONDelta() if self._native_computer and self._native_computer.answers(self._current_block):
+            case BetaInputJSONDelta() if self._native_computer and self._native_computer.is_computer_call(
+                self._current_block
+            ):
                 self._computer_input.append(delta.partial_json)
             case BetaInputJSONDelta():
                 yield from self._parts_manager.handle_tool_call_delta_events(
@@ -440,10 +410,10 @@ class AnthropicStreamedResponse(StreamedResponse):
             )
         current_block = self._current_block
         native_computer = self._native_computer
-        if native_computer and native_computer.answers(current_block):
-            yield from self._map_computer_block_stop(native_computer, current_block)
-        elif event.index in self._ignored_block_indices:
+        if event.index in self._ignored_block_indices:
             self._ignored_block_indices.remove(event.index)
+        elif native_computer and native_computer.is_computer_call(current_block):
+            yield self._map_computer_block_stop(native_computer, current_block)
         elif isinstance(current_block, BetaMCPToolUseBlock):
             # A call with no arguments streams no input JSON, so restore the `{}` dropped at block start.
             no_input = (
@@ -473,38 +443,15 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_computer_block_stop(
         self, native_computer: NativeComputer, current_block: BetaToolUseBlock
-    ) -> Iterator[ModelResponseStreamEvent]:
-        computer_input_json = ''.join(self._computer_input)
-        try:
-            # With no input deltas, the whole input came with the block's start event.
-            computer_args: dict[str, Any] = (
-                pydantic_core.from_json(computer_input_json) if self._computer_input else {**current_block.input}
-            )
-        except ValueError:
-            # Cut off, as at `max_tokens`: kept as partial JSON so the run stops on it, like any cut-off tool call.
-            yield self._parts_manager.handle_part(
-                vendor_part_id=current_block.id,
-                part=ComputerCallPart(
-                    native_computer.name,
-                    computer_input_json,
-                    tool_call_id=current_block.id,
-                    provider_name=self.provider_name,
-                ),
-            )
-            return
+    ) -> ModelResponseStreamEvent:
+        # With no input deltas, the whole input came with the block's start event.
+        computer_args: dict[str, Any] = (
+            pydantic_core.from_json(''.join(self._computer_input)) if self._computer_input else {**current_block.input}
+        )
         block = ComputerBlock(id=current_block.id, name=current_block.name, input=computer_args)
-        if native_computer.is_toolset:
-            batch = self._computer_batch
-            batch.add(block)
-            if len(batch.blocks) == 1:
-                # Reserve the batch's position among the parts. Its event is sent when the response ends.
-                self._parts_manager.handle_part(
-                    vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
-                )
-        else:
-            yield self._parts_manager.handle_part(
-                vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
-            )
+        return self._parts_manager.handle_part(
+            vendor_part_id=block['id'], part=native_computer.map_computer_call(block, self.provider_name)
+        )
 
     async def close_stream(self) -> None:
         await self._response.source.close()

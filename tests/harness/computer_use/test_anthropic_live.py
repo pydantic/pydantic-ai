@@ -26,7 +26,7 @@ from tests.models.conftest import content_blocks, json_objects
 
 from ...conftest import RequestCapture, try_import
 from ..display_fakes import ScreenProvider, png
-from .shared_live import DONE, TASK, _is_object_list, vcr_config as vcr_config  # pyright: ignore[reportPrivateUsage]
+from .shared_live import DONE, TASK, is_object_list, vcr_config as vcr_config
 
 with try_import() as anthropic_installed:
     from anthropic import AsyncAnthropicBedrockMantle
@@ -75,9 +75,7 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     first, *_, last = request_capture.bodies('/v1/messages')
     # Claude's toolset has no name or schema from us.
     assert _tools(first) == [{'type': 'computer_toolset_20260801'}]
-    # Claude's screenshot, click and typing ran as one batch.
-    assert len(request_capture.bodies('/v1/messages')) == 2
-    # The screenshot call got `OK` and the screen it saw; the last call got the screen after the batch.
+    # Each toolset call is one `computer` call, answered by its own result.
     calls = content_blocks(last, 'tool_use')
     results = content_blocks(last, 'tool_result')
     assert [result['tool_use_id'] for result in results] == [call['id'] for call in calls]
@@ -85,9 +83,9 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
     assert [call['name'] for call in calls] == snapshot(['screenshot', 'left_click', 'type'])
     assert _results(last) == snapshot(
         [
-            (False, ['OK']),
-            (False, ['OK']),
-            (False, ['Ran 3 actions. Screenshot attached (1280x800).', 'image', 'image']),
+            (False, ['Ran 1 action. Screenshot attached (1280x800).', 'image']),
+            (False, ['Ran 1 action. Screenshot attached (1280x800).', 'image']),
+            (False, ['Ran 1 action. Screenshot attached (1280x800).', 'image']),
         ]
     )
 
@@ -111,7 +109,7 @@ async def test_claude_sees_an_image_a_result_holds_beside_its_screenshot(
         result: ToolReturn,
     ) -> ToolReturn:
         # As an app might add an image of its own to the result, before the screenshot.
-        assert _is_object_list(result.return_value)
+        assert is_object_list(result.return_value)
         return ToolReturn([picture, *result.return_value], metadata=result.metadata)
 
     agent = Agent(
@@ -124,7 +122,7 @@ async def test_claude_sees_an_image_a_result_holds_beside_its_screenshot(
 
     assert 'red' in result.output.lower()
     last = request_capture.bodies('/v1/messages')[-1]
-    # The last call that ran gets the whole result unchanged: the image, the summary and the screen.
+    # The call's result goes back unchanged: the image, the summary and the screen.
     *_, last_result = _results(last)
     assert last_result == (False, ['image', 'Ran 1 action. Screenshot attached (1280x800).', 'image'])
 
@@ -260,68 +258,46 @@ async def test_claude_sonnet_4_6_drags_with_a_button_held_across_calls(
 @needs_anthropic
 @pytest.mark.vcr
 @pytest.mark.parametrize(
-    'calls, actions, results',
+    'calls, actions',
     [
         pytest.param(
-            'click at x=100 y=200, hold the shift key for 1 second, then type "b"',
-            [Click(x=100, y=200)],
-            # The click ran and gets the whole result. The key hold failed, and the typing never ran.
-            [
-                (
-                    False,
-                    [
-                        "Action 2 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after"
-                        ' it did not run. Screenshot attached (1280x800).',
-                        'image',
-                    ],
-                ),
-                (True, ['Failed.']),
-                (True, ['Not executed: an earlier computer action in this turn failed.']),
-            ],
-            id='mid-batch',
+            'click at x=100 y=200, hold the shift key for 1 second, then type "b"', [Click(x=100, y=200)], id='mid-turn'
         ),
-        pytest.param(
-            'hold the shift key for 1 second, then type "b"',
-            [],
-            # Nothing ran before the key hold. Its error result holds only text, so the screenshot isn't sent.
-            [
-                (
-                    True,
-                    [
-                        'Failed.',
-                        "Action 1 of 2 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The 1 action after"
-                        ' it did not run. Screenshot attached (1280x800).',
-                    ],
-                ),
-                (True, ['Not executed: an earlier computer action in this turn failed.']),
-            ],
-            id='first-call',
-        ),
+        pytest.param('hold the shift key for 1 second, then type "b"', [], id='first-call'),
     ],
 )
-async def test_claude_toolset_batch_stops_at_the_failed_call(
+async def test_claude_toolset_calls_stop_at_the_failed_call(
     allow_model_requests: None,
     anthropic_api_key: str,
     request_capture: RequestCapture,
     calls: str,
     actions: list[DisplayAction],
-    results: list[tuple[bool, list[str]]],
 ) -> None:
+    """The key hold fails, and the calls after it in the same response don't run."""
     provider = ScreenProvider()
     model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
     task = f'Make these computer calls in one turn, in this order: {calls}. Then reply "done". Do nothing else, and do not retry anything.'
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
 
     assert provider.actions == actions
-    assert _results(request_capture.bodies('/v1/messages')[-1]) == results
+    # The failed call's result says what failed, as a regular result. The call after it is answered as an error.
+    *_, failed, not_run = _results(request_capture.bodies('/v1/messages')[1])
+    assert failed == (
+        False,
+        [
+            "Action 1 of 1 (hold_keys) failed: the fake display cannot perform 'hold_keys'. Screenshot attached "
+            '(1280x800).',
+            'image',
+        ],
+    )
+    assert not_run == (True, ['Not executed: an earlier computer action in this turn failed.'])
 
 
 @needs_anthropic
 @pytest.mark.vcr
-async def test_claude_reads_a_zoom_and_the_pointer_position_from_the_last_calls_result(
+async def test_claude_reads_a_zoom_and_the_pointer_position_from_their_results(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """The last call that ran gets the whole result, including the zoom's image and the pointer position."""
     provider = ScreenProvider()
     model = _claude('claude-haiku-5-5', anthropic_api_key, request_capture)
     task = (
@@ -335,11 +311,8 @@ async def test_claude_reads_a_zoom_and_the_pointer_position_from_the_last_calls_
     assert [call['name'] for call in content_blocks(last, 'tool_use')] == snapshot(['zoom', 'cursor_position'])
     assert _results(last) == snapshot(
         [
-            (False, ['OK']),
-            (
-                False,
-                ['Ran 2 actions. Screenshot attached (1280x800).', 'image', 'The pointer is at (640, 400).', 'image'],
-            ),
+            (False, ['Ran 1 action. Screenshot attached (1280x800).', 'image', 'image']),
+            (False, ['Ran 1 action. Screenshot attached (1280x800).', 'The pointer is at (640, 400).', 'image']),
         ]
     )
 

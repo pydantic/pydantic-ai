@@ -389,7 +389,7 @@ def resolve_anthropic_effort(
     return effort
 
 
-_COMPUTER_TOOLSET_MODELS = (
+_COMPUTER_TOOLSET_MODEL_PREFIXES = (
     'claude-fable-5',
     'claude-mythos-5',
     'claude-opus-5',
@@ -755,7 +755,7 @@ def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | No
     function tool.
     https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
     """
-    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+    if model_name.startswith(_COMPUTER_TOOLSET_MODEL_PREFIXES):
         return 'computer_toolset_20260801'
     if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
         return 'computer_20251124'
