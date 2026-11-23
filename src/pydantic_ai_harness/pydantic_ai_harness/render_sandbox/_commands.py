@@ -171,7 +171,7 @@ async def client_scope(client: RenderAsync | None) -> AsyncGenerator[RenderAsync
         await run_to_completion(lambda: close_client(opened))
 
 
-_SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
+_SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text(encoding='utf-8')
 
 
 @dataclass(frozen=True)

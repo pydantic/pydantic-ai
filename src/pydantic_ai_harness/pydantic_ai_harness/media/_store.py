@@ -288,7 +288,7 @@ class FileMediaStore:
         meta_path = path.with_name(path.name + '.meta.json')
         if not meta_path.exists():
             return _EMPTY_METADATA
-        return coerce_metadata_mapping(json.loads(meta_path.read_text()))
+        return coerce_metadata_mapping(json.loads(meta_path.read_text(encoding='utf-8')))
 
 
 def _write_atomically(path: Path, data: bytes) -> None:

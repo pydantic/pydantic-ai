@@ -68,7 +68,7 @@ _OPERATION_TIMEOUT = 30.0
 _POLL_INTERVAL = 1.0
 # Transfers get the base timeout plus this much per byte, as E2B's uploads do, so large files can finish.
 _MIN_BYTES_PER_SECOND = 256 * 1024
-_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py').read_text()
+_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py').read_text(encoding='utf-8')
 
 
 def check_sandbox_timeout(value: int) -> None:
