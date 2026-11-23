@@ -86,6 +86,13 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   directly before its first `##` heading, linking the
   [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
+- **Diagrams**: draw a page's diagram as a `mermaid` fence, byte-identical on the docs page and in the README
+  (`tests/harness/test_docs_parity.py` compares them). The docs site and GitHub both render it in light and dark
+  themes, so set no fill or text colors. Start with `accTitle:` and `accDescr:`, the text a screen reader gets:
+  `accDescr` describes the diagram as drawn, in plain text with no angle brackets.
+  Style nodes only with the three shared classes, copying their `classDef` lines from an existing page:
+  `capability` (what the capability adds), `external` (a system outside the agent), and `blocked` (rejected or
+  dropped, reached by a `-.-x` edge). Break labels with `<br/>` and keep the diagram narrower than the text column.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
   text. On `docs/harness/` pages, name models with the aliases from
   `docs/model_aliases/aliases.json` (`{{ anthropic:large }}`), never model IDs; see the "Model names"
@@ -108,12 +115,13 @@ reminder lives here: a rename PR is not done until both indexes agree.
 ## Categories
 
 Capabilities are grouped by what they give the agent, not by implementation detail:
-**Harnesses** (complete combined capabilities like `Coder`) · **Execution environments** (the
-workspace the agent acts in) · **Tools & native abilities** · **Integrations** (one third-party
+**Harnesses** (complete combined capabilities like `Coder`) · **Workspaces** (where the agent's
+commands run and files live; also add a row to the supported-workspaces table in `docs/workspace.md`) ·
+**Files & shell** (tools that act in the run's workspace) · **Tools & native abilities** · **Integrations** (one third-party
 service each, like `GitHub` or `Slack`; also list a new one on `docs/harness/integrations.md`) ·
 **Web & research** ·
 **Reasoning, planning & delegation** · **Context management** (how the agent spends the context
-window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
+window; Code Mode lives here, not under workspaces: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·
 **Execution runtime** (durable execution, persistence, observability plumbing). The same scheme
 orders the subsections under "Capabilities" in `docs/navigation.yml`. That file adds a core-only

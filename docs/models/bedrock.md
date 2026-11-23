@@ -20,9 +20,9 @@ AWS [recommends the `bedrock-runtime` endpoint for new applications](https://doc
 
 ## OpenAI model routes {#bedrock-openai-model-routes}
 
-GPT-OSS, GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
+GPT-OSS, GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol/Terra are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
 
-On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, Astra, and GPT-6.1 Sol support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html), and [GPT-6.1 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html) for current endpoint and regional availability.
+On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, Astra, and GPT-6.1 Sol/Terra support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), [GPT-6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html), [GPT-6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html), [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html), [GPT-6.1 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html), and [GPT-6.1 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html) for current endpoint and regional availability.
 
 ## Bedrock Converse
 
@@ -40,11 +40,11 @@ pip/uv-add "pydantic-ai-slim[bedrock]"
 
 To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS account with Bedrock enabled and appropriate credentials. You can use either AWS credentials directly or a pre-configured boto3 client.
 
-[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
+[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] lists the latest Bedrock models for autocomplete, one id per model, including models from Anthropic, Amazon, Meta, Mistral and OpenAI. Any other model id Bedrock accepts works too.
 
 ### Data retention
 
-Claude Fable 5 and 5.1 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
+Claude Fable 5, 5.1 and 5.2 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
 
 ### Environment variables
 
@@ -114,11 +114,15 @@ The Converse API takes video only on Amazon Nova. On every other family, includi
 
 ### Output token limit
 
-When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
+When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. A `max_tokens` you set above Claude's known maximum is lowered to it, since Bedrock rejects it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
 
 Such a request is streamed behind the scenes, since a response that long can take longer than the client's read timeout (`aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], 300 seconds by default), which then limits the wait between streamed chunks rather than the whole response. That wait includes the time the model spends thinking, which can arrive as a single chunk. Streaming needs the `bedrock:InvokeModelWithResponseStream` IAM permission, which streamed runs already needed, and tool call `args` in the response are the streamed JSON string rather than a dict, as on streamed runs; [`args_as_dict()`][pydantic_ai.messages.BaseToolCallPart.args_as_dict] gives the same value.
 
 Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request starts, so an account with a small Claude quota can see more `ThrottlingException`s. Set `max_tokens` close to the output you expect to reserve less and send a non-streaming `Converse` request.
+
+### Stop sequences
+
+Converse rejects [`stop_sequences`][pydantic_ai.settings.ModelSettings.stop_sequences] with a 400 for the OpenAI (GPT and gpt-oss), xAI Grok, Qwen, Google Gemma, Z.AI GLM, Moonshot AI Kimi, MiniMax and NVIDIA Nemotron models, DeepSeek V3.2, Writer Palmyra Vision, and Mistral's Devstral, Magistral, Ministral 3, Mistral Large 3 and Voxtral. On those models, Pydantic AI drops the setting with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] instead of sending it, so the response isn't cut off at a stop sequence. Claude, Amazon Nova, Meta Llama, DeepSeek R1 and the older Mistral models take it.
 
 ### Thinking and structured output
 
@@ -164,7 +168,7 @@ while it reasons. A `thinking` setting does not change this: `tool_choice='requi
 
 ### Claude thinking from other platforms
 
-Claude's thinking signatures and redacted thinking are verified on every platform, so history from [`AnthropicModel`](anthropic.md#history-across-platforms), on the Anthropic API or any other client, continues on a Claude model here with its thinking, and the other way round: for Claude models, `BedrockConverseModel` has the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). It recognizes them by the profile's `bedrock_thinking_variant`, which you can set to `'anthropic'` in `profile=` for a model the name doesn't identify, such as an [application inference profile](#using-aws-application-inference-profiles). Other models keep their reasoning to Bedrock.
+Claude's thinking signatures and redacted thinking are verified on every platform, so history from [`AnthropicModel`](anthropic.md#history-across-platforms), on the Anthropic API or any other client, continues on a Claude model here with its thinking, and the other way round: for Claude models, `BedrockConverseModel` has the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). It recognizes them by the profile's `bedrock_thinking_variant`, which you can set to `'anthropic'` in `profile=` for a model the name doesn't identify, such as an [application inference profile](#using-aws-application-inference-profiles). Other models keep their reasoning to Bedrock. For an application inference profile that routes to GPT-5.6, GPT-6 or GPT-6.1 Sol, set it to `'openai_responses'`, so their encrypted reasoning isn't sent to Claude models on Bedrock.
 
 ### Array constraints in structured output
 

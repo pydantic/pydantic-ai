@@ -432,7 +432,8 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
     """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
     cost is the genai-prices estimate."""
-    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
+    # HTTPS because botocore 1.44+ refuses to send a Bearer token to a plain-HTTP endpoint.
+    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='https://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
 

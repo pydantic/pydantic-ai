@@ -78,11 +78,12 @@ All changes need to:
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking; "integration" means real in-process code paths with recorded requests, not process spawns or real waits (see "Test cost" in [tests/AGENTS.md](tests/AGENTS.md))
 - update/add all relevant documentation, following the existing voice and patterns
+- update [THREAT_MODEL.md](THREAT_MODEL.md) when one of the triggers in its "Keeping this model current" section applies
 - update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), Pydantic AI Harness skills in [src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/](src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/), cross-harness repository workflow skills live under [.agents/skills/](.agents/skills/), and Claude-only workflow skills live under [.claude/skills/](.claude/skills/)
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged.
 
-PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
+PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. The one exception to the no-prefix rule is the `[<name>]` prefix of a PR in a cluster, which [PR clusters](.agents/skills/pushing-commits-to-the-repo/SKILL.md#pr-clusters) defines. An issue's [priority title prefix](.agents/skills/file-followup-issue/SKILL.md#priority-title-prefix) never carries over to a PR title. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
 
 Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
 
@@ -115,7 +116,7 @@ The repo contains a `uv` workspace defining multiple Python packages:
 - `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
 - `clai` in `clai/`: a [CLI](docs/cli.md) (with an optional [web UI](docs/web.md)) to chat with Pydantic AI agents
 - `pydantic-ai-harness` in `src/pydantic_ai_harness/`: the [capability library](docs/harness/index.md) built on the packages above, with tests in `tests/harness/` and a contributor guide in `src/pydantic_ai_harness/AGENTS.md`. Released as `0.X.Y` alongside pydantic-ai `2.X.Y`.
-- `pydantic-clai2` in `src/pydantic_clai2/`: a capability-aware terminal client built on the harness, with tests in `tests/clai2/` and a guide in `src/pydantic_clai2/AGENTS.md`. Released with the harness.
+- `pydantic-ai-pax` in `src/pydantic_ai_pax/`: a capability-aware terminal client built on the harness, with tests in `tests/pax/` and a guide in `src/pydantic_ai_pax/AGENTS.md`. Released with the harness, alongside `pydantic-clai2` in `src/pydantic_clai2/`, its deprecated former name.
 - `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well as the optional dependency groups for all model providers and select integrations.
 
 ## Development workflow
@@ -164,6 +165,7 @@ Additionally, always read the directory-specific instructions when working in th
 - [pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md](pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/models/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/models/anthropic/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/anthropic/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/models/openai/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/openai/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md](pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md](pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/providers/AGENTS.md](pydantic_ai_slim/pydantic_ai/providers/AGENTS.md)

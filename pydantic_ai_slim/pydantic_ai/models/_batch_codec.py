@@ -1,4 +1,4 @@
-"""The provider-independent steps of the batch codecs in `anthropic/_batch.py`, `_openai_batch.py` and `_google_batch.py`."""
+"""The provider-independent steps of the batch codecs in `anthropic/_batch.py`, `openai/_batch.py` and `_google_batch.py`."""
 
 from __future__ import annotations
 

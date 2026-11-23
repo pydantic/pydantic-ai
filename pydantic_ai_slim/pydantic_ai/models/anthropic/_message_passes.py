@@ -75,13 +75,7 @@ def drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) 
     only concurrent client-tool results. That shape is `is_tool_result_only`, shared with the
     `container_upload` injection so the two cannot drift.
     """
-    returned_native_tool_call_ids: set[str] = set()
-    for message in anthropic_messages:
-        content = message['content']
-        assert isinstance(content, list)
-        for block in content:
-            if is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
-                returned_native_tool_call_ids.add(tool_use_id)
+    returned_native_tool_call_ids = returned_tool_call_ids(anthropic_messages)
 
     suffix_is_tool_result_only = True
     for index in range(len(anthropic_messages) - 1, -1, -1):
@@ -99,25 +93,10 @@ def drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) 
                 block['type'] in ('server_tool_use', 'mcp_tool_use')
                 and block['id'] not in returned_native_tool_call_ids
             )
-            if unpaired and not suffix_is_tool_result_only:
-                # Keep a cache boundary on the nearest preceding cacheable block. Moving it
-                # forward would cache content the user placed outside the boundary. If no such
-                # block exists, the boundary disappears with the block that carried it.
-                if (cache_control := block.get('cache_control')) is not None:
-                    carriers: list[BetaContentBlockParam] = []
-                    for preceding_content in [
-                        preceding_message['content'] for preceding_message in anthropic_messages[:index]
-                    ] + [kept]:
-                        assert isinstance(preceding_content, list)
-                        for param in preceding_content:
-                            # Preserve the union type before `is_str_dict` narrows `param`.
-                            param_value = param
-                            if is_str_dict(param) and param['type'] in ANTHROPIC_CACHEABLE_PARAM_TYPES:
-                                carriers.append(param_value)
-                    if carriers:
-                        add_cache_control_param(carriers, cache_control)
+            if suffix_is_tool_result_only or not unpaired:
+                kept.append(block_param)
                 continue
-            kept.append(block_param)
+            keep_cache_boundary_before(block, anthropic_messages[:index], kept)
 
         if len(kept) != len(content):
             if not kept:
@@ -130,6 +109,41 @@ def drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) 
         suffix_is_tool_result_only = (
             suffix_is_tool_result_only and message['role'] == 'user' and is_tool_result_only(kept)
         )
+
+
+def returned_tool_call_ids(anthropic_messages: list[BetaMessageParam]) -> set[str]:
+    """The `tool_use_id` of every result block in the messages."""
+    tool_call_ids: set[str] = set()
+    for message in anthropic_messages:
+        content = message['content']
+        assert isinstance(content, list)
+        for block in content:
+            if is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
+                tool_call_ids.add(tool_use_id)
+    return tool_call_ids
+
+
+def keep_cache_boundary_before(
+    dropped_block: dict[str, Any], preceding_messages: list[BetaMessageParam], kept: list[BetaContentBlockParam]
+) -> None:
+    """Move a dropped block's cache boundary to the nearest cacheable block before it.
+
+    Moving it forward would cache content the user placed outside the boundary. If no such block exists, the
+    boundary disappears with the block that carried it. The blocks before it are those of `preceding_messages`, then
+    the blocks its own message keeps ahead of it.
+    """
+    if (cache_control := dropped_block.get('cache_control')) is None:
+        return
+    carriers: list[BetaContentBlockParam] = []
+    for preceding_content in [preceding_message['content'] for preceding_message in preceding_messages] + [kept]:
+        assert isinstance(preceding_content, list)
+        for param in preceding_content:
+            # Preserve the union type before `is_str_dict` narrows `param`.
+            param_value = param
+            if is_str_dict(param) and param['type'] in ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                carriers.append(param_value)
+    if carriers:
+        add_cache_control_param(carriers, cache_control)
 
 
 def anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:

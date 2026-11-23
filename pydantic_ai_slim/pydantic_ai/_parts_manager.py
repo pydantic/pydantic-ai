@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ToolPartKind,
 )
 
+from ._special_tokens import StreamRestorer
 from ._utils import generate_tool_call_id as _generate_tool_call_id
 
 if TYPE_CHECKING:
@@ -68,6 +69,9 @@ class ModelResponsePartsManager:
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
     than only after a post-stream pass.
     """
+
+    special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
+    """Removes the joiner from the special tokens in the response, for a model whose requests have them."""
 
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
@@ -134,7 +138,14 @@ class ModelResponsePartsManager:
         for part_index in tuple(self._string_buffers):
             if not isinstance(self._parts[part_index], ToolCallPartDelta):
                 self._materialize_and_cache_part(part_index)
-        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        restorer = self.special_token_restorer
+        if restorer is None:
+            return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        return [
+            restorer.restore_part_so_far(index, p)
+            for index, p in enumerate(self._parts)
+            if not isinstance(p, ToolCallPartDelta)
+        ]
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.

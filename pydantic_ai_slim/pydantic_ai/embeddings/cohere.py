@@ -55,6 +55,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
         # Neither `embed()` nor `count_tokens()` exercises this fallback.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e  # pragma: no cover
+    except httpx.HTTPStatusError as e:
+        # A retrying transport raises this for a status it gave up on, and `cohere` lets it through unwrapped.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
     except httpx.TransportError as e:
         # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx.TimeoutException)
@@ -64,9 +67,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestCohereEmbeddingModelNames = Literal[
     'embed-v4.0',
     'embed-english-v3.0',
-    'embed-english-light-v3.0',
     'embed-multilingual-v3.0',
-    'embed-multilingual-light-v3.0',
 ]
 """Latest Cohere embeddings models.
 

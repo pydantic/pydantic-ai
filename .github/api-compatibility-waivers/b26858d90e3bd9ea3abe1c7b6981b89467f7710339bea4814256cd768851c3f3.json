@@ -1,0 +1,5 @@
+{
+  "against": "v2.67.0",
+  "reason": "`ModelFallback.from_spec`'s default `fallback_on` adds `OutputTokenLimitExceeded`, matching `ModelFallback(...)`, so a spec's `ModelFallback` falls back when a response is cut off at `max_tokens`. `fallback_on: [ModelAPIError, ContentFilterError]` restores the previous default. `FallbackModel` and the core agent's handling of cut-off responses are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12407"
+}

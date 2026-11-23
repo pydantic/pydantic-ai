@@ -329,6 +329,7 @@ The mapping the adapter applies (matching the AG-UI Python SDK field names):
 | `Interrupt.reason`      | Always `"tool_call"` for `requires_approval=True` tools                                                         |
 | `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
 | `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
+| `Interrupt.message`     | `Approve <tool_name>(<args>)?`: each argument the model sent, as JSON, with the value the tool will receive from [`DeferredToolRequests.validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args]. A default and an argument a validation hook added stay on the server, at any depth; an argument whose validated value can't be matched to it, such as one under a validation alias, shows the model's value |
 | `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
 | `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; omitting either optional field or sending it as `null` is accepted |
 | `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
@@ -527,7 +528,7 @@ Everything else is still rejected with `422 Unprocessable Entity` — a payload 
 
 ### Trust model
 
-AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
+AG-UI's `RunAgentInput.messages` is fully client-controlled. So is `RunAgentInput.tools`: the adapter offers each [frontend tool](#tools) to the model with the name, description and argument schema the client sent. To limit which tools a client can offer, filter `run_input.tools` after [`AGUIAdapter.build_run_input()`][pydantic_ai.ui.ag_ui.AGUIAdapter.build_run_input] and before you construct the adapter, as in [Handle run input and output directly](#handle-run-input-and-output-directly). The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
 ### Records carried as activity messages {#activity-records}
 
@@ -551,7 +552,7 @@ So when the frontend holds the message history through `@ag-ui/client`, these re
 
 The model then sees a different conversation than it did on the earlier run, and the request no longer starts with the same bytes, so the [prompt cache](../capabilities/caching.md) misses as well.
 
-To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client.
+To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client. Or have the adapter load and save the conversation for you through a [conversation store](./overview.md#saving-to-a-conversation-store).
 
 If the frontend must hold the history, it can send the records back itself. This middleware puts the `pydantic_ai_*` activity messages from `agent.messages` back into each request, in their original positions:
 

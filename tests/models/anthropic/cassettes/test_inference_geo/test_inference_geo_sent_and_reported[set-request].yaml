@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "170"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64
+        messages:
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-sonnet-5-5
+        inference_geo: us
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1158
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bf5d8b77efa207f24c1621e3c2a06699-eee6c8609a6c8d89-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011Ch1U1noWV21oVuSwLYhwr
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: OK
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 18
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 4
+          output_tokens_details:
+            thinking_tokens: 0
+          service_tier: standard
+          inference_geo: us
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-11-13T19:18:36.622027+00:00

@@ -10,7 +10,13 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    Authority,
+    ModelResponse,
+    ToolCallPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -39,6 +45,7 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
+    _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -233,8 +240,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # `CustomEvent`s.
         return self.wrapped._emits_app_events
 
+    @property
+    def _effective_authority(self) -> Authority:
+        # What the wrapped capability enqueues may reach `RunContext.enqueue` through the wrapper, so the wrapper
+        # carries the lower of its own authority and the wrapped one's: wrapping never raises a capability's authority.
+        return _lower_authority(super()._effective_authority, self.wrapped._effective_authority)
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = self.wrapped.for_agent(agent)
+        new_wrapped = self.wrapped._keep_authority(self.wrapped.for_agent(agent))
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
@@ -242,7 +255,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return new_self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = await self.wrapped.for_run(ctx)
+        new_wrapped = await self.wrapped._for_run_keeping_authority(ctx)
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
@@ -330,6 +343,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_default_run_id(self) -> str | None:
         return self.wrapped.get_default_run_id()
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        if type(self).get_default_run_id is not WrapperCapability.get_default_run_id:
+            return self.get_default_run_id()
+        return await self.wrapped._get_default_run_id_for_inputs(get_inputs)
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return self.wrapped.get_default_conversation_id(run_id)

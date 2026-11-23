@@ -5,13 +5,14 @@ import os
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.nvidia import nvidia_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
@@ -57,7 +58,7 @@ class OllamaProvider(_OpenAISDKProvider):
             'command': cohere_model_profile,
             'gpt-oss': harmony_model_profile,
             'glm': _glm_5_3_schema_profile,
-            'nemotron': nvidia_model_profile,
+            'kimi': moonshotai_model_profile,
         }
 
         model_name = model_name.lower()
@@ -77,7 +78,11 @@ class OllamaProvider(_OpenAISDKProvider):
                 openai_supports_strict_tool_definition=False,
                 supports_json_schema_output=True,
                 supports_json_object_output=True,
+                # Ollama's chat request reads only `max_tokens` and silently ignores `max_completion_tokens`.
+                # See `ChatCompletionRequest` in https://github.com/ollama/ollama/blob/main/openai/openai.go.
+                openai_chat_supports_max_completion_tokens=False,
             ),
+            special_token_route_profile('ollama', model_name),
         )
 
     def __init__(

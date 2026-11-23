@@ -214,4 +214,4 @@ def test_huggingface_provider_model_profile(mocker: MockerFixture):
     assert google_profile.get('supports_inline_system_prompts', False) is True
 
     unknown_profile = provider.model_profile('unknown/model')
-    assert unknown_profile is None
+    assert unknown_profile == {'may_tokenize_special_tokens_in_content': True}
