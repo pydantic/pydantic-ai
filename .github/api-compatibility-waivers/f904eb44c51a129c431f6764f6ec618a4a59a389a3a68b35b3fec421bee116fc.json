@@ -1,5 +1,0 @@
-{
-  "against": "v2.70.0",
-  "reason": "clai2's background session naming becomes opt-in (#9365): `Settings.session_namer` defaults to `False` so a saved session makes no extra model request unless the user turns it on; saved values are unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13748"
-}
