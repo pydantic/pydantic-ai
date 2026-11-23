@@ -42,8 +42,6 @@ from pydantic_ai.computer_use import (
     ComputerCallPart,
     ComputerReturnPart,
     Drag,
-    KeyDown,
-    KeyUp,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -1155,73 +1153,6 @@ The `computer` tool shows and controls this computer's screen.
         assert tool_return.outcome == 'success'
         assert provider.actions == [MouseUp(button='right')]
 
-    async def test_a_key_stays_pressed_across_calls_and_the_run_end_releases_it(
-        self, durability: list[AbstractCapability[object]]
-    ) -> None:
-        provider = ScreenProvider()
-        agent = Agent(
-            _scripted(
-                [{'type': 'key_down', 'keys': ['shift', 'ctrl']}],
-                [{'type': 'click', 'x': 5, 'y': 5}, {'type': 'key_up', 'keys': ['ctrl']}],
-            ),
-            name='computer',
-            capabilities=[provider.capability(), ComputerUse(), *durability],
-        )
-        returns = _returns((await agent.run('Go.')).all_messages())
-
-        assert [tool_return.content_items()[0] for tool_return in returns] == [
-            'Ran 1 action. The shift and ctrl keys are still pressed. Screenshot attached (1280x800).',
-            'Ran 2 actions. The shift key is still pressed. Screenshot attached (1280x800).',
-        ]
-        assert provider.actions == [
-            KeyDown(keys=('shift', 'ctrl')),
-            Click(x=5, y=5),
-            KeyUp(keys=('ctrl',)),
-            KeyUp(keys=('shift',)),
-        ]
-
-    async def test_a_failed_call_releases_the_keys_and_buttons_it_holds(self) -> None:
-        provider = ScreenProvider()
-        agent = Agent(
-            _scripted(
-                [
-                    {'type': 'key_down', 'keys': ['shift']},
-                    {'type': 'mouse_down'},
-                    {'type': 'hold_keys', 'keys': ['a'], 'seconds': 1},
-                ]
-            ),
-            capabilities=[provider.capability(), ComputerUse()],
-        )
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        assert tool_return.content_items()[0] == snapshot(
-            "Action 3 of 3 (hold_keys) failed: the fake display cannot perform 'hold_keys'. The left mouse button was released. The shift key was released. Screenshot attached (1280x800)."
-        )
-        # Released in reverse order, so a drop with shift held still has shift held.
-        assert provider.actions == [KeyDown(keys=('shift',)), MouseDown(), MouseUp(), KeyUp(keys=('shift',))]
-
-    async def test_a_key_down_the_display_refuses_leaves_nothing_held(self) -> None:
-        class NoHeldKeys(ScreenBackend):
-            async def act(self, action: DisplayAction) -> None:
-                if isinstance(action, KeyDown | KeyUp):
-                    raise UnsupportedActionError('this display cannot hold keys')
-                await super().act(action)
-
-        class Provider(ScreenProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
-                return NoHeldKeys(self, ref)
-
-        provider = Provider()
-        agent = Agent(
-            _scripted([{'type': 'key_down', 'keys': ['shift']}]), capabilities=[provider.capability(), ComputerUse()]
-        )
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        assert tool_return.content_items()[0] == snapshot(
-            'Action 1 of 1 (key_down) failed: this display cannot hold keys. Screenshot attached (1280x800).'
-        )
-        assert provider.actions == []
-
     async def test_the_end_of_a_run_releases_the_buttons_it_still_holds(
         self, durability: list[AbstractCapability[object]]
     ) -> None:
@@ -1383,7 +1314,7 @@ The `computer` tool shows and controls this computer's screen.
             capabilities=[ScreenProvider().capability(), ComputerUse(), durability],
         )
         assert (await agent.run('Go.')).output == 'done'
-        assert 'Could not release the left mouse button when the run ended' in caplog.text
+        assert "Could not release the mouse buttons ['left'] when the run ended" in caplog.text
 
     @pytest.mark.moves_cache_prefix(reason='loading the capability adds the native computer tool to `tools`')
     async def test_a_computer_use_loaded_mid_run_releases_at_the_end_of_each_call(self) -> None:

@@ -12,8 +12,6 @@ from pydantic_ai.computer_use import (
     Click,
     Drag,
     HoldKeys,
-    KeyDown,
-    KeyUp,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -380,9 +378,5 @@ class X11Computer:
                 )
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)
-            case KeyDown(keys=keys):
-                await self._xdotool(['keydown', *(_keysym(key) for key in keys)])
-            case KeyUp(keys=keys):
-                await self._xdotool(['keyup', *(_keysym(key) for key in reversed(keys))])
             case _:
                 raise UnsupportedActionError(f'The display cannot perform {action!r}.')
