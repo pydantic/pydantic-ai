@@ -5,9 +5,9 @@ from typing import Literal, cast
 import httpx2
 
 from pydantic_ai import _model_errors, _utils
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import check_allow_model_requests
-from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._decode_errors import map_decode_errors, raised_by
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -132,8 +132,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
-            # `openai` returns the body's text when its content type isn't JSON, and reads it as an embeddings response.
-            with map_decode_errors(self.model_name, AttributeError):
+            with map_decode_errors(self.model_name):
                 response = await self._client.embeddings.create(
                     input=inputs,
                     model=self.model_name,
@@ -156,6 +155,11 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         except APIConnectionError as e:
             timeout = isinstance(e, APITimeoutError)
             raise _model_errors.connection_error(self.model_name, e.message, e, timeout=timeout) from e
+        except AttributeError as e:
+            # `openai` returns the body's text when its content type isn't JSON, and reads it as an embeddings response.
+            if not isinstance(e.obj, str) or not raised_by(e, 'openai'):
+                raise
+            raise ModelAPIError(model_name=self.model_name, message=f'Expected a JSON response, got: {e.obj!r}') from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
             body, error, text = _model_errors.transport_error_body(e.response)

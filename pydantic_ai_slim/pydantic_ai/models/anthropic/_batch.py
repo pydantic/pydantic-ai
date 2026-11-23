@@ -40,7 +40,7 @@ from .._batch_codec import (
     shared_group,
     unrun_error,
 )
-from .._decode_errors import check_json_response, map_decode_errors
+from .._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ..batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 from ._errors import ERROR_TYPE_STATUS_CODES, api_error
 from ._native_tools import open_turn_has_code_execution
@@ -160,7 +160,8 @@ async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult
     # when its content type isn't JSON.
     with map_decode_errors(model.model_name, AttributeError):
         batch_items = await _batch_client(model).beta.messages.batches.results(batch.id)
-    async for item in batch_items:
+    # Then it decodes each line of the results file as the iteration reaches it.
+    async for item in MapStreamDecodeErrors(batch_items, model.model_name):
         result = item.result
         body = result.model_dump_json() if result.type in ('succeeded', 'errored') else None
         results.append(BatchResult(custom_id=item.custom_id, status=result.type, body=body))

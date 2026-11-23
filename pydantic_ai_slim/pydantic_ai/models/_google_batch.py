@@ -38,12 +38,12 @@ from google.genai.types import (
     JobState,
     UploadFileConfigDict,
 )
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict, now_utc
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests
 from ._batch_codec import (
@@ -57,7 +57,7 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
-from ._decode_errors import map_decode_errors
+from ._decode_errors import map_decode_errors, raised_by
 from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 from .google import (
     GoogleModel,
@@ -184,11 +184,15 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
     check_batch_bytes(requests, request_size, MAX_BATCH_BYTES, 'Gemini')
     client = _batch_client(model)
     content = io.BytesIO(b'\n'.join(_input_line(request) for request in requests))
-    # `files.upload` raises `KeyError` when the answer to the request that creates the file names no URL to upload to.
-    with map_decode_errors(model.model_name, KeyError):
+    try:
         file = await client.aio.files.upload(
             file=content, config=UploadFileConfigDict(mime_type='application/jsonl', display_name='pydantic-ai-batch')
         )
+    except KeyError as e:
+        # `files.upload` raises it when the answer to the request that creates the file names no URL to upload to.
+        if not raised_by(e, 'google.genai'):
+            raise
+        raise ModelAPIError(model_name=model.model_name, message=f'Failed to upload the batch input file: {e}') from e
     assert file.name is not None
     # Unlike the upload, the job can't be created twice safely: the first attempt may have created it.
     no_retries = HttpOptionsDict(retry_options={'attempts': 1})
@@ -265,7 +269,9 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     content = await client.aio.files.download(file=job.dest.file_name)
     results: list[BatchResult] = []
     for line in content.splitlines():
-        item = _RESULT_LINE_ADAPTER.validate_json(line)
+        # The SDK returns the file as it is, so reading its lines is the decode the SDK does for other responses.
+        with map_decode_errors(model.model_name, ValidationError):
+            item = _RESULT_LINE_ADAPTER.validate_json(line)
         if 'response' in item:
             results.append(
                 BatchResult(custom_id=item['key'], status='succeeded', body=to_json(item['response']).decode())

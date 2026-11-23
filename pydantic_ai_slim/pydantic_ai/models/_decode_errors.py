@@ -35,6 +35,17 @@ def map_decode_errors(model_name: str, *error_types: type[Exception]) -> Generat
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as JSON: {e}') from e
 
 
+def raised_by(error: BaseException, package: str) -> bool:
+    """Whether `package` raised `error` itself, rather than code it called, like a user's HTTP client event hook.
+
+    For an error an SDK raises on a response it couldn't read whose type a bug raises too, like `AttributeError`.
+    """
+    innermost = error.__traceback__
+    while innermost is not None and innermost.tb_next is not None:
+        innermost = innermost.tb_next
+    return innermost is not None and innermost.tb_frame.f_globals.get('__name__', '').startswith(f'{package}.')
+
+
 _ResponseT = TypeVar('_ResponseT')
 
 

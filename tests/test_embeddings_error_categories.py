@@ -477,6 +477,31 @@ async def test_cohere_count_tokens_transport_gave_up():
     assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
 
 
+async def test_openai_embed_raises_an_event_hook_bug_as_it_is():
+    """An `AttributeError` from the caller's own `httpx` event hook isn't raised as a `ModelAPIError`, which
+    `FallbackModel` would fall back on. The `AttributeError` `openai` raises reading a `text/plain` answer is one; see
+    `tests/test_model_adapter_conformance.py`.
+
+    Not a VCR test: the error is the hook's, not the provider's.
+    """
+
+    async def hook(response: httpx2.Response) -> None:
+        raise AttributeError('hook bug')
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(lambda request: httpx2.Response(200, json={})),
+            event_hooks={'response': [hook]},
+        ),
+    )
+    model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(openai_client=client))
+    with pytest.raises(AttributeError, match='hook bug'):
+        await Embedder(model).embed_query('hello')
+
+
 def _bedrock_error(code: str, message: str, status_code: int) -> ClientError:
     response: dict[str, Any] = {
         'Error': {'Code': code, 'Message': message},
