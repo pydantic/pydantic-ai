@@ -8,6 +8,9 @@ hands its consumer, through `StreamedResponse.__aiter__`, and fails the test whe
 - `delta-after-end`: a `PartDeltaEvent` arrives for an index after its `PartEndEvent`, which says the part is
   complete, without a new `PartStartEvent` restarting it.
 - `tool-delta-without-id`: a `ToolCallPartDelta` carries no `tool_call_id`.
+- `start-replaces-streamed`: a `PartStartEvent` names an index whose part received a `PartDeltaEvent`, so the part a
+  consumer built from deltas is replaced, even when `StreamedResponse.__aiter__` ended it first because another index
+  started in between. A part that was never delta-streamed may be started again after its end.
 - `end-differs-from-stream`: a `PartEndEvent`'s part isn't the part its start and deltas built, so a consumer is told
   the part it streamed ended as something else. Replacing a streamed part with a `PartStartEvent` of the same index
   does this: `StreamedResponse.__aiter__` ends the part with its replacement.
@@ -18,9 +21,10 @@ hands its consumer, through `StreamedResponse.__aiter__`, and fails the test whe
   returns.
 
 A start may name an index past the next one: an adapter can hold a part's slot and start the part once it's complete,
-as `GeminiStreamedResponse` does for a return it holds back until its grounding metadata arrives. A resumed stream starts after the parts it
-carries in from an earlier run, so the parts before its first start aren't compared. A part or delta of a class
-defined outside `pydantic_ai` is not folded, so the check never builds a user's part subclass a test counts.
+as `GeminiStreamedResponse` does for a return it holds back until its grounding metadata arrives. A resumed stream
+starts after the parts it carries in from an earlier run, so the parts before its first start aren't compared. A part
+or delta of a class defined outside `pydantic_ai` is not folded, so the check never builds a user's part subclass a
+test counts.
 
 A violation an adapter is known to cause goes in `KNOWN`, with the issue that tracks its fix and the test that
 streams it, which fails once it no longer does, so a fixed entry can't stay. A test that streams a
@@ -57,6 +61,7 @@ StreamContractCode = Literal[
     'end-before-start',
     'delta-after-end',
     'tool-delta-without-id',
+    'start-replaces-streamed',
     'end-differs-from-stream',
     'native-args-not-json',
     'stream-differs-from-get',
@@ -90,13 +95,19 @@ class Known:
     tracked_by: str
     """The issue tracking the fix."""
     repro: str
-    """The node id of a test that streams the violation."""
+    """A test that streams the violation: for a `KNOWN` entry here, its node id, which fails once it no longer does."""
 
 
 KNOWN: dict[ViolationKey, Known] = {
     ('AnthropicStreamedResponse', 'end-differs-from-stream', 'NativeToolSearchCallPart'): Known(
         'A tool search call streams its raw input JSON, then is replaced at its block stop with the normalized '
         '`ToolSearchArgs`, so its end event carries args its deltas never built',
+        tracked_by='to open: anthropic-tool-search-replaces-streamed-call',
+        repro='tests/test_tool_search.py::test_anthropic_native_tool_search_streaming',
+    ),
+    ('AnthropicStreamedResponse', 'start-replaces-streamed', 'NativeToolSearchCallPart'): Known(
+        'A tool search call streams its raw input JSON as deltas, then is started again at its block stop with the '
+        'normalized `ToolSearchArgs`',
         tracked_by='to open: anthropic-tool-search-replaces-streamed-call',
         repro='tests/test_tool_search.py::test_anthropic_native_tool_search_streaming',
     ),
@@ -160,6 +171,8 @@ class StreamContractChecker:
     report: Callable[[StreamContractCode, ModelResponsePart | None, str], None]
     _parts: dict[int, ModelResponsePart] = field(default_factory=dict[int, ModelResponsePart])
     _ended: set[int] = field(default_factory=set[int])
+    # Indices whose current part received a delta.
+    _delta_streamed: set[int] = field(default_factory=set[int])
     # Indices with a part or delta of a class defined outside `pydantic_ai`, which the checker doesn't fold.
     _opaque: set[int] = field(default_factory=set[int])
     _replay: ModelResponsePartsManager | None = None
@@ -176,6 +189,12 @@ class StreamContractChecker:
             self._see_end(event)
 
     def _see_start(self, event: PartStartEvent) -> None:
+        if event.index in self._delta_streamed:
+            streamed = self._parts[event.index]
+            self.report(
+                'start-replaces-streamed', streamed, f'{event.index}: streamed {streamed!r}, restarted {event.part!r}'
+            )
+            self._delta_streamed.discard(event.index)
         self._parts[event.index] = event.part
         self._ended.discard(event.index)
         if not _is_library_class(event.part):
@@ -191,6 +210,7 @@ class StreamContractChecker:
             self.report('delta-before-start', None, f'delta {index}: {delta!r}')
             self._replay = None
             return
+        self._delta_streamed.add(index)
         if index in self._ended:
             self.report('delta-after-end', part, f'delta {index}: {delta!r}')
         if isinstance(delta, ToolCallPartDelta) and not delta.tool_call_id:

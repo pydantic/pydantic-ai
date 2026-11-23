@@ -82,6 +82,20 @@ ARGS = ToolCallPartDelta(args_delta='"Paris"}', tool_call_id='call_1')
         ),
         pytest.param(
             [
+                PartStartEvent(index=0, part=TextPart('a')),
+                PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+                PartEndEvent(index=0, part=TextPart('ab')),
+                PartStartEvent(index=1, part=TextPart('c')),
+                PartEndEvent(index=1, part=TextPart('c')),
+                PartStartEvent(index=0, part=TextPart('x')),
+                PartEndEvent(index=0, part=TextPart('x')),
+            ],
+            [TextPart('x'), TextPart('c')],
+            ['start-replaces-streamed'],
+            id='start-replaces-streamed',
+        ),
+        pytest.param(
+            [
                 PartStartEvent(index=0, part=NativeToolCallPart('web_search', '{"query": ', tool_call_id='ws_1')),
                 PartEndEvent(index=0, part=NativeToolCallPart('web_search', '{"query": ', tool_call_id='ws_1')),
             ],
@@ -159,7 +173,9 @@ def test_known_entries_name_a_tracking_issue_and_a_repro() -> None:
 
 
 UNKNOWN_VIOLATION: ViolationKey = ('FunctionStreamedResponse', 'delta-before-start', None)
-(KNOWN_VIOLATION, KNOWN_ENTRY), *_ = KNOWN.items()
+(_, KNOWN_ENTRY), *_ = KNOWN.items()
+# Every entry this repro streams, since one test can repro several.
+KNOWN_VIOLATIONS = {key: 'seen' for key, known in KNOWN.items() if known.repro == KNOWN_ENTRY.repro}
 NODE = 'tests/test_example.py::test_example'
 MARKED = pytest.mark.breaks_stream_contract(reason='streams a forbidden shape on purpose').mark
 
@@ -178,7 +194,7 @@ CHECK_CASES = [
     CheckCase('stale-marker', MARKED, NODE, {}, 'is stale'),
     CheckCase('marked', MARKED, NODE, {UNKNOWN_VIOLATION: 'delta 0'}, None),
     CheckCase('unknown-violation', None, NODE, {UNKNOWN_VIOLATION: 'delta 0'}, 'add a `KNOWN` entry'),
-    CheckCase('known-violation', None, KNOWN_ENTRY.repro, {KNOWN_VIOLATION: 'end 0'}, None),
+    CheckCase('known-violation', None, KNOWN_ENTRY.repro, KNOWN_VIOLATIONS, None),
     CheckCase('stale-known-entry', None, KNOWN_ENTRY.repro, {}, 'no longer streams their violation'),
 ]
 
