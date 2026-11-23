@@ -350,7 +350,8 @@ def test_quitting_prints_how_to_resume(
     monkeypatch.setattr('pydantic_ai_pax.app.chat', chat)
     monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db')])
     cli.run()
-    assert capsys.readouterr().out == f'Resume this conversation with: pax --resume {NEW_ID}\n'
+    database = tmp_path / 'config.db'
+    assert capsys.readouterr().out == f'Resume this conversation with: pax --database {database} --resume {NEW_ID}\n'
 
 
 @pytest.mark.parametrize('mode', [[], ['-p', 'hi'], ['--web']])

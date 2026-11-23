@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import re
+import shlex
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -246,7 +247,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                 )
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
-            _print_resume_command(saved)
+            _print_resume_command(args, saved_id=saved)
     except Relaunch as relaunch:
         _relaunch(args, relaunch, launched=launched)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
@@ -291,10 +292,12 @@ def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Work
     os.execv(relaunch.executable, argv)
 
 
-def _print_resume_command(saved_id: str | None) -> None:
-    """Name the command that reopens the conversation just left, once it has been saved."""
+def _print_resume_command(args: argparse.Namespace, *, saved_id: str | None) -> None:
+    """Name the command that reopens the conversation just left, with the launch options it needs, once saved."""
     if saved_id is not None:
-        print(f'Resume this conversation with: pax --resume {saved_id}')
+        print(
+            f'Resume this conversation with: {shlex.join(relaunch_argv(args, executable="pax", session_id=saved_id))}'
+        )
 
 
 def _report_kept_worktree(worktree: 'Worktree | None') -> None:

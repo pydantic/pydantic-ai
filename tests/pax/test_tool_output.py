@@ -80,6 +80,7 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
         ('read_file', {'path': '/tmp/example.cpp'}, '● read_file /tmp/example.cpp'),
         ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, '● read_file main.py lines 21-35'),
         ('read_file', {'path': 'main.py', 'offset': 20}, '● read_file main.py from line 21'),
+        ('read_file', {'path': 'main.py', 'limit': 5000}, '● read_file main.py lines 1-2000'),
     ],
 )
 async def test_inspection_headers(name: str, args: dict[str, object], expected: str) -> None:

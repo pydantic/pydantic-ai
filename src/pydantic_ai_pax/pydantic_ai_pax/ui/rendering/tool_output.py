@@ -280,7 +280,8 @@ class ToolOutput:
                 return False
             details = ''
             if args.limit is not None:
-                details = f' lines {args.offset + 1}-{args.offset + args.limit}'
+                # The tool reads at most 2000 lines whatever the model asks for.
+                details = f' lines {args.offset + 1}-{args.offset + min(args.limit, 2000)}'
             elif args.offset:
                 details = f' from line {args.offset + 1}'
             argument = args.path + details
