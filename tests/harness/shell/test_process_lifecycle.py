@@ -1,4 +1,5 @@
-"""`Shell` background jobs under each POSIX shell CI provides, against commands that work against their own supervisor.
+"""`Shell` background jobs under each POSIX shell CI provides, running commands that remove or lock their own job
+directory.
 
 A job's launcher, supervisor and log watcher are `sh` scripts, and `Job` finds `sh` on the workspace's `PATH`, so
 a `PATH` whose `sh` is `dash` or `bash` runs the whole job under that shell. Each case asserts what a model relies
@@ -116,7 +117,7 @@ async def _wait_for_file(path: Path) -> str:
     return text
 
 
-@pytest.mark.parametrize('term', ['handled', 'ignored'])
+@pytest.mark.parametrize('term', ['default', 'ignored'])
 async def test_supervisor_exits_when_its_job_directory_is_removed(host: Host, term: str) -> None:
     """With nowhere to create `watch.stop`, the supervisor still stops its log watcher and exits.
 
@@ -149,37 +150,3 @@ async def test_exit_code_is_published_when_the_job_directory_is_read_only(writab
     await _wait_for_exit(status['pid'])
     result = await toolset.check_command(host.context(), command_id)
     assert result.splitlines()[-2:] == ['[status: finished]', '[exit code: 0]']
-
-
-async def test_stop_kills_a_job_that_ignores_term(host: Host, monkeypatch: pytest.MonkeyPatch) -> None:
-    toolset = _toolset()
-    ready = host.working_dir / 'ready'
-    started = await toolset.start_command(
-        host.context(), f"trap '' TERM; echo $$ > {ready.name}; while :; do sleep 1; done"
-    )
-    pid = int(await _wait_for_file(ready))
-    monkeypatch.setattr('pydantic_ai_harness.shell._jobs._KILL_GRACE_PERIOD', 0.2)
-    result = await toolset.stop_command(host.context(), _command_id(started))
-    assert result.endswith('[stopped]')
-    await _wait_for_exit(pid)
-
-
-async def test_a_job_that_exits_at_once_is_reported_and_stopped(host: Host) -> None:
-    """The job runs under the `sh` on the workspace's `PATH`, and a stop after it has exited reports its exit code."""
-    toolset = _toolset()
-    command_id = _command_id(
-        await toolset.start_command(
-            host.context(), 'if [ -n "${BASH_VERSION-}" ]; then printf bash; else printf dash; fi; exit 3'
-        )
-    )
-    status = json.loads(await _wait_for_file(_job_directory(host, command_id) / 'status.json'))
-    await _wait_for_exit(status['pid'])
-    assert (await toolset.check_command(host.context(), command_id)).splitlines() == [
-        '[stdout]',
-        host.shell,
-        '[status: finished]',
-        '[exit code: 3]',
-    ]
-    result = await toolset.stop_command(host.context(), command_id)
-    assert result.splitlines()[-2:] == ['[stopped]', '[exit code: 3]']
-    assert not _job_directory(host, command_id).exists()

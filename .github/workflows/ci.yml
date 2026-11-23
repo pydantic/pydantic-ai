@@ -2024,7 +2024,8 @@ jobs:
           X=src/pydantic_ai_pax/pydantic_ai_pax
           detect process_lifecycle "$H/pydantic_ai_harness/shell" tests/harness/shell pydantic_ai_slim/pydantic_ai/workspaces \
             tests/test_local_workspace.py tests/process_lifecycle.py "$X/cli/shell_passthrough.py" "$X/plugins/git.py" \
-            "$X/runtime/processes.py" tests/pax/test_shell_passthrough.py tests/pax/test_plugin_git.py tests/pax/test_processes.py
+            "$X/runtime/processes.py" tests/pax/test_shell_passthrough.py tests/pax/test_plugin_git.py tests/pax/test_processes.py \
+            tests/harness/_tool_calls.py tests/_timeouts.py
 
   harness-localstack-integration:
     name: harness LocalStack integration tests

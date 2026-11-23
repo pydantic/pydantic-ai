@@ -21,8 +21,8 @@ Deletion follows the SDK: `destroy_sprite` (and `AsyncSprite.delete()`) returns 
 the request, after which `get_sprite` raises `NotFoundError` and an exec handshake with the deleted
 Sprite fails with HTTP 404 (`websockets.exceptions.InvalidStatus`, which the SDK parses into an
 `APIError`). Deleting a Sprite also ends the commands running in it. The fake kills them, so they report
-247 rather than an exit of their own: a live one need not report 137 either, so the backend can't rely on
-any exit status to tell that its Sprite is gone.
+247 rather than an exit of their own: a live one need not report 137 either (#10193), so the backend can't
+rely on any exit status to tell that its Sprite is gone.
 """
 
 from __future__ import annotations
