@@ -356,6 +356,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'auto_stop_interval',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'path_authority',
@@ -375,5 +376,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'snapshot': 'base',
         'auto_stop_interval': 30,
         'allow_internet_access': False,
+        'desktop': (1280, 800),
     }
     assert DaytonaSandbox[None].from_spec(**spec_fields) == DaytonaSandbox[None](**spec_fields)

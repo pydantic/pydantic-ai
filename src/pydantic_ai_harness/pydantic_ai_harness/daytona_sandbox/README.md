@@ -118,6 +118,18 @@ async def run_in_prepared_sandbox() -> str:
 
 The run leaves a backend you built open, so close it with `aclose()`. That closes the client it opened from `DAYTONA_API_KEY`, not the sandbox. A `client=` or `sandbox=` you passed is never closed. To keep the sandbox, store `backend.ref` instead of destroying it.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[DaytonaSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size is set when the sandbox is created.
+
+Daytona's default snapshot has a desktop with a terminal and Chromium. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/).
+
+- A public sandbox gets no desktop, since its preview link needs no token and anyone with it can control the desktop: the run fails with `UserError`.
+- On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+- The desktop can't press print screen, pause, scroll lock or the menu key, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
+
 ## Clean up
 
 Delete a sandbox with the ref you stored. This doesn't start a stopped sandbox:
@@ -216,12 +228,13 @@ git config --global credential.https://github.com.helper '!f() { echo username=x
 | `client` | A `daytona.AsyncDaytona` to share across runs on one event loop, or to configure its API URL or target. Default: `None`, a client each run opens from `DAYTONA_API_KEY` and closes when it ends. You close a client you pass. |
 | `snapshot` | Daytona snapshot a new sandbox starts from. Default: `None`, Daytona's default. An unknown snapshot fails on first use. |
 | `auto_stop_interval` | Idle minutes before Daytona stops a new sandbox. `0` disables it. Default: `None`, Daytona's default of 15 minutes for a container. A VM pauses after 60 minutes instead. |
-| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. `False` blocks everything only for Tier 3 and 4 organizations. Lower tiers can still reach package registries, GitHub and AI APIs, so `False` doesn't stop data leaving the sandbox there. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). |
+| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. `False` blocks all outbound traffic on every tier, including package registries, GitHub and AI APIs. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/daytona`. Created on a new sandbox. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `secrets` | Daytona Secrets for a new sandbox, as a map from environment variable name to the name of an existing organization Secret. Passed to `AsyncDaytona.create` unchanged. Default: `None`. An attached sandbox keeps the ones it was created with. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). |
 | `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox. Default: `False`. |
 
 `client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
 
