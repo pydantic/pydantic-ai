@@ -10,7 +10,7 @@ from uuid import UUID
 
 import anyio
 import pytest
-from PIL import Image, ImageGrab
+from PIL import Image
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application, create_app_session
 from prompt_toolkit.input import create_pipe_input
@@ -99,22 +99,6 @@ def test_mixed_and_non_image_paths(image_path: Path) -> None:
         read_image(image_path)
 
 
-def test_decompression_bombs_are_value_errors(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Paste handlers catch `ValueError`; Pillow's own bomb error would otherwise escape them."""
-    with Image.open(image_path) as image:
-        pixels = image.width * image.height
-    monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', pixels // 2 - 1)
-    with pytest.raises(ValueError, match='decompression bomb'):
-        read_image(image_path)
-
-    def grab() -> None:
-        raise Image.DecompressionBombError('Image size exceeds limit, could be decompression bomb DOS attack.')
-
-    monkeypatch.setattr(ImageGrab, 'grabclipboard', grab)
-    with pytest.raises(ValueError, match='decompression bomb'):
-        clipboard_images()
-
-
 @pytest.mark.parametrize('kind', ['image', 'files', 'empty', 'empty_files', 'error'])
 def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
     def grab() -> Image.Image | list[str] | None:
@@ -128,7 +112,7 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
             raise NotImplementedError('No clipboard backend')
         return None
 
-    monkeypatch.setattr(ImageGrab, 'grabclipboard', grab)
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
     if kind in ('image', 'files'):
         assert clipboard_images() == [read_image(image_path)]
     elif kind == 'error':
@@ -285,7 +269,7 @@ async def test_clipboard_diagnostics(
         assert args[0] in binaries and capture_output
         return subprocess.CompletedProcess(args, int(bool(stderr)), stdout=b'not a PNG', stderr=stderr or b'')
 
-    monkeypatch.setattr(ImageGrab.subprocess, 'run', run)
+    monkeypatch.setattr(image_input.ImageGrab.subprocess, 'run', run)
     with pytest.raises((OSError, ValueError, NotImplementedError)) as raised:
         await anyio.to_thread.run_sync(clipboard_images)
     assert str(raised.value) == expected
@@ -307,7 +291,7 @@ async def test_headless_clipboard_shim_keeps_pillow_argv(image_path: Path, monke
         assert capture_output
         return subprocess.CompletedProcess(args, 0, stdout=data, stderr=b'')
 
-    monkeypatch.setattr(ImageGrab.subprocess, 'run', run)
+    monkeypatch.setattr(image_input.ImageGrab.subprocess, 'run', run)
     assert await anyio.to_thread.run_sync(clipboard_images) == [read_image(image_path)]
 
 
@@ -318,7 +302,7 @@ def test_native_clipboard_errors_get_no_linux_advice(system: str, monkeypatch: p
     def grab() -> None:
         raise ChildProcessError('native clipboard unavailable')
 
-    monkeypatch.setattr(ImageGrab, 'grabclipboard', grab)
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
     with pytest.raises(ChildProcessError, match=r'^native clipboard unavailable$'):
         clipboard_images()
 
@@ -530,7 +514,7 @@ async def test_line_prompt_error_timer_survives_prompt_restart(
 
     monkeypatch.setattr(ImageInput, 'paste_failed', failed)
     monkeypatch.setattr(image_input.anyio, 'sleep', sleep)
-    monkeypatch.setattr(ImageGrab, 'grabclipboard', grab)
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
     monkeypatch.setattr(Application, 'invalidate', redraw)
     with (
         no_leaked_tasks(),
@@ -766,7 +750,7 @@ def test_network_paths_are_rejected_without_io(text: str, monkeypatch: pytest.Mo
     assert pasted_paths(text) == []
     with pytest.raises(ValueError, match='UNC and device'):
         read_image(Path(text))
-    monkeypatch.setattr(ImageGrab, 'grabclipboard', lambda: [text])
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', lambda: [text])
     with pytest.raises(ValueError, match='UNC and device'):
         clipboard_images()
 

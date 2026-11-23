@@ -4,14 +4,11 @@ import binascii
 from base64 import b64decode
 from collections.abc import Sequence
 from io import BytesIO
-from typing import TYPE_CHECKING
 
+from PIL import Image, ImageOps
 from typing_extensions import Buffer
 
 from pydantic_ai.messages import BinaryContent
-
-if TYPE_CHECKING:
-    from PIL import Image
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PENDING_BYTES = 32 * 1024 * 1024
@@ -29,11 +26,8 @@ class ImageBuffer(BytesIO):
         return super().write(data)
 
 
-def encode_image(image: 'Image.Image') -> BinaryContent:
+def encode_image(image: Image.Image) -> BinaryContent:
     """Normalize to PNG, bounding decoded dimensions and encoded payload size."""
-    # Pillow is imported where images are read, not at startup, which rarely sees one.
-    from PIL import ImageOps
-
     if image.width * image.height > MAX_PIXELS:
         raise ValueError('Image exceeds the 25 megapixel limit.')
     mode = 'RGBA' if 'A' in image.getbands() or 'transparency' in image.info else 'RGB'
@@ -61,8 +55,6 @@ def decode_images(encoded: Sequence[str]) -> list[BinaryContent]:
 
 
 def _decode(data: bytes) -> BinaryContent:
-    from PIL import Image
-
     try:
         with Image.open(BytesIO(data), formats=FORMATS) as image:
             return encode_image(image)

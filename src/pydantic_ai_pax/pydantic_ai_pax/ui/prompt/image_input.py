@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import anyio
+from PIL import Image, ImageGrab
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
@@ -38,15 +39,8 @@ def read_image(path: Path) -> BinaryContent:
     path = local_image_path(str(path))
     if path.stat().st_size > image_codec.MAX_IMAGE_BYTES:
         raise ValueError('Image file exceeds the 10 MiB attachment limit.')
-    # Pillow is imported where images are read, not at startup, which rarely sees one.
-    from PIL import Image
-
-    try:
-        with Image.open(path, formats=FORMATS) as image:
-            return encode_image(image)
-    except Image.DecompressionBombError as exc:
-        # A `ValueError`, so a paste handler can catch it without importing Pillow.
-        raise ValueError(str(exc)) from exc
+    with Image.open(path, formats=FORMATS) as image:
+        return encode_image(image)
 
 
 def read_images(paths: Sequence[Path]) -> list[BinaryContent]:
@@ -83,12 +77,8 @@ def pasted_paths(text: str) -> list[Path]:
 
 def clipboard_images() -> list[BinaryContent]:
     """Use Pillow's native macOS/Windows and wl-paste/xclip Linux backends."""
-    from PIL import Image, ImageGrab
-
     try:
         content = ImageGrab.grabclipboard()
-    except Image.DecompressionBombError as exc:
-        raise ValueError(str(exc)) from exc
     except (NotImplementedError, ChildProcessError) as exc:
         if sys.platform != 'linux':
             raise
@@ -238,7 +228,7 @@ class ImageInput:
                     images = read_images(paths)
                 buffer.insert_text(self.attach(images))
                 self.notice = ATTACHED
-            except (OSError, ValueError, NotImplementedError) as exc:
+            except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
                 self.paste_failed(exc)
                 self.resume_notice(event.app)
             finally:

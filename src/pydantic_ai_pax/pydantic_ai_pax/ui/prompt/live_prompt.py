@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from itertools import islice
 
 import anyio
+from PIL import Image
 from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.history import History
 from rich.console import Console, ConsoleDimensions
@@ -225,7 +226,7 @@ class LivePrompt:
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
                 self.images.notice = ATTACHED
-        except (OSError, ValueError, NotImplementedError) as exc:
+        except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
             self.images.paste_failed(exc, clock=self.clock)
 
     def feed(self, key: str, data: str = '') -> None:
