@@ -905,10 +905,11 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     rejected there. So the endpoint's userinfo password and every query value are
     replaced wherever they still appear: as written, decoded, and percent-encoded
     by `quote` and `quote_plus`. Every value counts, whatever its parameter is
-    called. A value shorter than eight characters, the shortest password NIST
-    SP 800-63B lets a service accept, is left alone: below that sit the settings
-    an endpoint is configured with, such as `headless=true` or `timeout=60000`,
-    whose text the message can contain for other reasons.
+    called. A value shorter than eight characters is left alone: below that sit
+    the settings an endpoint is configured with, such as `headless=true` or
+    `timeout=60000`, whose text the message can contain for other reasons. Eight
+    is the shortest password NIST SP 800-63B allows, for one used alongside a
+    second factor.
     """
     values: list[str] = []
     try:

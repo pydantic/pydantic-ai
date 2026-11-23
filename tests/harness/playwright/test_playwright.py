@@ -3531,11 +3531,11 @@ class TestPlaywrightBrowserLifecycle:
                 id='userinfo-password',
             ),
             pytest.param(
-                'ws://127.0.0.1:9222/devtools/browser?headless=true&token=SUPERSECRET',
+                'ws://127.0.0.1:9222/devtools/browser?headless=true&profile=default&token=MYSECRET',
                 'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
-                '{"error": "invalid token SUPERSECRET", "headless": true}\n',
-                ('"headless": true',),
-                id='short-value-kept',
+                '{"error": "invalid token MYSECRET", "headless": true, "profile": "default"}\n',
+                ('"headless": true', '"profile": "default"', '"error": "invalid token REDACTED"'),
+                id='values-under-eight-characters-kept',
             ),
         ],
     )
