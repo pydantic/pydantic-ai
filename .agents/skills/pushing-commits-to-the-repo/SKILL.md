@@ -192,7 +192,7 @@ For prose-only documentation, handle title, body, and labels directly. Otherwise
 Reconcile labels whenever the title or body changes.
 
 Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. It prints the path of a label catalog it caches outside the worktree. Read that file directly for prose-only documentation; otherwise give it to that session.
-Run `label-catalog --refresh` after creating, renaming, or updating repository labels.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog --refresh` after creating, renaming, or updating repository labels.
 Never fetch labels individually or pass raw label API responses.
 
 Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
