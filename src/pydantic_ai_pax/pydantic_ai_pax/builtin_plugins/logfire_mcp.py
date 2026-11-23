@@ -129,7 +129,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
         return seeded if shown == f'{source.title}: nothing changed.' else f'{seeded}\n{shown}'
 
     async def on_session_start(self, event: SessionStart) -> None:
-        # A worker thread: `/keys` takes a lock another CLAI process can hold, and the keyring can block.
+        # A worker thread: `/keys` takes a lock another Pax process can hold, and the keyring can block.
         self.capability, missing = await anyio.to_thread.run_sync(
             partial(_capability, settings=self.settings), abandon_on_cancel=True
         )

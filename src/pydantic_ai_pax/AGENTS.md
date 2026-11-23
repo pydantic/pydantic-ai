@@ -1,10 +1,10 @@
-# CLAI 2 guide for AI code assistants
+# Pax guide for AI code assistants
 
 Read this before touching `src/pydantic_ai_pax/`. The repository-level `AGENTS.md`
 still applies (no em-dashes, no `Any`, pyright strict, keyword-only arguments,
 100% branch coverage). This file adds what is specific to the terminal shell.
 
-## What CLAI is
+## What Pax is
 
 A thin terminal around any Pydantic AI agent. It reads a prompt, runs the agent,
 streams the answer, and repeats. Everything beyond that is a plugin, including
@@ -14,7 +14,7 @@ The three layers, and who owns what:
 
 | Layer | Owns | Never does |
 |---|---|---|
-| Pydantic AI core | the agent loop, hooks, events, toolsets | know CLAI exists |
+| Pydantic AI core | the agent loop, hooks, events, toolsets | know Pax exists |
 | `pydantic_ai_harness` | reusable capabilities (`Coder`, `Shell`, ...) | print to a terminal |
 | `pydantic_ai_pax` | the prompt loop, rendering, `/commands`, plugin loading | reimplement a core hook |
 
@@ -32,7 +32,7 @@ capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 `get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
 chat); `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, and `on_install_progress` for CLAI's own moments;
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, and `on_install_progress` for Pax's own moments;
 `prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
@@ -71,8 +71,9 @@ they agree in the same PR.
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
   The one exception is a built-in that moves some conversations elsewhere, as
   `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
-  run's own history, the same history `get_workspace` resolves from.
-- **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
+  run's own history, the same history `get_workspace` resolves from. Answer
+  `shell_line_workspace` from that history too, so `!` lines run where the runs do.
+- **Pax moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
 - **Payloads are kw-only dataclasses.** Not `BaseModel`. Pydantic is for the
@@ -102,7 +103,7 @@ they agree in the same PR.
 
 ## Loading and unloading
 
-Plugins load and unload while CLAI runs. The rules that make that safe:
+Plugins load and unload while Pax runs. The rules that make that safe:
 
 - **One `LoadedPlugin` per plugin.** It holds the instance and what its `get_*`
   methods returned, so unloading is "discard this `LoadedPlugin`". No
@@ -146,7 +147,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
   `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
   `/reload` and `/update now` unless the terminal shows them (only that session, or the one
-  CLAI started with, restarts it, never from another folder or while another session runs a
+  Pax started with, restarts it, never from another folder or while another session runs a
   turn, and a failed `/reload` continues the shown session's conversation), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
   watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
@@ -173,7 +174,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
   terminal's. `/resume` of a conversation another live session holds shows that one
   (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
-  live, and the session CLAI started with is closed for idleness like any other while
+  live, and the session Pax started with is closed for idleness like any other while
   hidden. Prompts queued for a session stay its own when the terminal shows another.
   `pax --web` keeps its terminal on the session it started with. With one live
   session nothing changes, and the toolbar adds `N live` only for more.
@@ -184,9 +185,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   Installed modules use `importlib.reload`, which retains globals absent from the
   new source. Plugins keep their state on the instance, set up in `__init__`.
 - **Instruction order is capability order.** Placement is a core
-  `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
+  `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a Pax list.
 - **Registration is idempotent per name.** "Active for the next prompt" is the
-  natural unit. Stock agents are rebuilt when the capability snapshot or CLAI's
+  natural unit. Stock agents are rebuilt when the capability snapshot or Pax's
   unchosen default model changes. Plugins are bound at construction so
   self-delegation carries their tools, instructions, and guardrails, and the
   default model is bound as the agent's own so a capability can replace it.
@@ -197,14 +198,14 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt.
 - **Integrations are deferred.** Only the coding loop and run plumbing are eager.
-  The agent docs capability (`clai_customization`) and every hosted integration
+  The agent docs capability (`pax_customization`) and every hosted integration
   plugin pass `defer_loading=True` on the capability they build (on the one a
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `config/builtins.py` lists the library's built-ins (re-exported by `app.py`,
   kept apart so `pax plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
-  agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
+  agent into delegation without changing supplied-agent defaults. Pax ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
@@ -216,14 +217,14 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   user's saved toggle of it maps to the built-in instead of outranking it.
 - **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
   built-in to that list only when it needs no terminal and reads nothing from the
-  user's CLAI configuration directory. Hosts rely on a configuration that the user's
+  user's Pax configuration directory. Hosts rely on a configuration that the user's
   saved settings cannot change.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
-  drop-in folder, project, built-in. CLAI never writes the project file.
+  drop-in folder, project, built-in. Pax never writes the project file.
   The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
   such as the `hooks` table's `project_hooks`: its declaration is what runs, so
   a stored approval with the same id and factory that differs from the
@@ -273,7 +274,7 @@ including plugin off loads them again. Add a row there; do not special-case ids.
 
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
-threshold math or an orchestrator in CLAI. Register the usage gauge after the
+threshold math or an orchestrator in Pax. Register the usage gauge after the
 chain so yellow means the compacted request still exceeds the threshold.
 `/compact` drives the same chain regardless of threshold, keeps the result only
 when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
@@ -281,7 +282,7 @@ and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `Model
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
 over `CompactionSettings`; the loader's reload builds the new chain. Background
-compaction is harness `FallbackCompaction(background_start=...)`, not CLAI code: the plugin
+compaction is harness `FallbackCompaction(background_start=...)`, not Pax code: the plugin
 only passes the setting, closes the chain in `on_session_end`, discards the summaries of
 conversations other than the shown one and its running tasks at each turn end and conversation
 change (not per task event, which would build one for every streamed event), and has `/compact` try the
@@ -295,7 +296,7 @@ its `settings_from` provider's), which the row and web UI show while `context_wi
 is `None`; after one, an unresolved window stays `?`. A conversation without a figure
 yet, such as a resumed one, reads its last response's `context_tokens`.
 
-## Adding or changing a CLAI moment or contribution
+## Adding or changing a Pax moment or contribution
 
 1. Add the event dataclass and an `on_*` method (or a `get_*` method with a
    no-op default) to `Plugin`, and route it in `_HANDLERS` or `collect`.
@@ -397,9 +398,13 @@ Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
 streamed fences, shell command headers, and theme previews. Shell command headers
 add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
-a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
-green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use a dark green and red;
+bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette until their lightness differs, so colour-blind readers can tell them apart.
+On a light terminal (`app.chat` asks for the background once, `ui/terminal_background.py`, and
+passes it to `theme.use(background=...)`), `default` paints brand roles in the fixed `theme._ON_LIGHT`
+shades and diffs on pale lines with Pygments' `xcode` style; code fences keep the terminal's ANSI
+colours. On a dark or unknown background it is unchanged.
 `theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
 (or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 
@@ -441,7 +446,7 @@ Keep files concise - we don't need any 10,000 line files. Single responsibility.
 ## Windows-only CLI operations
 
 Check whether an existing interactive command already completes the operation on Windows.
-If a new non-interactive path cannot observe completion because CLAI must exit first,
+If a new non-interactive path cannot observe completion because Pax must exit first,
 fail early with a non-zero status and name the working command. Do not report success
 for a detached operation or add a process trampoline just to make the new path work.
 Add Windows-specific orchestration only when a concrete requirement cannot use the
@@ -449,8 +454,8 @@ existing path. For updates, `/update now` is the working interactive path.
 
 ## Testing
 
-- When adding or modifying a CLAI2 CLI UX feature, test every affected UX feature
-  with your changes in a fresh tmux window before opening a PR. Run CLAI2 with
+- When adding or modifying a Pax CLI UX feature, test every affected UX feature
+  with your changes in a fresh tmux window before opening a PR. Run Pax with
   `uv run pax`. Verify the actual terminal behavior against the intention of
   the user's request, not just the implementation or automated tests.
 - `pytest-anyio`; real model calls are blocked globally.
@@ -491,13 +496,13 @@ switches. Different versions can share the same settings database.
   never add a field to `PluginSettings`, a key to its `settings`, or bump
   `user_version`, since older builds reject all three. A build lacking a feature
   drops only that setting and uses the default. Run setup `UserError`s are caught
-  only by `PluginGuard`, and only around a capability CLAI built from a
+  only by `PluginGuard`, and only around a capability Pax built from a
   `module:Class` declaration's settings with no `Hooks` inside, so policy hooks
   and plugin-contributed capabilities always fail closed. See "Settings that need a feature" in `customization.md`.
 
 ## Local verification
 
-Run from the repository root. CLAI shares the root `uv.lock`, `.venv`, and
+Run from the repository root. Pax shares the root `uv.lock`, `.venv`, and
 Pyright configuration with Harness.
 
 ```bash
@@ -515,14 +520,15 @@ uv run --no-sync pytest -p no:cacheprovider tests/pax
 change updates the reference (and the README when it changes what the tour shows)
 and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
 images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
-the images in `docs/images/`. Plain
+the images in `docs/images/`. `docs/harness/clai2.md` is generated from the README by
+`scripts/sync_docs_page.py`, which pre-commit runs; edit the README, never the page. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
-Agent-readable docs are indexed by `clai_docs._CLAI_DOCS`. Docs outside
+Agent-readable docs are indexed by `pax_docs._PAX_DOCS`. Docs outside
 `pydantic_ai_pax/` ship through `pyproject.toml`'s wheel `force-include` and sdist
-`include`. The catalog and packaging guards in `tests/pax/test_clai_docs.py`
+`include`. The catalog and packaging guards in `tests/pax/test_pax_docs.py`
 reject new docs missing from either surface. If a new feature falls outside the
-existing discovery triggers, update `clai_docs._DESCRIPTION` and `_HINT`.
+existing discovery triggers, update `pax_docs._DESCRIPTION` and `_hint`.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
 it needs independently focused projects/sessions and two-line cards. Keep its
@@ -576,11 +582,15 @@ selects painted cells in `PromptSurface` and its release copies them through
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+A `MarkdownBlock` shows its streamed rows until its writer calls `end`, and
+renders its source again only after that: rendering a streaming part again per
+frame costs the whole part every frame.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)` and pin the question text in their rows, not the
 transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 a tool-call group its call names, and a shell call's header its command, for width/theme repaint
-(syntax colours share hex values with brand roles under a palette, so translating them would guess);
+(syntax colours share hex values with brand roles under a palette, so translating them would guess;
+a part still streaming is translated like tool output until it ends, then renders again);
 tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`

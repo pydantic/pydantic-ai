@@ -758,14 +758,14 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
 
 
 def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
-    """A legacy runner must not silently bypass CLAI 2 and canonical capture."""
+    """A legacy runner must not silently bypass Pax and canonical capture."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         'jobs: {agent: {steps: [{id: agentic_execution, run: pydantic-ai-runner-launch}]}}',
     )
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
-    assert 'public CLAI 2 harness' in violations[0].message
+    assert 'public Pax harness' in violations[0].message
 
 
 _PUBLIC_ENGINE_LOCK = """

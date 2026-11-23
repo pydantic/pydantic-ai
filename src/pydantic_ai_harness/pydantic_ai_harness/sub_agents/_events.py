@@ -41,7 +41,8 @@ DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'c
 - `budget`: the child reached its own `SubAgent.usage_limits`; the parent got a steering message.
 - `failed`: the child raised a soft model error (the parent got a `ModelRetry` or a tool result, per
   `SubAgent.on_model_error`),
-  or its run ended with `DeferredToolRequests` or `PendingModelResponse` (the parent got a steering message).
+  or its run ended with `DeferredToolRequests` or `PendingModelResponse` (the parent got a steering message, or, with
+  `SubAgents(forward_deferred_calls=True)`, the deferred tool calls went to the parent run's caller).
 - `contained`: the child crashed with `contain_errors` on; the parent got a `ModelRetry`.
 """
 

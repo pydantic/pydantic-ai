@@ -33,6 +33,8 @@ For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFil
 
 Use capabilities when the user wants behavior that should survive model/provider changes.
 
+To add a capability for one run, pass `agent.run(..., capabilities=[...])`. `agent.override(capabilities=[...])` replaces the agent's capabilities for every run inside the block rather than merging with them; to add one there, list the agent's own beside it: `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`. Import `AgentInstructions` from `pydantic_ai` or `pydantic_ai.capabilities` to annotate `get_instructions()`.
+
 ## Enable Thinking Across Providers
 
 Use the unified `Thinking` capability or the `thinking` model setting.

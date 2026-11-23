@@ -549,13 +549,20 @@ current owners.
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
 
-Compile with [gh-aw v1.2.1](https://github.com/github/gh-aw/releases/tag/v1.2.1), which ships AWF v0.29.7.
-It is the first release that lets the review failure reporter read trusted pre-agent eligibility outputs
+Compile with [gh-aw v1.3.1](https://github.com/github/gh-aw/releases/tag/v1.3.1), which ships AWF v0.29.14.
+It is the first release that skips `Parse agent logs for step summary` when the engine step was skipped
+([gh-aw#78623](https://github.com/github/gh-aw/pull/78623)). A step that fails before the engine then stays the
+run's only failed step, instead of sitting behind a protected-capture error.
+The review failure reporter needs v1.2.1 or newer to read trusted pre-agent eligibility outputs
 after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
+v1.3.1 grants `id-token: write` to every lock's `activation` and `conclusion` jobs, for gh-aw's admission steps
+([gh-aw#78818](https://github.com/github/gh-aw/pull/78818)). The grant does not depend on configuration.
+gh-aw emits admission steps only when `aw.json` sets `"admission": true` or a source sets `on.admission`.
+Neither is set here, so no step in these locks mints a token.
 `shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
 `shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.70.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
-`stage-gh-aw-agent.sh` configures the existing request limits in an isolated CLAI
+`stage-gh-aw-agent.sh` configures the existing request limits in an isolated Pax
 settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
 passes to the engine as `LOGFIRE_SERVICE_VERSION`. Workflow `engine.args` is ignored by this compiler's public-engine path.
 `shared/engine-zai.md` also sets the agent job to GitHub's 360-minute maximum and detection to 20 minutes;
@@ -568,7 +575,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 - **After editing a workflow `*.md` source, recompile and commit the regenerated `*.lock.yml` in the same change** — a `*.md` edit without its recompiled lock is incomplete, and source and lock drift apart:
 
   ```
-  gh aw compile --action-mode action --action-tag v1.2.1
+  gh aw compile --action-mode action --action-tag v1.3.1
   ```
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
@@ -576,7 +583,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 gh-aw labels the issues it opens itself `agentic-workflows`: the `[aw] Detection Runs` tracker and the
 `agentics-maintenance.yml` activity report. Its issue cleanup operation closes only issues with that label.
-gh-aw v1.2.1 hardcodes that name and has no setting for it.
+gh-aw reads that name from `issue_label` in [`.github/workflows/aw.json`](https://github.com/github/gh-aw/blob/v1.3.1/pkg/workflow/repo_config.go). This repository has no `aw.json`, so the name stays `agentic-workflows`.
 The repository's own automation, such as the provider-health controller, uses `area:agentic-workflows`.
 
 ## OpenCode threat detection
@@ -597,7 +604,7 @@ The post-steps check the script out at `github.workflow_sha` and install OpenCod
   A run that reaches the script's deadline, two minutes before the step's 15, writes `reason=engine_timeout`, which concludes as `agent_failure`, and stops.
   Warn mode turns each of these three into a `warning` and a comment on the `[aw] Detection Runs` tracker.
 - Keep gh-aw's `threat-detect` install: its conclusion step runs `threat-detect conclude`.
-  gh-aw v1.2.1 also installs AWF, its container images and the Copilot CLI in the detection job. The detector uses none of them.
+  gh-aw v1.3.1 also installs AWF, its container images and the Copilot CLI in the detection job. The detector uses none of them.
 
 ## Weekly agent instructions audit
 
@@ -769,6 +776,11 @@ account alone opens no incident. Keep these outcomes local to their run:
   `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
   concurrency, so such an incident has no recovery signal. An exhausted plan still blocks
   the next run at its quota check.
+- A 403 `max_cache_misses_exceeded` from AWF's API proxy (runner kind `cache_miss_limit`).
+  `awf` starts the proxy with each run's containers and removes it when the run ends, so
+  its count of consecutive cache misses spans one run's root agent and sub-agents, and the
+  next run starts a fresh count. Z.AI never saw the refused request, so the host record
+  runs no Z.ai check for it.
 - A gate on a `pull_request`, `pull_request_review` or `pull_request_review_comment` event
   that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds secrets
   from these events on fork and Dependabot pull requests. Gates on other events, and the
@@ -855,7 +867,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `job-timeout-env-missing` / `job-timeout-env-mismatch` | a source whose `env.PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is absent, or set to something other than its `timeout-minutes` | The shim derives the agent's own wall-clock budget from that variable, because gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never reaches the agent container. Drift means the agent either stops early and wastes the time it was granted, or overruns and is killed with nothing emitted. Every new workflow trips this until it declares the pair. |
 | `job-timeout-too-short` | `timeout-minutes:` at or below the shim's teardown headroom (2) | The shim reserves that headroom for container teardown and artifact upload, so it falls back to 30 minutes rather than granting a non-positive budget — the agent then runs far past the point Actions kills the job. |
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
-| `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy, Z.ai credential exclusion, or the engine key the agent-start recheck's `account` selects | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
+| `compiled-runner-contract` | missing public Pax execution, runtime pin, workflow policy, Z.ai credential exclusion, or the engine key the agent-start recheck's `account` selects | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
 | `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
 | `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
 | `daily-aic-guardrail` | a lock that compiles gh-aw's daily AI-credits guardrail step, matched by the script it runs (`check_daily_aic_workflow_guardrail.cjs`) | On every activation the guardrail lists the artifacts of each run from the past 24h to total their AI credits: about 700 REST calls per CI Review activation in [run 39522281523](https://github.com/pydantic/pydantic-ai/actions/runs/39522281523). That spend exhausted the repo's `GITHUB_TOKEN` rate limit. AI credits do not measure the Z.AI Coding Plan quota; provider health gates that quota. Disable the guardrail with `max-daily-ai-credits: -1` in each source's own frontmatter. gh-aw removes the guardrail only for that value. A `-1` in an import such as `shared/engine-zai.md` only drops `GH_AW_MAX_DAILY_AI_CREDITS`: the scan step compiles but skips, and the conclusion job's `if: always()` cache restore, write, save and `aic-usage-cache` upload still run whenever the conclusion job runs. |

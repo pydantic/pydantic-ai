@@ -14,7 +14,8 @@ client and the provider:
 - **[Browser → backend WebSocket relay](#browser-backend-websocket-relay)** — works with every
   provider, including Gemini Live, xAI, and ElevenLabs Agents: the browser streams audio to your backend, which owns the
   media bridge.
-- **[SIP / telephony bridge](#siptelephony-bridge)** — for phone calls, via a telephony provider.
+- **[Twilio Media Streams](#twilio-media-streams)** — for phone calls: Twilio streams the call's audio to
+  your backend, which bridges it to the session.
 
 [Hosting the backend](#hosting) covers what the server running these sessions needs: long-lived
 connections, routing, timeouts, and draining on deploy.
@@ -170,11 +171,156 @@ tell the browser to stop playback and clear its own buffer: the session can only
 not forwarded yet. Passing `played_ms=` records the provider-side cutoff but never flushes audio
 queued by the session or buffered in the browser.
 
-## SIP/telephony bridge
+## Twilio Media Streams {#twilio-media-streams}
 
-Terminate the phone call with a telephony provider such as Twilio, then build the service that
-connects its media stream (e.g. Twilio Media Streams over WebSocket) to the backend session,
-transcoding between the line's codec and PCM16.
+For phone calls, Twilio's [Media Streams](https://www.twilio.com/docs/voice/media-streams) carry a call's
+audio over a WebSocket to your backend, which bridges it to the session, as the
+[relay](#browser-backend-websocket-relay) does for a browser. Your server answers Twilio's incoming-call webhook
+with [TwiML](https://www.twilio.com/docs/voice/twiml/stream) that connects the call to a `<Stream>`, and Twilio
+then opens the stream's WebSocket and exchanges [JSON messages](https://www.twilio.com/docs/voice/media-streams/websocket-messages)
+on it. The [Twilio example](../examples/realtime-twilio.md) runs the whole call, webhook included. The stream
+end of it is below. Its mu-law helpers come from the example's `audio` module, which you can copy or import from
+the `pydantic-ai-examples` package; they aren't part of Pydantic AI.
+
+```python
+import base64
+import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
+
+import anyio
+from fastapi import FastAPI, WebSocket
+from pydantic_ai_examples.realtime_twilio.audio import mulaw_to_pcm16, pcm16_to_mulaw
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import RealtimeInputSpeechStartEvent
+
+agent = Agent(deps_type=str, instructions='You answer the phone for a restaurant. Keep replies short.')
+app = FastAPI()
+# The calls your signed `/twiml` webhook answered, as in the example: only their streams get a session.
+answered_calls: set[str] = set()
+
+
+@agent.instructions
+def caller_number(ctx: RunContext[str]) -> str:
+    return f'The caller is calling from {ctx.deps}.'
+
+
+@dataclass
+class PlaybackMarks:
+    """How much of the session's audio Twilio has played, from the marks it echoes."""
+
+    played_bytes: int = 0
+    pending: dict[str, int] = field(default_factory=dict[str, int])
+    sent: int = 0
+
+    def name_next(self, pcm_bytes: int) -> str:
+        self.sent += 1
+        self.pending[str(self.sent)] = pcm_bytes
+        return str(self.sent)
+
+
+async def twilio_messages(websocket: WebSocket) -> AsyncIterator[dict[str, Any]]:
+    async for text in websocket.iter_text():
+        yield json.loads(text)
+
+
+@app.websocket('/media-stream')
+async def media_stream(websocket: WebSocket):
+    await websocket.accept()
+    messages = twilio_messages(websocket)
+    await anext(messages)  # `connected`
+    start = await anext(messages)
+    if start['start']['callSid'] not in answered_calls:
+        await websocket.close(code=1008)
+        return
+    answered_calls.discard(start['start']['callSid'])
+    stream_sid = start['streamSid']
+    marks = PlaybackMarks()
+
+    async with agent.realtime(
+        '{{ openai:realtime }}', deps=start['start']['customParameters']['caller']
+    ).session() as session:
+
+        async def caller_audio() -> AsyncIterator[bytes]:
+            async for message in messages:
+                if message['event'] == 'media':
+                    mulaw = base64.b64decode(message['media']['payload'])
+                    yield mulaw_to_pcm16(mulaw, rate=session.audio_input_sample_rate)
+                elif message['event'] == 'mark':
+                    marks.played_bytes += marks.pending.pop(message['mark']['name'], 0)
+                elif message['event'] == 'dtmf':
+                    await session.send(f'The caller pressed {message["dtmf"]["digit"]}.')
+                elif message['event'] == 'stop':
+                    return
+
+        async def playback():
+            async for chunk in session.stream_audio():
+                mulaw = pcm16_to_mulaw(chunk, rate=session.audio_output_sample_rate)
+                payload = base64.b64encode(mulaw).decode()
+                mark = {'name': marks.name_next(len(chunk))}  # before a `clear` can drop the chunk
+                await websocket.send_json({'event': 'media', 'streamSid': stream_sid, 'media': {'payload': payload}})
+                await websocket.send_json({'event': 'mark', 'streamSid': stream_sid, 'mark': mark})
+
+        async def barge_in():
+            async for event in session:
+                if isinstance(event, RealtimeInputSpeechStartEvent):
+                    played = marks.played_bytes
+                    # Unheard, but still behind the next interruption's position.
+                    marks.played_bytes += sum(marks.pending.values())
+                    marks.pending.clear()
+                    await websocket.send_json({'event': 'clear', 'streamSid': stream_sid})
+                    await session.interrupt(played_bytes=played)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(playback)
+            tg.start_soon(barge_in)
+            await session.send_audio(caller_audio())
+            tg.cancel_scope.cancel()
+```
+
+What a bridge has to get right:
+
+- **The line's audio.** Twilio sends and plays 8 kHz G.711 mu-law, base64-encoded. A session takes mono PCM16 at
+  [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate] and speaks at
+  [`audio_output_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_output_sample_rate], and Pydantic AI
+  doesn't take G.711 yet ([#9038](https://github.com/pydantic/pydantic-ai/issues/9038)), so the bridge converts
+  and resamples both ways. The example's `audio` module does it with the standard library: both session rates are
+  whole multiples of 8 kHz.
+- **What the caller heard.** Twilio buffers the audio it's sent and plays it in order, so a bridge that forwards
+  each [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] chunk as it arrives has, as far as the
+  session can tell, played all of it, and `handle_barge_in=True` does nothing, as for the
+  [relay](#browser-backend-websocket-relay). Send a `mark` after each chunk instead: Twilio echoes it once the
+  audio ahead of it has played. When the caller speaks, the bytes of the chunks whose marks came back are what to
+  pass to [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt], which truncates the
+  reply there so history records what the caller heard.
+- **`clear` echoes every pending mark.** Interrupting the session doesn't stop audio Twilio already has: send
+  `clear` too. Twilio then drops what it hasn't played and echoes every mark still pending, though nobody heard
+  that audio. Read the played count and forget the pending marks before sending `clear`, so those echoes count
+  for nothing, and name each chunk's mark before sending the chunk, so a `clear` sent in between drops the mark
+  too. Then add the bytes of those chunks to the count: the session handed them over and can't learn that the
+  caller skipped them, so every later `interrupt()` would otherwise land that many bytes early.
+- **Models that interrupt themselves.** Gemini and ElevenLabs Agents cut their own reply short when the caller
+  talks and report a [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
+  rather than a speech start: send `clear` on it too, with no `interrupt()` call, as the example does.
+  [GPT-Live](openai.md#gpt-live-feature-support-and-limitations) reports neither and has no `interrupt()`: it
+  stops talking over the caller by itself, and sends its audio at the pace it speaks it (ten 100 ms frames a
+  second in our recordings), so little of it waits in Twilio's buffer to play on.
+- **Per-call context.** The stream URL takes no query string. Put the call's context in `<Parameter>` elements of
+  the `<Stream>`, read them from the `start` message's `customParameters` before opening the session, and pass
+  them as the session's [`deps`](../dependencies.md).
+- **Key presses.** Twilio reports the caller's keypad as `dtmf` messages. A session has no keypad input, so send
+  the digit as text.
+- **Ending the call.** Feed [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] from the stream's
+  messages inside the `async with` block: Twilio's `stop` ends the iterator, as does the socket closing, and either
+  leaves the block, which hangs up the provider session. Twilio carries on with the TwiML after `<Connect>` once
+  your server closes the socket, so with nothing after it, closing the socket ends the call.
+- **Signatures.** Check `X-Twilio-Signature` on Twilio's requests with the `RequestValidator` of
+  [Twilio's SDK](https://www.twilio.com/docs/usage/webhooks/webhooks-security), as Twilio asks, rather than with
+  code of your own. Twilio signs the public URL it called, which a tunnel or proxy hides from your server, so
+  validate against that. Then accept a stream only for a call that webhook answered, as the snippet does with
+  `answered_calls`, which the example's webhook fills.
 
 ## Hosting the backend {#hosting}
 
