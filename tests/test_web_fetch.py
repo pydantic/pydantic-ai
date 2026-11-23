@@ -1099,8 +1099,6 @@ _TEXT_BUDGET = '_MAX_HTML_TEXT_SCAN_COST'
 # Content after these 16 `<div>`s sits at depth 18 (the document itself is depth 1), two levels past the 16 where
 # deep scans start. The deepest `<div>` charges 8 conversion cost for its own scan.
 _DEEP = '<div>' * 16
-# One digit more than `int()` parses.
-_TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
 
 # Each case is a document, the budget it pins, and the exact total charged against that budget.
 _BUDGET_TOTAL_CASES = [
@@ -1256,6 +1254,9 @@ _BUDGET_CHECK_CASES = [
 
 
 class TestMarkdownConverter:
+    # One digit more than `int()` parses.
+    _TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
+
     def test_large_well_formed_reference_list_passes_markup_budgets(self):
         """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
 
