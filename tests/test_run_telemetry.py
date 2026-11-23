@@ -137,8 +137,10 @@ class FailWhenPrepared(AbstractCapability[object]):
 
 
 @pytest.mark.parametrize('include_content', [True, False])
-async def test_an_escaping_errors_message_is_recorded_only_with_content(include_content: bool):
-    instrumentation, exporter = instrumented(include_content=include_content)
+async def test_an_escaping_errors_message_is_recorded_only_with_content(
+    include_content: bool, instrumented: Instrumented
+):
+    instrumentation, exporter = instrumented(include_content)
     with pytest.raises(ValueError):
         await Agent(TestModel(), capabilities=[FailWhenPrepared(), instrumentation]).run('go')
 
