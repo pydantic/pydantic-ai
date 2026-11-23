@@ -631,7 +631,7 @@ Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenA
 
 Many OpenAI-compatible servers accept a `system` message only at the start of the conversation, and reject one that comes later, such as after a tool result, with a `400` that may name no reason: `{'message': 'Invalid request', 'type': 'Bad Request', 'code': 400}`. So a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), such as a reminder a capability adds partway through a run, goes to these endpoints as a `<system>` block in a user message, and the system prompt says what the tag means. gpt-oss models get that explanation from the first request, as their [measurements](../message-history.md#what-each-rendering-gives-up) favor. The explanation is a system message of its own at the start of the conversation, so a Chat Completions endpoint that also accepts only one leading system message needs the merge described [above](#models-that-accept-only-one-leading-system-message).
 
-If your endpoint accepts a `system` message at any position, set `supports_inline_system_prompts=True` in the model's profile to send the prompt as one:
+If your endpoint accepts a `system` message at any position, set [`supports_inline_system_prompts`][pydantic_ai.profiles.ModelProfile.supports_inline_system_prompts] to `True` in the model's profile to send the prompt as one:
 
 ```python
 from pydantic_ai import Agent
@@ -651,4 +651,4 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
-[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sends a `system` message, as OpenAI's API accepts one at any position, also when you give it another server's `base_url`. If that server rejects it, use `OpenAICompatibleProvider` as in [Other endpoints](#other-endpoints), or set the flag to `False`.
+[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sends a `system` message, as OpenAI's API accepts one at any position, also when you give it another server's `base_url`. If that server rejects it, use [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] as in [Other endpoints](#other-endpoints), or set the flag to `False`.

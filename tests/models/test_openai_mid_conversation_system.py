@@ -115,6 +115,35 @@ async def test_openai_sends_a_native_system_message(
     ] == LIVE_WIRE[api]
 
 
+async def test_gpt_oss_on_a_compatible_endpoint_gets_the_announcement_first(
+    allow_model_requests: None, deepinfra_api_key: str, request_capture: RequestCapture
+):
+    """gpt-oss on an OpenAI-compatible endpoint gets the announcement from a conversation's first request.
+
+    Its profile's `default_framing_announcement='always'` applies once the endpoint has no mid-conversation system
+    role, so even a plain request opens with two system messages: the announcement, then the instructions. The
+    recording shows a server running gpt-oss behind a chat template accepting that.
+    """
+    provider = OpenAICompatibleProvider(
+        'deepinfra',
+        base_url='https://api.deepinfra.com/v1/openai',
+        api_key=deepinfra_api_key,
+        http_client=request_capture.client,
+    )
+    agent = Agent(OpenAIChatModel('openai/gpt-oss-120b', provider=provider), instructions=INSTRUCTIONS)
+
+    result = await agent.run('Reply with one word: what color is the sky on a clear day?')
+
+    assert result.output
+    assert request_capture.body('/chat/completions')['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': ANNOUNCEMENT},
+            {'role': 'system', 'content': INSTRUCTIONS},
+            {'role': 'user', 'content': 'Reply with one word: what color is the sky on a clear day?'},
+        ]
+    )
+
+
 def chat_completion(request: httpx2.Request) -> httpx2.Response:
     if request.url.path.endswith('/chat/completions'):
         return httpx2.Response(
