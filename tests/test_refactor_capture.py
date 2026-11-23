@@ -29,9 +29,9 @@ import pydantic_ai
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime._core import Owed
 
@@ -2378,9 +2378,13 @@ async def test_capture_holds_no_error_a_tool_hook_raises(tmp_path: Path):
     class Deps:
         pass
 
-    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('fail')])), deps_type=Deps)
+    async def call_fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('fail')])
 
-    # A sync tool runs on a worker thread, which can drop the context it copied only once the run has returned.
+    agent = Agent(FunctionModel(call_fail), deps_type=Deps)
+
+    # A sync model function or tool runs on a worker thread, which can drop the context it copied only once the run has
+    # returned.
     @agent.tool_plain
     async def fail() -> str:
         raise RuntimeError('tool failed')
@@ -2644,13 +2648,16 @@ def test_fails_first():
 
 
 def test_compare_names_the_nodes_that_failed(
-    pytester: pytest.Pytester, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
     """A node that fails is listed for each side it failed on, first, so it shows even when a side recorded nothing.
 
     A test that fails records only what it did before it failed, like one whose MCP server missed its startup timeout,
     so matching records don't prove it. Listing it doesn't fail the comparison; the failed pytest run does.
     """
+    # As `run` sets them, so the session runs as `main` runs each side, even under xdist.
+    monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
+    monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
     pytester.makeconftest(CONFTEST)
     pytester.makepyfile(test_failing=FAILING)
     base, head, nothing = tmp_path / 'base', tmp_path / 'head', tmp_path / 'nothing'
