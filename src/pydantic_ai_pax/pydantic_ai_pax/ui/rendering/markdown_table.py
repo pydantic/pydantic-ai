@@ -1,4 +1,10 @@
-"""Markdown tables that keep words whole: wrapped columns when the words fit, one block per row when not."""
+"""Markdown tables that keep words whole: wrapped columns when the words fit, one block per row when not.
+
+This works around Termflow 1.0's `TableRenderState.cap_widths_to_max`, which shrinks an
+overflowing table's columns to a fixed minimum of 8 cells instead of the column's longest
+word, so the cell wrap then splits words mid-character. Remove this module once Termflow
+keeps a column at least as wide as its longest word.
+"""
 
 import os
 import re
@@ -94,14 +100,9 @@ def _share(*, natural: list[int], words: list[int], room: int) -> list[int]:
 def _stacked(
     *, header: Sequence[str], rows: Sequence[Sequence[str]], width: int, margin: str, style: RenderStyle
 ) -> list[str]:
-    if not rows:
-        return [
-            margin + part
-            for part in wrap_ansi(f'{BOLD_ON}{"  ".join(cell.strip() for cell in header)}{BOLD_OFF}', width)
-        ]
     rule = f'{margin}{fg_color(style.symbol)}{TABLE_HORIZ * width}{RESET}'
     lines: list[str] = []
-    for index, row in enumerate(rows):
+    for index, row in enumerate(rows or [[]]):
         if index:
             lines.append(rule)
         for label, cell in zip_longest(header, row, fillvalue=''):

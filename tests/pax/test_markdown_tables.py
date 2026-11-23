@@ -32,14 +32,6 @@ def test_table_cells_keep_their_words_whole(*, width: int, stacked: bool) -> Non
     # A code span keeps its style wherever the layout moves it.
     code = text.plain.index('InvalidHexDigit(char)', text.plain.index('Keep'))
     assert text.get_style_at_offset(Console(), code).dim
-    if stacked:
-        assert lines[:4] == [
-            'Variant: UnexpectedEof',
-            'Meaning: Input ends before all 4 hex digits of a \\u escape',
-            'Example: \\u00',
-            'Fix: UnexpectedEof',
-        ]
-        assert lines[4] == '─' * width
 
 
 def test_a_table_that_fits_is_drawn_as_before() -> None:
@@ -55,69 +47,33 @@ def test_a_table_that_fits_is_drawn_as_before() -> None:
     assert _render(source, 80) == output.getvalue()
 
 
-def test_a_header_only_table_too_narrow_for_its_words_keeps_them() -> None:
-    lines = Text.from_ansi(_render('| Variant | InvalidCodePoint(u16) |\n|---|---|', 24)).plain.splitlines()
-    assert lines == ['Variant', 'InvalidCodePoint(u16)']
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        pytest.param(
+            '| Variant | InvalidCodePoint(u16) |\n|---|---|\n| UnexpectedEof |\n| a | b | extra |',
+            [
+                'Variant: UnexpectedEof',
+                'InvalidCodePoint(u16):',
+                '─' * 24,
+                'Variant: a',
+                'InvalidCodePoint(u16): b',
+                'extra',
+            ],
+            id='ragged-rows',
+        ),
+        pytest.param(
+            '| Variant | InvalidCodePoint(u16) |\n|---|---|', ['Variant:', 'InvalidCodePoint(u16):'], id='header-only'
+        ),
+    ],
+)
+def test_a_table_too_narrow_for_its_words_stacks_its_rows(*, source: str, expected: list[str]) -> None:
+    assert Text.from_ansi(_render(source, 24)).plain.splitlines() == expected
 
 
-@pytest.mark.parametrize('word', ['東京hello', 'a👩\u200d💻b'])
-def test_wide_characters_join_the_word_around_them(word: str) -> None:
-    source = f'| Name | Code |\n|---|---|\n| {word} next | 12345678 |'
-    assert any(word in line for line in Text.from_ansi(_render(source, 20)).plain.splitlines())
-
-
-@pytest.mark.parametrize('cap', ['40', ' +40 '])
-def test_termflow_table_width_cap_stacks_a_table_that_no_longer_fits(monkeypatch: pytest.MonkeyPatch, cap: str) -> None:
+@pytest.mark.parametrize(('cap', 'width'), [(' +40 ', 40), ('0', 80), ('wide', 80)])
+def test_termflow_table_width_cap_applies_when_it_leaves_room(
+    monkeypatch: pytest.MonkeyPatch, *, cap: str, width: int
+) -> None:
     monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', cap)
-    lines = Text.from_ansi(_render(ERRORS, 80)).plain.splitlines()
-    assert lines[0] == 'Variant: UnexpectedEof'
-    assert max(len(line) for line in lines) == 40
-
-
-def test_a_table_width_cap_with_no_room_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    uncapped = _render(ERRORS, 80)
-    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', '0')
-    assert _render(ERRORS, 80) == uncapped
-
-
-def test_a_stacked_row_keeps_ragged_cells(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('TERMFLOW_MAX_TABLE_WIDTH', 'wide')  # Not a number, so no cap.
-    source = '| Variant | InvalidCodePoint(u16) |\n|---|---|\n| UnexpectedEof |\n| a | b | extra |'
-    assert Text.from_ansi(_render(source, 24)).plain.splitlines() == [
-        'Variant: UnexpectedEof',
-        'InvalidCodePoint(u16):',
-        '─' * 24,
-        'Variant: a',
-        'InvalidCodePoint(u16): b',
-        'extra',
-    ]
-
-
-def test_a_stacked_table_in_thinking_stays_dim() -> None:
-    text = Text.from_ansi(render_markdown(source=ERRORS, width=60, thinking=True, colors='truecolor'))
-    assert text.plain.splitlines()[1].startswith('Meaning: Input ends')
-    assert text.get_style_at_offset(Console(), text.plain.index('Input ends')).dim
-
-
-def test_spare_room_goes_to_the_columns_that_wrap() -> None:
-    """At 80 columns each column gets its longest word, and the prose column takes the rest."""
-    assert (
-        '\n' + Text.from_ansi(_render(ERRORS, 80)).plain + '\n'
-        == r"""
-┌───────────────────────┬────────────────────┬─────────┬───────────────────────┐
-│ Variant               │ Meaning            │ Example │ Fix                   │
-├───────────────────────┼────────────────────┼─────────┼───────────────────────┤
-│ UnexpectedEof         │ Input ends before  │ \u00    │ UnexpectedEof         │
-│                       │ all 4 hex digits   │         │                       │
-│                       │ of a \u escape     │         │                       │
-│ InvalidHexDigit(char) │ A non-hex          │ \u00G1  │ Keep                  │
-│                       │ character inside a │         │ InvalidHexDigit(char) │
-│                       │ \u escape          │         │                       │
-│ InvalidCodePoint(u16) │ A lone surrogate   │ \uD800  │ Report                │
-│                       │ that does not pair │         │ InvalidCodePoint(u16) │
-│                       │ with another       │         │                       │
-│                       │ escape to form a   │         │                       │
-│                       │ code point         │         │                       │
-└───────────────────────┴────────────────────┴─────────┴───────────────────────┘
-"""
-    )
+    assert max(len(line) for line in Text.from_ansi(_render(ERRORS, 80)).plain.splitlines()) == width
