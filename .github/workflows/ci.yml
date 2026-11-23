@@ -692,7 +692,9 @@ jobs:
         env:
           CURL_HOME: ${{ runner.temp }}/lychee-curl
         with:
-          args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
+          args: >-
+            --no-progress --offline --include-fragments --config .github/workflows/lychee.toml
+            './docs/**/*.md' './*.md' './examples/**/*.md' './.agents/**/*.md' './**/agent_docs/**/*.md' './**/AGENTS.md'
           fail: true
 
   # Documentation examples are runtime-checked on one representative Python version. A
