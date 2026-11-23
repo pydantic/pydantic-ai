@@ -78,6 +78,7 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
         'supported_cache_retentions',
         'openai_responses_supports_prompt_cache_diagnostics',
         'openai_responses_supports_max_reasoning_effort',
+        'supported_native_tools',
     }
 
     assert {key: value for key, value in codex.items() if key not in dialect} == {

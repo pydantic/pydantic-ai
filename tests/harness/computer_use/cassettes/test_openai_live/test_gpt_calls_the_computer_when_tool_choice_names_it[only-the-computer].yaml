@@ -1,0 +1,155 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "383"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Look at the screen.
+        reasoning:
+          context: all_turns
+        tool_choice:
+          type: computer
+        tools:
+        - type: computer
+        - name: note
+          parameters:
+            type: object
+            properties: {}
+            additionalProperties: false
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2287"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0e904134cc98f746006afeb406d37887d294791506b6447176
+        object: response
+        created_at: 1795077126
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795077128
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-mini-2026-03-17
+        moderation: null
+        output:
+        - id: cu_0e904134cc98f746006afeb4083da887d296b89e2eaba9faba
+          type: computer_call
+          status: completed
+          actions:
+          - type: screenshot
+          call_id: call_iWfhZMHDVBEXGg0PKVNny6tl
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice:
+          type: computer
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: note
+          output_schema: null
+          parameters:
+            type: object
+            properties: {}
+            additionalProperties: false
+          strict: false
+        - type: computer
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 844
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 15
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 859
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-19T08:32:09.131832+00:00

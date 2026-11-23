@@ -35,7 +35,9 @@ print(result.output)
 
 ## Models
 
-The model must accept images. Every model gets `computer` as a regular function tool.
+The model must accept images. On the models listed under [OpenAI](../models/openai.md#computer-use), it gets its provider's own computer use
+tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
+tool.
 
 ## Safety
 
