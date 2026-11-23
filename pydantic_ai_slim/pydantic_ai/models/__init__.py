@@ -3796,7 +3796,13 @@ def infer_model(  # noqa: C901
             infer_provider_class(provider_name)
         except ValueError:
             message = f'Unknown model: {model}'
-            if suggested_name := _suggest_known_model_name(model, model_name):
+            suggested_name = _suggest_known_model_name(model, model_name)
+            # Off the Gateway, a suggestion names a different provider: point at the route instead.
+            if provider_name.startswith('gateway/') and not (suggested_name or '').startswith('gateway/'):
+                from ..providers.gateway import unknown_gateway_route_hint
+
+                message += f'. {unknown_gateway_route_hint(provider_name)}'
+            elif suggested_name:
                 message += f". Did you mean '{suggested_name}'?"
             raise UserError(message) from None
 

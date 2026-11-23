@@ -34,7 +34,7 @@ _HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses'],
+    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses', 'doubleword'],
     /,
     *,
     route: str | None = None,
@@ -109,6 +109,7 @@ ModelProvider = Literal[
     'bedrock',
     'google',
     'google-cloud',
+    'doubleword',
 ]
 
 
@@ -162,7 +163,7 @@ def gateway_provider(
     canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
         # Use the implied providerId as the default route.
-        route = _gateway_route(canonical)
+        route = _default_gateway_route(upstream_provider)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -246,7 +247,9 @@ def gateway_provider(
             create_http_client=create_async_http_client,
         )
     else:
-        raise UserError(f'Unknown upstream provider: {upstream_provider}')
+        raise UserError(
+            f'Unknown upstream provider: {upstream_provider}. {unknown_gateway_route_hint(upstream_provider)}'
+        )
 
 
 def _build_gateway_provider(
@@ -397,6 +400,31 @@ def _gateway_route(provider: str) -> str:
     return _GATEWAY_ROUTE_REMAP.get(provider, provider)
 
 
+# Gateway routes with no Pydantic AI provider of their own, mapped to the canonical
+# class-lookup name of the API they speak. Unlike `_GATEWAY_PROVIDER_ALIASES`, the
+# URL route keeps the route name rather than following the API's default route.
+_GATEWAY_ROUTE_APIS: dict[str, str] = {
+    'doubleword': 'openai-chat',
+}
+
+
+def _default_gateway_route(provider: str) -> str:
+    """The Gateway URL route segment for a `gateway/` provider name when no `route` is given."""
+    provider = provider.removeprefix('gateway/')
+    if provider in _GATEWAY_ROUTE_APIS:
+        return provider
+    return _gateway_route(normalize_gateway_provider(provider))
+
+
+def unknown_gateway_route_hint(provider: str) -> str:
+    """How to reach a Gateway route that `provider` does not name a known API for."""
+    route = provider.removeprefix('gateway/')
+    return (
+        "To use a Gateway route Pydantic AI doesn't know, pass its API format and the route: "
+        f"`gateway_provider('openai-chat', route='{route}')`."
+    )
+
+
 # User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
 # onto `google-cloud` as a convenience — the Gateway server only exposes the Google Cloud
 # (Vertex) route today, so both prefixes land on the same backend.
@@ -414,6 +442,8 @@ def normalize_gateway_provider(provider: str) -> str:
     Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
+    if provider in _GATEWAY_ROUTE_APIS:
+        return _GATEWAY_ROUTE_APIS[provider]
     return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 

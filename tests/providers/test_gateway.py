@@ -12,6 +12,7 @@ import pytest
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.models import infer_model
 
 from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
@@ -353,6 +354,7 @@ def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
         ('bedrock', BedrockProvider, 'bedrock'),
+        ('doubleword', OpenAIProvider, 'doubleword'),
     ],
 )
 def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]], route: str):
@@ -447,6 +449,39 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 @patch.dict(
     os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
 )
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+def test_infer_model_gateway_route_without_own_provider():
+    model = infer_model('gateway/doubleword:deepseek-ai/DeepSeek-V4.1-Flash-1017')
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == 'deepseek-ai/DeepSeek-V4.1-Flash-1017'
+    assert model.base_url == f'{GATEWAY_BASE_URL}/doubleword/'
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+def test_infer_model_unknown_gateway_route():
+    with raises(
+        snapshot(
+            "UserError: Unknown model: gateway/potato:some-model. To use a Gateway route Pydantic AI doesn't know, "
+            "pass its API format and the route: `gateway_provider('openai-chat', route='potato')`."
+        )
+    ):
+        infer_model('gateway/potato:some-model')
+
+
+def test_infer_model_gateway_typo_keeps_gateway_suggestion():
+    with raises(
+        snapshot(
+            'UserError: Unknown model: gateway/anthropik:claude-sonnet-4-5. '
+            "Did you mean 'gateway/anthropic:claude-sonnet-5-5'?"
+        )
+    ):
+        infer_model('gateway/anthropik:claude-sonnet-4-5')
+
+
 async def test_model_provider_argument():
     model = OpenAIChatModel('gpt-5', provider='gateway')
     assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]
