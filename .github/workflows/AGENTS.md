@@ -573,6 +573,9 @@ root engine block model-only; the shared import owns identity and credentials.
 unless `ANTHROPIC_BASE_URL` is unset or names `api.anthropic.com`.
 Z.AI's Anthropic-compatible endpoint maps any enabled `thinking`, a token budget included, to its default `max` effort
 ([Z.AI](https://docs.z.ai/devpack/latest-model)).
+Each workflow reads its model from the `GH_AW_ZAI_MODEL` repository variable. Keep `GH_AW_MODEL` on `glm-5.3-flash`.
+On an approval, `CI Review` runs the PR's merge ref, which keeps its old lock while the PR conflicts with `main`.
+Those locks read `GH_AW_MODEL`, and have neither GLM-5.4's pricing nor its low effort.
 `stage-gh-aw-agent.sh` configures the existing request limits in an isolated Pax
 settings store. It also outputs the staged shim's source digest, which `shared/engine-zai.md`
 passes to the engine as `LOGFIRE_SERVICE_VERSION`. Workflow `engine.args` is ignored by this compiler's public-engine path.
