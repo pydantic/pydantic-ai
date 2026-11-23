@@ -98,8 +98,8 @@ returning the whole HTML. Prefer one JavaScript expression that returns structur
 so if what you need is missing, wait briefly and evaluate again.
 
 `Page.captureScreenshot` returns the image itself. Page dialogs (`alert`, `confirm`, `prompt`) are dismissed.
-Hosts reachable by navigation and by page scripts' data requests (`fetch`, XHR): {hosts}. A refused request
-fails with `net::ERR_BLOCKED_BY_CLIENT`.\
+Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) may
+reach: {hosts}. A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.\
 """
 
 

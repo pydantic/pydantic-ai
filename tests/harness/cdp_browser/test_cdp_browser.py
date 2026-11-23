@@ -172,11 +172,12 @@ class TestCDPBrowser:
 
         await Agent(FunctionModel(respond), capabilities=[CDPBrowser(allowed_domains=['example.com'])]).run('hi')
         assert seen[0] is not None and 'Chrome DevTools Protocol' in seen[0]
-        assert seen[0].splitlines()[-2] == snapshot(
-            "Hosts reachable by navigation and by page scripts' data requests (`fetch`, XHR): example.com (and their "
-            'subdomains) (private/internal addresses blocked). A refused request'
+        assert seen[0].splitlines()[-2:] == snapshot(
+            [
+                "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) may",
+                'reach: example.com (and their subdomains) (private/internal addresses blocked). A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.',
+            ]
         )
-        assert seen[0].splitlines()[-1] == snapshot('fails with `net::ERR_BLOCKED_BY_CLIENT`.')
 
     async def test_every_target_is_guarded(self, chrome: FakeChrome):
         """Requests from the page, its frames, a popup and workers all wait for the egress policy's verdict.
