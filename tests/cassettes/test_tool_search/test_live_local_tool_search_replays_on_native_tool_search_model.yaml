@@ -1,0 +1,1136 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1064"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "4359"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d87948f8b0f4b0a006b03857f9c4487d2b84fa6471c2dd931
+        object: response
+        created_at: 1795392895
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795392899
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5-2025-08-07
+        moderation: null
+        output:
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABrA4WDlL2jSAh61N1ugeLMirmWYKRM21r4asOiCVK0mtYkHyNRY-_TiACCySZ2qcsViPACZRj1yVbmzlrRaDzC4K38njjnN2CiWfBJNd_Mfm7EInpKJcO_3K87rq2VibMBpSs9HagZ-cqOqBxrT-66EwT8hKKAQasa-7zny996tR24cHmSE5HNIrxbe_cOarvQ3UQJPVh36ktMGGd-Y2KAeE0ZgKEuTSbkuCxxUzx75X9rBvoS9y26s_poBmM7sOkmnI0RtQA7nDi8qQCWJQfQAK9LoLEu2BKB0ux6UAY4XnpWCCG59Uoav2KvG9flPR9c88W5MKedj5ANYqg-guTXnJiU_xOXpt81VvJkbkF7GiYGtl4qRqOPGF_D3gScXsoeQP7x8tu9xi9UkaGnkaijzIr4sjmlLXuV26qkzykfN23m6kRlkrOcRcKyHY3em34dlhux5ypNQMO47OQ-jmEbcTzR_VAKzD0lwbvsJQgemH3Z-0wdD10iIa3E5nGr66z1BkCURNlAZPp9ijzyYIjW_SbuvFgMUd5Epy-9n7y_9uI1VMV6W6fereYa5-TPnW76Ze0eDoHniqSnsNi-LhYlTzMrXxS9JkKLj78y__VglGZgupqhfWPvDoXECplN73SgGhPSl4ZnMaKxI5Icn5iPDLGr88Q-go360bxXtfjmZR4TXTcKJ-atuAG2496wv5s435sO5oHMgfx78vXX82dczkUEhkESVql5vSdtJgdDvHGR_FCBUQFXBCUBhtg1zTi08aMpmGYEe8lm4nuB16gvXk-IVFs8X31Fs7B7BpWYUpk_jauQj-V38G-2ijlWneI4qozLkNRSxbXFssNh_M5V9TE7cH8JljUew2-YGCgF1JwLP56YlKn2otHqJJ-516ApIBWulT_k0PUuxTUbCe17EpXt8_-Qsy0OE1trUFyTVisXdfuXFyd8ydrrZSfXt-aOfh86xnP0HUqRMmX5zLQXav7rHnc5XIIe-0VIW09biFPfecgTG_m2v9J7TCoUCTO79pcxzPW7byACoZlE8xTNZf3WhlVxN613f7QHV0W-xogd4qicALnIoPE84OXnXquowea8eoHYTWXabpNgaczjj41d6XkydVkIMBq9hNgItlSMWy4SbeicnADoN9ImLuQq5ABZuB901bghoAhssM7jlGz8YuDtyoA8wWhGJCdtgsiq3_DYQVQ3G6VL4s4cjDh8bEI7yox5d1NWQLTP4JEPCLKvbkzTP-RLySzbDT-2ji06cTTU0jx3fw9bvpTVanoO-V0Ifb3XjkNzmLlRsAUomMkzco55aFMwqFwLpybZZ_ai8uHRDqXNlm1_1LfM3aFusFNnkaBLTgo3fk7CJs653ZGnnUekIJPXlGuIvmWCk9VNhZKArxadPxQHwt4MudIW4nZK7Kp3RD4_meRHBYqSuzlnmAymZzssqulN7NSQ1LLBpC4uLRsFN-TwaBCB5aTGYNNnNh2sg_-msAZxUXo5GQL-gODceEK43UPEhGFmyuHkhG374f8St0ZlpSYNuFGdi4f6vl8UxIhPpJhBiPi1lwHYcGdD_HhB2Hadfxq9YStZDRH6QlbJTVjt9sgjinrGiQvG108diSlnOnGKpWmb5Wao0CJTP3Yaie5D7obnz17olFpI1zisdMeflcvO1nIJU3wnoN9jyydXFryHETSZ16PVbNioE3uosjAq-YR56PBTsxovcEN-GGHJV04SOZyZBsAAqvehZDXmmsvgWre1hIQutzXildntJ-aTHfx8NIBtCwQiLkUzcYFMRBYxOf-CN-XzFKhtn7d_izrZf9c1olVivRjoYTW-9Nee-C4pSpyyy8oi_vl5HIqYJ-i7C0dBI1FpmQPlcVhVqmxLzD-0UXA1-YC4LbBidjOyoSFHEu6HPbjW7QUCbQb4--gTEHDtifTjm_Rn-uQXOWtdUshPTUl-1ZvCBOMNC7VLzr4O6OXDB89uHo46uJ8hkZtw3_BlKGVhfsW5sv4xvjp2LA1auRY1z0cPBeN3NEKkCsOai8GsuffCF2PpTdbn1QXDE2h3j4wrnwlk8BLgdVjTZn-RXT1hnRrVQmCbzEbvONTnUG215H-DscKL9v3wRlb-moTyP14MrQPBhTewER6NTTORKfz74GKtwxHgZHTgjX6_SOQxBu_pKvJ1nqauop3MOoJ7D4FYLWwc5gJcOEyTChi_nMNwukfYlgwyaWjfm3PtzuQCDUDNhR6AzLCZTQmUQORVPyB8Eh9o_XaYMbuWNNuQhIZ_M5MhByCH5IEwpxoFauyQjjOKqz8oV0h_xmjZPq2AdXXQ1kmIAfxPO6knx2Pxm7dzgEvjDer_2_f6P5SSmkfDlI5nZovdb4sd9UJlRS0jw88ci6pT2-3GKhnTUn-HMt-hMQegdseK2iedRtqKFyg37NFZS04csvFKQytw6ZiTCOiiYGLx7yoNIilRAXM6M_1rjj_v4c8BlgPccyjJiC0YWlGetB-lk7k2ZbicO_sVvcMYWK45-Q9-rF_KJbM9IeVSrL5BA81lHPGdvzvaVpEdkT7XHrF4Qd3GJO2mpntoN4AO7x8AivSDeuxETS0AWjAHlhh_DeZ_w3iT2rFwQq2gEJ-MzUZjhsaBu-bWh7Q8y37KIicQpNRT05nahMWisnq3Lf1HTtZlvkSr8tJcKlE-z_qDYqWmboUHN9f8gZ1ITM3_oro_f798CTnohuzOx5YUQ0lGWbyHrjftt8jmsMV1JmImHLVapnt_yOcKWONFVg_GN5Qo4gVd9L89n1WGdTrWl4rOHqV4aZSqxNVIBs8eY-MqkdPSWqrKLglCc257V2F8gLNUwCUsxuLuV4eyXAZ6TqtUVFaXAKy6637N_4VGqMmB26Pppi0nAS3zdotLrG81m4t2ExOCMl8b0T8MAjjyOR4CNaHW2BBLY87wWKwBSNEd9ylE2UGdRjV8jN7Ob6bbkW1fiRNiVZ1hEbvx7TYO69TuF7bFF_K0taNyDyCMCN_ofa6m60YUvuVnLsWCar0OuIPzvfAEoQBvm5fjXm1MQrEFcWA9Ly83muJmy3ndzG631_QBUQBOEQCBQ617Y7Ebml6iWyLdMVvwk0Md_AW-UXRfRQ8e3wDKrc5_IyPhMPZ-kMv40clfqCf97B_lvnwXbWR2TEa1-7CTnRlY1dOnT-O6IrTn_7nJz44WJnSI1s_t8vcpSxlXE6FNbvVofHP8RW-6rKX_DrDJHa_uUmnq59dt1xM181a9Z773p7CXXzjr-PZkrtcAEc9r-h52pj0UYiiPKFkeuQh2TjtVArt0gGkkIGsO5uitiDn7bcPy5h0qe4nibJNLMjH1wAsjmoLqgEC0oGkW3KXbiwQr9yb2Oh3suvKej1GMOuj7ffCUhcl70R9aeJxO3BbRQLVDLYnezZ1pd9RjpoLuiQRLFfNHkRjEOifVXDPW1go03S4Ts0G8NdCuvlibvLHjD-LzqzDH8-xMj2AxyTS1YAkOuEbNe-leaUklVPq7nvEY2DjeqaOEO9CMWmj1jd7o36KzuqfOKr5EFh9RjafynxaO5T5dLqDIdBgvPOCFiIX2unYSILJXyvkcup-roN9QlnA5bUab_VNQpF7a5PuDNnTxSu5joEw7XNtzvq5A__niV5yAgVZJYpQn7-4Bs4G5bBMdMwMn7dvo1_IMEEiiMWuYGlaohEwn8d-h7G1AZ9OZ4QXgOAdXWoJIwjnsZu-0db-O2Nz6YP0XiaYscd7m1oKZUIGJ0zjdXiJKKNkAwkObZx4HfDJCnFQteXCIQz9KA9XmHDGild8V1Yi36zi-RfJG6PbW5PcZkIY4ORxdMY6_--8qCgsR-eZBLicQDliKiLUkYcI9C9ayxVfVKuLyC_ULcC-66QPBQ8jrm4yvK_mPsEubVYw8Mb2KywrYJtJv2Vqj7OkEvNqjNIrzrW-jigoHSmxK5BJ17CVorcezWJhYTvDZtzZ9-fT5YS8Y46ljskyVIJGaUWzZRlX-9mK9m_J1WuIN-50xquBpiopwBalGUkvpzHZwP5JuBUvdkPO8BRy_u04aJu9b1EG1JUpKeVVC3jd3Pv82RStRQZ3KyxWnkxhoV6rxKITbSdPGTNokfUY5uJ-bh_I4jhcZKoi-0MXKfZgnAfAcs72o4nYLKBS6NfmvHi2iKDxzGAddbEa0OKnnTwAconoUuum-BxL0Rchq57SDyzeUdVYtr59aj8OzplyN3-lzw_egmxpqLEtLSFRBLANr3mqHnqawmdXQZdNyeGm16KUG0UnQ7Y-dlqfGTF4ZpbukHuCzTqG-BtrZgywzZztq1p_5E8QLFtPawmk-U-u7Mq21YjMbV1nNXj8GkpoIfhRCjE0faiES5aNEkWY7T5eNcEFhxsRPXe5Ins5I4QKZggkW-WN-jJCwmxERSSs_NwWvIeQSD06GqmzQwJ55xVUtrOS7eFKM8ewzw7HMwekxe9VX2GGb031-h_8W84ukPoNfS5y7hsQrx0sL3vKqbtR5QUVZCQ9pNS-BcpHSQmFnadveEsABENu59VjplGhWcnGpJ5rkIhSMFMi4-p3WEFEoOhTufTXq76ALOa0NWnoynSUt6p0cx1QDTwz-Qp-Gxg65qJ1BdsJpJsqCtakswfHcJwTRYTe2u9fS2QkVGK5gcvZFldcY5yFT93bLMFEkHc-8orfBVlZdjtsKFcHyiSuwmW5i2K2T5IOXIL0Yiwrv2KnM2aEJgoFtE89tzmZp7qCNCz1nNf7wIIJCBI7jBsciNSfr6j-chaKAUST-Wm8DCOkmd51q41KYby5p9iJ3Fh19IC6lr5U65-KT3n8QZTUPgC8oWkFFn4OXD_mWoRfuc8kXtFGmwOePCzId_PJsQ94uMF7JcqdjNq6l_n5880wtxFnnestnhK9p8xplOO5kCgbgFbAE-TmRt7bev0YFicgO_bMlBbqV1s67nWAmztL0sL1Q_Xu-K-HOQZGbwATh-xmRN8ZA9DEkmb0rmTVcqHx789FYm4sehZvv3yTCYag6M9aMRLH7VntyLmnsyhvZbNulWZW87s_8A0g4hVoJ-nlRnee-jkqvJldGBVxEwehUYhItwT3Tx7vyb-iamFOrFuAkdiSr8H2ofu73GJunTLpnTpUPBo6l1uxyTg_yqU77RhyLXB6mm7OQh_5cw9P92uQ48Djpi0kRx2CK2BcOxcFbe4mTYmp__e0orfZp6zGi3VN_vRs7jgef_XwNcOv5lgIClpdv_gRYcRS6f5tHEj_VoEXcx6J4mC-zK3lpVazbqaUeoDfFPir3tE3Tkx8W7xqCHvZGFlS9AKHrTVcXoLRWsEtLGn6geTbpLJQfzv9mcCsW-yaFHJ0_VFahjI33dgNAK22xO4SXc28Q0G-OJEpwtc0pqxiRKNlJUazZlpqE-L6NGl9aEqnQBTbJGgyV1gWsyN3ZAm7qjGwU1iMuEiZCHnx3Cwxcynrai9TqbjTrmrm2SVTGnbWSJfZfHfREML1x1aLaTra7BqskuKR9J8g1oztT9j8TVuK7J-eo2-41-o-xTRx9nEAM2Cjsbh9kPG2vXbqdQnF-uqmobva5BFvJt1NnpbPIsJ6GwoEqBddFELnCxZPda4Xqru6a7cX795X5kwl22QBAC5rNMBeCeEIEd7VaBjZjwohgsLIO3KQVOhn0fBB3IlS_0N7ex7szYwpCgnGf_uwzF_TFs02E_krLvkCOQKkXBMb7OE392g2qsLOQHIAcTtVX9iCJ6ZC8VyBZTfgtPXr4mW3lmS8MUqZXabFMTJ3kkvdEV0_X9vNKUUV6nalwv5bLbyTSEKWyG2ldqi19-B5DhqJLHWN26QvYGsC56HVXBy35e5IfhvKZrDWnony9VZnatRyxJXVoD2oGZ-AzyOp1wOu2OrA_TfzsWHx02OJ_caSJuB5Dc9AT2ez3_pF-jtz2_DbwWXwNPQ5KyuXU6LQ1WmTnn8Ia1sYKJFKNwr5WyCsdvr7tXp5v_bLTdno0zysJrP-xboEOqHda9qNNJN_OtzOoOhaC0SMz7LAWzj4WHGdSvFVP8gSKaXJuIK3DwBXSOCJWkozKnyzvUmmNG2E_t-Iu71K2bHs86kXo8nLSOY-g3BNtf9oW
+          summary: []
+        - id: fc_0d87948f8b0f4b0a006b038583115087d28f77a86cf7228f22
+          type: function_call
+          status: completed
+          arguments: "{\"queries\":[\"get_exchange_rate\",\"exchange rate\",\"FX rate\",\"currency conversion\",\"USD/EUR\"]}"
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          name: search_tools
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 164
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 368
+          output_tokens_details:
+            reasoning_tokens: 320
+          total_tokens: 532
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-23T00:14:59.973014+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "7986"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WDlL2jSAh61N1ugeLMirmWYKRM21r4asOiCVK0mtYkHyNRY-_TiACCySZ2qcsViPACZRj1yVbmzlrRaDzC4K38njjnN2CiWfBJNd_Mfm7EInpKJcO_3K87rq2VibMBpSs9HagZ-cqOqBxrT-66EwT8hKKAQasa-7zny996tR24cHmSE5HNIrxbe_cOarvQ3UQJPVh36ktMGGd-Y2KAeE0ZgKEuTSbkuCxxUzx75X9rBvoS9y26s_poBmM7sOkmnI0RtQA7nDi8qQCWJQfQAK9LoLEu2BKB0ux6UAY4XnpWCCG59Uoav2KvG9flPR9c88W5MKedj5ANYqg-guTXnJiU_xOXpt81VvJkbkF7GiYGtl4qRqOPGF_D3gScXsoeQP7x8tu9xi9UkaGnkaijzIr4sjmlLXuV26qkzykfN23m6kRlkrOcRcKyHY3em34dlhux5ypNQMO47OQ-jmEbcTzR_VAKzD0lwbvsJQgemH3Z-0wdD10iIa3E5nGr66z1BkCURNlAZPp9ijzyYIjW_SbuvFgMUd5Epy-9n7y_9uI1VMV6W6fereYa5-TPnW76Ze0eDoHniqSnsNi-LhYlTzMrXxS9JkKLj78y__VglGZgupqhfWPvDoXECplN73SgGhPSl4ZnMaKxI5Icn5iPDLGr88Q-go360bxXtfjmZR4TXTcKJ-atuAG2496wv5s435sO5oHMgfx78vXX82dczkUEhkESVql5vSdtJgdDvHGR_FCBUQFXBCUBhtg1zTi08aMpmGYEe8lm4nuB16gvXk-IVFs8X31Fs7B7BpWYUpk_jauQj-V38G-2ijlWneI4qozLkNRSxbXFssNh_M5V9TE7cH8JljUew2-YGCgF1JwLP56YlKn2otHqJJ-516ApIBWulT_k0PUuxTUbCe17EpXt8_-Qsy0OE1trUFyTVisXdfuXFyd8ydrrZSfXt-aOfh86xnP0HUqRMmX5zLQXav7rHnc5XIIe-0VIW09biFPfecgTG_m2v9J7TCoUCTO79pcxzPW7byACoZlE8xTNZf3WhlVxN613f7QHV0W-xogd4qicALnIoPE84OXnXquowea8eoHYTWXabpNgaczjj41d6XkydVkIMBq9hNgItlSMWy4SbeicnADoN9ImLuQq5ABZuB901bghoAhssM7jlGz8YuDtyoA8wWhGJCdtgsiq3_DYQVQ3G6VL4s4cjDh8bEI7yox5d1NWQLTP4JEPCLKvbkzTP-RLySzbDT-2ji06cTTU0jx3fw9bvpTVanoO-V0Ifb3XjkNzmLlRsAUomMkzco55aFMwqFwLpybZZ_ai8uHRDqXNlm1_1LfM3aFusFNnkaBLTgo3fk7CJs653ZGnnUekIJPXlGuIvmWCk9VNhZKArxadPxQHwt4MudIW4nZK7Kp3RD4_meRHBYqSuzlnmAymZzssqulN7NSQ1LLBpC4uLRsFN-TwaBCB5aTGYNNnNh2sg_-msAZxUXo5GQL-gODceEK43UPEhGFmyuHkhG374f8St0ZlpSYNuFGdi4f6vl8UxIhPpJhBiPi1lwHYcGdD_HhB2Hadfxq9YStZDRH6QlbJTVjt9sgjinrGiQvG108diSlnOnGKpWmb5Wao0CJTP3Yaie5D7obnz17olFpI1zisdMeflcvO1nIJU3wnoN9jyydXFryHETSZ16PVbNioE3uosjAq-YR56PBTsxovcEN-GGHJV04SOZyZBsAAqvehZDXmmsvgWre1hIQutzXildntJ-aTHfx8NIBtCwQiLkUzcYFMRBYxOf-CN-XzFKhtn7d_izrZf9c1olVivRjoYTW-9Nee-C4pSpyyy8oi_vl5HIqYJ-i7C0dBI1FpmQPlcVhVqmxLzD-0UXA1-YC4LbBidjOyoSFHEu6HPbjW7QUCbQb4--gTEHDtifTjm_Rn-uQXOWtdUshPTUl-1ZvCBOMNC7VLzr4O6OXDB89uHo46uJ8hkZtw3_BlKGVhfsW5sv4xvjp2LA1auRY1z0cPBeN3NEKkCsOai8GsuffCF2PpTdbn1QXDE2h3j4wrnwlk8BLgdVjTZn-RXT1hnRrVQmCbzEbvONTnUG215H-DscKL9v3wRlb-moTyP14MrQPBhTewER6NTTORKfz74GKtwxHgZHTgjX6_SOQxBu_pKvJ1nqauop3MOoJ7D4FYLWwc5gJcOEyTChi_nMNwukfYlgwyaWjfm3PtzuQCDUDNhR6AzLCZTQmUQORVPyB8Eh9o_XaYMbuWNNuQhIZ_M5MhByCH5IEwpxoFauyQjjOKqz8oV0h_xmjZPq2AdXXQ1kmIAfxPO6knx2Pxm7dzgEvjDer_2_f6P5SSmkfDlI5nZovdb4sd9UJlRS0jw88ci6pT2-3GKhnTUn-HMt-hMQegdseK2iedRtqKFyg37NFZS04csvFKQytw6ZiTCOiiYGLx7yoNIilRAXM6M_1rjj_v4c8BlgPccyjJiC0YWlGetB-lk7k2ZbicO_sVvcMYWK45-Q9-rF_KJbM9IeVSrL5BA81lHPGdvzvaVpEdkT7XHrF4Qd3GJO2mpntoN4AO7x8AivSDeuxETS0AWjAHlhh_DeZ_w3iT2rFwQq2gEJ-MzUZjhsaBu-bWh7Q8y37KIicQpNRT05nahMWisnq3Lf1HTtZlvkSr8tJcKlE-z_qDYqWmboUHN9f8gZ1ITM3_oro_f798CTnohuzOx5YUQ0lGWbyHrjftt8jmsMV1JmImHLVapnt_yOcKWONFVg_GN5Qo4gVd9L89n1WGdTrWl4rOHqV4aZSqxNVIBs8eY-MqkdPSWqrKLglCc257V2F8gLNUwCUsxuLuV4eyXAZ6TqtUVFaXAKy6637N_4VGqMmB26Pppi0nAS3zdotLrG81m4t2ExOCMl8b0T8MAjjyOR4CNaHW2BBLY87wWKwBSNEd9ylE2UGdRjV8jN7Ob6bbkW1fiRNiVZ1hEbvx7TYO69TuF7bFF_K0taNyDyCMCN_ofa6m60YUvuVnLsWCar0OuIPzvfAEoQBvm5fjXm1MQrEFcWA9Ly83muJmy3ndzG631_QBUQBOEQCBQ617Y7Ebml6iWyLdMVvwk0Md_AW-UXRfRQ8e3wDKrc5_IyPhMPZ-kMv40clfqCf97B_lvnwXbWR2TEa1-7CTnRlY1dOnT-O6IrTn_7nJz44WJnSI1s_t8vcpSxlXE6FNbvVofHP8RW-6rKX_DrDJHa_uUmnq59dt1xM181a9Z773p7CXXzjr-PZkrtcAEc9r-h52pj0UYiiPKFkeuQh2TjtVArt0gGkkIGsO5uitiDn7bcPy5h0qe4nibJNLMjH1wAsjmoLqgEC0oGkW3KXbiwQr9yb2Oh3suvKej1GMOuj7ffCUhcl70R9aeJxO3BbRQLVDLYnezZ1pd9RjpoLuiQRLFfNHkRjEOifVXDPW1go03S4Ts0G8NdCuvlibvLHjD-LzqzDH8-xMj2AxyTS1YAkOuEbNe-leaUklVPq7nvEY2DjeqaOEO9CMWmj1jd7o36KzuqfOKr5EFh9RjafynxaO5T5dLqDIdBgvPOCFiIX2unYSILJXyvkcup-roN9QlnA5bUab_VNQpF7a5PuDNnTxSu5joEw7XNtzvq5A__niV5yAgVZJYpQn7-4Bs4G5bBMdMwMn7dvo1_IMEEiiMWuYGlaohEwn8d-h7G1AZ9OZ4QXgOAdXWoJIwjnsZu-0db-O2Nz6YP0XiaYscd7m1oKZUIGJ0zjdXiJKKNkAwkObZx4HfDJCnFQteXCIQz9KA9XmHDGild8V1Yi36zi-RfJG6PbW5PcZkIY4ORxdMY6_--8qCgsR-eZBLicQDliKiLUkYcI9C9ayxVfVKuLyC_ULcC-66QPBQ8jrm4yvK_mPsEubVYw8Mb2KywrYJtJv2Vqj7OkEvNqjNIrzrW-jigoHSmxK5BJ17CVorcezWJhYTvDZtzZ9-fT5YS8Y46ljskyVIJGaUWzZRlX-9mK9m_J1WuIN-50xquBpiopwBalGUkvpzHZwP5JuBUvdkPO8BRy_u04aJu9b1EG1JUpKeVVC3jd3Pv82RStRQZ3KyxWnkxhoV6rxKITbSdPGTNokfUY5uJ-bh_I4jhcZKoi-0MXKfZgnAfAcs72o4nYLKBS6NfmvHi2iKDxzGAddbEa0OKnnTwAconoUuum-BxL0Rchq57SDyzeUdVYtr59aj8OzplyN3-lzw_egmxpqLEtLSFRBLANr3mqHnqawmdXQZdNyeGm16KUG0UnQ7Y-dlqfGTF4ZpbukHuCzTqG-BtrZgywzZztq1p_5E8QLFtPawmk-U-u7Mq21YjMbV1nNXj8GkpoIfhRCjE0faiES5aNEkWY7T5eNcEFhxsRPXe5Ins5I4QKZggkW-WN-jJCwmxERSSs_NwWvIeQSD06GqmzQwJ55xVUtrOS7eFKM8ewzw7HMwekxe9VX2GGb031-h_8W84ukPoNfS5y7hsQrx0sL3vKqbtR5QUVZCQ9pNS-BcpHSQmFnadveEsABENu59VjplGhWcnGpJ5rkIhSMFMi4-p3WEFEoOhTufTXq76ALOa0NWnoynSUt6p0cx1QDTwz-Qp-Gxg65qJ1BdsJpJsqCtakswfHcJwTRYTe2u9fS2QkVGK5gcvZFldcY5yFT93bLMFEkHc-8orfBVlZdjtsKFcHyiSuwmW5i2K2T5IOXIL0Yiwrv2KnM2aEJgoFtE89tzmZp7qCNCz1nNf7wIIJCBI7jBsciNSfr6j-chaKAUST-Wm8DCOkmd51q41KYby5p9iJ3Fh19IC6lr5U65-KT3n8QZTUPgC8oWkFFn4OXD_mWoRfuc8kXtFGmwOePCzId_PJsQ94uMF7JcqdjNq6l_n5880wtxFnnestnhK9p8xplOO5kCgbgFbAE-TmRt7bev0YFicgO_bMlBbqV1s67nWAmztL0sL1Q_Xu-K-HOQZGbwATh-xmRN8ZA9DEkmb0rmTVcqHx789FYm4sehZvv3yTCYag6M9aMRLH7VntyLmnsyhvZbNulWZW87s_8A0g4hVoJ-nlRnee-jkqvJldGBVxEwehUYhItwT3Tx7vyb-iamFOrFuAkdiSr8H2ofu73GJunTLpnTpUPBo6l1uxyTg_yqU77RhyLXB6mm7OQh_5cw9P92uQ48Djpi0kRx2CK2BcOxcFbe4mTYmp__e0orfZp6zGi3VN_vRs7jgef_XwNcOv5lgIClpdv_gRYcRS6f5tHEj_VoEXcx6J4mC-zK3lpVazbqaUeoDfFPir3tE3Tkx8W7xqCHvZGFlS9AKHrTVcXoLRWsEtLGn6geTbpLJQfzv9mcCsW-yaFHJ0_VFahjI33dgNAK22xO4SXc28Q0G-OJEpwtc0pqxiRKNlJUazZlpqE-L6NGl9aEqnQBTbJGgyV1gWsyN3ZAm7qjGwU1iMuEiZCHnx3Cwxcynrai9TqbjTrmrm2SVTGnbWSJfZfHfREML1x1aLaTra7BqskuKR9J8g1oztT9j8TVuK7J-eo2-41-o-xTRx9nEAM2Cjsbh9kPG2vXbqdQnF-uqmobva5BFvJt1NnpbPIsJ6GwoEqBddFELnCxZPda4Xqru6a7cX795X5kwl22QBAC5rNMBeCeEIEd7VaBjZjwohgsLIO3KQVOhn0fBB3IlS_0N7ex7szYwpCgnGf_uwzF_TFs02E_krLvkCOQKkXBMb7OE392g2qsLOQHIAcTtVX9iCJ6ZC8VyBZTfgtPXr4mW3lmS8MUqZXabFMTJ3kkvdEV0_X9vNKUUV6nalwv5bLbyTSEKWyG2ldqi19-B5DhqJLHWN26QvYGsC56HVXBy35e5IfhvKZrDWnony9VZnatRyxJXVoD2oGZ-AzyOp1wOu2OrA_TfzsWHx02OJ_caSJuB5Dc9AT2ez3_pF-jtz2_DbwWXwNPQ5KyuXU6LQ1WmTnn8Ia1sYKJFKNwr5WyCsdvr7tXp5v_bLTdno0zysJrP-xboEOqHda9qNNJN_OtzOoOhaC0SMz7LAWzj4WHGdSvFVP8gSKaXJuIK3DwBXSOCJWkozKnyzvUmmNG2E_t-Iu71K2bHs86kXo8nLSOY-g3BNtf9oW
+          type: reasoning
+        - name: search_tools
+          arguments: "{\"queries\":[\"get_exchange_rate\",\"exchange rate\",\"FX rate\",\"currency conversion\",\"USD/EUR\"]}"
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          type: function_call
+          id: fc_0d87948f8b0f4b0a006b038583115087d28f77a86cf7228f22
+        - type: function_call_output
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          output: "{\"discovered_tools\":[{\"name\":\"get_exchange_rate\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2436"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d87948f8b0f4b0a006b03858419bc87d29e94d86f301f0007
+        object: response
+        created_at: 1795392900
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795392901
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5-2025-08-07
+        moderation: null
+        output:
+        - id: rs_0d87948f8b0f4b0a006b038585274487d29ffe715c5a04b3f1
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABrA4WGRBSGdV9Z7oWgV0zcECxWkg79gFnxHqCh4k5V-lESYQ0s272d4jSAqCYNuDOb1n5hEIDZitvt8a-vfbnpRTTd97xfvZ4WLuGSw2xAOnXpY-jXCvae8WuX0uLpQDDxSMvZ-736pYTCa72CSBygFQc-g70yxwT8wpRSF7dTNIpCgd6TUlX6nBk8n7y5cFRV-pnUZIddEQwt6Eoju17nNsN5_GFhXv_i6RxmDCdSvDGHolFfcL_QhrATwcspDSRlNzGt_2YIvbFEU3lF9t4eIcHIKa2_PrZY5kbIOUv3dxULPyiqUvFrI05W6zv8HR9mCkdj7CCziEqDv_C1wX8IOPD7xnh1H8QfaxO6VThpEwGG4cj9n0UVQ-7WeSkEK-mDfOSn9DScPLjdjXBsYt8RD0r5csk5merY9C6CA5oKLZ91DHbLHLBAm1WKx3uFNH4ffPwMxIh-eHmcZA3IdUAF9DZK4RsJkm76Wf2QyX04mQ6c-NsuD1qHYGeGjJbhaEQ9LRSQpSZiP8PKvOgaYoBtbZqt-sKI74_2UD6Rpe2KQW05yrqE-gqH1wBb5LYUoGN0jYkEIpgcvESLe38Qsl3UOSeNSPPhUbGzMFoc6m0N3RBJX9x6d20lIM3JUXC7Q9Fp6WSLegTetc0rFMkbMemttvG43Dk21YObbKn-_5TrSTxsYHmsypSVKbHk4gWiLXsoNMnMqnGnaWONFIlGw3a1XjasOMpuCyi_WkGQ4WjNZjYZthvOaTEswllfO2NTB_xhIG1E3UBynhwkC_m7FbnpZ-qEX-Z00owPXb3kuhumbGQGREOys2qIEHK5gXKZwxSdiQbsDD5XY1nwZ-F1FrHRQ4F00oW9FHNpyUnlwMgkbOBZWuiQRj9wIbhZQyAwy2LLooBEEoZ8ZBQ0AoTpY4rS6xVkfDHXCbzA7qKY9iuCJM7Kp87O06Yp-1s9-4iLCJTUk49olcFqK5AOCtBwqqCU2N4j3E_Njo2bQw938_GotDZrRQYyScEpH3G7tbxYPZ20D_0oXCstRPekZMo9opHwXmOzyhSIl9u0vxTuVTu3FDegclRuXHgi_otWi6anFq_HKliGZrITjGCR5NhQQqvQPQsqmXX6zpP0o2CHrWNLqobkpnQ6Ue4YbqG2Sp8yRHJBdcya6LnFeur-yRIyOrgvebWdQet9wWkqfV1LvHDHP400ZHo5IeVs_veZ1tpzhC9b9u_4CQ-TLOTz3Ieoz2q6eRCFpCXQMzcqVp3Nj3tO_XCW-mIZTfYhoK3LVRf1qpEjggeVKpFQfBMufdOs7eGSbmcPTM2T7P7Aak6y7eRXAjdPq5eHConxlXX4r1Q_w7c6XjinsPEIK5t8fzS-hYgF99mvsEecmujo3REPoofTiGlivcyNjNKUddKG7Ze-eYgbbWksKS0ICuO_q15QOciccZKA1RBR0rikUR6MK9JOenIHwplLejS2NrFEia_ZwjVNd_u7F3Y2WXzbc4jRT3CfIqBluzuejryYh4dHz9N8DpMRnbthwSKckaPOXJ399TRwPPhL4ez9QFZIvxxBvFttufVloqX4nux39LqbvMC9R9LTqDC24S0Ktd4N5rNqSWYi25ibpMimuMNi-yevtQHonisRPNhlDsxTFT2tBUsYo3ZRmme0_jFxaYhvpV-HduC-DkZEuGggIK11vIb-eCFedpsCG_8yajO6DjXTdQil-Q65ex_TkETAe2YWLO0sFnCvPVa4uz1pv_vVkTQKUKmpEcJSXfvIUNphBoRnu3ezkWrgWtO54Xtf0ds7ZY5AMQNNHtz4bopGWViEfpPf22Y06PUvLvO0xYf0TE1q1M-W0RnbmfrNUt4j7AF2zIiDv1Dz0pVKs43a8y_aD_iU830De_a-8AaG89Wk8u-KZn3mx3Ncd36t0L78GJFSWz1kEd0aDD2_plSJvte7rrXizHYPqV1eQ9-aI0st2ZPU3HI0AJrFPZqn8tmxEEXtxL8WwzI6QZyRCAKH2zv9tzf6MjgEcHqxj9fVtbeDherNWwO35JPmGViLBBUKcKBE79fdYPhHOEK30B-xdhCtZ4MjXIP6hxm-Hu7oNoWl1r2Fr_YOrQItkXVinqKsHSKh4spPqm4NPPL_tHnUNlwAJDaIN7HX4tFveMEPVJ-FF6pHu7b8ezAbt4UOJ4Mkz2vpQNB8Ifr12tK6rDWkzYqi2FSvuq6tWFn2J682aQHRr1J73qy_K1LQmJr8uLN7oMFslD7bf1aTGjOFtnpxtcwiApq5-zkoda-t8EJgh7iUmYTrbvSry9w-4yL6M1uh03AVvQXcpv4o-RkJyx4OheMuHjAqf-3gkkPUaztGZLaR0xl8IuqTtlb2ihMxtTY3NxmARPLryk-0umFxd8qYKfi0ne65mbjVG4wU1aOdtOpl2qKYBad8PPtsIqcC8BaJGXAfGPSAa_P6xwuDTW_m1Q6KxRkambLFqPsL_YuHu9AvUpicbF4QnNMnAb6u6xx4eU2UkCyJ39RScvFfdVZaAUFnMpvmLdTVDIoMzTXuQocYMMUbW2Xo-nxblD7j3nISKCyLkXsAlhZi40xoi6GiMZ_VeZRdfHHrYd2ZqTdENXtSN4Ay9aNSdmv3zJOdcQfTu_f8wiCMMusM2lLKwQz2j_n6dFCXzytjiG782T3NDALHlnLkNbdV11nyrnhl9VU941nJfDVfJ0JzXYEJJZE_Dx3VKLukWwLSczHaApSV19n--fhvgU_okxWktOjLDhjB9-tpIklp6nZXtLYQjZecb0JYPuDPif0RDhO6CsfiB3d_ccMrTg1u2NM_HLeJmiuza0I-OssDqI8t8BZk8uq-g1JhPS3VwWb5uf3QPc7uvBaamyfmI90-0taN3CfWWiUI47lmdiEEABJDUdf1cw9KxzvVIvRWjoaIzgo8Gw==
+          summary: []
+        - id: fc_0d87948f8b0f4b0a006b038585ca2087d28c9ac32357fa9a6c
+          type: function_call
+          status: completed
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          name: get_exchange_rate
+          namespace: get_exchange_rate
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 681
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 116
+          output_tokens_details:
+            reasoning_tokens: 64
+          total_tokens: 797
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-23T00:15:02.534000+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "11343"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WDlL2jSAh61N1ugeLMirmWYKRM21r4asOiCVK0mtYkHyNRY-_TiACCySZ2qcsViPACZRj1yVbmzlrRaDzC4K38njjnN2CiWfBJNd_Mfm7EInpKJcO_3K87rq2VibMBpSs9HagZ-cqOqBxrT-66EwT8hKKAQasa-7zny996tR24cHmSE5HNIrxbe_cOarvQ3UQJPVh36ktMGGd-Y2KAeE0ZgKEuTSbkuCxxUzx75X9rBvoS9y26s_poBmM7sOkmnI0RtQA7nDi8qQCWJQfQAK9LoLEu2BKB0ux6UAY4XnpWCCG59Uoav2KvG9flPR9c88W5MKedj5ANYqg-guTXnJiU_xOXpt81VvJkbkF7GiYGtl4qRqOPGF_D3gScXsoeQP7x8tu9xi9UkaGnkaijzIr4sjmlLXuV26qkzykfN23m6kRlkrOcRcKyHY3em34dlhux5ypNQMO47OQ-jmEbcTzR_VAKzD0lwbvsJQgemH3Z-0wdD10iIa3E5nGr66z1BkCURNlAZPp9ijzyYIjW_SbuvFgMUd5Epy-9n7y_9uI1VMV6W6fereYa5-TPnW76Ze0eDoHniqSnsNi-LhYlTzMrXxS9JkKLj78y__VglGZgupqhfWPvDoXECplN73SgGhPSl4ZnMaKxI5Icn5iPDLGr88Q-go360bxXtfjmZR4TXTcKJ-atuAG2496wv5s435sO5oHMgfx78vXX82dczkUEhkESVql5vSdtJgdDvHGR_FCBUQFXBCUBhtg1zTi08aMpmGYEe8lm4nuB16gvXk-IVFs8X31Fs7B7BpWYUpk_jauQj-V38G-2ijlWneI4qozLkNRSxbXFssNh_M5V9TE7cH8JljUew2-YGCgF1JwLP56YlKn2otHqJJ-516ApIBWulT_k0PUuxTUbCe17EpXt8_-Qsy0OE1trUFyTVisXdfuXFyd8ydrrZSfXt-aOfh86xnP0HUqRMmX5zLQXav7rHnc5XIIe-0VIW09biFPfecgTG_m2v9J7TCoUCTO79pcxzPW7byACoZlE8xTNZf3WhlVxN613f7QHV0W-xogd4qicALnIoPE84OXnXquowea8eoHYTWXabpNgaczjj41d6XkydVkIMBq9hNgItlSMWy4SbeicnADoN9ImLuQq5ABZuB901bghoAhssM7jlGz8YuDtyoA8wWhGJCdtgsiq3_DYQVQ3G6VL4s4cjDh8bEI7yox5d1NWQLTP4JEPCLKvbkzTP-RLySzbDT-2ji06cTTU0jx3fw9bvpTVanoO-V0Ifb3XjkNzmLlRsAUomMkzco55aFMwqFwLpybZZ_ai8uHRDqXNlm1_1LfM3aFusFNnkaBLTgo3fk7CJs653ZGnnUekIJPXlGuIvmWCk9VNhZKArxadPxQHwt4MudIW4nZK7Kp3RD4_meRHBYqSuzlnmAymZzssqulN7NSQ1LLBpC4uLRsFN-TwaBCB5aTGYNNnNh2sg_-msAZxUXo5GQL-gODceEK43UPEhGFmyuHkhG374f8St0ZlpSYNuFGdi4f6vl8UxIhPpJhBiPi1lwHYcGdD_HhB2Hadfxq9YStZDRH6QlbJTVjt9sgjinrGiQvG108diSlnOnGKpWmb5Wao0CJTP3Yaie5D7obnz17olFpI1zisdMeflcvO1nIJU3wnoN9jyydXFryHETSZ16PVbNioE3uosjAq-YR56PBTsxovcEN-GGHJV04SOZyZBsAAqvehZDXmmsvgWre1hIQutzXildntJ-aTHfx8NIBtCwQiLkUzcYFMRBYxOf-CN-XzFKhtn7d_izrZf9c1olVivRjoYTW-9Nee-C4pSpyyy8oi_vl5HIqYJ-i7C0dBI1FpmQPlcVhVqmxLzD-0UXA1-YC4LbBidjOyoSFHEu6HPbjW7QUCbQb4--gTEHDtifTjm_Rn-uQXOWtdUshPTUl-1ZvCBOMNC7VLzr4O6OXDB89uHo46uJ8hkZtw3_BlKGVhfsW5sv4xvjp2LA1auRY1z0cPBeN3NEKkCsOai8GsuffCF2PpTdbn1QXDE2h3j4wrnwlk8BLgdVjTZn-RXT1hnRrVQmCbzEbvONTnUG215H-DscKL9v3wRlb-moTyP14MrQPBhTewER6NTTORKfz74GKtwxHgZHTgjX6_SOQxBu_pKvJ1nqauop3MOoJ7D4FYLWwc5gJcOEyTChi_nMNwukfYlgwyaWjfm3PtzuQCDUDNhR6AzLCZTQmUQORVPyB8Eh9o_XaYMbuWNNuQhIZ_M5MhByCH5IEwpxoFauyQjjOKqz8oV0h_xmjZPq2AdXXQ1kmIAfxPO6knx2Pxm7dzgEvjDer_2_f6P5SSmkfDlI5nZovdb4sd9UJlRS0jw88ci6pT2-3GKhnTUn-HMt-hMQegdseK2iedRtqKFyg37NFZS04csvFKQytw6ZiTCOiiYGLx7yoNIilRAXM6M_1rjj_v4c8BlgPccyjJiC0YWlGetB-lk7k2ZbicO_sVvcMYWK45-Q9-rF_KJbM9IeVSrL5BA81lHPGdvzvaVpEdkT7XHrF4Qd3GJO2mpntoN4AO7x8AivSDeuxETS0AWjAHlhh_DeZ_w3iT2rFwQq2gEJ-MzUZjhsaBu-bWh7Q8y37KIicQpNRT05nahMWisnq3Lf1HTtZlvkSr8tJcKlE-z_qDYqWmboUHN9f8gZ1ITM3_oro_f798CTnohuzOx5YUQ0lGWbyHrjftt8jmsMV1JmImHLVapnt_yOcKWONFVg_GN5Qo4gVd9L89n1WGdTrWl4rOHqV4aZSqxNVIBs8eY-MqkdPSWqrKLglCc257V2F8gLNUwCUsxuLuV4eyXAZ6TqtUVFaXAKy6637N_4VGqMmB26Pppi0nAS3zdotLrG81m4t2ExOCMl8b0T8MAjjyOR4CNaHW2BBLY87wWKwBSNEd9ylE2UGdRjV8jN7Ob6bbkW1fiRNiVZ1hEbvx7TYO69TuF7bFF_K0taNyDyCMCN_ofa6m60YUvuVnLsWCar0OuIPzvfAEoQBvm5fjXm1MQrEFcWA9Ly83muJmy3ndzG631_QBUQBOEQCBQ617Y7Ebml6iWyLdMVvwk0Md_AW-UXRfRQ8e3wDKrc5_IyPhMPZ-kMv40clfqCf97B_lvnwXbWR2TEa1-7CTnRlY1dOnT-O6IrTn_7nJz44WJnSI1s_t8vcpSxlXE6FNbvVofHP8RW-6rKX_DrDJHa_uUmnq59dt1xM181a9Z773p7CXXzjr-PZkrtcAEc9r-h52pj0UYiiPKFkeuQh2TjtVArt0gGkkIGsO5uitiDn7bcPy5h0qe4nibJNLMjH1wAsjmoLqgEC0oGkW3KXbiwQr9yb2Oh3suvKej1GMOuj7ffCUhcl70R9aeJxO3BbRQLVDLYnezZ1pd9RjpoLuiQRLFfNHkRjEOifVXDPW1go03S4Ts0G8NdCuvlibvLHjD-LzqzDH8-xMj2AxyTS1YAkOuEbNe-leaUklVPq7nvEY2DjeqaOEO9CMWmj1jd7o36KzuqfOKr5EFh9RjafynxaO5T5dLqDIdBgvPOCFiIX2unYSILJXyvkcup-roN9QlnA5bUab_VNQpF7a5PuDNnTxSu5joEw7XNtzvq5A__niV5yAgVZJYpQn7-4Bs4G5bBMdMwMn7dvo1_IMEEiiMWuYGlaohEwn8d-h7G1AZ9OZ4QXgOAdXWoJIwjnsZu-0db-O2Nz6YP0XiaYscd7m1oKZUIGJ0zjdXiJKKNkAwkObZx4HfDJCnFQteXCIQz9KA9XmHDGild8V1Yi36zi-RfJG6PbW5PcZkIY4ORxdMY6_--8qCgsR-eZBLicQDliKiLUkYcI9C9ayxVfVKuLyC_ULcC-66QPBQ8jrm4yvK_mPsEubVYw8Mb2KywrYJtJv2Vqj7OkEvNqjNIrzrW-jigoHSmxK5BJ17CVorcezWJhYTvDZtzZ9-fT5YS8Y46ljskyVIJGaUWzZRlX-9mK9m_J1WuIN-50xquBpiopwBalGUkvpzHZwP5JuBUvdkPO8BRy_u04aJu9b1EG1JUpKeVVC3jd3Pv82RStRQZ3KyxWnkxhoV6rxKITbSdPGTNokfUY5uJ-bh_I4jhcZKoi-0MXKfZgnAfAcs72o4nYLKBS6NfmvHi2iKDxzGAddbEa0OKnnTwAconoUuum-BxL0Rchq57SDyzeUdVYtr59aj8OzplyN3-lzw_egmxpqLEtLSFRBLANr3mqHnqawmdXQZdNyeGm16KUG0UnQ7Y-dlqfGTF4ZpbukHuCzTqG-BtrZgywzZztq1p_5E8QLFtPawmk-U-u7Mq21YjMbV1nNXj8GkpoIfhRCjE0faiES5aNEkWY7T5eNcEFhxsRPXe5Ins5I4QKZggkW-WN-jJCwmxERSSs_NwWvIeQSD06GqmzQwJ55xVUtrOS7eFKM8ewzw7HMwekxe9VX2GGb031-h_8W84ukPoNfS5y7hsQrx0sL3vKqbtR5QUVZCQ9pNS-BcpHSQmFnadveEsABENu59VjplGhWcnGpJ5rkIhSMFMi4-p3WEFEoOhTufTXq76ALOa0NWnoynSUt6p0cx1QDTwz-Qp-Gxg65qJ1BdsJpJsqCtakswfHcJwTRYTe2u9fS2QkVGK5gcvZFldcY5yFT93bLMFEkHc-8orfBVlZdjtsKFcHyiSuwmW5i2K2T5IOXIL0Yiwrv2KnM2aEJgoFtE89tzmZp7qCNCz1nNf7wIIJCBI7jBsciNSfr6j-chaKAUST-Wm8DCOkmd51q41KYby5p9iJ3Fh19IC6lr5U65-KT3n8QZTUPgC8oWkFFn4OXD_mWoRfuc8kXtFGmwOePCzId_PJsQ94uMF7JcqdjNq6l_n5880wtxFnnestnhK9p8xplOO5kCgbgFbAE-TmRt7bev0YFicgO_bMlBbqV1s67nWAmztL0sL1Q_Xu-K-HOQZGbwATh-xmRN8ZA9DEkmb0rmTVcqHx789FYm4sehZvv3yTCYag6M9aMRLH7VntyLmnsyhvZbNulWZW87s_8A0g4hVoJ-nlRnee-jkqvJldGBVxEwehUYhItwT3Tx7vyb-iamFOrFuAkdiSr8H2ofu73GJunTLpnTpUPBo6l1uxyTg_yqU77RhyLXB6mm7OQh_5cw9P92uQ48Djpi0kRx2CK2BcOxcFbe4mTYmp__e0orfZp6zGi3VN_vRs7jgef_XwNcOv5lgIClpdv_gRYcRS6f5tHEj_VoEXcx6J4mC-zK3lpVazbqaUeoDfFPir3tE3Tkx8W7xqCHvZGFlS9AKHrTVcXoLRWsEtLGn6geTbpLJQfzv9mcCsW-yaFHJ0_VFahjI33dgNAK22xO4SXc28Q0G-OJEpwtc0pqxiRKNlJUazZlpqE-L6NGl9aEqnQBTbJGgyV1gWsyN3ZAm7qjGwU1iMuEiZCHnx3Cwxcynrai9TqbjTrmrm2SVTGnbWSJfZfHfREML1x1aLaTra7BqskuKR9J8g1oztT9j8TVuK7J-eo2-41-o-xTRx9nEAM2Cjsbh9kPG2vXbqdQnF-uqmobva5BFvJt1NnpbPIsJ6GwoEqBddFELnCxZPda4Xqru6a7cX795X5kwl22QBAC5rNMBeCeEIEd7VaBjZjwohgsLIO3KQVOhn0fBB3IlS_0N7ex7szYwpCgnGf_uwzF_TFs02E_krLvkCOQKkXBMb7OE392g2qsLOQHIAcTtVX9iCJ6ZC8VyBZTfgtPXr4mW3lmS8MUqZXabFMTJ3kkvdEV0_X9vNKUUV6nalwv5bLbyTSEKWyG2ldqi19-B5DhqJLHWN26QvYGsC56HVXBy35e5IfhvKZrDWnony9VZnatRyxJXVoD2oGZ-AzyOp1wOu2OrA_TfzsWHx02OJ_caSJuB5Dc9AT2ez3_pF-jtz2_DbwWXwNPQ5KyuXU6LQ1WmTnn8Ia1sYKJFKNwr5WyCsdvr7tXp5v_bLTdno0zysJrP-xboEOqHda9qNNJN_OtzOoOhaC0SMz7LAWzj4WHGdSvFVP8gSKaXJuIK3DwBXSOCJWkozKnyzvUmmNG2E_t-Iu71K2bHs86kXo8nLSOY-g3BNtf9oW
+          type: reasoning
+        - name: search_tools
+          arguments: "{\"queries\":[\"get_exchange_rate\",\"exchange rate\",\"FX rate\",\"currency conversion\",\"USD/EUR\"]}"
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          type: function_call
+          id: fc_0d87948f8b0f4b0a006b038583115087d28f77a86cf7228f22
+        - type: function_call_output
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          output: "{\"discovered_tools\":[{\"name\":\"get_exchange_rate\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+        - id: rs_0d87948f8b0f4b0a006b038585274487d29ffe715c5a04b3f1
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WGRBSGdV9Z7oWgV0zcECxWkg79gFnxHqCh4k5V-lESYQ0s272d4jSAqCYNuDOb1n5hEIDZitvt8a-vfbnpRTTd97xfvZ4WLuGSw2xAOnXpY-jXCvae8WuX0uLpQDDxSMvZ-736pYTCa72CSBygFQc-g70yxwT8wpRSF7dTNIpCgd6TUlX6nBk8n7y5cFRV-pnUZIddEQwt6Eoju17nNsN5_GFhXv_i6RxmDCdSvDGHolFfcL_QhrATwcspDSRlNzGt_2YIvbFEU3lF9t4eIcHIKa2_PrZY5kbIOUv3dxULPyiqUvFrI05W6zv8HR9mCkdj7CCziEqDv_C1wX8IOPD7xnh1H8QfaxO6VThpEwGG4cj9n0UVQ-7WeSkEK-mDfOSn9DScPLjdjXBsYt8RD0r5csk5merY9C6CA5oKLZ91DHbLHLBAm1WKx3uFNH4ffPwMxIh-eHmcZA3IdUAF9DZK4RsJkm76Wf2QyX04mQ6c-NsuD1qHYGeGjJbhaEQ9LRSQpSZiP8PKvOgaYoBtbZqt-sKI74_2UD6Rpe2KQW05yrqE-gqH1wBb5LYUoGN0jYkEIpgcvESLe38Qsl3UOSeNSPPhUbGzMFoc6m0N3RBJX9x6d20lIM3JUXC7Q9Fp6WSLegTetc0rFMkbMemttvG43Dk21YObbKn-_5TrSTxsYHmsypSVKbHk4gWiLXsoNMnMqnGnaWONFIlGw3a1XjasOMpuCyi_WkGQ4WjNZjYZthvOaTEswllfO2NTB_xhIG1E3UBynhwkC_m7FbnpZ-qEX-Z00owPXb3kuhumbGQGREOys2qIEHK5gXKZwxSdiQbsDD5XY1nwZ-F1FrHRQ4F00oW9FHNpyUnlwMgkbOBZWuiQRj9wIbhZQyAwy2LLooBEEoZ8ZBQ0AoTpY4rS6xVkfDHXCbzA7qKY9iuCJM7Kp87O06Yp-1s9-4iLCJTUk49olcFqK5AOCtBwqqCU2N4j3E_Njo2bQw938_GotDZrRQYyScEpH3G7tbxYPZ20D_0oXCstRPekZMo9opHwXmOzyhSIl9u0vxTuVTu3FDegclRuXHgi_otWi6anFq_HKliGZrITjGCR5NhQQqvQPQsqmXX6zpP0o2CHrWNLqobkpnQ6Ue4YbqG2Sp8yRHJBdcya6LnFeur-yRIyOrgvebWdQet9wWkqfV1LvHDHP400ZHo5IeVs_veZ1tpzhC9b9u_4CQ-TLOTz3Ieoz2q6eRCFpCXQMzcqVp3Nj3tO_XCW-mIZTfYhoK3LVRf1qpEjggeVKpFQfBMufdOs7eGSbmcPTM2T7P7Aak6y7eRXAjdPq5eHConxlXX4r1Q_w7c6XjinsPEIK5t8fzS-hYgF99mvsEecmujo3REPoofTiGlivcyNjNKUddKG7Ze-eYgbbWksKS0ICuO_q15QOciccZKA1RBR0rikUR6MK9JOenIHwplLejS2NrFEia_ZwjVNd_u7F3Y2WXzbc4jRT3CfIqBluzuejryYh4dHz9N8DpMRnbthwSKckaPOXJ399TRwPPhL4ez9QFZIvxxBvFttufVloqX4nux39LqbvMC9R9LTqDC24S0Ktd4N5rNqSWYi25ibpMimuMNi-yevtQHonisRPNhlDsxTFT2tBUsYo3ZRmme0_jFxaYhvpV-HduC-DkZEuGggIK11vIb-eCFedpsCG_8yajO6DjXTdQil-Q65ex_TkETAe2YWLO0sFnCvPVa4uz1pv_vVkTQKUKmpEcJSXfvIUNphBoRnu3ezkWrgWtO54Xtf0ds7ZY5AMQNNHtz4bopGWViEfpPf22Y06PUvLvO0xYf0TE1q1M-W0RnbmfrNUt4j7AF2zIiDv1Dz0pVKs43a8y_aD_iU830De_a-8AaG89Wk8u-KZn3mx3Ncd36t0L78GJFSWz1kEd0aDD2_plSJvte7rrXizHYPqV1eQ9-aI0st2ZPU3HI0AJrFPZqn8tmxEEXtxL8WwzI6QZyRCAKH2zv9tzf6MjgEcHqxj9fVtbeDherNWwO35JPmGViLBBUKcKBE79fdYPhHOEK30B-xdhCtZ4MjXIP6hxm-Hu7oNoWl1r2Fr_YOrQItkXVinqKsHSKh4spPqm4NPPL_tHnUNlwAJDaIN7HX4tFveMEPVJ-FF6pHu7b8ezAbt4UOJ4Mkz2vpQNB8Ifr12tK6rDWkzYqi2FSvuq6tWFn2J682aQHRr1J73qy_K1LQmJr8uLN7oMFslD7bf1aTGjOFtnpxtcwiApq5-zkoda-t8EJgh7iUmYTrbvSry9w-4yL6M1uh03AVvQXcpv4o-RkJyx4OheMuHjAqf-3gkkPUaztGZLaR0xl8IuqTtlb2ihMxtTY3NxmARPLryk-0umFxd8qYKfi0ne65mbjVG4wU1aOdtOpl2qKYBad8PPtsIqcC8BaJGXAfGPSAa_P6xwuDTW_m1Q6KxRkambLFqPsL_YuHu9AvUpicbF4QnNMnAb6u6xx4eU2UkCyJ39RScvFfdVZaAUFnMpvmLdTVDIoMzTXuQocYMMUbW2Xo-nxblD7j3nISKCyLkXsAlhZi40xoi6GiMZ_VeZRdfHHrYd2ZqTdENXtSN4Ay9aNSdmv3zJOdcQfTu_f8wiCMMusM2lLKwQz2j_n6dFCXzytjiG782T3NDALHlnLkNbdV11nyrnhl9VU941nJfDVfJ0JzXYEJJZE_Dx3VKLukWwLSczHaApSV19n--fhvgU_okxWktOjLDhjB9-tpIklp6nZXtLYQjZecb0JYPuDPif0RDhO6CsfiB3d_ccMrTg1u2NM_HLeJmiuza0I-OssDqI8t8BZk8uq-g1JhPS3VwWb5uf3QPc7uvBaamyfmI90-0taN3CfWWiUI47lmdiEEABJDUdf1cw9KxzvVIvRWjoaIzgo8Gw==
+          type: reasoning
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          type: function_call
+          id: fc_0d87948f8b0f4b0a006b038585ca2087d28c9ac32357fa9a6c
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          output: "USD/EUR: 0.92"
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1260"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d87948f8b0f4b0a006b0385869ad487d28d7eaa3c5df5b711
+        object: response
+        created_at: 1795392902
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795392903
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5-2025-08-07
+        moderation: null
+        output:
+        - id: msg_0d87948f8b0f4b0a006b0385871ef087d28bf0ae2c684d62a8
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: The current USD/EUR exchange rate is 0.92.
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 819
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 17
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 836
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-23T00:15:03.856853+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "11074"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WDlL2jSAh61N1ugeLMirmWYKRM21r4asOiCVK0mtYkHyNRY-_TiACCySZ2qcsViPACZRj1yVbmzlrRaDzC4K38njjnN2CiWfBJNd_Mfm7EInpKJcO_3K87rq2VibMBpSs9HagZ-cqOqBxrT-66EwT8hKKAQasa-7zny996tR24cHmSE5HNIrxbe_cOarvQ3UQJPVh36ktMGGd-Y2KAeE0ZgKEuTSbkuCxxUzx75X9rBvoS9y26s_poBmM7sOkmnI0RtQA7nDi8qQCWJQfQAK9LoLEu2BKB0ux6UAY4XnpWCCG59Uoav2KvG9flPR9c88W5MKedj5ANYqg-guTXnJiU_xOXpt81VvJkbkF7GiYGtl4qRqOPGF_D3gScXsoeQP7x8tu9xi9UkaGnkaijzIr4sjmlLXuV26qkzykfN23m6kRlkrOcRcKyHY3em34dlhux5ypNQMO47OQ-jmEbcTzR_VAKzD0lwbvsJQgemH3Z-0wdD10iIa3E5nGr66z1BkCURNlAZPp9ijzyYIjW_SbuvFgMUd5Epy-9n7y_9uI1VMV6W6fereYa5-TPnW76Ze0eDoHniqSnsNi-LhYlTzMrXxS9JkKLj78y__VglGZgupqhfWPvDoXECplN73SgGhPSl4ZnMaKxI5Icn5iPDLGr88Q-go360bxXtfjmZR4TXTcKJ-atuAG2496wv5s435sO5oHMgfx78vXX82dczkUEhkESVql5vSdtJgdDvHGR_FCBUQFXBCUBhtg1zTi08aMpmGYEe8lm4nuB16gvXk-IVFs8X31Fs7B7BpWYUpk_jauQj-V38G-2ijlWneI4qozLkNRSxbXFssNh_M5V9TE7cH8JljUew2-YGCgF1JwLP56YlKn2otHqJJ-516ApIBWulT_k0PUuxTUbCe17EpXt8_-Qsy0OE1trUFyTVisXdfuXFyd8ydrrZSfXt-aOfh86xnP0HUqRMmX5zLQXav7rHnc5XIIe-0VIW09biFPfecgTG_m2v9J7TCoUCTO79pcxzPW7byACoZlE8xTNZf3WhlVxN613f7QHV0W-xogd4qicALnIoPE84OXnXquowea8eoHYTWXabpNgaczjj41d6XkydVkIMBq9hNgItlSMWy4SbeicnADoN9ImLuQq5ABZuB901bghoAhssM7jlGz8YuDtyoA8wWhGJCdtgsiq3_DYQVQ3G6VL4s4cjDh8bEI7yox5d1NWQLTP4JEPCLKvbkzTP-RLySzbDT-2ji06cTTU0jx3fw9bvpTVanoO-V0Ifb3XjkNzmLlRsAUomMkzco55aFMwqFwLpybZZ_ai8uHRDqXNlm1_1LfM3aFusFNnkaBLTgo3fk7CJs653ZGnnUekIJPXlGuIvmWCk9VNhZKArxadPxQHwt4MudIW4nZK7Kp3RD4_meRHBYqSuzlnmAymZzssqulN7NSQ1LLBpC4uLRsFN-TwaBCB5aTGYNNnNh2sg_-msAZxUXo5GQL-gODceEK43UPEhGFmyuHkhG374f8St0ZlpSYNuFGdi4f6vl8UxIhPpJhBiPi1lwHYcGdD_HhB2Hadfxq9YStZDRH6QlbJTVjt9sgjinrGiQvG108diSlnOnGKpWmb5Wao0CJTP3Yaie5D7obnz17olFpI1zisdMeflcvO1nIJU3wnoN9jyydXFryHETSZ16PVbNioE3uosjAq-YR56PBTsxovcEN-GGHJV04SOZyZBsAAqvehZDXmmsvgWre1hIQutzXildntJ-aTHfx8NIBtCwQiLkUzcYFMRBYxOf-CN-XzFKhtn7d_izrZf9c1olVivRjoYTW-9Nee-C4pSpyyy8oi_vl5HIqYJ-i7C0dBI1FpmQPlcVhVqmxLzD-0UXA1-YC4LbBidjOyoSFHEu6HPbjW7QUCbQb4--gTEHDtifTjm_Rn-uQXOWtdUshPTUl-1ZvCBOMNC7VLzr4O6OXDB89uHo46uJ8hkZtw3_BlKGVhfsW5sv4xvjp2LA1auRY1z0cPBeN3NEKkCsOai8GsuffCF2PpTdbn1QXDE2h3j4wrnwlk8BLgdVjTZn-RXT1hnRrVQmCbzEbvONTnUG215H-DscKL9v3wRlb-moTyP14MrQPBhTewER6NTTORKfz74GKtwxHgZHTgjX6_SOQxBu_pKvJ1nqauop3MOoJ7D4FYLWwc5gJcOEyTChi_nMNwukfYlgwyaWjfm3PtzuQCDUDNhR6AzLCZTQmUQORVPyB8Eh9o_XaYMbuWNNuQhIZ_M5MhByCH5IEwpxoFauyQjjOKqz8oV0h_xmjZPq2AdXXQ1kmIAfxPO6knx2Pxm7dzgEvjDer_2_f6P5SSmkfDlI5nZovdb4sd9UJlRS0jw88ci6pT2-3GKhnTUn-HMt-hMQegdseK2iedRtqKFyg37NFZS04csvFKQytw6ZiTCOiiYGLx7yoNIilRAXM6M_1rjj_v4c8BlgPccyjJiC0YWlGetB-lk7k2ZbicO_sVvcMYWK45-Q9-rF_KJbM9IeVSrL5BA81lHPGdvzvaVpEdkT7XHrF4Qd3GJO2mpntoN4AO7x8AivSDeuxETS0AWjAHlhh_DeZ_w3iT2rFwQq2gEJ-MzUZjhsaBu-bWh7Q8y37KIicQpNRT05nahMWisnq3Lf1HTtZlvkSr8tJcKlE-z_qDYqWmboUHN9f8gZ1ITM3_oro_f798CTnohuzOx5YUQ0lGWbyHrjftt8jmsMV1JmImHLVapnt_yOcKWONFVg_GN5Qo4gVd9L89n1WGdTrWl4rOHqV4aZSqxNVIBs8eY-MqkdPSWqrKLglCc257V2F8gLNUwCUsxuLuV4eyXAZ6TqtUVFaXAKy6637N_4VGqMmB26Pppi0nAS3zdotLrG81m4t2ExOCMl8b0T8MAjjyOR4CNaHW2BBLY87wWKwBSNEd9ylE2UGdRjV8jN7Ob6bbkW1fiRNiVZ1hEbvx7TYO69TuF7bFF_K0taNyDyCMCN_ofa6m60YUvuVnLsWCar0OuIPzvfAEoQBvm5fjXm1MQrEFcWA9Ly83muJmy3ndzG631_QBUQBOEQCBQ617Y7Ebml6iWyLdMVvwk0Md_AW-UXRfRQ8e3wDKrc5_IyPhMPZ-kMv40clfqCf97B_lvnwXbWR2TEa1-7CTnRlY1dOnT-O6IrTn_7nJz44WJnSI1s_t8vcpSxlXE6FNbvVofHP8RW-6rKX_DrDJHa_uUmnq59dt1xM181a9Z773p7CXXzjr-PZkrtcAEc9r-h52pj0UYiiPKFkeuQh2TjtVArt0gGkkIGsO5uitiDn7bcPy5h0qe4nibJNLMjH1wAsjmoLqgEC0oGkW3KXbiwQr9yb2Oh3suvKej1GMOuj7ffCUhcl70R9aeJxO3BbRQLVDLYnezZ1pd9RjpoLuiQRLFfNHkRjEOifVXDPW1go03S4Ts0G8NdCuvlibvLHjD-LzqzDH8-xMj2AxyTS1YAkOuEbNe-leaUklVPq7nvEY2DjeqaOEO9CMWmj1jd7o36KzuqfOKr5EFh9RjafynxaO5T5dLqDIdBgvPOCFiIX2unYSILJXyvkcup-roN9QlnA5bUab_VNQpF7a5PuDNnTxSu5joEw7XNtzvq5A__niV5yAgVZJYpQn7-4Bs4G5bBMdMwMn7dvo1_IMEEiiMWuYGlaohEwn8d-h7G1AZ9OZ4QXgOAdXWoJIwjnsZu-0db-O2Nz6YP0XiaYscd7m1oKZUIGJ0zjdXiJKKNkAwkObZx4HfDJCnFQteXCIQz9KA9XmHDGild8V1Yi36zi-RfJG6PbW5PcZkIY4ORxdMY6_--8qCgsR-eZBLicQDliKiLUkYcI9C9ayxVfVKuLyC_ULcC-66QPBQ8jrm4yvK_mPsEubVYw8Mb2KywrYJtJv2Vqj7OkEvNqjNIrzrW-jigoHSmxK5BJ17CVorcezWJhYTvDZtzZ9-fT5YS8Y46ljskyVIJGaUWzZRlX-9mK9m_J1WuIN-50xquBpiopwBalGUkvpzHZwP5JuBUvdkPO8BRy_u04aJu9b1EG1JUpKeVVC3jd3Pv82RStRQZ3KyxWnkxhoV6rxKITbSdPGTNokfUY5uJ-bh_I4jhcZKoi-0MXKfZgnAfAcs72o4nYLKBS6NfmvHi2iKDxzGAddbEa0OKnnTwAconoUuum-BxL0Rchq57SDyzeUdVYtr59aj8OzplyN3-lzw_egmxpqLEtLSFRBLANr3mqHnqawmdXQZdNyeGm16KUG0UnQ7Y-dlqfGTF4ZpbukHuCzTqG-BtrZgywzZztq1p_5E8QLFtPawmk-U-u7Mq21YjMbV1nNXj8GkpoIfhRCjE0faiES5aNEkWY7T5eNcEFhxsRPXe5Ins5I4QKZggkW-WN-jJCwmxERSSs_NwWvIeQSD06GqmzQwJ55xVUtrOS7eFKM8ewzw7HMwekxe9VX2GGb031-h_8W84ukPoNfS5y7hsQrx0sL3vKqbtR5QUVZCQ9pNS-BcpHSQmFnadveEsABENu59VjplGhWcnGpJ5rkIhSMFMi4-p3WEFEoOhTufTXq76ALOa0NWnoynSUt6p0cx1QDTwz-Qp-Gxg65qJ1BdsJpJsqCtakswfHcJwTRYTe2u9fS2QkVGK5gcvZFldcY5yFT93bLMFEkHc-8orfBVlZdjtsKFcHyiSuwmW5i2K2T5IOXIL0Yiwrv2KnM2aEJgoFtE89tzmZp7qCNCz1nNf7wIIJCBI7jBsciNSfr6j-chaKAUST-Wm8DCOkmd51q41KYby5p9iJ3Fh19IC6lr5U65-KT3n8QZTUPgC8oWkFFn4OXD_mWoRfuc8kXtFGmwOePCzId_PJsQ94uMF7JcqdjNq6l_n5880wtxFnnestnhK9p8xplOO5kCgbgFbAE-TmRt7bev0YFicgO_bMlBbqV1s67nWAmztL0sL1Q_Xu-K-HOQZGbwATh-xmRN8ZA9DEkmb0rmTVcqHx789FYm4sehZvv3yTCYag6M9aMRLH7VntyLmnsyhvZbNulWZW87s_8A0g4hVoJ-nlRnee-jkqvJldGBVxEwehUYhItwT3Tx7vyb-iamFOrFuAkdiSr8H2ofu73GJunTLpnTpUPBo6l1uxyTg_yqU77RhyLXB6mm7OQh_5cw9P92uQ48Djpi0kRx2CK2BcOxcFbe4mTYmp__e0orfZp6zGi3VN_vRs7jgef_XwNcOv5lgIClpdv_gRYcRS6f5tHEj_VoEXcx6J4mC-zK3lpVazbqaUeoDfFPir3tE3Tkx8W7xqCHvZGFlS9AKHrTVcXoLRWsEtLGn6geTbpLJQfzv9mcCsW-yaFHJ0_VFahjI33dgNAK22xO4SXc28Q0G-OJEpwtc0pqxiRKNlJUazZlpqE-L6NGl9aEqnQBTbJGgyV1gWsyN3ZAm7qjGwU1iMuEiZCHnx3Cwxcynrai9TqbjTrmrm2SVTGnbWSJfZfHfREML1x1aLaTra7BqskuKR9J8g1oztT9j8TVuK7J-eo2-41-o-xTRx9nEAM2Cjsbh9kPG2vXbqdQnF-uqmobva5BFvJt1NnpbPIsJ6GwoEqBddFELnCxZPda4Xqru6a7cX795X5kwl22QBAC5rNMBeCeEIEd7VaBjZjwohgsLIO3KQVOhn0fBB3IlS_0N7ex7szYwpCgnGf_uwzF_TFs02E_krLvkCOQKkXBMb7OE392g2qsLOQHIAcTtVX9iCJ6ZC8VyBZTfgtPXr4mW3lmS8MUqZXabFMTJ3kkvdEV0_X9vNKUUV6nalwv5bLbyTSEKWyG2ldqi19-B5DhqJLHWN26QvYGsC56HVXBy35e5IfhvKZrDWnony9VZnatRyxJXVoD2oGZ-AzyOp1wOu2OrA_TfzsWHx02OJ_caSJuB5Dc9AT2ez3_pF-jtz2_DbwWXwNPQ5KyuXU6LQ1WmTnn8Ia1sYKJFKNwr5WyCsdvr7tXp5v_bLTdno0zysJrP-xboEOqHda9qNNJN_OtzOoOhaC0SMz7LAWzj4WHGdSvFVP8gSKaXJuIK3DwBXSOCJWkozKnyzvUmmNG2E_t-Iu71K2bHs86kXo8nLSOY-g3BNtf9oW
+          type: reasoning
+        - type: tool_search_call
+          execution: client
+          arguments:
+            queries:
+            - get_exchange_rate
+            - exchange rate
+            - FX rate
+            - currency conversion
+            - USD/EUR
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          status: completed
+        - type: tool_search_output
+          execution: client
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+            defer_loading: true
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          status: completed
+        - id: rs_0d87948f8b0f4b0a006b038585274487d29ffe715c5a04b3f1
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WGRBSGdV9Z7oWgV0zcECxWkg79gFnxHqCh4k5V-lESYQ0s272d4jSAqCYNuDOb1n5hEIDZitvt8a-vfbnpRTTd97xfvZ4WLuGSw2xAOnXpY-jXCvae8WuX0uLpQDDxSMvZ-736pYTCa72CSBygFQc-g70yxwT8wpRSF7dTNIpCgd6TUlX6nBk8n7y5cFRV-pnUZIddEQwt6Eoju17nNsN5_GFhXv_i6RxmDCdSvDGHolFfcL_QhrATwcspDSRlNzGt_2YIvbFEU3lF9t4eIcHIKa2_PrZY5kbIOUv3dxULPyiqUvFrI05W6zv8HR9mCkdj7CCziEqDv_C1wX8IOPD7xnh1H8QfaxO6VThpEwGG4cj9n0UVQ-7WeSkEK-mDfOSn9DScPLjdjXBsYt8RD0r5csk5merY9C6CA5oKLZ91DHbLHLBAm1WKx3uFNH4ffPwMxIh-eHmcZA3IdUAF9DZK4RsJkm76Wf2QyX04mQ6c-NsuD1qHYGeGjJbhaEQ9LRSQpSZiP8PKvOgaYoBtbZqt-sKI74_2UD6Rpe2KQW05yrqE-gqH1wBb5LYUoGN0jYkEIpgcvESLe38Qsl3UOSeNSPPhUbGzMFoc6m0N3RBJX9x6d20lIM3JUXC7Q9Fp6WSLegTetc0rFMkbMemttvG43Dk21YObbKn-_5TrSTxsYHmsypSVKbHk4gWiLXsoNMnMqnGnaWONFIlGw3a1XjasOMpuCyi_WkGQ4WjNZjYZthvOaTEswllfO2NTB_xhIG1E3UBynhwkC_m7FbnpZ-qEX-Z00owPXb3kuhumbGQGREOys2qIEHK5gXKZwxSdiQbsDD5XY1nwZ-F1FrHRQ4F00oW9FHNpyUnlwMgkbOBZWuiQRj9wIbhZQyAwy2LLooBEEoZ8ZBQ0AoTpY4rS6xVkfDHXCbzA7qKY9iuCJM7Kp87O06Yp-1s9-4iLCJTUk49olcFqK5AOCtBwqqCU2N4j3E_Njo2bQw938_GotDZrRQYyScEpH3G7tbxYPZ20D_0oXCstRPekZMo9opHwXmOzyhSIl9u0vxTuVTu3FDegclRuXHgi_otWi6anFq_HKliGZrITjGCR5NhQQqvQPQsqmXX6zpP0o2CHrWNLqobkpnQ6Ue4YbqG2Sp8yRHJBdcya6LnFeur-yRIyOrgvebWdQet9wWkqfV1LvHDHP400ZHo5IeVs_veZ1tpzhC9b9u_4CQ-TLOTz3Ieoz2q6eRCFpCXQMzcqVp3Nj3tO_XCW-mIZTfYhoK3LVRf1qpEjggeVKpFQfBMufdOs7eGSbmcPTM2T7P7Aak6y7eRXAjdPq5eHConxlXX4r1Q_w7c6XjinsPEIK5t8fzS-hYgF99mvsEecmujo3REPoofTiGlivcyNjNKUddKG7Ze-eYgbbWksKS0ICuO_q15QOciccZKA1RBR0rikUR6MK9JOenIHwplLejS2NrFEia_ZwjVNd_u7F3Y2WXzbc4jRT3CfIqBluzuejryYh4dHz9N8DpMRnbthwSKckaPOXJ399TRwPPhL4ez9QFZIvxxBvFttufVloqX4nux39LqbvMC9R9LTqDC24S0Ktd4N5rNqSWYi25ibpMimuMNi-yevtQHonisRPNhlDsxTFT2tBUsYo3ZRmme0_jFxaYhvpV-HduC-DkZEuGggIK11vIb-eCFedpsCG_8yajO6DjXTdQil-Q65ex_TkETAe2YWLO0sFnCvPVa4uz1pv_vVkTQKUKmpEcJSXfvIUNphBoRnu3ezkWrgWtO54Xtf0ds7ZY5AMQNNHtz4bopGWViEfpPf22Y06PUvLvO0xYf0TE1q1M-W0RnbmfrNUt4j7AF2zIiDv1Dz0pVKs43a8y_aD_iU830De_a-8AaG89Wk8u-KZn3mx3Ncd36t0L78GJFSWz1kEd0aDD2_plSJvte7rrXizHYPqV1eQ9-aI0st2ZPU3HI0AJrFPZqn8tmxEEXtxL8WwzI6QZyRCAKH2zv9tzf6MjgEcHqxj9fVtbeDherNWwO35JPmGViLBBUKcKBE79fdYPhHOEK30B-xdhCtZ4MjXIP6hxm-Hu7oNoWl1r2Fr_YOrQItkXVinqKsHSKh4spPqm4NPPL_tHnUNlwAJDaIN7HX4tFveMEPVJ-FF6pHu7b8ezAbt4UOJ4Mkz2vpQNB8Ifr12tK6rDWkzYqi2FSvuq6tWFn2J682aQHRr1J73qy_K1LQmJr8uLN7oMFslD7bf1aTGjOFtnpxtcwiApq5-zkoda-t8EJgh7iUmYTrbvSry9w-4yL6M1uh03AVvQXcpv4o-RkJyx4OheMuHjAqf-3gkkPUaztGZLaR0xl8IuqTtlb2ihMxtTY3NxmARPLryk-0umFxd8qYKfi0ne65mbjVG4wU1aOdtOpl2qKYBad8PPtsIqcC8BaJGXAfGPSAa_P6xwuDTW_m1Q6KxRkambLFqPsL_YuHu9AvUpicbF4QnNMnAb6u6xx4eU2UkCyJ39RScvFfdVZaAUFnMpvmLdTVDIoMzTXuQocYMMUbW2Xo-nxblD7j3nISKCyLkXsAlhZi40xoi6GiMZ_VeZRdfHHrYd2ZqTdENXtSN4Ay9aNSdmv3zJOdcQfTu_f8wiCMMusM2lLKwQz2j_n6dFCXzytjiG782T3NDALHlnLkNbdV11nyrnhl9VU941nJfDVfJ0JzXYEJJZE_Dx3VKLukWwLSczHaApSV19n--fhvgU_okxWktOjLDhjB9-tpIklp6nZXtLYQjZecb0JYPuDPif0RDhO6CsfiB3d_ccMrTg1u2NM_HLeJmiuza0I-OssDqI8t8BZk8uq-g1JhPS3VwWb5uf3QPc7uvBaamyfmI90-0taN3CfWWiUI47lmdiEEABJDUdf1cw9KxzvVIvRWjoaIzgo8Gw==
+          type: reasoning
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          type: function_call
+          id: fc_0d87948f8b0f4b0a006b038585ca2087d28c9ac32357fa9a6c
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          output: "USD/EUR: 0.92"
+        - role: assistant
+          id: msg_0d87948f8b0f4b0a006b0385871ef087d28bf0ae2c684d62a8
+          content:
+          - text: The current USD/EUR exchange rate is 0.92.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+        - role: user
+          content: Now call get_exchange_rate for GBP/USD without searching again.
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: tool_search
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1786"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d87948f8b0f4b0a006b038587f0d887d2b0c0c8892e81ca86
+        object: response
+        created_at: 1795392904
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795392905
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations:
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          type: reasoning
+          action: removed
+          reason: model_mismatch
+        - id: rs_0d87948f8b0f4b0a006b038585274487d29ffe715c5a04b3f1
+          type: reasoning
+          action: removed
+          reason: model_mismatch
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: fc_0d87948f8b0f4b0a006b038588c3a087d2b14100489df4fc6e
+          type: function_call
+          status: completed
+          arguments: "{\"pair\":\"GBP/USD\"}"
+          call_id: call_9TbP2vofGrZQIj1s0ryU1kIP
+          name: get_exchange_rate
+          namespace: get_exchange_rate
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: tool_search
+          description: null
+          parameters: null
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 676
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 21
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 697
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-23T00:15:05.722137+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "11397"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WDlL2jSAh61N1ugeLMirmWYKRM21r4asOiCVK0mtYkHyNRY-_TiACCySZ2qcsViPACZRj1yVbmzlrRaDzC4K38njjnN2CiWfBJNd_Mfm7EInpKJcO_3K87rq2VibMBpSs9HagZ-cqOqBxrT-66EwT8hKKAQasa-7zny996tR24cHmSE5HNIrxbe_cOarvQ3UQJPVh36ktMGGd-Y2KAeE0ZgKEuTSbkuCxxUzx75X9rBvoS9y26s_poBmM7sOkmnI0RtQA7nDi8qQCWJQfQAK9LoLEu2BKB0ux6UAY4XnpWCCG59Uoav2KvG9flPR9c88W5MKedj5ANYqg-guTXnJiU_xOXpt81VvJkbkF7GiYGtl4qRqOPGF_D3gScXsoeQP7x8tu9xi9UkaGnkaijzIr4sjmlLXuV26qkzykfN23m6kRlkrOcRcKyHY3em34dlhux5ypNQMO47OQ-jmEbcTzR_VAKzD0lwbvsJQgemH3Z-0wdD10iIa3E5nGr66z1BkCURNlAZPp9ijzyYIjW_SbuvFgMUd5Epy-9n7y_9uI1VMV6W6fereYa5-TPnW76Ze0eDoHniqSnsNi-LhYlTzMrXxS9JkKLj78y__VglGZgupqhfWPvDoXECplN73SgGhPSl4ZnMaKxI5Icn5iPDLGr88Q-go360bxXtfjmZR4TXTcKJ-atuAG2496wv5s435sO5oHMgfx78vXX82dczkUEhkESVql5vSdtJgdDvHGR_FCBUQFXBCUBhtg1zTi08aMpmGYEe8lm4nuB16gvXk-IVFs8X31Fs7B7BpWYUpk_jauQj-V38G-2ijlWneI4qozLkNRSxbXFssNh_M5V9TE7cH8JljUew2-YGCgF1JwLP56YlKn2otHqJJ-516ApIBWulT_k0PUuxTUbCe17EpXt8_-Qsy0OE1trUFyTVisXdfuXFyd8ydrrZSfXt-aOfh86xnP0HUqRMmX5zLQXav7rHnc5XIIe-0VIW09biFPfecgTG_m2v9J7TCoUCTO79pcxzPW7byACoZlE8xTNZf3WhlVxN613f7QHV0W-xogd4qicALnIoPE84OXnXquowea8eoHYTWXabpNgaczjj41d6XkydVkIMBq9hNgItlSMWy4SbeicnADoN9ImLuQq5ABZuB901bghoAhssM7jlGz8YuDtyoA8wWhGJCdtgsiq3_DYQVQ3G6VL4s4cjDh8bEI7yox5d1NWQLTP4JEPCLKvbkzTP-RLySzbDT-2ji06cTTU0jx3fw9bvpTVanoO-V0Ifb3XjkNzmLlRsAUomMkzco55aFMwqFwLpybZZ_ai8uHRDqXNlm1_1LfM3aFusFNnkaBLTgo3fk7CJs653ZGnnUekIJPXlGuIvmWCk9VNhZKArxadPxQHwt4MudIW4nZK7Kp3RD4_meRHBYqSuzlnmAymZzssqulN7NSQ1LLBpC4uLRsFN-TwaBCB5aTGYNNnNh2sg_-msAZxUXo5GQL-gODceEK43UPEhGFmyuHkhG374f8St0ZlpSYNuFGdi4f6vl8UxIhPpJhBiPi1lwHYcGdD_HhB2Hadfxq9YStZDRH6QlbJTVjt9sgjinrGiQvG108diSlnOnGKpWmb5Wao0CJTP3Yaie5D7obnz17olFpI1zisdMeflcvO1nIJU3wnoN9jyydXFryHETSZ16PVbNioE3uosjAq-YR56PBTsxovcEN-GGHJV04SOZyZBsAAqvehZDXmmsvgWre1hIQutzXildntJ-aTHfx8NIBtCwQiLkUzcYFMRBYxOf-CN-XzFKhtn7d_izrZf9c1olVivRjoYTW-9Nee-C4pSpyyy8oi_vl5HIqYJ-i7C0dBI1FpmQPlcVhVqmxLzD-0UXA1-YC4LbBidjOyoSFHEu6HPbjW7QUCbQb4--gTEHDtifTjm_Rn-uQXOWtdUshPTUl-1ZvCBOMNC7VLzr4O6OXDB89uHo46uJ8hkZtw3_BlKGVhfsW5sv4xvjp2LA1auRY1z0cPBeN3NEKkCsOai8GsuffCF2PpTdbn1QXDE2h3j4wrnwlk8BLgdVjTZn-RXT1hnRrVQmCbzEbvONTnUG215H-DscKL9v3wRlb-moTyP14MrQPBhTewER6NTTORKfz74GKtwxHgZHTgjX6_SOQxBu_pKvJ1nqauop3MOoJ7D4FYLWwc5gJcOEyTChi_nMNwukfYlgwyaWjfm3PtzuQCDUDNhR6AzLCZTQmUQORVPyB8Eh9o_XaYMbuWNNuQhIZ_M5MhByCH5IEwpxoFauyQjjOKqz8oV0h_xmjZPq2AdXXQ1kmIAfxPO6knx2Pxm7dzgEvjDer_2_f6P5SSmkfDlI5nZovdb4sd9UJlRS0jw88ci6pT2-3GKhnTUn-HMt-hMQegdseK2iedRtqKFyg37NFZS04csvFKQytw6ZiTCOiiYGLx7yoNIilRAXM6M_1rjj_v4c8BlgPccyjJiC0YWlGetB-lk7k2ZbicO_sVvcMYWK45-Q9-rF_KJbM9IeVSrL5BA81lHPGdvzvaVpEdkT7XHrF4Qd3GJO2mpntoN4AO7x8AivSDeuxETS0AWjAHlhh_DeZ_w3iT2rFwQq2gEJ-MzUZjhsaBu-bWh7Q8y37KIicQpNRT05nahMWisnq3Lf1HTtZlvkSr8tJcKlE-z_qDYqWmboUHN9f8gZ1ITM3_oro_f798CTnohuzOx5YUQ0lGWbyHrjftt8jmsMV1JmImHLVapnt_yOcKWONFVg_GN5Qo4gVd9L89n1WGdTrWl4rOHqV4aZSqxNVIBs8eY-MqkdPSWqrKLglCc257V2F8gLNUwCUsxuLuV4eyXAZ6TqtUVFaXAKy6637N_4VGqMmB26Pppi0nAS3zdotLrG81m4t2ExOCMl8b0T8MAjjyOR4CNaHW2BBLY87wWKwBSNEd9ylE2UGdRjV8jN7Ob6bbkW1fiRNiVZ1hEbvx7TYO69TuF7bFF_K0taNyDyCMCN_ofa6m60YUvuVnLsWCar0OuIPzvfAEoQBvm5fjXm1MQrEFcWA9Ly83muJmy3ndzG631_QBUQBOEQCBQ617Y7Ebml6iWyLdMVvwk0Md_AW-UXRfRQ8e3wDKrc5_IyPhMPZ-kMv40clfqCf97B_lvnwXbWR2TEa1-7CTnRlY1dOnT-O6IrTn_7nJz44WJnSI1s_t8vcpSxlXE6FNbvVofHP8RW-6rKX_DrDJHa_uUmnq59dt1xM181a9Z773p7CXXzjr-PZkrtcAEc9r-h52pj0UYiiPKFkeuQh2TjtVArt0gGkkIGsO5uitiDn7bcPy5h0qe4nibJNLMjH1wAsjmoLqgEC0oGkW3KXbiwQr9yb2Oh3suvKej1GMOuj7ffCUhcl70R9aeJxO3BbRQLVDLYnezZ1pd9RjpoLuiQRLFfNHkRjEOifVXDPW1go03S4Ts0G8NdCuvlibvLHjD-LzqzDH8-xMj2AxyTS1YAkOuEbNe-leaUklVPq7nvEY2DjeqaOEO9CMWmj1jd7o36KzuqfOKr5EFh9RjafynxaO5T5dLqDIdBgvPOCFiIX2unYSILJXyvkcup-roN9QlnA5bUab_VNQpF7a5PuDNnTxSu5joEw7XNtzvq5A__niV5yAgVZJYpQn7-4Bs4G5bBMdMwMn7dvo1_IMEEiiMWuYGlaohEwn8d-h7G1AZ9OZ4QXgOAdXWoJIwjnsZu-0db-O2Nz6YP0XiaYscd7m1oKZUIGJ0zjdXiJKKNkAwkObZx4HfDJCnFQteXCIQz9KA9XmHDGild8V1Yi36zi-RfJG6PbW5PcZkIY4ORxdMY6_--8qCgsR-eZBLicQDliKiLUkYcI9C9ayxVfVKuLyC_ULcC-66QPBQ8jrm4yvK_mPsEubVYw8Mb2KywrYJtJv2Vqj7OkEvNqjNIrzrW-jigoHSmxK5BJ17CVorcezWJhYTvDZtzZ9-fT5YS8Y46ljskyVIJGaUWzZRlX-9mK9m_J1WuIN-50xquBpiopwBalGUkvpzHZwP5JuBUvdkPO8BRy_u04aJu9b1EG1JUpKeVVC3jd3Pv82RStRQZ3KyxWnkxhoV6rxKITbSdPGTNokfUY5uJ-bh_I4jhcZKoi-0MXKfZgnAfAcs72o4nYLKBS6NfmvHi2iKDxzGAddbEa0OKnnTwAconoUuum-BxL0Rchq57SDyzeUdVYtr59aj8OzplyN3-lzw_egmxpqLEtLSFRBLANr3mqHnqawmdXQZdNyeGm16KUG0UnQ7Y-dlqfGTF4ZpbukHuCzTqG-BtrZgywzZztq1p_5E8QLFtPawmk-U-u7Mq21YjMbV1nNXj8GkpoIfhRCjE0faiES5aNEkWY7T5eNcEFhxsRPXe5Ins5I4QKZggkW-WN-jJCwmxERSSs_NwWvIeQSD06GqmzQwJ55xVUtrOS7eFKM8ewzw7HMwekxe9VX2GGb031-h_8W84ukPoNfS5y7hsQrx0sL3vKqbtR5QUVZCQ9pNS-BcpHSQmFnadveEsABENu59VjplGhWcnGpJ5rkIhSMFMi4-p3WEFEoOhTufTXq76ALOa0NWnoynSUt6p0cx1QDTwz-Qp-Gxg65qJ1BdsJpJsqCtakswfHcJwTRYTe2u9fS2QkVGK5gcvZFldcY5yFT93bLMFEkHc-8orfBVlZdjtsKFcHyiSuwmW5i2K2T5IOXIL0Yiwrv2KnM2aEJgoFtE89tzmZp7qCNCz1nNf7wIIJCBI7jBsciNSfr6j-chaKAUST-Wm8DCOkmd51q41KYby5p9iJ3Fh19IC6lr5U65-KT3n8QZTUPgC8oWkFFn4OXD_mWoRfuc8kXtFGmwOePCzId_PJsQ94uMF7JcqdjNq6l_n5880wtxFnnestnhK9p8xplOO5kCgbgFbAE-TmRt7bev0YFicgO_bMlBbqV1s67nWAmztL0sL1Q_Xu-K-HOQZGbwATh-xmRN8ZA9DEkmb0rmTVcqHx789FYm4sehZvv3yTCYag6M9aMRLH7VntyLmnsyhvZbNulWZW87s_8A0g4hVoJ-nlRnee-jkqvJldGBVxEwehUYhItwT3Tx7vyb-iamFOrFuAkdiSr8H2ofu73GJunTLpnTpUPBo6l1uxyTg_yqU77RhyLXB6mm7OQh_5cw9P92uQ48Djpi0kRx2CK2BcOxcFbe4mTYmp__e0orfZp6zGi3VN_vRs7jgef_XwNcOv5lgIClpdv_gRYcRS6f5tHEj_VoEXcx6J4mC-zK3lpVazbqaUeoDfFPir3tE3Tkx8W7xqCHvZGFlS9AKHrTVcXoLRWsEtLGn6geTbpLJQfzv9mcCsW-yaFHJ0_VFahjI33dgNAK22xO4SXc28Q0G-OJEpwtc0pqxiRKNlJUazZlpqE-L6NGl9aEqnQBTbJGgyV1gWsyN3ZAm7qjGwU1iMuEiZCHnx3Cwxcynrai9TqbjTrmrm2SVTGnbWSJfZfHfREML1x1aLaTra7BqskuKR9J8g1oztT9j8TVuK7J-eo2-41-o-xTRx9nEAM2Cjsbh9kPG2vXbqdQnF-uqmobva5BFvJt1NnpbPIsJ6GwoEqBddFELnCxZPda4Xqru6a7cX795X5kwl22QBAC5rNMBeCeEIEd7VaBjZjwohgsLIO3KQVOhn0fBB3IlS_0N7ex7szYwpCgnGf_uwzF_TFs02E_krLvkCOQKkXBMb7OE392g2qsLOQHIAcTtVX9iCJ6ZC8VyBZTfgtPXr4mW3lmS8MUqZXabFMTJ3kkvdEV0_X9vNKUUV6nalwv5bLbyTSEKWyG2ldqi19-B5DhqJLHWN26QvYGsC56HVXBy35e5IfhvKZrDWnony9VZnatRyxJXVoD2oGZ-AzyOp1wOu2OrA_TfzsWHx02OJ_caSJuB5Dc9AT2ez3_pF-jtz2_DbwWXwNPQ5KyuXU6LQ1WmTnn8Ia1sYKJFKNwr5WyCsdvr7tXp5v_bLTdno0zysJrP-xboEOqHda9qNNJN_OtzOoOhaC0SMz7LAWzj4WHGdSvFVP8gSKaXJuIK3DwBXSOCJWkozKnyzvUmmNG2E_t-Iu71K2bHs86kXo8nLSOY-g3BNtf9oW
+          type: reasoning
+        - type: tool_search_call
+          execution: client
+          arguments:
+            queries:
+            - get_exchange_rate
+            - exchange rate
+            - FX rate
+            - currency conversion
+            - USD/EUR
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          status: completed
+        - type: tool_search_output
+          execution: client
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+            defer_loading: true
+          call_id: call_xZFIZN2P9I0CIWpwguMe5n5F
+          status: completed
+        - id: rs_0d87948f8b0f4b0a006b038585274487d29ffe715c5a04b3f1
+          summary: []
+          encrypted_content: >-
+            gAAAAABrA4WGRBSGdV9Z7oWgV0zcECxWkg79gFnxHqCh4k5V-lESYQ0s272d4jSAqCYNuDOb1n5hEIDZitvt8a-vfbnpRTTd97xfvZ4WLuGSw2xAOnXpY-jXCvae8WuX0uLpQDDxSMvZ-736pYTCa72CSBygFQc-g70yxwT8wpRSF7dTNIpCgd6TUlX6nBk8n7y5cFRV-pnUZIddEQwt6Eoju17nNsN5_GFhXv_i6RxmDCdSvDGHolFfcL_QhrATwcspDSRlNzGt_2YIvbFEU3lF9t4eIcHIKa2_PrZY5kbIOUv3dxULPyiqUvFrI05W6zv8HR9mCkdj7CCziEqDv_C1wX8IOPD7xnh1H8QfaxO6VThpEwGG4cj9n0UVQ-7WeSkEK-mDfOSn9DScPLjdjXBsYt8RD0r5csk5merY9C6CA5oKLZ91DHbLHLBAm1WKx3uFNH4ffPwMxIh-eHmcZA3IdUAF9DZK4RsJkm76Wf2QyX04mQ6c-NsuD1qHYGeGjJbhaEQ9LRSQpSZiP8PKvOgaYoBtbZqt-sKI74_2UD6Rpe2KQW05yrqE-gqH1wBb5LYUoGN0jYkEIpgcvESLe38Qsl3UOSeNSPPhUbGzMFoc6m0N3RBJX9x6d20lIM3JUXC7Q9Fp6WSLegTetc0rFMkbMemttvG43Dk21YObbKn-_5TrSTxsYHmsypSVKbHk4gWiLXsoNMnMqnGnaWONFIlGw3a1XjasOMpuCyi_WkGQ4WjNZjYZthvOaTEswllfO2NTB_xhIG1E3UBynhwkC_m7FbnpZ-qEX-Z00owPXb3kuhumbGQGREOys2qIEHK5gXKZwxSdiQbsDD5XY1nwZ-F1FrHRQ4F00oW9FHNpyUnlwMgkbOBZWuiQRj9wIbhZQyAwy2LLooBEEoZ8ZBQ0AoTpY4rS6xVkfDHXCbzA7qKY9iuCJM7Kp87O06Yp-1s9-4iLCJTUk49olcFqK5AOCtBwqqCU2N4j3E_Njo2bQw938_GotDZrRQYyScEpH3G7tbxYPZ20D_0oXCstRPekZMo9opHwXmOzyhSIl9u0vxTuVTu3FDegclRuXHgi_otWi6anFq_HKliGZrITjGCR5NhQQqvQPQsqmXX6zpP0o2CHrWNLqobkpnQ6Ue4YbqG2Sp8yRHJBdcya6LnFeur-yRIyOrgvebWdQet9wWkqfV1LvHDHP400ZHo5IeVs_veZ1tpzhC9b9u_4CQ-TLOTz3Ieoz2q6eRCFpCXQMzcqVp3Nj3tO_XCW-mIZTfYhoK3LVRf1qpEjggeVKpFQfBMufdOs7eGSbmcPTM2T7P7Aak6y7eRXAjdPq5eHConxlXX4r1Q_w7c6XjinsPEIK5t8fzS-hYgF99mvsEecmujo3REPoofTiGlivcyNjNKUddKG7Ze-eYgbbWksKS0ICuO_q15QOciccZKA1RBR0rikUR6MK9JOenIHwplLejS2NrFEia_ZwjVNd_u7F3Y2WXzbc4jRT3CfIqBluzuejryYh4dHz9N8DpMRnbthwSKckaPOXJ399TRwPPhL4ez9QFZIvxxBvFttufVloqX4nux39LqbvMC9R9LTqDC24S0Ktd4N5rNqSWYi25ibpMimuMNi-yevtQHonisRPNhlDsxTFT2tBUsYo3ZRmme0_jFxaYhvpV-HduC-DkZEuGggIK11vIb-eCFedpsCG_8yajO6DjXTdQil-Q65ex_TkETAe2YWLO0sFnCvPVa4uz1pv_vVkTQKUKmpEcJSXfvIUNphBoRnu3ezkWrgWtO54Xtf0ds7ZY5AMQNNHtz4bopGWViEfpPf22Y06PUvLvO0xYf0TE1q1M-W0RnbmfrNUt4j7AF2zIiDv1Dz0pVKs43a8y_aD_iU830De_a-8AaG89Wk8u-KZn3mx3Ncd36t0L78GJFSWz1kEd0aDD2_plSJvte7rrXizHYPqV1eQ9-aI0st2ZPU3HI0AJrFPZqn8tmxEEXtxL8WwzI6QZyRCAKH2zv9tzf6MjgEcHqxj9fVtbeDherNWwO35JPmGViLBBUKcKBE79fdYPhHOEK30B-xdhCtZ4MjXIP6hxm-Hu7oNoWl1r2Fr_YOrQItkXVinqKsHSKh4spPqm4NPPL_tHnUNlwAJDaIN7HX4tFveMEPVJ-FF6pHu7b8ezAbt4UOJ4Mkz2vpQNB8Ifr12tK6rDWkzYqi2FSvuq6tWFn2J682aQHRr1J73qy_K1LQmJr8uLN7oMFslD7bf1aTGjOFtnpxtcwiApq5-zkoda-t8EJgh7iUmYTrbvSry9w-4yL6M1uh03AVvQXcpv4o-RkJyx4OheMuHjAqf-3gkkPUaztGZLaR0xl8IuqTtlb2ihMxtTY3NxmARPLryk-0umFxd8qYKfi0ne65mbjVG4wU1aOdtOpl2qKYBad8PPtsIqcC8BaJGXAfGPSAa_P6xwuDTW_m1Q6KxRkambLFqPsL_YuHu9AvUpicbF4QnNMnAb6u6xx4eU2UkCyJ39RScvFfdVZaAUFnMpvmLdTVDIoMzTXuQocYMMUbW2Xo-nxblD7j3nISKCyLkXsAlhZi40xoi6GiMZ_VeZRdfHHrYd2ZqTdENXtSN4Ay9aNSdmv3zJOdcQfTu_f8wiCMMusM2lLKwQz2j_n6dFCXzytjiG782T3NDALHlnLkNbdV11nyrnhl9VU941nJfDVfJ0JzXYEJJZE_Dx3VKLukWwLSczHaApSV19n--fhvgU_okxWktOjLDhjB9-tpIklp6nZXtLYQjZecb0JYPuDPif0RDhO6CsfiB3d_ccMrTg1u2NM_HLeJmiuza0I-OssDqI8t8BZk8uq-g1JhPS3VwWb5uf3QPc7uvBaamyfmI90-0taN3CfWWiUI47lmdiEEABJDUdf1cw9KxzvVIvRWjoaIzgo8Gw==
+          type: reasoning
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          type: function_call
+          id: fc_0d87948f8b0f4b0a006b038585ca2087d28c9ac32357fa9a6c
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_nU6sA7mubakhgfgwLlRLUcil
+          output: "USD/EUR: 0.92"
+        - role: assistant
+          id: msg_0d87948f8b0f4b0a006b0385871ef087d28bf0ae2c684d62a8
+          content:
+          - text: The current USD/EUR exchange rate is 0.92.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+        - role: user
+          content: Now call get_exchange_rate for GBP/USD without searching again.
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"GBP/USD\"}"
+          call_id: call_9TbP2vofGrZQIj1s0ryU1kIP
+          type: function_call
+          id: fc_0d87948f8b0f4b0a006b038588c3a087d2b14100489df4fc6e
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_9TbP2vofGrZQIj1s0ryU1kIP
+          output: "GBP/USD: 0.92"
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: tool_search
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2356"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d87948f8b0f4b0a006b03858b802c87d295a16485f8be4697
+        object: response
+        created_at: 1795392907
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795392909
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations:
+        - id: rs_0d87948f8b0f4b0a006b038580b5b487d2bf3e92947a4011bd
+          type: reasoning
+          action: removed
+          reason: model_mismatch
+        - id: rs_0d87948f8b0f4b0a006b038585274487d29ffe715c5a04b3f1
+          type: reasoning
+          action: removed
+          reason: model_mismatch
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: msg_0d87948f8b0f4b0a006b03858d274887d2a12127739376023f
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: GBP/USD is 0.92.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: tool_search
+          description: null
+          parameters: null
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 718
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 12
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 730
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-23T00:15:09.847477+00:00

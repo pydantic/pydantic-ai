@@ -192,6 +192,12 @@ the workspace, so there is no nested context to surface. Each directory in the
 chain must itself resolve inside the working directory, so a symlinked directory
 in the path can't surface an instruction file from outside it.
 
+`traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
+to a non-default value emits `HarnessDeprecationWarning` and keeps the old
+tool-name and argument sniffing path active for hosts that do not emit events.
+With the defaults, sniffing is disabled, so a `FileSystem` event cannot deliver
+the same note twice.
+
 ## Trust
 
 Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) should hold only instruction files you would put in your own instructions.
@@ -227,7 +233,7 @@ print(await pinned.authority_of('AGENTS.md'))
 
 A changed file never rises above the level the workspace already gives it, and files not in `accepted` keep the workspace's level. Files are compared when `pin_accepted_files` is called, not when they are read later in the run.
 
-The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Files you didn't write](../workspace.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
+The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Marking who wrote the files](../workspace-custom.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
 
 ## Cache cost
 
@@ -252,9 +258,13 @@ RepoContext(
     nested_inject='contents',       # 'contents' | 'pointer'
     nested_exclude=('node_modules', '.venv', 'venv', 'site-packages'),  # fnmatch patterns Strategy 3 skips
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
+    traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
+    traversal_path_arg='path',                                       # deprecated fallback
     asset_roots=('.claude', '.agents', '.codex', '.grok'),
 )
 ```
+
+`workspace_dir=` is deprecated and ignored: the working directory comes from the workspace.
 
 ## Scope
 

@@ -21,9 +21,9 @@ Three packages, each built on the one before it. Start with the one that matches
 |---|---|---|
 | [Pydantic AI](../index.md) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
 | [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2) (`pydantic-clai2`) | A coding agent for your terminal, run as `clai2`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-clai2` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
 
 ## Quick start
 
@@ -129,7 +129,7 @@ Look up a capability by the problem it solves. The Capabilities section below li
 |---|---|---|
 | The model's output must pass a check, and bad output should be retried or blocked | [`OutputGuardrail`](guardrails.md) | Its `guard` returns `GuardrailResult.retry(...)` to send the output back to the model, or `False` to raise `OutputBlocked`. `retry` needs `run()`: under `run_stream()` it raises `UnexpectedModelBehavior`. |
 | One tool result is flooding the context window | [`ToolOutputLimits`](tool-output-limits.md) | By default, a result of 10,000 characters or more spills to a file in the run's workspace, and the model gets a preview plus a handle to read the rest. If the write fails, the result is truncated to 4,000 characters. Without a workspace, pass `store=LocalFileOverflowStore()`. |
-| The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
+| The agent's files and commands must start in a specific directory | Core [`LocalWorkspace`](../workspace.md), or a sandbox | Set the directory on the workspace: `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox. Every capability that works in the workspace starts there; `Shell(cwd=)` and `FileSystem(cwd=)` warn and are ignored. In your own tool, `ctx.workspace.run(..., cwd='subdir')` starts one command elsewhere. |
 | A run, a day, or a tenant needs a spend ceiling | Core [`UsageLimits`](../agent.md#usage-limits), or [`SpendLimits`](spend.md) | For one run, pass `usage_limits=UsageLimits(cost_limit=Decimal('5'))`: the run raises `UsageLimitExceeded` after the response that crosses the limit. For a day or month, per tenant, or across worker processes, `SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])` refuses the next request once a window is spent. |
 | The model hits a usage or spend limit before it answers | [`ReportRemainingBudget`](report-remaining-budget.md) | `ReportRemainingBudget(spend_limits=spend)` tells the model on every request how many requests, tool calls, tokens and dollars the run's `UsageLimits` and the `SpendLimits` budgets have left, so it can answer while it still can. |
 | The model should get only a few calls to an expensive tool per run | [`ToolBudgets`](tool-budgets.md) | `ToolBudgets(per_tool={'web_search': 3}, refuse_repeats={'web_search'})` answers the fourth call, or an exact repeat, with a tool result saying the budget is used, and the run continues. `UsageLimits.tool_calls_limit` stays the hard ceiling. |
@@ -150,28 +150,38 @@ Complete agent stacks as regular combined capabilities: one import gives you a w
 | [Coder](coder.md) | Harness | Six coding tools, persistent shell commands, delegation to itself, autonomous guidance, and context controls |
 | [Researcher](researcher.md) | Harness | A complete web-research stack: search, page fetching, a delegated sub-researcher, and bounded tool output |
 
-### Execution environments
+### Workspaces
 
-The workspace the agent acts in: the files it edits and the commands it runs, local or isolated.
+<span id="execution-environments"></span>
+
+Where the agent runs commands and keeps files: this machine, a container, or a sandbox. [Compare them](../workspace.md#supported-workspaces).
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Local Workspace](../workspace.md) | Core | Commands and files in a directory on this machine; no isolation. Adds no tools: pair it with the [Files & shell](#files-shell) tools or your own |
+| [Docker Container](docker-container.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
+| [Smol Sandbox](smol-sandbox.md) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
+| [BoxLite Sandbox](boxlite-sandbox.md) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
+| [OpenSandbox](opensandbox-sandbox.md) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
+| [Kubernetes Sandbox](kubernetes-sandbox.md) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
+| [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
+| [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
+| [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
+| [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
+| [Bubblewrapped Workspace](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
+
+### Files & shell {#files-shell}
+
+The tools the model uses in the run's workspace, whichever one it is.
 
 | Capability | Package | What it does |
 |---|---|---|
 | [FileSystem](filesystem.md) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Smart Search](smart-search.md) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
-| [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
-| [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
-| [Kubernetes Sandbox](kubernetes-sandbox.md) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
-| [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
-| [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
-| [Daytona Sandbox](daytona-sandbox.md) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
-| [boxd Sandbox](boxd-sandbox.md) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
-| [Smol Sandbox](smol-sandbox.md) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
-| [BoxLite Sandbox](boxlite-sandbox.md) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
-| [OpenSandbox](opensandbox-sandbox.md) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
-| [Docker Container](docker-container.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
-| [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
-| [Bubblewrapped Workspace](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
 ### Tools & native abilities
 

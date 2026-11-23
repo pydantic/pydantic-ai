@@ -64,8 +64,8 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (show the model the plan). Turn on caching on the model (such
-  as `anthropic_cache_messages`).
+- `enable_subtasks=False`, `inject=True` (show the model the plan). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); turn on caching on the model (such as `anthropic_cache_messages`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.
 
@@ -97,7 +97,7 @@ Gotchas:
 - `parent_id`, `depends_on`, and `blocked` are rejected by `write_plan` unless `enable_subtasks=True`.
 - Events: `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`,
   `PlanDeletedEvent` from `pydantic_ai_harness.planning`, via `@agent.on_event(...)`. Only mutations
-  made through the tools emit them; direct `PlanStore` calls do not.
+  made through the tools emit them; direct `PlanStore` calls do not. Store `event_emitter=` is deprecated.
 - The planner's "do not implement" discipline comes from its instructions and toolsets, not from `Planning`.
 
 ## SubAgents
@@ -140,7 +140,7 @@ max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets
   Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
-- The parent's own tools are not passed on. Bind tools directly to explicit child agents, use
+- `inherit_tools=False`: `True` is deprecated. Bind tools directly to explicit child agents, use
   `include_self=True` for a fresh run of the agent with all capabilities and tools bound to it, or
   use `tool_resolver` to give disk agents tools.
 - `shared_capabilities=()`: capabilities applied to every child run.
@@ -175,6 +175,14 @@ Gotchas:
   keeps the `ModelRetry` even with `on_failure` set. If it's unset, setting `on_failure` returns that message alone,
   without the error. Other
   crashes abort the parent unless `contain_errors=True`.
+- `SubAgents(forward_deferred_calls=True)` instead passes a child's `DeferredToolRequests` to the parent run's
+  caller (outcome `failed`; the parent's `output_type` must include `DeferredToolRequests`). Show them with
+  `delegated_requests(result.output)` (IDs `'<delegate call>:<child call>'`, metadata `agent_path`), answer every
+  call, and resume with `deferred_tool_results=delegated_results(result.output, answers)`: the child continues from
+  its history. Approving the delegate call itself approves none of the child's calls: it reruns the task. The child's history waits
+  server-side in `deferred_state_store` (in memory per instance when unset; pass a shared store to resume in
+  another process). Durable
+  execution and `task_control` refuse it.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
   `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
   has not passed output validation and can be text the child rejected; leave it off for a child whose
@@ -234,7 +242,7 @@ orchestrator = Agent(
 - Non-`self` delegations run in an activity on Temporal and inline in the workflow on DBOS. To keep a delegate's
   own durability, add `SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}})` (or `dbos=...`):
   every delegate must be durable on that engine, and on Temporal registered with the worker (`AgentPlugin`).
-  Combined with `include_self`, `models`, `shared_capabilities`, `event_stream_handler`,
+  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
   `dynamic_agents`, `task_control`, or `max_calls`, a delegation raises `UserError`.
   The delegate's usage isn't reliably counted in the parent's usage or bounded by its limits.
   Depth isn't carried across, so nested opt-ins reset `max_depth` per child workflow.
@@ -406,7 +414,9 @@ typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=De
 caching=None, forward_history=False, id=None, defer_loading=False, description=None)`. By
 default it uses the provider tool where it applies (history gets provider-native parts) and the
 `advisor` function tool otherwise (history gets a `ToolCallPart` and `ToolReturnPart`). `local=False`
-requires the provider tool; `native=False` always uses the function tool.
+requires the provider tool; `native=False` always uses the function tool. `mode=` is deprecated.
+
+<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
 
 The executor decides when to consult. To require a consultation before a verdict, use
 `native=False` and check this run's history in an output validator:

@@ -9,6 +9,9 @@ import anyio
 import pytest
 
 from pydantic_ai_harness.planning import (
+    PlanEvent,
+    PlanEventEmitter,
+    PlanEventType,
     PlanItem,
     PostgresConnection,
     PostgresPlanStore,
@@ -16,6 +19,11 @@ from pydantic_ai_harness.planning import (
     TaskStatus,
 )
 from pydantic_ai_harness.planning._postgres import _deleted_count  # pyright: ignore[reportPrivateUsage]
+
+pytestmark = [
+    pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
+]
+
 
 Row = tuple[object, ...]
 
@@ -185,8 +193,8 @@ class TestPostgresStore:
         assert pool.connection.create_calls == 1
         assert pool.connection.advisory_locks == 1
 
-    async def test_remove_creates_the_schema(self) -> None:
-        """`remove_item` deletes without reading first, so it creates the schema itself."""
+    async def test_remove_creates_the_schema_without_an_emitter(self) -> None:
+        """`remove_item` skips its read when no emitter is attached, so it cannot rely on one."""
         pool = FakePool()
         store = PostgresPlanStore(pool)
         assert await store.remove_item('missing') is False
@@ -212,6 +220,20 @@ class TestPostgresStore:
         item = await store.add_item(_item('x'))
         assert await store.remove_item(item.id) is True
         assert await store.remove_item(item.id) is False
+
+    async def test_events(self) -> None:
+        events: list[PlanEvent] = []
+        emitter = PlanEventEmitter()
+        for kind in PlanEventType:
+            emitter.on(kind, events.append)
+        store = PostgresPlanStore(FakePool(), event_emitter=emitter)
+        item = await store.add_item(_item('t'))
+        await store.update_item(item.id, status=TaskStatus.completed)
+        await store.remove_item(item.id)
+        kinds = [e.event_type for e in events]
+        assert PlanEventType.created in kinds
+        assert PlanEventType.completed in kinds
+        assert kinds[-1] is PlanEventType.deleted
 
 
 class TestDeletedCount:

@@ -25,7 +25,7 @@ change instead of reimplementing core behavior in harness.
 - **Capability**: an `AbstractCapability` subclass that bundles tools, hooks, instructions, and model settings into a reusable unit. This is the core abstraction of pydantic-ai-harness.
 - **Hook**: a lifecycle method on `AbstractCapability` that intercepts agent graph execution (e.g. `before_model_request`, `wrap_run`, `after_tool_execute`)
 - **Toolset**: a collection of tools that a capability can provide to the agent
-- **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuardrail`, `OutputGuardrail`)
+- **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuard`, `OutputGuard`)
 - **Harness**: this package -- a collection of pre-made capabilities for Pydantic AI.
 - **AICA**: AI Code Assistant -- the automated agent that implements issues, reviews plans, and handles PR feedback
 
@@ -179,7 +179,7 @@ only from an author with write access; any other author asks a maintainer to add
 uv sync --locked --all-packages --all-extras --group lint
 ```
 
-Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
+Harness and `pydantic-ai-pax` share the root `uv.lock`, `.venv`, and Pyright
 configuration. Every workspace package requires Python 3.11 or newer.
 
 ## File structure

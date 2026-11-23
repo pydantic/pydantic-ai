@@ -16,7 +16,7 @@ def run_web_command(
     models: list[str] = [],
     tools: list[str] = [],
     instructions: str | None = None,
-    default_model: str = 'openai:gpt-5',
+    default_model: str = 'openai:gpt-6.1-sol',
     html_source: str | None = None,
     allowed_hosts: list[str] = [],
 ) -> int:

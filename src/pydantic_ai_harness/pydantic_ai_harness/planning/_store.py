@@ -3,7 +3,9 @@
 A `PlanStore` is an async CRUD interface over an ordered list of plan steps. The
 default `InMemoryPlanStore` keeps them in process memory; `SqlitePlanStore`
 persists them to a local SQLite file. `PostgresPlanStore` (in `_postgres.py`) and
-`RedisPlanStore` (in `_redis.py`) work over a caller-owned client.
+`RedisPlanStore` (in `_redis.py`) work over a caller-owned client. Their deprecated
+`event_emitter` parameters preserve callback delivery for applications migrating to
+typed events from `Planning` tool runs.
 """
 
 from __future__ import annotations
@@ -12,13 +14,30 @@ import json
 import re
 import sqlite3
 import threading
+import warnings
 from typing import Protocol, runtime_checkable
 
 import anyio.to_thread
 
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.planning._events import PlanEvent, PlanEventEmitter, PlanEventType
 from pydantic_ai_harness.planning._types import PlanItem, TaskStatus
 
 _VALID_TABLE_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,62}')
+
+
+def warn_event_emitter(event_emitter: PlanEventEmitter | None) -> None:
+    """Warn when a store is configured with the deprecated emitter delivery path."""
+    if event_emitter is not None:
+        warnings.warn(
+            '`event_emitter` is deprecated; subscribe with `@agent.on_event` to the events `Planning` emits '
+            'instead -- `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, '
+            '`PlanCompletedEvent` and `PlanDeletedEvent`, from `pydantic_ai_harness.planning`. They are '
+            'emitted from the planning tools rather than from the store, so a mutation your own code '
+            'makes on this store directly has no run context and reaches no listener.',
+            HarnessDeprecationWarning,
+            stacklevel=3,
+        )
 
 
 @runtime_checkable
@@ -116,11 +135,46 @@ def _snapshot(item: PlanItem) -> PlanItem:
     return item.model_copy(deep=True)
 
 
+async def emit_created(emitter: PlanEventEmitter | None, item: PlanItem) -> None:
+    """Emit a `created` event when an emitter is attached."""
+    if emitter is not None:
+        await emitter.emit(PlanEvent(event_type=PlanEventType.created, item=_snapshot(item)))
+
+
+async def emit_deleted(emitter: PlanEventEmitter | None, item: PlanItem) -> None:
+    """Emit a `deleted` event when an emitter is attached."""
+    if emitter is not None:
+        await emitter.emit(PlanEvent(event_type=PlanEventType.deleted, item=_snapshot(item)))
+
+
+async def emit_mutation(emitter: PlanEventEmitter | None, updated: PlanItem, previous: PlanItem | None) -> None:
+    """Emit `updated`, then `status_changed`/`completed` if the status moved."""
+    if emitter is None or previous is None:
+        return
+    await emitter.emit(
+        PlanEvent(event_type=PlanEventType.updated, item=_snapshot(updated), previous_state=_snapshot(previous))
+    )
+    if updated.status != previous.status:
+        await emitter.emit(
+            PlanEvent(
+                event_type=PlanEventType.status_changed, item=_snapshot(updated), previous_state=_snapshot(previous)
+            )
+        )
+        if updated.status is TaskStatus.completed:
+            await emitter.emit(
+                PlanEvent(
+                    event_type=PlanEventType.completed, item=_snapshot(updated), previous_state=_snapshot(previous)
+                )
+            )
+
+
 class InMemoryPlanStore:
     """In-process plan storage. The default backend; state is lost on exit."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, event_emitter: PlanEventEmitter | None = None) -> None:
+        warn_event_emitter(event_emitter)
         self._items: list[PlanItem] = []
+        self._emitter = event_emitter
 
     async def get_items(self) -> list[PlanItem]:
         """Return every step in insertion order."""
@@ -141,6 +195,7 @@ class InMemoryPlanStore:
             raise ValueError(f'A step with id {item.id!r} is already in this plan.')
         stored = _snapshot(item)
         self._items.append(stored)
+        await emit_created(self._emitter, stored)
         return _snapshot(stored)
 
     async def update_item(
@@ -157,6 +212,7 @@ class InMemoryPlanStore:
         item = next((item for item in self._items if item.id == item_id), None)
         if item is None:
             return None
+        previous = _snapshot(item) if self._emitter is not None else None
         apply_updates(
             item,
             content=content,
@@ -165,13 +221,15 @@ class InMemoryPlanStore:
             parent_id=parent_id,
             depends_on=depends_on,
         )
+        await emit_mutation(self._emitter, item, previous)
         return _snapshot(item)
 
     async def remove_item(self, item_id: str) -> bool:
         """Delete `item_id`; return whether it existed."""
         for index, item in enumerate(self._items):
             if item.id == item_id:
-                del self._items[index]
+                removed = self._items.pop(index)
+                await emit_deleted(self._emitter, removed)
                 return True
         return False
 
@@ -196,7 +254,9 @@ class SqlitePlanStore:
         *,
         session: str = 'default',
         table: str = 'plan_items',
+        event_emitter: PlanEventEmitter | None = None,
     ) -> None:
+        warn_event_emitter(event_emitter)
         validate_table_name(table)
         if database == ':memory:':
             raise ValueError(
@@ -205,6 +265,7 @@ class SqlitePlanStore:
         self._database = database
         self._session = session
         self._table = table
+        self._emitter = event_emitter
         self._lock = threading.Lock()
         self._ready = False
 
@@ -356,6 +417,7 @@ class SqlitePlanStore:
     async def add_item(self, item: PlanItem) -> PlanItem:
         """Append `item` and return it."""
         await anyio.to_thread.run_sync(self._add_item_sync, item)
+        await emit_created(self._emitter, item)
         return item
 
     async def update_item(
@@ -372,6 +434,7 @@ class SqlitePlanStore:
         item = await self.get_item(item_id)
         if item is None:
             return None
+        previous = item.model_copy() if self._emitter is not None else None
         apply_updates(
             item,
             content=content,
@@ -381,8 +444,13 @@ class SqlitePlanStore:
             depends_on=depends_on,
         )
         await anyio.to_thread.run_sync(self._write_item_sync, item)
+        await emit_mutation(self._emitter, item, previous)
         return item
 
     async def remove_item(self, item_id: str) -> bool:
         """Delete `item_id`; return whether it existed."""
-        return await anyio.to_thread.run_sync(self._remove_item_sync, item_id)
+        removed = await self.get_item(item_id) if self._emitter is not None else None
+        existed = await anyio.to_thread.run_sync(self._remove_item_sync, item_id)
+        if existed and removed is not None:
+            await emit_deleted(self._emitter, removed)
+        return existed
