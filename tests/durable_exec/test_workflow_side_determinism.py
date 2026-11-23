@@ -44,8 +44,17 @@ the workflow does next -- each of which the trace shows running on the workflow 
 
 Expand the core modules only with the same evidence. The set was derived under Temporal. DBOS and
 Prefect run the same core modules in their workflow and flow bodies, but no trace has confirmed the
-set for them, and their engine modules and the Harness engines are not checked. TODO:
+set for them, and their engine modules are not checked. TODO:
 https://github.com/pydantic/pydantic-ai/issues/11176
+
+**The Harness** is checked whole: every module under `src/pydantic_ai_harness/pydantic_ai_harness/`
+except the workspace backends in `_WORKSPACE_BACKENDS`. A capability's hooks run in workflow code
+under every engine, and under DBOS so do its function tools, and the Harness engines (`absurd`,
+`aws_lambda`, `azure_durable_task`, `pgtask`, `render`) re-run their task body on replay, so no
+narrower set is known to hold. A workspace backend runs inside the durable unit each workspace call
+is (`durable_exec/AGENTS.md`, "Workspaces are routed by the base"), not in workflow code. The calls
+the Harness made when it joined this check are in `_HARNESS_ON_MAIN`, untriaged; like `_ACCEPTED`,
+it may only shrink.
 
 **What is denied** is in `_DENYLIST`, each with why replay breaks it. `asyncio.to_thread` and
 `loop.run_in_executor` are left out on purpose: they already raise inside a Temporal workflow, whose
@@ -81,6 +90,7 @@ from inline_snapshot import snapshot
 
 REPO_ROOT = Path(__file__).parents[2]
 CORE = 'pydantic_ai_slim/pydantic_ai'
+HARNESS = 'src/pydantic_ai_harness/pydantic_ai_harness'
 
 _CLOCK = 'reads a clock that has moved by the time the run replays'
 _RANDOM = 'draws randomness that a replay does not reproduce'
@@ -219,6 +229,227 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         'waits on a single activity or child-workflow handle, so there is no completion order to reproduce',
     ),
 }
+
+_WORKSPACE_BACKENDS = frozenset(
+    {
+        'boxd_sandbox',
+        'boxlite_sandbox',
+        'bubblewrap_sandbox',
+        'daytona_sandbox',
+        'docker_container',
+        'docker_sandbox',
+        'e2b_sandbox',
+        'kubernetes_sandbox',
+        'modal_sandbox',
+        'opensandbox_sandbox',
+        'render_sandbox',
+        'smol_sandbox',
+        'sprites_sandbox',
+        'ssh_workspace',
+        '_smolvm_cli.py',
+        '_workspace_provider.py',
+    }
+)
+"""The Harness packages and modules that implement a workspace backend, which is not workflow code.
+
+A durable run wraps its workspace in a `DurableWorkspace`, and each call it makes, `ensure` included, is one
+durable unit (`durable_exec/AGENTS.md`, "Workspaces are routed by the base"), so a backend's clock reads, ids and
+threads run inside that unit and are recorded with its result.
+"""
+
+_HARNESS_ON_MAIN: dict[tuple[str, str, str], int] = {
+    ('_mcp.py', 'credential', 'os.environ.get'): 1,
+    ('ask_user/_types.py', 'AskUserRequest', 'uuid.uuid4'): 1,
+    ('aws_lambda/_bridge.py', '_AgentLoop.get', 'threading.Thread'): 1,
+    ('aws_lambda/_bridge.py', '_clean_up_retired_loop', 'anyio.sleep'): 1,
+    ('aws_lambda/_bridge.py', '_run_durable_on_agent_loop', 'time.monotonic'): 1,
+    ('aws_lambda/_bridge.py', '_run_durable_on_agent_loop.record_completion', 'time.monotonic'): 1,
+    ('aws_lambda/_bridge.py', '_run_step_body', 'concurrent.futures.Future'): 1,
+    ('aws_lambda/_bridge.py', '_wait_within_budget', 'asyncio.wait'): 1,
+    ('azure_durable_task/_operation_backend.py', '_BoundOperation._call_waiting_retry_after', 'asyncio.sleep'): 1,
+    ('browser_use/_toolset.py', 'BrowserUseToolset._run_in_fresh_session', 'anyio.to_thread.run_sync'): 1,
+    ('browser_use/_toolset.py', 'BrowserUseToolset._run_in_shared_session', 'anyio.to_thread.run_sync'): 1,
+    ('capability_creation/_capability.py', 'CapabilityCreation._absolute_directory', 'anyio.to_thread.run_sync'): 1,
+    ('capability_creation/_capability.py', 'CapabilityCreation._disable', 'anyio.to_thread.run_sync'): 1,
+    ('capability_creation/_capability.py', 'CapabilityCreation._list_all', 'anyio.to_thread.run_sync'): 1,
+    ('capability_creation/_capability.py', 'CapabilityCreation._write', 'anyio.to_thread.run_sync'): 1,
+    ('capability_creation/_capability.py', 'CapabilityCreation.load_active', 'anyio.to_thread.run_sync'): 1,
+    ('capability_creation/_toolset.py', 'CapabilityCreationToolset.author_capability', 'anyio.to_thread.run_sync'): 1,
+    (
+        'capability_creation/_toolset.py',
+        'CapabilityCreationToolset.disable_authored_capability',
+        'anyio.to_thread.run_sync',
+    ): 1,
+    (
+        'capability_creation/_toolset.py',
+        'CapabilityCreationToolset.list_authored_capabilities',
+        'anyio.to_thread.run_sync',
+    ): 1,
+    ('capability_creation/_validate.py', '_construct', 'uuid.uuid4'): 1,
+    ('code_mode/_eager.py', 'EagerCoordinator.cancel_pump', 'asyncio.wait'): 1,
+    ('code_mode/_speculation.py', 'SpeculationCoordinator._cancel_watch', 'asyncio.wait'): 1,
+    ('code_mode/_speculation.py', 'SpeculationCoordinator._launch', 'time.perf_counter'): 2,
+    ('code_mode/_speculation.py', 'SpeculativeCall.elapsed_ms', 'time.perf_counter'): 1,
+    ('compaction/_background.py', 'BackgroundCompaction.result', 'asyncio.wait'): 1,
+    ('compaction/_relevance_compaction.py', 'RelevanceCompaction._summarize', 'datetime.datetime.now'): 1,
+    ('compaction/_summarizing_compaction.py', 'SummarizingCompaction._summarize', 'datetime.datetime.now'): 1,
+    ('compaction/_summary.py', 'summary_request', 'datetime.datetime.now'): 1,
+    ('dynamic_workflow/_toolset.py', '_LambdaBranches.flush', 'asyncio.sleep'): 1,
+    ('dynamic_workflow/_toolset.py', '_apply_scheduler.flush_scheduler', 'asyncio.sleep'): 1,
+    ('exa/_agent.py', 'ExaAgent', 'uuid.uuid4'): 1,
+    ('exa/_toolset.py', 'DefaultExa.__init__', 'os.environ.get'): 1,
+    ('experimental/acp/_adapter.py', 'PydanticAIACPAgent.new_session', 'uuid.uuid4'): 1,
+    ('experimental/acp/_client_toolsets.py', 'ACPTerminalToolset.run_command', 'asyncio.wait'): 1,
+    ('guardrails/_capability.py', 'InputGuardrail.wrap_model_request', 'asyncio.wait'): 1,
+    ('guardrails/_capability.py', 'input_guardrails_allow', 'asyncio.wait'): 1,
+    ('ipython_code_mode/_kernel.py', 'IPythonKernel._answer_input_request', 'time.monotonic'): 1,
+    ('ipython_code_mode/_kernel.py', 'IPythonKernel._ensure_started', 'secrets.token_hex'): 1,
+    ('ipython_code_mode/_kernel.py', '_CellDeadline.after', 'time.monotonic'): 1,
+    ('ipython_code_mode/_kernel.py', '_CellDeadline.due', 'time.monotonic'): 1,
+    ('ipython_code_mode/_kernel.py', '_CellDeadline.exclude_since', 'time.monotonic'): 1,
+    ('ipython_code_mode/_kernel.py', '_CellDeadline.poll_ms', 'time.monotonic'): 1,
+    ('ipython_code_mode/_kernel.py', '_CellDeadline.start_grace', 'time.monotonic'): 1,
+    ('ipython_code_mode/_kernel.py', '_kernel_manager', 'secrets.token_hex'): 1,
+    ('keenable/_toolset.py', 'HttpKeenableClient.__init__', 'os.environ.get'): 2,
+    ('keenable/_toolset.py', 'HttpKeenableClient._request', 'httpx2.AsyncClient'): 1,
+    ('localstack/_container.py', 'LocalStackContainer._effective_environment', 'os.environ.get'): 2,
+    ('localstack/_container.py', 'LocalStackContainer._run_docker', 'anyio.to_thread.run_sync'): 1,
+    ('localstack/_container.py', 'LocalStackContainer._run_docker.run', 'subprocess.run'): 1,
+    ('localstack/_container.py', 'LocalStackContainer._wait_until_ready', 'anyio.sleep'): 1,
+    ('localstack/_container.py', 'LocalStackContainer._wait_until_ready', 'httpx2.AsyncClient'): 1,
+    ('localstack/_toolset.py', 'LocalStackToolset._build_env', 'os.environ.items'): 1,
+    ('localstack/_toolset.py', 'LocalStackToolset._run', 'anyio.to_thread.run_sync'): 3,
+    ('localstack/_toolset.py', 'LocalStackToolset.localstack_health', 'httpx2.AsyncClient'): 1,
+    ('media/_s3.py', 'S3MediaStore._request', 'httpx2.AsyncClient'): 1,
+    ('media/_s3.py', '_utcnow', 'datetime.datetime.now'): 1,
+    ('media/_store.py', 'FileMediaStore.exists', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'FileMediaStore.get', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'FileMediaStore.get_metadata', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'FileMediaStore.put', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'SqliteMediaStore.exists', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'SqliteMediaStore.get', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'SqliteMediaStore.get_metadata', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', 'SqliteMediaStore.put', 'anyio.to_thread.run_sync'): 1,
+    ('media/_store.py', '_write_atomically', 'uuid.uuid4'): 1,
+    ('memory/_file.py', '_replace_text', 'uuid.uuid4'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore._mutate_sync', 'uuid.uuid4'): 2,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.delete', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.get_operation', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.list_child_paths', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.list_paths', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.read', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.search', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_pixeltable.py', 'PixeltableMemoryStore.write', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.delete', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.get_operation', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.list_child_paths', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.list_paths', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.read', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.search', 'anyio.to_thread.run_sync'): 1,
+    ('memory/_sqlite.py', 'SqliteMemoryStore.write_with_metadata', 'anyio.to_thread.run_sync'): 1,
+    ('peers/_inbox.py', 'LocalPeerInbox._load', 'anyio.to_thread.run_sync'): 1,
+    ('peers/_inbox.py', 'LocalPeerInbox._save', 'anyio.to_thread.run_sync'): 1,
+    ('peers/_inbox.py', 'LocalPeerInbox._write', 'secrets.token_hex'): 1,
+    ('peers/_network.py', 'InMemoryPeerNetwork.join', 'uuid.uuid4'): 1,
+    ('peers/_network.py', '_Peer.send', 'datetime.datetime.now'): 1,
+    ('planning/_store.py', 'SqlitePlanStore.add_item', 'anyio.to_thread.run_sync'): 1,
+    ('planning/_store.py', 'SqlitePlanStore.get_item', 'anyio.to_thread.run_sync'): 1,
+    ('planning/_store.py', 'SqlitePlanStore.get_items', 'anyio.to_thread.run_sync'): 1,
+    ('planning/_store.py', 'SqlitePlanStore.remove_item', 'anyio.to_thread.run_sync'): 1,
+    ('planning/_store.py', 'SqlitePlanStore.set_items', 'anyio.to_thread.run_sync'): 1,
+    ('planning/_store.py', 'SqlitePlanStore.update_item', 'anyio.to_thread.run_sync'): 1,
+    ('planning/_types.py', 'PlanItem', 'uuid.uuid4'): 1,
+    ('playwright/_toolset.py', 'PlaywrightBrowserToolset._deadlines', 'time.monotonic'): 1,
+    ('playwright/_toolset.py', 'PlaywrightBrowserToolset._wait_in_any_frame', 'asyncio.wait'): 1,
+    ('playwright/_toolset.py', '_Deadlines._remaining', 'time.monotonic'): 1,
+    ('playwright/_toolset.py', '_resolve_host', 'time.monotonic'): 1,
+    ('prompt_injection_defender/_capability.py', 'PromptInjectionDefender._warmup', 'anyio.to_thread.run_sync'): 1,
+    ('pydantic_ai_docs/_capability.py', 'PydanticAIDocs._resolved_local_path', 'os.environ.get'): 1,
+    ('pydantic_ai_docs/_toolset.py', 'PydanticAIDocsToolset._fetch_remote', 'httpx2.AsyncClient'): 1,
+    ('shell/_jobs.py', 'Job.kill', 'anyio.sleep'): 1,
+    ('shell/_jobs.py', 'Job.launch', 'uuid.uuid4'): 1,
+    ('shell/_jobs.py', 'Job.status_text', 'anyio.sleep'): 1,
+    ('shell/_persistent.py', 'run_persistent_command', 'anyio.sleep'): 1,
+    ('shell/_toolset.py', 'ShellToolset._build_cwd_capture', 'uuid.uuid4'): 1,
+    ('smart_search/_index.py', 'SnippetIndexes.shortlist', 'anyio.to_thread.run_sync'): 1,
+    ('smart_search/_index.py', '_refresh', 'anyio.to_thread.run_sync'): 2,
+    ('spend_limits/_store.py', 'utc_now', 'datetime.datetime.now'): 1,
+    ('stackone/_toolset.py', 'resolve_api_key', 'os.environ.get'): 1,
+    ('step_persistence/_capability.py', 'StepPersistence._append_event', 'datetime.datetime.now'): 1,
+    ('step_persistence/_capability.py', 'StepPersistence._finish_tool_effect', 'datetime.datetime.now'): 1,
+    ('step_persistence/_capability.py', 'StepPersistence._persist_snapshot', 'datetime.datetime.now'): 1,
+    ('step_persistence/_capability.py', 'StepPersistence._registration_id', 'uuid.uuid4'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.append_event', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.get_run', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.get_tool_effect', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.latest_snapshot', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.list_events', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.list_runs', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.list_snapshots', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.list_unresolved_tool_effects', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.record_tool_effect', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.register_run', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'FileStepStore.save_snapshot', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.append_event', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.get_run', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.get_tool_effect', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.latest_snapshot', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.list_events', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.list_runs', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.list_snapshots', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.list_unresolved_tool_effects', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.record_tool_effect', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.register_run', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', 'SqliteStepStore.save_snapshot', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/_store.py', '_atomic_write_text', 'uuid.uuid4'): 1,
+    ('step_persistence/_types.py', '_utcnow', 'datetime.datetime.now'): 1,
+    ('step_persistence/conversations.py', 'ConversationSummary', 'datetime.datetime.now'): 1,
+    ('step_persistence/conversations.py', 'ConversationSummary', 'uuid.uuid4'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore._set_archived', 'datetime.datetime.now'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.delete', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.get', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.listing', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.name', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.save', 'anyio.to_thread.run_sync'): 2,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.save', 'datetime.datetime.now'): 1,
+    ('step_persistence/conversations.py', 'SqliteConversationStore.set_archived', 'anyio.to_thread.run_sync'): 1,
+    ('step_persistence/conversations.py', 'ensure_inactive', 'subprocess.run'): 1,
+    ('sub_agents/_control.py', 'TaskLink.ask_parent', 'uuid.uuid4'): 1,
+    ('sub_agents/_deferred.py', 'InMemoryDeferredStateStore.save', 'time.monotonic'): 1,
+    ('sub_agents/_deferred.py', 'InMemoryDeferredStateStore.take', 'time.monotonic'): 1,
+    ('sub_agents/_deferred.py', 'deferral_metadata', 'secrets.token_urlsafe'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTask', 'uuid.uuid4'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks._drain', 'asyncio.wait'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks._prepare_record', 'time.time'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks._prepare_record', 'uuid.uuid4'): 2,
+    ('sub_agents/_tasks.py', 'DelegationTasks._run', 'time.time'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks._settle_interrupted', 'time.time'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks._settle_unstarted', 'time.time'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks._snapshot', 'time.time'): 1,
+    ('sub_agents/_tasks.py', 'DelegationTasks.delegate', 'asyncio.wait'): 1,
+    ('sub_agents/_toolset.py', 'SubAgentToolset._background_after', 'anyio.sleep'): 1,
+    ('sub_agents/_toolset.py', 'SubAgentToolset._child_run.start', 'uuid.uuid4'): 1,
+    ('sub_agents/_toolset.py', 'SubAgentToolset._run_delegation', 'time.perf_counter'): 1,
+    ('sub_agents/_toolset.py', '_elapsed_ms', 'time.perf_counter'): 1,
+    ('sub_agents/_toolset.py', '_new_task_id', 'uuid.uuid4'): 1,
+    ('tool_output_limits/_store.py', 'LocalFileOverflowStore._chunks', 'anyio.to_thread.run_sync'): 2,
+    ('tool_output_limits/_store.py', 'LocalFileOverflowStore._prune_sync', 'time.time'): 1,
+    ('tool_output_limits/_store.py', 'LocalFileOverflowStore._schedule_cleanup', 'threading.Thread'): 1,
+    ('tool_output_limits/_store.py', 'LocalFileOverflowStore.read', 'anyio.to_thread.run_sync'): 1,
+    ('tool_output_limits/_store.py', 'LocalFileOverflowStore.write', 'anyio.to_thread.run_sync'): 1,
+    ('trajectory_judge/_capability.py', 'TrajectoryJudge._judge_verdict', 'secrets.token_hex'): 1,
+    ('youdotcom/_toolset.py', 'default_client', 'os.environ.get'): 2,
+}
+"""The calls the Harness made when it joined this check, keyed by module under `HARNESS`, enclosing qualname and
+callee, with how many such calls each key accepts. They are not triaged: an entry says the call was there, not that
+replay is safe. Lower or remove an entry when its calls go; a new call needs a pragma with a reason."""
+
+_ACCEPTED.update(
+    {
+        (f'{HARNESS}/{module}', qualname, callee): (count, 'made by the Harness when it joined this check')
+        for (module, qualname, callee), count in _HARNESS_ON_MAIN.items()
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -363,12 +594,18 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
         f'{CORE}/run.py',
         f'{CORE}/tool_manager.py',
         *sorted(path.relative_to(REPO_ROOT).as_posix() for paths in engine_modules.values() for path in paths),
+        *sorted(
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in (REPO_ROOT / HARNESS).rglob('*.py')
+            if path.relative_to(REPO_ROOT / HARNESS).parts[0] not in _WORKSPACE_BACKENDS
+        ),
     ]
     found: Counter[tuple[str, str, str]] = Counter()
     problems: list[str] = []
     for relative in modules:
         path = REPO_ROOT / relative
-        parts = path.relative_to(REPO_ROOT / 'pydantic_ai_slim').with_suffix('').parts
+        package_root = Path(HARNESS if relative.startswith(HARNESS) else CORE).parent
+        parts = path.relative_to(REPO_ROOT / package_root).with_suffix('').parts
         is_package = parts[-1] == '__init__'
         module = '.'.join(parts[:-1] if is_package else parts)
         calls = nondeterministic_calls(path.read_text(encoding='utf-8'), module, is_package=is_package)
@@ -379,7 +616,15 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
         problems
     )
     stale = sorted(key for key, (accepted, _) in _ACCEPTED.items() if found[key] < accepted)
-    assert stale == [], f'`_ACCEPTED` entries that accept more calls than remain, lower or remove them: {stale}'
+    assert stale == [], (
+        f'`_ACCEPTED` or `_HARNESS_ON_MAIN` entries that accept more calls than remain, lower or remove them: {stale}'
+    )
+
+
+def test_every_workspace_backend_exists():
+    """A name in `_WORKSPACE_BACKENDS` that no longer exists would leave a new module of that name unchecked."""
+    harness = REPO_ROOT / HARNESS
+    assert sorted(name for name in _WORKSPACE_BACKENDS if not (harness / name).exists()) == []
 
 
 def test_nondeterministic_calls_resolves_imports_and_pragmas():

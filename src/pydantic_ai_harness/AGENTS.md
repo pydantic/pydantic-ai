@@ -173,6 +173,9 @@ an engine change leaves it stale: see
 Harness durable engine's directory needs an entry there too. `Protect .github` accepts that edit
 only from an author with write access; any other author asks a maintainer to add the entry.
 
+A capability's hooks run in workflow code under every durable engine, and its function tools do
+under DBOS: the workflow-side determinism check scans the Harness too.
+
 ### Workspace and Python versions
 
 ```bash

@@ -86,6 +86,9 @@ paths, and verify that resources created inside a durable unit do not escape it.
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.
 
+`tests/durable_exec/test_exception_transport.py` gives each durable boundary a row and each public
+exception a column; a new boundary or exception class gets its verdicts there.
+
 ## Core changes that engines depend on
 
 `scripts/durable_exec_contract.json` lists the core definitions the durable engines import,
@@ -114,7 +117,7 @@ either takes effect only once merged. To list the touched entries yourself, run
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
 Read the diff: a new entry is a new dependency an engine took on core.
 
-`tests/durable_exec/test_workflow_side_determinism.py` fails when a module in its workflow-side set
+`tests/durable_exec/test_workflow_side_determinism.py` fails when a module in its workflow-side set, core or Harness,
 directly calls a clock, a random source, a sleep, a thread, a task-completion wait, an environment
 read or I/O that its `_DENYLIST` names. Prefer the replay-safe alternative the durability capability
 supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route through
@@ -122,4 +125,5 @@ supplies. For a delay, await `_agent_graph_sleep`, which Temporal and DBOS route
 [#11178](https://github.com/pydantic/pydantic-ai/issues/11178)). When the call is safe, mark it
 with `# workflow-nondeterminism-ok: <reason>` and name why replay cannot diverge. The test
 docstring is the reference for the workflow-side modules, the pragma rules, and what the test does
-not see, which needs a workflow-level test.
+not see, which needs a workflow-level test. Harness calls already on main are listed in a baseline
+that may only shrink.

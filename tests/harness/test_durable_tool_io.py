@@ -8,8 +8,8 @@ that no request was made again. Planning's tools also run with an event stream h
 for the events a tool emits must replay in their recorded order. Shell's `shell` tool names its job
 in workflow code, so a recovered workflow must report the job it started.
 
-The other engines run function tools in their own durable unit, which needs the toolset's `id`; the
-construction tests below check every one of those capabilities supplies one.
+The other engines run function tools in their own durable unit, named after the toolset's `id`:
+`tests/harness/test_durable_engines.py` builds every case under each of them.
 """
 
 from __future__ import annotations
@@ -55,10 +55,8 @@ try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
-    from pydantic_ai.durable_exec.prefect import PrefectDurability
-    from pydantic_ai.durable_exec.temporal import TemporalDurability
 except ImportError:  # pragma: lax no cover
-    pytest.skip('dbos, prefect, temporalio, exa-py or youdotcom not installed', allow_module_level=True)
+    pytest.skip('dbos, exa-py or youdotcom not installed', allow_module_level=True)
 
 
 @pytest.fixture
@@ -386,17 +384,3 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     steps = await dbos.list_workflow_steps_async(workflow_id)
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
     assert await handle.get_result(polling_interval_sec=0.01) == 'done'
-
-
-@pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])
-@pytest.mark.parametrize('scenario', sorted(_DURABLE))
-def test_toolset_can_be_wrapped_by_engines_that_wrap_function_tools(
-    scenario: str, durability: type[TemporalDurability | PrefectDurability], tmp_path: Path
-) -> None:
-    """Temporal and Prefect run each function tool in its own unit, named after the toolset's `id`."""
-    Agent(
-        _call_tools(),
-        name=f'wrapped_{uuid.uuid4().hex}',
-        deps_type=type(None),
-        capabilities=[*_capabilities(_DURABLE[scenario].build(tmp_path)), durability()],
-    )

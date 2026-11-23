@@ -523,7 +523,12 @@ CASES: dict[str, CapabilityCase] = {
                 SubAgents[None](agents=[SubAgent(Agent(TestModel(), name='beta'))]),
             ),
             _check_sub_agents,
-        )
+        ),
+        # A delegate with a model of its own, so delegating never reads the run's `ctx.model` (#11862).
+        calls=Calls(
+            (('delegate_task', {'agent_name': 'worker', 'task': 'Summarize the logs.'}),),
+            lambda _: SubAgents[None](agents=[SubAgent(Agent(TestModel(custom_output_text='done'), name='worker'))]),
+        ),
     ),
     'Advisor': CapabilityCase(
         Combines(
