@@ -30,6 +30,10 @@ def checked_desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | N
     return desktop
 
 
+RELEASE_TIMEOUT = 5
+"""Maximum seconds a desktop driver spends releasing held keys and buttons after a failed or cancelled action. The
+slowest release measured took under a second."""
+
 DEFAULT_DESKTOP_BASE_IMAGE = 'debian:bookworm-slim'
 """The image a new sandbox with a desktop and no `image` runs, where the backend's own default has no `apt-get` to
 install the display's programs with."""
