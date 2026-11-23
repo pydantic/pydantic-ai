@@ -275,6 +275,7 @@ CASES = [
 ]
 
 
+# Without `ignore_hosts`, the module's `vcr` mark answers these hosts from a cassette before the mock transport sees them.
 @pytest.mark.vcr(ignore_hosts=['nim.example', 'proxy.example'])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_mid_conversation_system_prompt_rendering(allow_model_requests: None, case: Case):
