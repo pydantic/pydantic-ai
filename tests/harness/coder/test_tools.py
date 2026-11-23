@@ -448,36 +448,24 @@ class TestCoder:
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
+    @pytest.mark.parametrize('repo_context', [False, True])
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),
-        [(False, 'the file tools only accept paths inside it'), (True, 'relative file paths resolve from it')],
+        [(False, ', and the file tools only accept paths inside it.'), (True, '.')],
     )
-    async def test_instructions_name_the_project_once(self, tmp_path: Path, unrestricted: bool, files: str) -> None:
+    async def test_instructions_name_the_project_once(
+        self, tmp_path: Path, repo_context: bool, unrestricted: bool, files: str
+    ) -> None:
+        """`Shell` and `FileSystem` name the directory, with or without `RepoContext`; `Coder` adds no line of its own."""
         model = TestModel(call_tools=[])
-        coder = Coder(unrestricted_filesystem=unrestricted)
+        coder = Coder(unrestricted_filesystem=unrestricted, repo_context=repo_context)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        notes = [part.content for part in parts if 'Your project is' in part.content]
-        assert notes == [f'Your project is `{tmp_path.resolve()}`. Shell commands start there, and {files}.']
-
-    async def test_lazy_sandbox_instructions_leave_out_the_project(self, tmp_path: Path) -> None:
-        # Without `RepoContext` nothing touches the workspace at run start, so neither do the instructions.
-        model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[Coder(repo_context=False)]).run(
-            'go', workspace=LocalWorkspaceBackend(tmp_path)
-        )
-        assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert not any('Your project is' in part.content for part in parts)
-
-    async def test_a_given_repo_context_keeps_the_project_note(self, tmp_path: Path) -> None:
-        model = TestModel(call_tools=[])
-        coder = Coder(repo_context=RepoContext(expose_inventory_tool=False))
-        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert sum('Your project is' in part.content for part in parts) == 1
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        path = tmp_path.resolve()
+        assert text.count(f'`{path}`') == 2
+        assert f'Shell commands start in `{path}`.' in text
+        assert f'Relative file paths resolve from `{path}`{files}' in text
 
     @pytest.mark.parametrize(
         ('config', 'loaded', 'nested'),

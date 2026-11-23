@@ -79,6 +79,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -431,7 +432,7 @@ async def _recover_create(client: AsyncSpritesClient, name: str, error: Exceptio
         raise error from None
 
 
-class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir, SupportsFilesystem):
     """A Fly.io Sprite behind the Pydantic AI `WorkspaceBackend` protocol.
 
     Pass `sandbox=` to wrap a `sprites.AsyncSprite` you already have, or `ref=` to reattach to one.
@@ -485,6 +486,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._attached_name: str | None = None
         # Set while `_sandbox` is such an unfetched handle, which `get_sandbox()` does not hand out.
         self._unfetched = False
+
+    @property
+    def known_working_dir(self) -> str | None:
+        """The resolved working directory, else the configured one; `None` until the environment names it."""
+        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

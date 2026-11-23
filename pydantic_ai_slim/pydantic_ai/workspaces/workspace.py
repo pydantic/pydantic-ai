@@ -22,6 +22,7 @@ from .protocol import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsKnownWorkingDir,
     SupportsPlatform,
     SupportsRealpath,
     SupportsRunInDirectory,
@@ -529,6 +530,18 @@ class Workspace(WorkspaceBackend):
     def ref(self) -> WorkspaceRef | None:
         """The environment's [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], `None` until it exists."""
         return self._backend.ref
+
+    @property
+    def known_working_dir(self) -> str | None:
+        """The [working directory][pydantic_ai.workspaces.Workspace.working_dir] if it is known without I/O, else `None`.
+
+        Reading it never starts or wakes the environment. `None` for a backend without
+        [`SupportsKnownWorkingDir`][pydantic_ai.workspaces.SupportsKnownWorkingDir].
+        """
+        backend = self._backend
+        if isinstance(backend, Workspace):
+            return backend.known_working_dir
+        return backend.known_working_dir if isinstance(backend, SupportsKnownWorkingDir) else None
 
     @property
     def platform(self) -> WorkspacePlatform:

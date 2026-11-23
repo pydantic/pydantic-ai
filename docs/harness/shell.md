@@ -395,6 +395,10 @@ inside the workspace, and that directory is carried into subsequent calls. The p
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
 
+The instructions tell the model where commands start. They name the directory when that starts nothing: for a local workspace, a sandbox with a
+configured `working_dir`, or one a tool has already started. A sandbox no tool has started yet isn't started just
+to name it. Until then the instructions say to use relative paths, and the path is added after the first tool call.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace

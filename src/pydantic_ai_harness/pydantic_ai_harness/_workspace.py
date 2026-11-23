@@ -91,6 +91,20 @@ def innermost_backend(workspace: Workspace) -> WorkspaceBackend:
     return current
 
 
+async def nameable_working_dir(workspace: Workspace) -> str | None:
+    """The working directory, if instructions can name it without starting or waking a sandbox.
+
+    A directory the backend already knows costs nothing. An existing environment is asked, which is
+    free for a local workspace and under durable execution, which journaled the answer. A sandbox no
+    tool has started yet gives `None`: its first tool call starts it, and the next request names it.
+    """
+    if (known := workspace.known_working_dir) is not None:
+        return known
+    if workspace.ref is None:
+        return None
+    return await workspace.working_dir()
+
+
 def is_unattached(workspace: Workspace) -> bool:
     """Whether `workspace` is core's placeholder for a run with no workspace.
 

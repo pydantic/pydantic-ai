@@ -15,6 +15,7 @@
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
+            - SupportsKnownWorkingDir
             - SupportsPlatform
             - SupportsRunInDirectory
             - WorkspacePlatform

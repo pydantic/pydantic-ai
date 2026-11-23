@@ -37,6 +37,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsKnownWorkingDir,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -215,7 +216,7 @@ def _check_image(image: str | modal.Image | None) -> None:
 
 
 # Subclassing the structural protocols makes a signature drift fail the type check on this class.
-class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir, SupportsFilesystem):
     """A Modal sandbox implementing Pydantic AI's `WorkspaceBackend` protocol.
 
     Construction performs no I/O. The first operation creates or attaches to a sandbox, and the
@@ -349,6 +350,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider='modal', id=sandbox.object_id)
             return sandbox
+
+    @property
+    def known_working_dir(self) -> str | None:
+        """The resolved working directory, else the configured one; `None` until the environment names it."""
+        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

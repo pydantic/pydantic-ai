@@ -39,6 +39,7 @@ import anyio.lowlevel
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
+    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -193,7 +194,7 @@ async def destroy_sandbox(sandbox_id: str, connection: ConnectionConfig | None =
         await manager.close()
 
 
-class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
+class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir):
     """Run commands in an [OpenSandbox](https://open-sandbox.ai) sandbox, created on first use.
 
     Built with `image`, the first operation creates a sandbox from it; built with `ref`, it attaches to that
@@ -273,6 +274,11 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._lock = anyio.Lock()
         self._operations = 0
         self._close_after_operation = False
+
+    @property
+    def known_working_dir(self) -> str | None:
+        """The resolved working directory, else the configured one; `None` until the environment names it."""
+        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

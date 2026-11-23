@@ -154,6 +154,10 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
+The instructions tell the model where relative paths resolve from. They name the directory when that starts nothing: for a local workspace, a sandbox with a
+configured `working_dir`, or one a tool has already started. A sandbox no tool has started yet isn't started just
+to name it. Until then the instructions say to use relative paths, and the path is added after the first tool call.
+
 [`PrefixTools`](../capabilities/prefix-tools.md) renames the tools so the model can tell two
 `FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
 doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one

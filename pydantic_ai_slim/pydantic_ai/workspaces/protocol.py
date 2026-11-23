@@ -3,7 +3,8 @@
 A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] plus
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
-[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath],
+[`SupportsKnownWorkingDir`][pydantic_ai.workspaces.SupportsKnownWorkingDir],
 [`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform] and
 [`SupportsRunInDirectory`][pydantic_ai.workspaces.SupportsRunInDirectory]. Every backend must:
 
@@ -51,6 +52,7 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsKnownWorkingDir',
     'SupportsPlatform',
     'SupportsRealpath',
     'SupportsRunInDirectory',
@@ -228,6 +230,25 @@ class SupportsRealpath(Protocol):
         Relative link targets start in the link's directory; `..` after a link climbs from its
         target. Keep missing components as written. A loop must not hang; a returned path through a loop
         must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsKnownWorkingDir(Protocol):
+    """Optional: a backend that can name its working directory without starting or waking its environment.
+
+    Without it, [`Workspace.known_working_dir`][pydantic_ai.workspaces.Workspace.known_working_dir] is `None`.
+    Implement it on a backend whose environment starts on first use, so instructions can name the directory
+    without that `working_dir()` call.
+    """
+
+    @property
+    def known_working_dir(self) -> str | None:
+        """What `working_dir()` returns, if known without I/O; else `None`.
+
+        Before the environment is asked, this may be the configured absolute path; once `working_dir()` has
+        returned, it is that value. The two differ only when the configured path goes through a symlink.
         """
         ...
 
