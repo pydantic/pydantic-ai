@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
@@ -18,7 +18,6 @@ from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
     coder_instructions,
-    project_instructions,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
@@ -139,14 +138,13 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
 
     guidance: str
     delegated_guidance: str
-    project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
     delegate: bool = False
 
     def __post_init__(self) -> None:
         self.id = 'coder_instructions'
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return [self.delegated_guidance if self.delegate else self.guidance, *self.project]
+        return self.delegated_guidance if self.delegate else self.guidance
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         if delegation_depth() <= 1:
@@ -282,14 +280,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             and bundled_repo_context.nested_traversal
             and bundled_repo_context.nested_inject == 'contents',
         )
-        # Naming the directory creates a lazily created sandbox, so it comes only with
-        # `RepoContext`, which reads the workspace at run start anyway.
-        project = (
-            [project_instructions(unrestricted=unrestricted_filesystem)] if bundled_repo_context is not None else []
-        )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
+            _CoderGuidance[AgentDepsT](guidance, delegated_guidance),
             _file_system(unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
                 denied_commands=[],

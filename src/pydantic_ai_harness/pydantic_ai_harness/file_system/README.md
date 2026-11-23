@@ -138,6 +138,10 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
+The instructions tell the model where relative paths resolve from. They name the directory of a workspace that
+already exists, such as a local one, and never create a sandbox to do it: until a sandbox's first tool call, the
+instructions say to use relative paths, and the path is added after that call.
+
 [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
 `FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
 doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one
