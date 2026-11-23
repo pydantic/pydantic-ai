@@ -429,7 +429,7 @@ class TestDetectLoops:
 
         assert str(exc_info.value) == message
 
-    async def test_span_leaves_out_fingerprints_without_content(self):
+    async def test_span_names_offered_tools_and_leaves_out_fingerprints_without_content(self):
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -441,6 +441,7 @@ class TestDetectLoops:
         [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
         assert 'detect_loops.fingerprints' not in (span.attributes or {})
         assert (span.attributes or {})['detect_loops.pattern'] == 'repeated_result'
+        assert (span.attributes or {})['detect_loops.tool_names'] == ('read_file',)
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_tool_name_the_run_does_not_offer_is_content(

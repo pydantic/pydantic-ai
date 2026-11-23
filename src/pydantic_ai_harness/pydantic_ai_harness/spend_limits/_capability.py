@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._telemetry import record_decision
+from pydantic_ai._telemetry import record_decision, records_content
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
@@ -791,9 +791,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             },
             # A scope key is usually a tenant or user id, and a trace has a wider audience than the
             # application that produced it. `budget.scope` is user code, so it runs only when recorded.
-            content={'spend.scope': budget.scope(ctx)}
-            if budget.scope is not None and ctx.trace_include_content
-            else None,
+            content={'spend.scope': budget.scope(ctx)} if budget.scope is not None and records_content(ctx) else None,
         )
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 

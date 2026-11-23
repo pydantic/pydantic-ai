@@ -766,6 +766,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         action = self.action
         # The names come from the model's tool calls, so one the run never offered is model output.
         offered = self._offered_tool_names
+        known_tool_names = tuple(name for name in loop.tool_names if name in offered)
         unknown_tool_names = tuple(name for name in loop.tool_names if name not in offered)
         # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
         content: dict[str, AttributeValue] = {'detect_loops.fingerprints': loop.fingerprints}
@@ -781,7 +782,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                 'detect_loops.action': action if isinstance(action, str) else 'handler',
                 'detect_loops.count': loop.count,
                 'detect_loops.window': loop.window,
-                'detect_loops.tool_names': tuple(name for name in loop.tool_names if name in offered),
+                'detect_loops.tool_names': known_tool_names,
             },
             content=content,
         )
