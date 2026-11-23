@@ -103,8 +103,9 @@ async def test_conditional_fields_empty_layout_and_narrow_terminal() -> None:
     assert 'agent default' not in Text.from_ansi(stream.getvalue()).plain
 
 
-DEEP = '/private/tmp/claude-501/-Users-adtyavrdhn/f1229371-cff2/scratchpad/proj/jsonrc'
+DEEP = '/home/dev/work/clients/acme/services/billing/jsonrc'
 WIDE = '/srv/プロジェクト/日本語のリポジトリ'
+REST = ' | running: shell | docker sandbox'
 
 
 @pytest.mark.parametrize(
@@ -112,22 +113,26 @@ WIDE = '/srv/プロジェクト/日本語のリポジトリ'
     [
         (
             DEEP,
-            200,
-            'opus | …hn/f1229371-cff2/scratchpad/proj/jsonrc | context: 61k/1m tokens | 1,804 output tokens'
-            ' | $0.0123 | running: shell | docker sandbox',
+            260,
+            'opus | …rk/clients/acme/services/billing/jsonrc | context: 61k/1m tokens | 1,804 output tokens'
+            f' | $0.0123{REST} | update ready | live: 2 | queued: 1',
         ),
         (
             DEEP,
-            120,
-            'opus | …/jsonrc | context: 61k/1m tokens | 1,804 output tokens | $0.0123 | running: shell'
-            ' | docker sandbox',
+            174,
+            f'opus | …/jsonrc | context: 61k/1m tokens | 1,804 output tokens | $0.0123{REST} | update ready | live: 2'
+            ' | queued: 1',
         ),
-        (DEEP, 80, 'opus | …/jsonrc | context: 61k/1m tokens | running: shell | docker sandbox'),
-        (DEEP, 60, 'opus | context: 61k/1m tokens | running: shell'),
-        (DEEP, 46, 'opus | context: 61k/1m tokens | running: shell'),
-        (DEEP, 40, 'opus | 61k/1m | running: shell'),
-        (DEEP, 24, '61k/1m | running: shell'),
-        (WIDE, 90, 'opus | …/日本語のリポジトリ | context: 61k/1m tokens | running: shell | docker sandbox'),
+        (DEEP, 142, f'opus | …/jsonrc | context: 61k/1m tokens | $0.0123{REST} | update ready | live: 2 | queued: 1'),
+        (DEEP, 120, f'opus | …/jsonrc | context: 61k/1m tokens{REST} | update ready | live: 2 | queued: 1'),
+        (DEEP, 110, f'opus | …/jsonrc | context: 61k/1m tokens{REST} | update ready | live: 2'),
+        (DEEP, 98, f'opus | …/jsonrc | context: 61k/1m tokens{REST} | live: 2'),
+        (DEEP, 83, f'opus | …/jsonrc | context: 61k/1m tokens{REST}'),
+        (DEEP, 73, f'opus | context: 61k/1m tokens{REST}'),
+        (DEEP, 62, 'opus | context: 61k/1m tokens | running: shell'),
+        (DEEP, 45, 'opus | 61k/1m | running: shell'),
+        (DEEP, 29, '61k/1m | running: shell'),
+        (WIDE, 120, f'opus | …/日本語のリポジトリ | context: 61k/1m tokens{REST} | update ready | live: 2'),
     ],
 )
 def test_a_narrow_footer_gives_way_by_priority_in_the_configured_order(
@@ -142,6 +147,9 @@ def test_a_narrow_footer_gives_way_by_priority_in_the_configured_order(
         cost=Decimal('0.0123'),
         activity='running: shell',
         status_segments=(lambda: 'docker sandbox',),
+        updates=lambda: 'update ready',
+        live=lambda: 'live: 2',
+        queued=lambda: 1,
     )
     assert ''.join(text for _, text in status.toolbar(width=width)) == expected
     assert cell_len(expected) <= width
