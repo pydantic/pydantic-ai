@@ -25,6 +25,7 @@ from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import (
     LinkOutput,
@@ -312,9 +313,10 @@ def _rows(surface: PromptSurface, *, width: int) -> list[str]:
 async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_theme() -> None:
     surface = PromptSurface(output=io.StringIO(), size=lambda: (120, 24))
     console = Console(file=surface, force_terminal=True, width=120, color_system='truecolor')
-    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
     words = ' '.join(f'word{index}' for index in range(30))
-    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=words)))
+    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=f'{words}\n')))
+    streaming = _rows(surface, width=40)
     await renderer.finish()
     wide = _rows(surface, width=120)
     assert wide[0].startswith('Thinking word0')
@@ -322,6 +324,11 @@ async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_th
     assert len(narrow) > len(wide)
     assert all(len(row) <= 40 for row in narrow)
     assert ''.join(''.join(narrow).split()) == 'Thinking' + ''.join(words.split())
+    replay = TranscriptBuffer()
+    replay.write(render_markdown(source=words, width=40, thinking=True, colors='truecolor'))
+    rendered = [Text.from_ansi(row).plain for row in replay.frame(width=40, height=50).rows]
+    assert narrow[: len(rendered) - 1] == rendered[:-1], 'the ended part renders again'
+    assert [len(row) for row in streaming[:3]] == [40] * 3, 'a live part cuts its streamed rows at 40 instead'
 
     def heading() -> str:
         """The heading's SGR as this console emits it, whatever Rich cached for the style."""

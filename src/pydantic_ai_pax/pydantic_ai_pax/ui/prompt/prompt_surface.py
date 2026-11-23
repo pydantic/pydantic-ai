@@ -201,10 +201,14 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def markdown(self, *, render: Render, width: int, expanded: Render | None = None) -> MarkdownBlock:
-        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock` for `expanded`."""
+    def markdown(
+        self, *, render: Render, width: int, streaming: bool = False, expanded: Render | None = None
+    ) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock` for `streaming` and `expanded`."""
         with self._lock:
-            return self.transcript.markdown(render=render, width=width, changed=self.changed, expanded=expanded)
+            return self.transcript.markdown(
+                render=render, width=width, changed=self.changed, streaming=streaming, expanded=expanded
+            )
 
     def toggle_details(self) -> bool:
         """Expand or collapse the output of every finished command in the transcript, for Ctrl+O; returns whether they are expanded.
