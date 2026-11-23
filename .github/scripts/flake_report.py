@@ -1,9 +1,10 @@
 """File each test that failed and then passed in one CI job as a `flake` issue.
 
-A job that reruns the tests it failed, as the nightly shuffled run does (`tests-shuffled-nightly.yml`), writes one
-JUnit report per pytest session and uploads them as one `junit-<job>-<index>` artifact per leg. A test that one
-report of a leg lists as failed or errored and another lists as passed gave two outcomes on the same commit: it is
-flaky. A test that failed in one leg and passed in another is not, because legs differ in Python and install.
+A job that reruns the tests it failed, as a merge-queue test job does through `pytest_rerun_once.sh` and the nightly
+shuffled run does (`tests-shuffled-nightly.yml`), writes one JUnit report per pytest session and uploads them as one
+`junit-<job>-<index>` artifact per leg. A test that one report of a leg lists as failed or errored and another lists
+as passed gave two outcomes on the same commit: it is flaky. A test that failed in one leg and passed in another is
+not, because legs differ in Python and install.
 
 Each flaky test gets one open issue titled `Flaky <node id>` and labeled `flake`, the convention of "Flake claims"
 in `.agents/skills/pushing-commits-to-the-repo/SKILL.md`:
