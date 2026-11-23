@@ -20,6 +20,7 @@ from termflow.parser.events import (
     CodeBlockStartEvent,
     HeadingEvent,
     ParseEvent,
+    TableEndEvent,
 )
 from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
 from termflow.render.heading import _heading_codes  # pyright: ignore[reportPrivateUsage]
@@ -47,6 +48,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.grep_output import GrepOutput
+from pydantic_ai_pax.ui.rendering.markdown_table import table_lines
 from pydantic_ai_pax.ui.rendering.tool_group import ToolCallGroup
 from pydantic_ai_pax.ui.rendering.tool_output import (
     ColorSystemName,
@@ -108,6 +110,20 @@ class MarkdownRenderer(Renderer):
     def render(self, event: ParseEvent) -> None:
         """Render one event, remembering a heading's style for links inside it."""
         self._enclosing = _heading_codes(event.level, self.style)[0] if isinstance(event, HeadingEvent) else ''
+        # Termflow buffers a table's header, rows and alignments until its end event and draws it
+        # there only once the table started and its header is set (`Renderer.render`); pax draws it
+        # instead, then clears the header so the base class only resets its table state.
+        if isinstance(event, TableEndEvent) and self._table_started and self._table_header is not None:
+            for line in table_lines(
+                header=[self._format_inline(cell) for cell in self._table_header],
+                rows=[[self._format_inline(cell) for cell in row] for row in self._table_rows],
+                alignments=self._table_alignments,
+                width=self._current_width(),
+                margin=self._margin(),
+                style=self.style,
+            ):
+                self._writeln(line)
+            self._table_header = None
         super().render(event)
 
     def _format_inline(self, text: str) -> str:

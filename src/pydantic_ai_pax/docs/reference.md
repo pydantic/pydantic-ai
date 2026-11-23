@@ -1628,6 +1628,13 @@ The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, 
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
 
+Markdown tables keep their words whole where they can. A table too wide for the terminal
+wraps its cells only between words, and every column is at least as wide as its longest word.
+When those words cannot sit side by side, each row is shown as its own block of
+`Header: value` lines, with a rule between rows; only a word wider than the terminal is
+split. Resizing lays the table out again for the new width. `TERMFLOW_MAX_TABLE_WIDTH`,
+if set, caps both layouts.
+
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
 Bare `http://` and `https://` URLs, and `<https://...>` autolinks, are shown in the
