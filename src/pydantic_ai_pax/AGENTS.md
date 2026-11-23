@@ -363,7 +363,7 @@ one that is not.
   menu worker between widgets, or ask with `Dialogs.text(multiline=True)` from a
   settings menu action, which the web UI shows as a text area. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
-  scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
+  scripted ones (`tests/pax/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`. Code that asks through `Dialogs` (settings menu
   actions, `plugins/keys.py`, `plugins/sign_in.py`) is tested with
   `tests/pax/dialog_script.py`'s `ScriptedDialogs` instead.
@@ -471,7 +471,7 @@ switches. Different versions can share the same settings database.
 - Adding a setting needs no API compatibility waiver: `SETTING_FIELDS` and
   `STRING_SETTINGS` are `growing_collections` in `.github/api-compatibility-allowlist.json`.
   Removing or renaming one still needs a deprecation and a waiver.
-- Add regression cases to `tests/test_settings_compatibility.py` and affected CLI
+- Add regression cases to `tests/pax/test_settings_compatibility.py` and affected CLI
   tests using the previous stored format. Keep historical fixtures unchanged;
   do not regenerate them with current models or rewrite them to make a change pass.
 - Verify older databases load with documented defaults for missing settings and
