@@ -8,7 +8,8 @@ The rule counts such functions in each file, and a change may not raise a file's
 is allowed, so existing checks pass until a change adds one. A function that matches but confines nothing, such as
 one that compares a resolved path for another reason, is left out of the count by `# not-confinement: <reason>` on
 its `def` line, or alone on the line above. Each such comment the change adds is reported, and one without a
-reason fails. A function moved unchanged from one changed file to another is not counted.
+reason fails. A function moved unchanged from one changed file to another is not counted, when its `def` line
+leaves the first file and that file's count falls.
 
 The rule cannot see a check split across two functions, one resolving and the other comparing.
 
@@ -32,16 +33,16 @@ from dataclasses import dataclass, field, replace
 
 from _ratchet import (
     Change,
-    Escape,
+    Exemption,
     Options,
-    added_escapes,
+    added_exemptions,
     added_findings,
     escape,
-    escapes,
+    exemptions,
     merge_head,
     parse_args,
     read_changes,
-    report_escapes,
+    report_exemptions,
     worse_than_both,
 )
 
@@ -68,7 +69,7 @@ class _Finding:
 @dataclass
 class _Scan:
     findings: list[_Finding] = field(default_factory=list[_Finding])
-    escapes: list[Escape] = field(default_factory=list[Escape])
+    exemptions: list[Exemption] = field(default_factory=list[Exemption])
 
 
 @dataclass
@@ -100,7 +101,7 @@ def _scan(source: str | None, path: str) -> _Scan:
         return _Scan()
     try:
         tree = ast.parse(source)
-        marked = escapes(source, _NOT_CONFINEMENT)
+        marked = exemptions(source, _NOT_CONFINEMENT)
     except (SyntaxError, tokenize.TokenError):
         return _Scan()
     escaped = {e.line for e in marked}
@@ -116,17 +117,25 @@ def _scan(source: str | None, path: str) -> _Scan:
     return _Scan(sorted(findings, key=lambda f: f.line), marked)
 
 
-def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Escape]]]:
+def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Exemption]]]:
     """Each file a change raised the count of, and each `# not-confinement` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
+    # A function moves out of a file only when its `def` line leaves it and the file's count falls; one edited or
+    # renamed in place has not moved.
     moves: Counter[str] = Counter()
     for _, old, new in scans:
-        moves.update(Counter(f.source for f in old.findings) - Counter(f.source for f in new.findings))
+        budget = len(old.findings) - len(new.findings)
+        gone = Counter(f.text for f in old.findings) - Counter(f.text for f in new.findings)
+        for f in old.findings:
+            if budget > 0 and gone[f.text]:
+                gone[f.text] -= 1
+                budget -= 1
+                moves[f.source] += 1
     growth: list[_Growth] = []
-    added: list[tuple[str, Escape]] = []
+    added: list[tuple[str, Exemption]] = []
     for change, old, new in scans:
         path = change.new_path or ''
-        added += added_escapes(path, old.escapes, new.escapes)
+        added += added_exemptions(path, old.exemptions, new.exemptions)
         found = added_findings(new.findings, old.findings, moves, key=lambda f: f.text, moved_key=lambda f: f.source)
         if found is not None:
             growth.append(_Growth(path, len(old.findings), len(new.findings), found))
@@ -147,7 +156,7 @@ def _print_growth(g: _Growth, github: bool) -> None:
             )
 
 
-def _check(options: Options) -> tuple[list[_Growth], list[tuple[str, Escape]]]:
+def _check(options: Options) -> tuple[list[_Growth], list[tuple[str, Exemption]]]:
     return _growth(read_changes(options, ROOTS))
 
 
@@ -159,7 +168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if theirs:
         their_growth, _ = _check(replace(options, base=theirs))
         growth = worse_than_both(growth, their_growth, key=lambda g: g.path, before=lambda g: g.old)
-    unexplained = report_escapes(
+    unexplained = report_exemptions(
         added,
         label='not confinement',
         missing='give a reason',

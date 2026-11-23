@@ -38,16 +38,16 @@ from typing import Literal
 
 from _ratchet import (
     Change,
-    Escape,
+    Exemption,
     Options,
-    added_escapes,
+    added_exemptions,
     added_findings,
     escape,
-    escapes,
+    exemptions,
     merge_head,
     parse_args,
     read_changes,
-    report_escapes,
+    report_exemptions,
     worse_than_both,
 )
 
@@ -105,7 +105,7 @@ class _Finding:
 @dataclass
 class _Scan:
     findings: dict[Rule, list[_Finding]] = field(default_factory=dict[Rule, list[_Finding]])
-    escapes: list[Escape] = field(default_factory=list[Escape])
+    exemptions: list[Exemption] = field(default_factory=list[Exemption])
 
 
 @dataclass
@@ -389,7 +389,7 @@ def _scan(source: str | None, path: str) -> _Scan:
         return _Scan()
     try:
         tree = ast.parse(source)
-        marked = escapes(source, _REAL_WAIT)
+        marked = exemptions(source, _REAL_WAIT)
     except (SyntaxError, tokenize.TokenError):
         return _Scan()
     findings = _Finder(tree, source.splitlines(), path).run()
@@ -411,7 +411,7 @@ def _rule_growth(
     return None if added is None else _Growth(path, rule, len(was), len(found), added)
 
 
-def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Escape]]]:
+def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Exemption]]]:
     """Each rule a change raised the count of in a file, and each `# real-wait` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
     # Only a wait may move, so a probe or constant removed from one file does not excuse one added to another.
@@ -420,10 +420,10 @@ def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Escap
         for rule in _ESCAPABLE & old.findings.keys():
             moves[rule].update(_texts(old.findings[rule]) - _texts(new.findings.get(rule, [])))
     growth: list[_Growth] = []
-    added: list[tuple[str, Escape]] = []
+    added: list[tuple[str, Exemption]] = []
     for change, old, new in scans:
         path = change.new_path or ''
-        added += added_escapes(path, old.escapes, new.escapes)
+        added += added_exemptions(path, old.exemptions, new.exemptions)
         for rule, found in new.findings.items():
             grown = _rule_growth(path, rule, found, old.findings.get(rule, []), moves.get(rule, Counter()))
             if grown:
@@ -449,7 +449,7 @@ def _print_advice(rules: set[Rule]) -> None:
     print(f'See {GUIDE}.')
 
 
-def _check(options: Options) -> tuple[list[_Growth], list[tuple[str, Escape]]]:
+def _check(options: Options) -> tuple[list[_Growth], list[tuple[str, Exemption]]]:
     return _growth(read_changes(options, ROOTS))
 
 
@@ -461,7 +461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if theirs:
         their_growth, _ = _check(replace(options, base=theirs))
         growth = worse_than_both(growth, their_growth, key=lambda g: (g.path, g.rule), before=lambda g: g.old)
-    unexplained = report_escapes(
+    unexplained = report_exemptions(
         added,
         label='real wait',
         missing='give the real wait a reason',

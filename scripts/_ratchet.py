@@ -1,4 +1,4 @@
-"""The base-ref comparison that `scripts/check_complexity.py` and `scripts/check_test_waits.py` share.
+"""The base-ref comparison that `scripts/check_complexity.py`, `scripts/check_test_waits.py` and `scripts/check_confine.py` share.
 
 A check reads each changed `.py` file under its roots on both sides of a change and compares what it measures, so
 a rule ratchets with no committed baseline: whatever the base already has is allowed, and the change may not add to
@@ -136,7 +136,8 @@ def added_findings(
     """The findings a change added to one file, or `None` when the change did not raise the file's count.
 
     `key` pairs a finding across the two sides of the file. `moves` counts, by `moved_key`, the findings the change
-    removed from the other changed files; each one this file gained is taken out of it and not counted.
+    moved out of the other changed files, as the caller defines a move; each one this file gained is taken out of it
+    and not counted.
     """
     fresh = Counter(map(key, found)) - Counter(map(key, was))
     added: list[T] = []
@@ -156,7 +157,7 @@ def added_findings(
 
 
 @dataclass
-class Escape:
+class Exemption:
     """A comment that leaves the finding on its line out of a rule's count."""
 
     line: int
@@ -166,26 +167,26 @@ class Escape:
     """Its source line, stripped, which pairs it across the two sides of a change."""
 
 
-def escapes(source: str, marker: re.Pattern[str]) -> list[Escape]:
+def exemptions(source: str, marker: re.Pattern[str]) -> list[Exemption]:
     """The comments in `source` that `marker` matches; its `reason` group is the reason each gives.
 
     Raises `tokenize.TokenError` on source that does not tokenize.
     """
-    found: list[Escape] = []
+    found: list[Exemption] = []
     for token in tokenize.generate_tokens(io.StringIO(source).readline):
         match = marker.match(token.string) if token.type == tokenize.COMMENT else None
         if match:
             alone = not token.line[: token.start[1]].strip()
             found.append(
-                Escape(token.start[0] + 1 if alone else token.start[0], match['reason'].strip(), token.line.strip())
+                Exemption(token.start[0] + 1 if alone else token.start[0], match['reason'].strip(), token.line.strip())
             )
     return found
 
 
-def added_escapes(path: str, old: Sequence[Escape], new: Sequence[Escape]) -> list[tuple[str, Escape]]:
-    """The escapes `new` has that `old` does not, paired by text."""
+def added_exemptions(path: str, old: Sequence[Exemption], new: Sequence[Exemption]) -> list[tuple[str, Exemption]]:
+    """The exemptions `new` has that `old` does not, paired by text."""
     before = Counter(e.text for e in old)
-    added: list[tuple[str, Escape]] = []
+    added: list[tuple[str, Exemption]] = []
     for e in new:
         if before[e.text]:
             before[e.text] -= 1
@@ -194,10 +195,10 @@ def added_escapes(path: str, old: Sequence[Escape], new: Sequence[Escape]) -> li
     return added
 
 
-def report_escapes(
-    added: Sequence[tuple[str, Escape]], *, label: str, missing: str, title: str, guide: str, github: bool
+def report_exemptions(
+    added: Sequence[tuple[str, Exemption]], *, label: str, missing: str, title: str, guide: str, github: bool
 ) -> bool:
-    """Print each escape a change added, as `<label>: <reason>`, or `missing` without one; return whether one lacks a reason."""
+    """Print each exemption a change added, as `<label>: <reason>`, or `missing` without one; return whether one lacks a reason."""
     for path, e in added:
         level, message = ('warning', f'{label}: {e.reason}') if e.reason else ('error', missing)
         print(f'{path}:{e.line}: {message}, see {guide}')
@@ -207,6 +208,6 @@ def report_escapes(
 
 
 def escape(value: str, prop: bool = False) -> str:
-    """Escape a GitHub workflow command's message, or with `prop` one of its properties."""
+    """Exemption a GitHub workflow command's message, or with `prop` one of its properties."""
     value = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
     return value.replace(':', '%3A').replace(',', '%2C') if prop else value

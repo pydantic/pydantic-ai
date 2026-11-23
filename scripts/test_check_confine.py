@@ -140,6 +140,24 @@ def test_a_function_moved_with_a_new_check_counts(repo: Path, capsys: pytest.Cap
     assert f'{_HARNESS}/moved.py: hand-written confine checks 0 -> 1' in out
 
 
+def test_a_copy_of_a_check_edited_in_place_counts(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, f'{_HARNESS}/store.py', _DEBT.replace("+ '/')", "+ '/') or False"))
+
+    code, out = _staged(repo, capsys, f'{_HARNESS}/moved.py', _DEBT)
+
+    assert code == 1
+    assert f'{_HARNESS}/moved.py: hand-written confine checks 0 -> 1' in out
+
+
+def test_a_copy_of_a_check_renamed_in_place_counts(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, f'{_HARNESS}/store.py', _DEBT.replace('def ', 'def renamed_', 1))
+
+    code, out = _staged(repo, capsys, f'{_HARNESS}/moved.py', _DEBT)
+
+    assert code == 1
+    assert f'{_HARNESS}/moved.py: hand-written confine checks 0 -> 1' in out
+
+
 def test_code_outside_the_library_roots_is_not_checked(repo: Path, capsys: pytest.CaptureFixture[str]):
     assert _staged(repo, capsys, 'tests/test_other.py', _NEW_CHECK) == (0, '')
 
