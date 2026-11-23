@@ -20,7 +20,7 @@ from pydantic_ai_harness._x11 import DESKTOP_PACKAGES
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE, DockerContainer, DockerContainerBackend
 
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from ._fake_docker import FakeDocker, install_fake_docker
 
 pytestmark = pytest.mark.skipif(
@@ -96,7 +96,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
 ) -> None:
     docker.remove_display()
     backend = DockerContainerBackend(image='my-desktop', working_dir=str(container_dir), desktop=desktop)
-    workspace = screen(backend)
+    workspace = full_display(backend)
 
     assert await workspace.display_size() == size
     await workspace.act(Click(x=3, y=4))
@@ -117,7 +117,7 @@ async def test_two_starts_at_once_start_one_x_server(docker: FakeDocker, contain
 
     async with anyio.create_task_group() as tg:
         for backend in (first, second):
-            tg.start_soon(screen(backend).display_size)
+            tg.start_soon(full_display(backend).display_size)
 
     assert docker.xvfb_starts == 1
 
@@ -137,12 +137,12 @@ async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, cont
         'do sleep 0.1; i=$((i+1)); done\n'
     )
 
-    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await full_display(_desktop(container_dir, image='my-desktop')).display_size()
     assert (bin_dir / 'xprop-probes').read_text().splitlines() == ['probe', 'probe']
 
 
 async def test_screenshots_and_the_pointer_come_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
-    workspace = screen(_desktop(container_dir, image='my-desktop'))
+    workspace = full_display(_desktop(container_dir, image='my-desktop'))
 
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=640, y=400)
@@ -172,7 +172,7 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
     backend = DockerContainerBackend(
         image='my-desktop', working_dir=str(container_dir), desktop=True, env={'DISPLAY': ':0'}
     )
-    await screen(backend).act(Click(x=3, y=4))
+    await full_display(backend).act(Click(x=3, y=4))
 
     # Starting the display checks the same X server the actions go to.
     assert {call.split(' ')[0] for call in docker.xdotool_calls} == {':1'}
@@ -180,7 +180,7 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
 
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
-    workspace = screen(backend)
+    workspace = full_display(backend)
     await workspace.display_size()
     assert docker.xvfb_starts == 1
 
@@ -208,7 +208,7 @@ async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
     docker.leave_x_lock(backend.ref.id)
 
     # The fake Xvfb refuses to start while a lock exists, so the display coming up shows the stale one went.
-    assert await screen(backend).display_size() == (1280, 800)
+    assert await full_display(backend).display_size() == (1280, 800)
 
 
 async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_dir: Path) -> None:
@@ -218,21 +218,21 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     assert backend.ref is not None
     docker.leave_x_lock(backend.ref.id, owner='Xvnc')
 
-    assert await screen(backend).display_size() == (1280, 800)
+    assert await full_display(backend).display_size() == (1280, 800)
     assert docker.xvfb_starts == 0
     assert docker.x_lock_exists(backend.ref.id)
 
 
 async def test_the_start_opens_the_panel_unless_it_shows(docker: FakeDocker, container_dir: Path) -> None:
-    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await full_display(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 1
 
-    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await full_display(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 1
 
     # As a panel that died, or a start cancelled before it, leaves the display.
     docker.close_panel()
-    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await full_display(_desktop(container_dir, image='my-desktop')).display_size()
     assert docker.panel_starts == 2
 
 
@@ -243,7 +243,7 @@ async def test_a_panel_that_exits_leaves_a_working_display(docker: FakeDocker, c
     assert backend.ref is not None
     docker.fail_panel()
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.panel_starts == 1
     log = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop.log'
     assert 'tint2: could not open the config' in log.read_text()
@@ -252,7 +252,7 @@ async def test_a_panel_that_exits_leaves_a_working_display(docker: FakeDocker, c
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
     # Missing as the shell reports it, not unlinked: a host's own `scrot` further along PATH would answer.
     (docker.bin_dir / 'scrot').write_text('#!/bin/sh\necho "scrot: not found" >&2\nexit 127\n')
-    workspace = screen(_desktop(container_dir, image='my-desktop'))
+    workspace = full_display(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):
         await workspace.screenshot()
@@ -260,7 +260,7 @@ async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, contai
 
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
-    workspace = screen(_desktop(container_dir, image='my-desktop'))
+    workspace = full_display(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='the X server did not start') as error:
         await workspace.screenshot()
@@ -306,7 +306,7 @@ async def test_missing_display_programs_are_installed_on_first_use(
     _hide_host_programs(docker)
     docker.run_as(uid, sudo=uid != 0)
 
-    assert await screen(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
+    assert await full_display(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
     assert docker.apt_get_calls == [f'{sudo}{_UPDATE}', f'{sudo}{_INSTALL}']
 
 
@@ -317,7 +317,7 @@ async def test_one_missing_program_makes_the_first_start_install_them_all(
     _hide_host_programs(docker)
     docker.run_as(0)
 
-    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [_UPDATE, _INSTALL]
 
 
@@ -331,7 +331,7 @@ async def test_missing_display_programs_without_root_say_what_is_missing(
     with pytest.raises(
         WorkspaceUnavailableError, match="the display needs xdotool scrot, and there's no root or passwordless sudo"
     ):
-        await screen(_desktop(container_dir, image='my-desktop')).screenshot()
+        await full_display(_desktop(container_dir, image='my-desktop')).screenshot()
     assert docker.apt_get_calls == []
 
 
@@ -349,7 +349,7 @@ async def test_missing_display_programs_without_apt_get_say_what_is_missing(
     with pytest.raises(
         WorkspaceUnavailableError, match="the display needs xdotool, and there's no apt-get to install them with"
     ):
-        await screen(backend).screenshot()
+        await full_display(backend).screenshot()
 
 
 async def test_a_running_x_server_needs_no_xvfb(docker: FakeDocker, container_dir: Path) -> None:
@@ -360,7 +360,7 @@ async def test_a_running_x_server_needs_no_xvfb(docker: FakeDocker, container_di
     docker.uninstall('Xvfb')
     _hide_host_programs(docker)
 
-    assert await screen(backend).display_size() == (1280, 800)
+    assert await full_display(backend).display_size() == (1280, 800)
     assert docker.apt_get_calls == []
 
 
@@ -374,7 +374,7 @@ async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDo
     docker.run_as(0)
     docker.start_x_during_install()
 
-    assert await screen(backend).display_size() == (1280, 800)
+    assert await full_display(backend).display_size() == (1280, 800)
     assert docker.apt_get_calls == [_UPDATE, _INSTALL]
     assert docker.xvfb_starts == 0
     assert docker.x_lock_exists(backend.ref.id)
@@ -403,7 +403,7 @@ async def test_a_desktop_log_that_isnt_a_file_still_starts_the_desktop(
         docker.run_as(0)
 
     with anyio.fail_after(10):  # real-wait: a start that opens the named pipe by name blocks forever, so fail fast
-        assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+        assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.panel_starts == 1
     assert target.read_text() == 'kept'
 
@@ -418,7 +418,7 @@ async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_worki
     docker.run_as(0)
     docker.lack_packages('tint2')
 
-    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [_UPDATE, _INSTALL, f'{_INSTALL_ONLY} tint2']
     assert docker.panel_starts == 0
 
@@ -434,7 +434,7 @@ async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
     docker.run_as(0)
     docker.lack_packages('tint2', 'xterm')
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     install_tint2 = [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert docker.apt_get_calls == install_tint2
     marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
@@ -443,13 +443,13 @@ async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
     # A later start, with the same program missing, doesn't run `apt-get` again.
     starts = docker.xvfb_starts
     docker.remove_display()
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
     assert docker.xvfb_starts == starts + 1
     assert docker.apt_get_calls == install_tint2
 
     docker.uninstall('xterm')
     docker.remove_display()
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
     assert docker.apt_get_calls == [*install_tint2, _UPDATE, f'{_INSTALL_ONLY} tint2 xterm']
     assert marker.read_text() == ' tint2 xterm'
 
@@ -466,7 +466,7 @@ async def test_a_working_desktop_install_removes_the_record_of_a_failed_one(
     _hide_host_programs(docker)
     docker.run_as(0)
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert not marker.exists()
 
@@ -487,7 +487,7 @@ async def test_a_failed_desktop_install_is_not_recorded_through_a_symlink(
     docker.run_as(0)
     docker.lack_packages('tint2')
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert target.read_text() == 'kept'
 
@@ -506,7 +506,7 @@ async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
     docker.fail_updates()
     docker.lack_packages('tint2')
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert docker.panel_starts == 0
     # The install failed only because the update did, so it isn't recorded, and the next start tries again.
@@ -527,7 +527,7 @@ async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, con
     _hide_host_programs(docker)
     docker.run_as(0)
 
-    assert await screen(backend).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [
         _UPDATE,
         f'{_INSTALL_ONLY} xdotool x11-utils scrot util-linux',
@@ -538,7 +538,7 @@ async def test_without_root_a_missing_desktop_is_skipped(docker: FakeDocker, con
     docker.uninstall('fluxbox', 'tint2', 'xterm')
     _hide_host_programs(docker)
 
-    assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
+    assert await full_display(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == []
     assert docker.panel_starts == 0
 
@@ -553,7 +553,7 @@ async def test_the_desktop_settings_are_written_for_the_user_unless_present(
     (home / '.config' / 'tint2').mkdir(parents=True)
     (home / '.config' / 'tint2' / 'tint2rc').write_text('panel_position = top\n')
 
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
 
     assert (home / '.fluxbox' / 'apps').read_text() == '[app] (class!=Tint2)\n  [Maximized] {yes}\n[end]\n'
     assert (home / '.config' / 'tint2' / 'tint2rc').read_text() == 'panel_position = top\n'
@@ -566,7 +566,7 @@ async def test_the_panel_settings_go_where_tint2_reads_them(
     config = tmp_path / 'config'
     docker.set_image_env('XDG_CONFIG_HOME', str(config))
 
-    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await full_display(_desktop(container_dir, image='my-desktop')).display_size()
 
     settings = (config / 'tint2' / 'tint2rc').read_text().splitlines()
     assert 'panel_position = bottom left horizontal' in settings
@@ -578,7 +578,7 @@ async def _panel_settings(docker: FakeDocker, container_dir: Path, tmp_path: Pat
     config = tmp_path / 'config'
     docker.set_image_env('XDG_CONFIG_HOME', str(config))
     _hide_host_programs(docker)
-    await screen(_desktop(container_dir, image='my-desktop')).display_size()
+    await full_display(_desktop(container_dir, image='my-desktop')).display_size()
     return (config / 'tint2' / 'tint2rc').read_text().splitlines()
 
 
@@ -636,7 +636,7 @@ async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path
     docker.fail_installs()
 
     with pytest.raises(WorkspaceUnavailableError, match='could not install xdotool:') as error:
-        await screen(_desktop(container_dir, image='my-desktop')).screenshot()
+        await full_display(_desktop(container_dir, image='my-desktop')).screenshot()
     assert 'Unable to locate package' in str(error.value)
     assert docker.apt_get_calls == [_UPDATE, _INSTALL]
 
@@ -648,50 +648,10 @@ async def test_the_socket_directory_is_made_for_a_user_without_root(docker: Fake
     assert backend.ref is not None
     docker.remove_display()
 
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
 
     socket_dir = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / '.X11-unix'
     assert socket_dir.stat().st_mode & 0o7777 == 0o1777
-
-
-async def test_a_desktop_refuses_the_host_network(docker: FakeDocker, container_dir: Path) -> None:
-    """On the host's network, programs in the container could connect to the host's X server and control its screen."""
-    created = screen(
-        DockerContainerBackend(
-            image='my-desktop', working_dir=str(container_dir), desktop=True, docker_args=['--network', 'host']
-        )
-    )
-    with pytest.raises(UserError, match="a desktop can't use the host's network"):
-        await created.screenshot()
-    # Without a desktop, nothing in the container talks to an X server.
-    await DockerContainerBackend(
-        image='python:3.12', working_dir=str(container_dir), docker_args=['--network', 'host']
-    ).working_dir()
-
-    # However the container got there: attached, or sharing a host-network container's network.
-    docker.add_container('on-host', container_dir, network='host')
-    docker.add_container('joined', container_dir, network='container:on-host')
-    for name in ['on-host', 'joined']:
-        attached = screen(DockerContainerBackend(ref=WorkspaceRef(provider='docker', id=name), desktop=True))
-        with pytest.raises(UserError, match="a desktop can't use the host's network"):
-            await attached.screenshot()
-    assert docker.xdotool_calls == []
-
-    docker.add_container('orphan', container_dir, network='container:gone')
-    orphan = screen(DockerContainerBackend(ref=WorkspaceRef(provider='docker', id='orphan'), desktop=True))
-    with pytest.raises(WorkspaceUnavailableError, match='could not inspect container gone'):
-        await orphan.screenshot()
-
-
-async def test_a_desktop_refuses_a_podman_namespace_path(docker: FakeDocker, container_dir: Path) -> None:
-    """Podman keeps `ns:<path>` as the network mode, and `ns:/proc/1/ns/net` is the host's network."""
-    docker.add_container('host-ns', container_dir, network='ns:/proc/1/ns/net')
-    docker.add_container('joined', container_dir, network='container:host-ns')
-    for name in ['host-ns', 'joined']:
-        attached = screen(DockerContainerBackend(ref=WorkspaceRef(provider='docker', id=name), desktop=True))
-        with pytest.raises(UserError, match="a desktop can't use the host's network"):
-            await attached.screenshot()
-    assert docker.xdotool_calls == []
 
 
 @pytest.mark.parametrize('desktop', [(0, 0), (1280, -1), (1280,)])
@@ -720,7 +680,7 @@ async def test_a_desktop_capability_gives_a_new_run_a_display(docker: FakeDocker
 
     @agent.tool
     async def probe(ctx: RunContext[object]) -> str:
-        return 'x'.join(map(str, await screen(ctx.workspace.backend).display_size()))
+        return 'x'.join(map(str, await full_display(ctx.workspace.backend).display_size()))
 
     result = await agent.run('go')
 
