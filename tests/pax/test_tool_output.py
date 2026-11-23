@@ -220,11 +220,17 @@ async def test_edit_uses_termflow_diff_renderer() -> None:
     assert 'old' in text and 'new' in text
     assert '\x1b[48;2;34;92;43m' in text  # addition rows: green
     assert '\x1b[48;2;122;41;54m' in text  # deletion rows: red
+
+
+async def test_a_truncated_diff_of_headers_only_keeps_one_blank_row() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, force_terminal=True, color_system=None), stop_loading=lambda: None)
     await renderer.on_stream_event(
-        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'cargo test'}, tool_call_id='next'))
+        FileEditedEvent(
+            path='big.py', root_dir='/tmp', content_hash='hash', diff='--- a/big.py\n+++ b/big.py\n', truncated=True
+        )
     )
-    rows = Text.from_ansi(output.getvalue()).plain.splitlines()
-    assert rows[-3:] == ['+ new', '', '● shell cargo test'], 'one blank row between the diff and the next call'
+    assert output.getvalue() == '● edit_file big.py\n\nDiff truncated.\n\n'
 
 
 async def _print_shell_call(console: Console, command: str) -> None:

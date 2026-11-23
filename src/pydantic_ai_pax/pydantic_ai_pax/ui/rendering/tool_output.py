@@ -300,8 +300,10 @@ class ToolOutput:
         safe_diff = terminal_text(diff).rstrip('\n')
         if safe_diff:
             if self.console.is_terminal:
-                self.console.file.write(theme.diff_renderer().render(safe_diff) + '\n')
-                self.console.file.flush()
+                # Termflow drops file and hunk headers, so a diff of headers only renders no rows.
+                if rendered := theme.diff_renderer().render(safe_diff):
+                    self.console.file.write(rendered + '\n')
+                    self.console.file.flush()
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)
         if truncated:
