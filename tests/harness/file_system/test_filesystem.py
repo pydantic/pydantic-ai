@@ -935,6 +935,19 @@ class TestReadFile:
             'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
         )
 
+    async def test_read_image_pillow_warns_about_is_described_where_warnings_are_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Between `MAX_IMAGE_PIXELS` and twice it, Pillow only warns; this suite turns warnings into errors.
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 4_000_000)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[big.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
     async def test_read_image_pillow_refuses_as_a_bomb_is_described(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

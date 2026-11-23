@@ -141,7 +141,10 @@ def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledIm
             oriented.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             output = BytesIO()
             oriented.save(output, format=image_format, quality=90)
-    except Image.DecompressionBombError:
+    # Pillow refuses an image over twice `Image.MAX_IMAGE_PIXELS` and warns about one over it.
+    # The warning is expected for such an image, which the size check above refuses anyway;
+    # where warnings are errors it arrives here as the exception instead.
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
         return TooLargeToDecode(None)
     except (OSError, SyntaxError, ValueError, EOFError):
         return None
