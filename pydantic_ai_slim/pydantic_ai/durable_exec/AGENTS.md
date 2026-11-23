@@ -87,8 +87,9 @@ teardown, control-flow exceptions, persisted-output upgrades, and behavior outsi
 context in the engine's own suite.
 
 `tests/durable_exec/test_exception_transport.py` (core) and `tests/harness/test_exception_transport.py`
-(Harness) give each durable boundary a table with a verdict for each public exception class; a new
-boundary or exception class gets its verdicts there.
+(Harness) give each durable boundary a table with a verdict for each public exception class, plus
+`asyncio.CancelledError` and `pydantic.ValidationError`; a new boundary or exception class gets its
+verdicts there.
 
 ## Core changes that engines depend on
 

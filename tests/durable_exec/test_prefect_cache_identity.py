@@ -16,7 +16,8 @@ Not VCR tests: no model request goes out, and no Prefect server runs. `task` and
 a stand-in flow attempt, which keeps the counters a flow attempt keeps and computes each task run's key with
 `PrefectAgentInputs`. That is the part of the default cache policy that varies within a flow: the task's source and
 the flow run's ID, which it adds, are the same for every task run here. The projections and counters that build a
-key are internal, and no public API exposes a key without a Prefect server, so the property imports them.
+key are internal, and computing one through the public cache policy needs a Prefect task run and flow run context,
+so the property imports them.
 """
 
 from __future__ import annotations

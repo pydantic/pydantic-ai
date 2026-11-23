@@ -49,8 +49,9 @@ https://github.com/pydantic/pydantic-ai/issues/11176
 
 **The Harness** is checked whole: every module under `src/pydantic_ai_harness/pydantic_ai_harness/`
 except the workspace backends in `_WORKSPACE_BACKENDS`. A capability's hooks run in workflow code
-under every engine, and under DBOS so do its function tools. No trace has derived a narrower set, as
-it has for core, so none is known to hold. A workspace backend runs inside the durable unit each workspace call
+under Temporal, DBOS and Prefect, and under DBOS so do its function tools
+(`docs/durable_execution/dbos.md`, `temporal.md`). The Harness set is not traced, so the whole package
+is checked. A workspace backend runs inside the durable unit each workspace call
 is (`durable_exec/AGENTS.md`, "Workspaces are routed by the base"), not in workflow code. The calls
 the Harness made when it joined this check are in `_HARNESS_ON_MAIN`, untriaged; like `_ACCEPTED`,
 it may only shrink.
