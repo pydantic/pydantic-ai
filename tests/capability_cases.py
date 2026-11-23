@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 from pydantic_ai.capabilities import (
     MCP,
+    Browser,
     Caching,
     Citations,
     CombinedCapability,
@@ -366,6 +367,11 @@ def _check_local_workspace(merged: LocalWorkspace[None]) -> None:
     assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
+def _check_browser(merged: Browser[None]) -> None:
+    # One browser: the later configuration replaces the earlier whole.
+    assert (merged.headless, merged.chrome_path) == (True, '/second')
+
+
 def _windows_workspaces() -> tuple[WindowsWorkspace[None], WindowsWorkspace[None]]:
     # Built as if on Windows, which they need; combining them touches no backend.
     with patch('pydantic_ai.workspaces.windows._on_windows', return_value=True):
@@ -480,6 +486,14 @@ CASES: dict[str, CapabilityCase] = {
             _check_local_workspace,
         ),
         build=lambda tmp_path: LocalWorkspace(tmp_path),
+    ),
+    'Browser': CapabilityCase(
+        Combines(
+            'the later configuration replaces the earlier one whole, so each run has one browser',
+            lambda: (Browser(headless=False, chrome_path='/first'), Browser(chrome_path='/second')),
+            _check_browser,
+        ),
+        build=Unbuildable('Launches Chrome when a run starts, which the offline suites have no binary for.'),
     ),
     'WindowsWorkspace': CapabilityCase(
         Combines(

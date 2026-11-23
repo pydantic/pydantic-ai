@@ -27,4 +27,4 @@ def test_every_capability_has_a_case() -> None:
 def test_only_the_listed_cases_are_unbuildable() -> None:
     """An `Unbuildable` case runs in none of the suites that build capabilities, so each one is a reviewed choice."""
     unbuildable = sorted(name for name, case in CASES.items() if isinstance(case.build, Unbuildable))
-    assert unbuildable == ['BatchModelRequests', 'NativeOrLocalTool', 'RequestInput', 'WindowsWorkspace']
+    assert unbuildable == ['BatchModelRequests', 'Browser', 'NativeOrLocalTool', 'RequestInput', 'WindowsWorkspace']
