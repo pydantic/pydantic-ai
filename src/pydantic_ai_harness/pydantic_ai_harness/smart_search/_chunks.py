@@ -11,14 +11,13 @@ workspace is searched where it lives, never on the host.
 
 from __future__ import annotations
 
-import posixpath
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import Workspace, WorkspaceError
+from pydantic_ai.workspaces._confine import confine
 from pydantic_ai_harness.file_system._ripgrep import RipgrepNotFoundError, run_ripgrep
 from pydantic_ai_harness.smart_search._structure import Range, python_ranges
 
@@ -174,8 +173,8 @@ async def read_or_error(workspace: Workspace, path: str) -> bytes | OSError:
 
 async def searchable_root(workspace: Workspace, directory: str) -> str:
     """The real path of `directory`, refused outside the working directory: its source would go to the judge."""
-    root = await workspace.resolve(directory)
-    cwd, real = await gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
-    if posixpath.commonpath([cwd, real]) != cwd:
+    cwd = await workspace.realpath(await workspace.working_dir())
+    real = await confine(workspace, cwd, await workspace.resolve(directory), allow_root=True)
+    if real is None:
         raise ModelRetry(f'{directory!r} is outside the working directory; `smart_search` only searches inside it.')
     return real

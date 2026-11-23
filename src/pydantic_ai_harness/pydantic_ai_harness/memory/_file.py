@@ -18,6 +18,7 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import FileEntry, Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai.workspaces._confine import confine
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
 from pydantic_ai_harness.memory._store import (
@@ -180,13 +181,14 @@ class FileMemoryStore:
         # symlink later, target realpaths outside it fail closed rather than following it.
         if self._real_root is None or self._real_root[0] != root:
             self._real_root = (root, await workspace.realpath(root))
-        return FileMemoryStore._confined(self._real_root[1], await workspace.realpath(target), path)
+        return await FileMemoryStore._confined(workspace, self._real_root[1], target, path)
 
     @staticmethod
-    def _confined(real_root: str, real_target: str, path: str) -> str:
-        if not real_target.startswith(real_root.rstrip('/') + '/'):
+    async def _confined(workspace: Workspace, real_root: str, target: str, path: str) -> str:
+        confined = await confine(workspace, real_root, target)
+        if confined is None:
             raise MemoryPathEscapeError(f'memory path {path!r} resolves outside the store directory')
-        return real_target
+        return confined
 
     @staticmethod
     async def _content(workspace: Workspace, target: str) -> str | None:
@@ -427,7 +429,7 @@ class FileMemoryStore:
         content_truncated = False
         for path in paths[:max_files]:
             try:
-                target = self._confined(root, await workspace.realpath(self._target(root, path)), path)
+                target = await self._confined(workspace, root, self._target(root, path), path)
             except ValueError:
                 # A listed file that links outside the store directory is not read.
                 continue
