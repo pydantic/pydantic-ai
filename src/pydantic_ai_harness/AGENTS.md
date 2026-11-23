@@ -125,6 +125,9 @@ structure. Tag names are lowercase snake_case. See
   what a capability tells the model mid-conversation is a `CapabilityPart` kind (see "Framing tags"), with
   `snake_case` tag names, attributes and no preambles; text that can't be one goes through
   `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered, never a hand-rolled escaper
+- confine a workspace path under a root with `confine` from `pydantic_ai.workspaces._confine`, not a
+  `realpath` compared with a prefix of its own; give a component that reads or writes under a root a row in
+  `tests/harness/test_rooted_components.py`, and a text store cases in `tests/harness/test_text_round_trip.py`
 
 ## Writing style
 
