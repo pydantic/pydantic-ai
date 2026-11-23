@@ -140,5 +140,5 @@ ChatGPT plan usage is a preview with the [limitations](https://developers.openai
 - System prompts and instructions are sent as developer messages, since system messages are rejected.
 - Unsupported generic settings (`max_tokens`, `service_tier`, `temperature`, and `top_p`) are dropped before sending. Explicit `openai_*` settings are sent unchanged, so ones the route rejects, such as `openai_truncation` and `openai_user`, surface as errors.
 - Of the [native tools](../native-tools.md), only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] is supported. [Tool search](../tools-advanced.md#tool-search) runs locally instead of through OpenAI's native tool search.
-- The prompt caching settings have no effect, and `count_tokens()` raises [`UserError`][pydantic_ai.exceptions.UserError].
+- The prompt caching settings have no effect, and `count_tokens()` raises a [`UserError`][pydantic_ai.exceptions.UserError] that is also a `NotImplementedError`, like a model without token counting.
 - The callback reaches the computer running the browser, so for an app on a remote VM, sign in locally and copy the credentials to it, as described in [Self-hosted VMs](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms).
