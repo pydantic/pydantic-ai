@@ -244,7 +244,7 @@ class TestIsPrivateIp:
             '203.0.114.0',  # TEST-NET-3
             '::ffff:1:0:0',  # IPv4-translated
             '100:0:0:2::',  # Dummy prefix
-            '2001:200::',  # IETF Protocol Assignments, which holds Teredo tunneling and Benchmarking
+            '2001:200::',  # IETF Protocol Assignments
             '2001:db9::',  # Documentation (RFC 3849)
             '3fff:1000::',  # Documentation (RFC 9637)
             '5f01::',  # Segment Routing (SRv6) SIDs
