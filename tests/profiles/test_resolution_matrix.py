@@ -4978,6 +4978,30 @@ def test_fireworks_open_weight_family(model_name: str, thinking: dict[str, bool]
     assert _normalize(FireworksProvider.model_profile(model_name)) == default | thinking
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'unprofiled_model_name', 'thinking'),
+    [
+        ('nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-mini-4b-instruct', _HYBRID_THINKING),
+        ('stepfun/step-5-preview', 'stepfun/step-4', _ALWAYS_THINKING),
+    ],
+)
+@pytest.mark.parametrize('provider_name', ['stav', 'otari'])
+def test_family_map_routes_add_only_open_weight_thinking(
+    provider_name: _RouteProvider, model_name: str, unprofiled_model_name: str, thinking: dict[str, bool]
+):
+    """Stav and Otari resolve the open-weight families through the shared family map, which adds only the thinking
+    flags to what an id the family doesn't describe gets."""
+    if provider_name == 'otari':
+        # Otari names the host before the model.
+        model_name, unprofiled_model_name = f'together:{model_name}', f'together:{unprofiled_model_name}'
+    provider = _route_provider(provider_name)
+    default = provider.model_profile(unprofiled_model_name)
+    profile = provider.model_profile(model_name)
+    assert default is not None and profile is not None
+    assert _normalize(profile) == _normalize(default) | thinking
+
+
 def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
     """Whether a route lets a forced tool choice through while the model thinks.
 
