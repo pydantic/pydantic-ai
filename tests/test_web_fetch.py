@@ -1551,6 +1551,26 @@ class TestMarkdownConverter:
         """
         assert _convert_html(html)[1] == expected
 
+    @pytest.mark.parametrize(
+        ('html', 'expected'),
+        [
+            pytest.param(f'<p>&#{_TOO_MANY_DIGITS};</p>', '\N{REPLACEMENT CHARACTER}', id='text'),
+            pytest.param(
+                f'<a href="/x&#{_TOO_MANY_DIGITS};">x</a>', '[x](/x\N{REPLACEMENT CHARACTER})', id='attribute'
+            ),
+            pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)}65;</p>', 'A', id='leading-zeros'),
+            # A raw-text element shows its references as written, so it doesn't raise.
+            pytest.param(f'<xmp>&#{_TOO_MANY_DIGITS};</xmp>', f'&#{_TOO_MANY_DIGITS};', id='raw-text-unchanged'),
+        ],
+    )
+    def test_too_long_decimal_character_references_convert(self, html: str, expected: str):
+        """A decimal character reference with more digits than `int()` parses names the character its number names.
+
+        `bs4` and `html.unescape` call `int()` on it, which raises past `sys.get_int_max_str_digits()`. With more than
+        7 significant digits the number is above U+10FFFF, which both parsers read as U+FFFD.
+        """
+        assert _convert_html(html)[1] == expected
+
     @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
