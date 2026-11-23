@@ -564,8 +564,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     blocks, whose changes are appended to the history. The instructions that rewrite the prefix when they change stay
     in the top-level `instructions` field, and with
     [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]
-    too. All of them stay there on a request that continues server-side state or a compacted history, has a dynamic
-    system prompt, or uses the `'user'` system prompt role.
+    too. All of them stay there on a request that sets `openai_previous_response_id` or `openai_conversation_id`,
+    continues a compacted history, has a dynamic system prompt, or uses the `'user'` system prompt role.
 
     Set by `OpenAIProvider` for `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level `instructions` after
     `input` and bill them at the uncached rate on every request:

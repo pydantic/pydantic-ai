@@ -191,7 +191,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the
     instructions are sent as leading input messages instead. That only happens on requests that
-    don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
+    don't use server-side state: when `openai_previous_response_id` or `openai_conversation_id`
     is set, or the history has been compacted, this setting leaves the instructions where they would
     otherwise go (normally the top-level field) and adds no breakpoint. That includes
     `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
