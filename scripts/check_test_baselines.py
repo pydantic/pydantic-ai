@@ -1,8 +1,9 @@
 """Fail when a change adds an entry to a baseline a test gate keeps of the violations it already found.
 
 A gate that finds violations on `main` lists them in a baseline and fails on any other. The baseline may only shrink:
-fixing a violation removes its entry, and a change may not add one. Each baseline is a set or dict literal of strings,
-or `frozenset()` of one, assigned once to a module-level name, so this reads it without importing the module.
+fixing a violation removes its entry, and a change may not add one. Each baseline is a `frozenset()` call, empty or over a
+set literal of strings, assigned once to a module-level name, so this reads it without importing the module. A mutable
+literal is refused: a later `add` or `update` call would grow it where this check does not look.
 
 Only the change that introduces `BASELINES` creates baselines. Once the base registers one, every entry of a baseline
 the base lacks counts as added, so a change can't add a second baseline or carry an existing one's entries to a new
@@ -58,15 +59,22 @@ def entries(source: str | None, name: str) -> set[str] | None:
     value = assigned(source, name)
     if value is None:
         return None
-    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == 'frozenset':
-        if not value.args and not value.keywords:
-            return set()
-        if len(value.args) == 1 and not value.keywords:
-            value = value.args[0]
-    keys = value.keys if isinstance(value, ast.Dict) else value.elts if isinstance(value, ast.Set) else None
-    found = {key.value for key in keys or () if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-    if keys is None or len(found) < len(keys):
-        raise InvalidBaseline(f'`{name}` is not a set or dict literal of strings, or `frozenset()` of one')
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == 'frozenset'
+        and not value.keywords
+        and len(value.args) <= 1
+    ):
+        raise InvalidBaseline(f'`{name}` is not `frozenset()` of a set literal of strings')
+    argument = value.args[0] if value.args else None
+    # `frozenset({})` is empty too: `{}` parses as an empty dict.
+    if argument is None or isinstance(argument, ast.Dict) and not argument.keys:
+        return set()
+    elements = argument.elts if isinstance(argument, ast.Set) else []
+    found = {key.value for key in elements if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+    if not elements or len(found) < len(elements):
+        raise InvalidBaseline(f'`{name}` is not `frozenset()` of a set literal of strings')
     return found
 
 

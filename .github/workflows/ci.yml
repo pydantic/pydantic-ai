@@ -2614,7 +2614,9 @@ jobs:
   # `.github/scripts/pytest_rerun_once.sh`, and takes the rerun's result. This job files each test that failed and then
   # passed as a flake, from the jobs' JUnit reports; see `.github/scripts/flake_report.py`. `check` doesn't need it:
   # filing must never hold or fail the queue. `harness-bubblewrap-integration` runs pytest through `make` and is not
-  # rerun.
+  # rerun. With its write-scoped token it runs the merge group's own `flake_report.py`, so a change to the script
+  # files with the version it reviewed: the queue admits only reviewed pull requests, and the reports reach issues only
+  # as checked node ids and fenced, truncated text.
   file-flakes:
     name: file flaky tests
     if: ${{ !cancelled() && github.event_name == 'merge_group' }}

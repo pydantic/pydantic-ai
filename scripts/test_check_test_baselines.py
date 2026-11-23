@@ -137,13 +137,23 @@ def test_once_the_base_registers_a_baseline_a_change_cannot_create_one(
         ),
         pytest.param(
             "GC_FINALIZED_BASELINE = frozenset({'a.py:first'}) | {'a.py:third'}\n",
-            'is not a set or dict literal of strings, or `frozenset()` of one',
+            'is not `frozenset()` of a set literal of strings',
             id='expression',
         ),
         pytest.param(
             "EXTRA = ('a.py:third',)\nGC_FINALIZED_BASELINE = frozenset({'a.py:first', *EXTRA})\n",
-            'is not a set or dict literal of strings, or `frozenset()` of one',
+            'is not `frozenset()` of a set literal of strings',
             id='unpacked',
+        ),
+        pytest.param(
+            "GC_FINALIZED_BASELINE = {'a.py:first'}\nGC_FINALIZED_BASELINE.add('a.py:third')\n",
+            'is not `frozenset()` of a set literal of strings',
+            id='mutable-set',
+        ),
+        pytest.param(
+            "GC_FINALIZED_BASELINE = {'a.py:first': 'reason'}\n",
+            'is not `frozenset()` of a set literal of strings',
+            id='mutable-dict',
         ),
     ],
 )
