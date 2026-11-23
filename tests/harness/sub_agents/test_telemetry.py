@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
-
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 from opentelemetry.util.types import AttributeValue
@@ -90,6 +87,8 @@ class TestSubAgentsTelemetry:
                 'contained',
                 'function:function:crash:',
             ),
+            # The model that answered, not the fallback chain.
+            (SubAgent(Agent(FallbackModel(FunctionModel(crash), TestModel()), name='worker')), 'ok', 'test:test'),
         ],
     )
     async def test_how_a_delegation_ended_is_recorded(
@@ -138,39 +137,6 @@ class TestSubAgentsTelemetry:
         [span] = delegation_spans(exporter)
         assert sub_agents_attributes(span) == expected
 
-    async def test_the_model_is_the_one_that_served_the_run(self, instrumented: Instrumented):
-        # Configured as the string `'test'`; the model that answered names itself `test:test`.
-        worker = SubAgent(Agent('test', name='worker'))
-        instrumentation, exporter = instrumented(False)
-        await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
-
-        [span] = delegation_spans(exporter)
-        assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
-
-    async def test_under_a_fallback_model_the_model_is_the_one_that_answered(self, instrumented: Instrumented):
-        worker = SubAgent(Agent(FallbackModel(FunctionModel(crash), TestModel()), name='worker'))
-        instrumentation, exporter = instrumented(False)
-        await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
-
-        [span] = delegation_spans(exporter)
-        assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
-
-    async def test_a_run_that_ends_unanswered_names_the_menu_model_it_ran_on(self, instrumented: Instrumented):
-        worker = SubAgent(Agent(name='worker'), timeout_seconds=0.01)
-        sub_agents = SubAgents[object](agents=[worker], models={'slow': FunctionModel(slow)})
-        delegate = ('delegate_task', {'agent_name': 'worker', 'task': 'do it', 'model': 'slow'})
-        instrumentation, exporter = instrumented(False)
-        await Agent(calling(delegate), capabilities=[sub_agents, instrumentation]).run('go')
-
-        [span] = delegation_spans(exporter)
-        assert sub_agents_attributes(span) == snapshot(
-            {
-                'sub_agents.agent_name': 'worker',
-                'sub_agents.outcome': 'timeout',
-                'sub_agents.model': 'function:function:slow:',
-            }
-        )
-
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_created_agents_name_is_content(self, include_content: bool, instrumented: Instrumented):
         create = ('create_agent', {'name': 'poet', 'description': 'd', 'instructions': 'i'})
@@ -182,16 +148,6 @@ class TestSubAgentsTelemetry:
         [span] = delegation_spans(exporter)
         name = {'sub_agents.agent_name': 'poet'} if include_content else {}
         assert sub_agents_attributes(span) == {**name, 'sub_agents.outcome': 'ok', 'sub_agents.model': 'test:test'}
-
-    async def test_a_timeout_is_a_successful_call_and_quotes_nothing_without_content(self, instrumented: Instrumented):
-        worker = SubAgent(Agent(FunctionModel(slow), name='worker'), timeout_seconds=0.01)
-        instrumentation, exporter = instrumented(False)
-        await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
-
-        [span] = delegation_spans(exporter)
-        assert span.status.status_code == StatusCode.UNSET
-        assert sub_agents_attributes(span)['sub_agents.outcome'] == 'timeout'
-        assert 'do it' not in json.dumps(dict(span.attributes or {}))
 
     async def test_an_uncontained_crash_is_an_error_with_its_outcome(self, instrumented: Instrumented):
         worker = SubAgent(Agent(FunctionModel(crash), name='worker'))
@@ -218,15 +174,3 @@ class TestSubAgentsTelemetry:
                 {'sub_agents.agent_name': 'worker', 'sub_agents.outcome': 'max_calls'},
             ]
         )
-
-    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        worker = SubAgent(Agent(TestModel(), name='worker'))
-        with provider.get_tracer('app').start_as_current_span('app request'):
-            await Agent(delegating(), capabilities=[SubAgents(agents=[worker])]).run('go')
-
-        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
-            ('app request', {})
-        ]

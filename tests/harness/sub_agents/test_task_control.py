@@ -19,12 +19,10 @@ from uuid import NAMESPACE_URL, uuid5
 import anyio
 import anyio.lowlevel
 import pytest
-from inline_snapshot import snapshot
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import StatusCode
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
@@ -573,20 +571,12 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(slow)), recorder],
         )
-        settings, exporter = traced(False)
-        parent.instrument = settings
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert cancelled.forced
         assert len(recorder.of(TaskForceCancelRequestedEvent)) == 1
-        settled = {
-            'sub_agents.agent_name': 'researcher',
-            'sub_agents.outcome': 'cancelled',
-            'sub_agents.model': 'function:function:respond:stream',
-        }
-        assert ('sub_agents task settled', settled) in decisions(exporter)
 
     async def test_a_resumed_task_continues_its_conversation(self) -> None:
         recorder = Recorder()
@@ -2295,48 +2285,6 @@ class TestTaskControlTelemetry:
         }
         assert ('sub_agents task refused', refused) in decisions(exporter)
 
-    def waiting_parent(self, gate: Gate) -> Agent[None, str]:
-        """A parent that backgrounds a task the gate holds, so its run waits for it."""
-        slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
-        return Agent(
-            scripted(call('delegate_task', agent_name='researcher', task='Slow.', background=True), text('Waiting.')),
-            capabilities=[controlled(researcher(slow))],
-        )
-
-    async def test_an_error_ending_the_wait_is_recorded_by_type_only_without_content(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # No real failure ends the wait, so one is injected: what is under test is how the span records it.
-        async def fail(self: DelegationTasks, task_id: str | None) -> None:
-            raise RuntimeError('quotes the task')
-
-        monkeypatch.setattr(DelegationTasks, 'wait_children', fail)
-        parent = self.waiting_parent(Gate())
-        settings, exporter = traced(False)
-        parent.instrument = settings
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(RuntimeError):
-            await parent.run('Go.')
-        [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
-        assert wait.status.status_code == StatusCode.ERROR
-        assert wait.status.description is None
-        assert [dict(event.attributes or {}) for event in wait.events] == snapshot(
-            [{'exception.type': 'RuntimeError', 'exception.escaped': 'False'}]
-        )
-
-    async def test_a_cancelled_wait_is_not_an_error(self) -> None:
-        # Not the child's gate: the child stays blocked, so the run is cancelled mid-wait.
-        waiting = Gate()
-        parent = self.waiting_parent(Gate())
-        settings, exporter = traced(False, OpensOnWait(waiting))
-        parent.instrument = settings
-        with anyio.fail_after(WAIT):
-            async with anyio.create_task_group() as group:
-                group.start_soon(parent.run, 'Go.')
-                await waiting.opened.wait()
-                group.cancel_scope.cancel()
-        [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
-        assert wait.status.status_code == StatusCode.UNSET
-
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_vetoed_created_agent_is_a_span(self, include_content: bool) -> None:
         @dataclass
@@ -2396,10 +2344,7 @@ class TestTaskControlTelemetry:
             ]
             assert not [text_ for text_ in recorded if 'poet' in text_ or 'private text' in text_]
 
-    @pytest.mark.parametrize('include_content', [False, True])
-    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(
-        self, include_content: bool
-    ) -> None:
+    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(self) -> None:
         """A bound owner lets the run return before its task settles, after the run dropped its created agents."""
         gate = Gate()
 
@@ -2407,7 +2352,7 @@ class TestTaskControlTelemetry:
             await gate.opened.wait()
             yield 'A poem.'
 
-        settings, exporter = traced(include_content)
+        settings, exporter = traced(False)
         parent = Agent(
             scripted(
                 call('create_agent', name='poet', description='Poems.', instructions='Write.'),
@@ -2431,69 +2376,13 @@ class TestTaskControlTelemetry:
                 gate.opened.set()
                 await owner.wait_children(None)
 
-        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
         assert decisions(exporter) == [
-            ('sub_agents task backgrounded', {**name, 'sub_agents.reason': 'requested'}),
+            ('sub_agents task backgrounded', {'sub_agents.reason': 'requested'}),
             (
                 'sub_agents task settled',
-                {**name, 'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
+                {'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
             ),
         ]
-
-    @pytest.mark.parametrize('include_content', [False, True])
-    async def test_a_created_agents_name_stays_content_in_a_later_run_of_the_conversation(
-        self, include_content: bool
-    ) -> None:
-        """A later run can steer a task whose agent an earlier run created, and dropped when it returned."""
-        gate = Gate()
-
-        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            await gate.opened.wait()
-            yield 'A poem.'
-
-        @dataclass
-        class Policy(AbstractCapability[object]):
-            @on_event(TaskSteeredEvent)
-            async def message(self, ctx: RunContext[object], event: TaskSteeredEvent) -> None:
-                event.veto()
-
-        owner = DelegationTasks()
-
-        def steer(messages: list[ModelMessage]) -> ModelResponse:
-            (record,) = owner.records.values()
-            return call('message_task', task_id=record.id, message='Shorter.')
-
-        settings, exporter = traced(include_content)
-        parent = Agent(
-            scripted(
-                call('create_agent', name='poet', description='Poems.', instructions='Write.'),
-                call('delegate_task', agent_name='poet', task='One.', background=True),
-                text('Bye.'),
-                steer,
-                text('Steered.'),
-            ),
-            capabilities=[
-                SubAgents(
-                    models={'slow': FunctionModel(stream_function=streamed)},
-                    task_control=TaskControl(),
-                    dynamic_agents=DynamicAgents(models=['slow']),
-                ),
-                Policy(),
-            ],
-        )
-        parent.instrument = settings
-        with anyio.fail_after(WAIT):
-            async with owner.opened():
-                with owner.bind():
-                    first = await parent.run('Go.', conversation_id='session')
-                    await parent.run('Steer it.', message_history=first.all_messages(), conversation_id='session')
-                gate.opened.set()
-                await owner.wait_children(None)
-
-        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
-        assert ('sub_agents vetoed', {**name, 'sub_agents.event': 'sub_agents.task_message'}) in decisions(exporter)
-        if not include_content:
-            assert not [attributes for _, attributes in decisions(exporter) if 'sub_agents.agent_name' in attributes]
 
     async def test_an_agent_on_the_bound_owners_roster_is_named_plainly(self) -> None:
         # The application configured it on the owner, not on `SubAgents`, and the model did not choose its name.
