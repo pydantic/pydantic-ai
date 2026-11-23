@@ -1831,8 +1831,9 @@ The user wants you to delete X.\
             await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
         assert slow_cancelled.is_set()
 
-    async def test_background_tool_ending_in_cancelled_error_cancels_the_run(self) -> None:
+    async def test_background_tool_ending_in_cancelled_error_cancels_the_run(self, instrumented: Instrumented) -> None:
         release = asyncio.Event()
+        instrumentation, exporter = instrumented(False)
         sibling_cancelled = asyncio.Event()
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1843,7 +1844,7 @@ The user wants you to delete X.\
                 parts=[ToolCallPart(tool_name='cancelled', args='{}'), ToolCallPart(tool_name='slow', args='{}')]
             )
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools(), instrumentation])
 
         @agent.tool_plain(metadata={'background': True})
         async def cancelled() -> str:
@@ -1862,6 +1863,10 @@ The user wants you to delete X.\
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(agent.run('go'), timeout=5)
         assert sibling_cancelled.is_set()
+        # Without a pending cancellation the run ends, but telling that apart from one needs a checkpoint
+        # that changes how the task unwinds, so the span records `interrupted`, as for a cancelled run.
+        span = _span(exporter, 'background_tools execute cancelled')
+        assert (span.attributes or {})['background_tools.outcome'] == 'interrupted'
 
     async def test_background_base_exception_stops_the_run(self) -> None:
         class FatalBackgroundError(BaseException):
@@ -2544,6 +2549,27 @@ class TestTelemetry:
                 ),
             ),
             (
+                None,
+                CallDeferred(metadata={'private_job_id': 'secret'}),
+                snapshot(
+                    {
+                        'attributes': {
+                            'gen_ai.tool.name': 'broken',
+                            'gen_ai.tool.call.id': 'call_1',
+                            'background_tools.outcome': 'failed',
+                        },
+                        'status': 'ERROR',
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_ai.exceptions.CallDeferred',
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                    }
+                ),
+            ),
+            (
                 lambda: ModelRetry('secret detail'),
                 None,
                 snapshot(
@@ -2588,7 +2614,7 @@ class TestTelemetry:
                 ),
             ),
         ],
-        ids=['tool-model-retry', 'tool-failed', 'hook-model-retry', 'hook-validation-error'],
+        ids=['tool-model-retry', 'tool-failed', 'tool-call-deferred', 'hook-model-retry', 'hook-validation-error'],
     )
     async def test_a_failed_call_records_its_outcome(
         self,
