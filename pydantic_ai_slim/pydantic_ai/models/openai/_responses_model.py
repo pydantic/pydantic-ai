@@ -210,6 +210,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    report_input_transformations,
     response_refusal,
     response_status_to_state,
 )
@@ -1171,6 +1172,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['service_tier'] = response.service_tier
         if response.prompt_cache_diagnostics is not None:
             provider_details['prompt_cache_diagnostics'] = response.prompt_cache_diagnostics.model_dump(mode='json')
+        if response.input_transformations:
+            provider_details['input_transformations'] = report_input_transformations(response.input_transformations)
 
         state = response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -2911,7 +2914,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 'call_id': call_id,
                 'status': 'completed',
             }
-            if id and should_send_item_id:  # pragma: no branch
+            # A local `search_tools` call made on a model without native tool search carries a
+            # function-call (`fc_*`) item ID, which the Responses API rejects on a `tool_search_call`
+            # item. The item ID is optional here, so only that prefix is dropped: compatible APIs
+            # can issue opaque IDs of their own.
+            if id and should_send_item_id and not id.startswith('fc_'):
                 tool_search_call['id'] = id
             context.openai_messages.append(tool_search_call)
         else:
