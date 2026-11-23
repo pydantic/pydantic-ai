@@ -16,7 +16,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer, TranscriptOutput
 from tests.pax.surface_terminal import SurfaceTerminal
 
-if sys.platform != 'win32':
+if sys.platform != 'win32':  # pragma: no branch
     import fcntl
     import termios
     from tty import setraw
@@ -24,6 +24,7 @@ if sys.platform != 'win32':
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
 
 RULE = '─' * 40
+END = b'\x07end-of-output\x07'
 ROWS = ('', RULE, '❯ ', RULE, 'model | ~/project | ready')
 
 
@@ -54,20 +55,23 @@ class Tty:
     def shown(self) -> str:
         """What the program wrote since the last call, with the line discipline's added carriage returns removed.
 
-        Linux delivers a pseudo-terminal's output, echo included, a moment after the write, so this reads until
-        nothing more arrives.
+        Output arrives in order, so reading up to a marker written now gets everything written before it.
         """
-        chunks: list[bytes] = []
-        while select.select([self.screen], [], [], 0.1)[0]:
-            chunks.append(os.read(self.screen, 65536))
-        return b''.join(chunks).decode().replace('\r\r\n', '\r\n')
+        os.write(self.terminal, END)
+        data = b''
+        while not data.endswith(END):
+            data += os.read(self.screen, 65536)
+        return data[: -len(END)].decode().replace('\r\r\n', '\r\n')
+
+    def echoes(self) -> bool:
+        return bool(termios.tcgetattr(self.terminal)[3] & termios.ECHO)
 
     def typed(self) -> bytes:
         """What the editor reads, in the raw mode it sets."""
         modes = termios.tcgetattr(self.terminal)
         setraw(self.terminal, termios.TCSANOW)
-        os.set_blocking(self.terminal, False)
         try:
+            select.select([self.terminal], [], [], 5)  # Typed keys reach the terminal a moment after the write.
             return os.read(self.terminal, 1024)
         finally:
             termios.tcsetattr(self.terminal, termios.TCSANOW, modes)
@@ -117,7 +121,7 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     shape = ['$ pax', '', '', '', RULE, '❯', RULE, '']
     assert after.lines() == [*shape, *[''] * 2], 'only the rules and the empty prompt, which read the same every launch'
     os.write(tty.screen, b'hi\r')
-    assert tty.shown() == '', 'keys typed during imports are not echoed among the rows'
+    assert not tty.echoes(), 'keys typed during imports are not echoed among the rows'
     print('Traceback: import-time warning', file=sys.stderr)
     print('a plugin says hello')
     assert tty.shown() == '', 'printed among the early rows, it would be painted over'
@@ -129,8 +133,7 @@ def test_the_next_launch_paints_the_first_frame_where_the_panel_will_and_keeps_t
     second.restore_input()
     second.restore_input()
     assert tty.typed() == b'hi\r', 'the keys wait for the editor, Enter as raw mode reads it'
-    os.write(tty.screen, b'x')
-    assert tty.shown() == 'x', 'echo is back for the editor to save and turn off itself'
+    assert tty.echoes(), 'echo is back for the editor to save and turn off itself'
     launch(after, adopted=rows, size=size, draft='hi')
     assert after.lines() == [('❯ hi' if line == '❯' else line) for line in before.lines()], 'no row painted twice'
 
@@ -252,8 +255,7 @@ def test_ctrl_c_while_painting_still_restores_the_terminal(
     tty.attach(monkeypatch)
     frame.close()
     assert tty.shown().endswith(INLINE_OFF + PASTE_OFF), 'cursor, autowrap, and paste back as they were'
-    os.write(tty.screen, b'x')
-    assert tty.shown() == 'x', 'echo is back'
+    assert tty.echoes(), 'echo is back'
 
 
 def test_nothing_is_painted_or_saved_outside_a_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
