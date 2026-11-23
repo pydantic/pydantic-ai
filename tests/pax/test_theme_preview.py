@@ -311,7 +311,8 @@ UNSTYLED_MENUS = {
     ('models.vllm', 'choose', 'MenuBuilder'),
     ('models.vllm', 'connection_action', 'MenuBuilder'),
 }
-"""Menus built without `markdown_style()`: termflow's own sky blue paints their title and cursor, 1.7:1 on white."""
+"""Menus built without `markdown_style()`: termflow's default style paints their title and highlighted row `#87CEEB`
+(1.74:1 on white) and their `search:` label `#DDA0DD` (2.07:1)."""
 
 SHOWS_LOGO = {('ui.menus.theme_picker', 'build_theme_picker', 'MenuBuilder')}
 """Menus whose preview draws the logo, which keeps its brand colours on every background."""
@@ -321,7 +322,7 @@ MENUS = [
         site,
         case,
         id=f'{".".join(site[:2])}:{case.name}',
-        marks=pytest.mark.xfail(strict=True, reason='built without `markdown_style()`')
+        marks=pytest.mark.xfail(strict=True, raises=AssertionError, reason='built without `markdown_style()`')
         if site in UNSTYLED_MENUS
         else (),
     )
