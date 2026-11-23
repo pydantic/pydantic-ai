@@ -174,6 +174,16 @@ def test_a_name_removed_outside_a_registered_set_has_not_moved(repo: Path, capsy
     assert _flagged(out) == [f"{_GROK}:1: 'mistral-tiny' in _GROK_47_REASONING_MODELS"]
 
 
+def test_a_name_tagged_in_place_has_not_moved(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, _MISTRAL, _SETS.replace("'mistral-medium-latest',", "'mistral-medium-latest',  # fact: known"))
+
+    source = "_GROK_47_REASONING_MODELS = frozenset({'grok-4.7', 'mistral-medium-latest'})\n"
+    code, out = _staged(repo, capsys, _GROK, source)
+
+    assert code == 1
+    assert _flagged(out) == [f"{_GROK}:1: 'mistral-medium-latest' in _GROK_47_REASONING_MODELS"]
+
+
 def test_files_outside_the_roots_and_files_that_do_not_parse_are_skipped(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ):

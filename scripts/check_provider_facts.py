@@ -106,6 +106,8 @@ class _Scan:
     strings: Counter[str] = field(default_factory=Counter[str])
     """Every string constant in the module."""
     tags: list[_Tag] = field(default_factory=list[_Tag])
+    members: Counter[str] = field(default_factory=Counter[str])
+    """Every member name of the module's registered sets, tagged or not."""
 
 
 @dataclass
@@ -169,9 +171,10 @@ def _scan(source: str | None, path: str, facts: frozenset[str]) -> _Scan:
     except (SyntaxError, tokenize.TokenError):
         return _Scan()
     tagged = {t.line for t in found if t.fact in facts}
-    untagged = [m for m in _members(tree, REGISTERED.get(path, frozenset())) if m.line not in tagged]
+    members = _members(tree, REGISTERED.get(path, frozenset()))
+    untagged = [m for m in members if m.line not in tagged]
     strings = Counter(n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))
-    return _Scan(untagged, strings, found)
+    return _Scan(untagged, strings, found, Counter(m.name for m in members))
 
 
 def _file_growth(path: str, old: _Scan, new: _Scan, moves: Counter[str]) -> _Growth | None:
@@ -213,10 +216,11 @@ def _growth(changes: list[Change], facts: frozenset[str]) -> tuple[list[_Growth]
     scans = [
         (c, _scan(c.old_source, c.old_path or '', facts), _scan(c.new_source, c.new_path or '', facts)) for c in changes
     ]
-    # Only a name that leaves a registered set elsewhere can move into one; any other string the change removes can't.
+    # Only an untagged name that leaves its file's registered sets can move into another file's. A name removed from
+    # anywhere else, or one that stays but gains a tag, has not moved.
     moves: Counter[str] = Counter()
     for _, old, new in scans:
-        moves.update(Counter(m.name for m in old.untagged) - Counter(m.name for m in new.untagged))
+        moves.update(Counter(m.name for m in old.untagged) - new.members)
     growth: list[_Growth] = []
     added_tags: list[tuple[str, _Tag]] = []
     for change, old, new in scans:
