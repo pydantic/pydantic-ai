@@ -60,6 +60,7 @@ _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] |
 _upstream_get_conv_fn: Callable[[MarkdownConverter, str], Callable[[Tag, str, set[str]], str] | None] = getattr(
     MarkdownConverter, 'get_conv_fn'
 )
+_DECIMAL_CHARREF_RE = re.compile(r'&#([0-9]+)')
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _HTML_HEADING_RE = re.compile(r'h\d+')
@@ -327,13 +328,32 @@ def _convert_html(html: str) -> tuple[str, str]:
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
     if html.count('<') + html.count('&') > _MAX_HTML_MARKUP_DELIMITERS:
         raise ModelRetry('the document is too complex')
-    budget = _HTMLMarkupBudget()
-    budget.feed(html)
-    budget.close()
-    soup = BeautifulSoup(html, 'html.parser')
+    try:
+        soup = _parse_html(html)
+    except ValueError:
+        # `int()` raises on a decimal character reference with more digits than
+        # `sys.get_int_max_str_digits()`, in `bs4`'s text handling and in `html.unescape` for
+        # attribute values. Parse again with each such reference shortened to one that reads as the
+        # same character: drop its leading zeros, and of more than 7 significant digits keep 8, which
+        # stay above U+10FFFF and so read as U+FFFD. The rewrite also shortens such references in
+        # raw-text elements like `<xmp>`, which show them as written, but only a page that raised
+        # takes this path.
+        soup = _parse_html(
+            _DECIMAL_CHARREF_RE.sub(
+                lambda ref: ref[0] if _is_parsable_decimal(ref[1]) else '&#' + (ref[1].lstrip('0')[:8] or '0'),
+                html,
+            )
+        )
     converter = _MarkdownConverter(strip=['img'])
     _HTMLConversionEstimate(converter).check(soup)
     return _extract_title(html), converter.convert_soup(soup)
+
+
+def _parse_html(html: str) -> BeautifulSoup:
+    budget = _HTMLMarkupBudget()
+    budget.feed(html)
+    budget.close()
+    return BeautifulSoup(html, 'html.parser')
 
 
 # Depth, indent depth, indent width, and whether the node is inline, unformatted, and inside `<pre>`.

@@ -722,18 +722,21 @@ def compiled_awf_configs(lock: Path) -> list[Mapping[str, object]]:
 
 
 def check_ai_credits_accounting(lock: Path) -> list[Violation]:
-    """Allow verified GLM prices in USD per token, never per-million overlay values."""
+    """Allow verified GLM prices in USD per token, never per-million overlay values.
+
+    Z.ai published no GLM-5.4 API price as of 2026-11-23, so GLM-5.4 is priced at GLM-5.3's rates.
+    """
     expected: dict[str, object] = {
         'anthropic': {
-            'models': {'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.00000050}}}
+            'models': {'glm-5.4': {'cost': {'input': 0.0000014, 'cache_read': 0.00000026, 'output': 0.0000044}}}
         }
     }
-    fallback: dict[str, float] = {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
+    fallback: dict[str, float] = {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4}
     return [
         Violation(
             str(lock),
             'ai-credits-accounting',
-            '`models.providers` must use the verified GLM-5.3-Flash USD-per-token rates; '
+            '`models.providers` must price GLM-5.4 at the verified GLM-5.3 USD-per-token rates; '
             'per-million values incorrectly exhaust the fixed AWF credit cap. '
             '`models.default-ai-credits-pricing` must use the same rates in USD per million tokens.',
         )
