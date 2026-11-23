@@ -663,7 +663,9 @@ Options are `service_name` (default `pydantic-clai2`), `include_content` and
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+over `LOGFIRE_SEND_TO_LOGFIRE`. Traces carry CLAI's own version as
+`service.version`, which `LOGFIRE_SERVICE_VERSION` and `OTEL_SERVICE_VERSION` do
+not change. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
@@ -3130,10 +3132,12 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 
 
 Built-in tool rendering shows one summary line per call by default, clipped to
-the terminal width and followed by a blank line. Tool names are pink; arguments
+the terminal width, then any result row, then a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
-diffs even with `display.tool_output` off. Shell output and completion details and grep results
-are hidden from the terminal, not from the model. Set `/set display.tool_output true`
+diffs even with `display.tool_output` off. A finished shell command always adds one result row
+(`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call
+whose result a renderer does not claim gets a red row with the reason. Other shell output and grep
+results are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
 diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
@@ -3171,9 +3175,9 @@ streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
-has to wait for streamed text to finish and the editor and status row to
-get out of the way. `host.full_screen()` flushes pending output, suspends the
-editor's input reader, and restores the editor and its draft when the block exits.
+needs streamed text written out and the editor and status row out of the way.
+`host.full_screen()` writes pending streamed text at once, suspends the editor's
+input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
@@ -3213,8 +3217,9 @@ output without changing the draft. New output does not move a scrolled view.
 A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
-Assistant Markdown renders again at the new width and theme; tool and command
-output rewraps, and a theme change repaints its colours role by role. Output
+Assistant Markdown renders again at the new width and theme once its part
+ends; tool and command output rewraps, and a theme change repaints its colours
+role by role. Output
 coloured with `theme.color(...)` or the theme's diff and syntax colours follows
 `/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
@@ -3686,7 +3691,9 @@ class Where(Plugin):
 The row is repainted about ten times a second while CLAI works and once a second
 while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
 and free of blocking IO. Return `''` to contribute nothing for a frame.
-Fragments are truncated from the right on a narrow terminal and are readable
+When the row is too narrow, the `plugins` group is hidden after the output count,
+cost, working directory, and other optional fields, and before the model; see the
+[status-line reference](docs/reference.md#status-line). Fragments are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
@@ -4311,7 +4318,8 @@ including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
 or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves CLAI's existing appearance without changing terminal colours
-on startup or exit. `/theme default` restores it after a palette selection.
+on startup or exit; on a light terminal background, which CLAI asks the terminal for
+at startup, it uses darker shades that reach WCAG AA contrast on white, cream and light grey. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
 validation. A project override takes precedence again on the next startup.
 
@@ -4326,7 +4334,8 @@ Resolve the `ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`, and `THINKING` roles
 through `theme.color(role)` at render time. The constants retain their brand
 values; the resolver reads the active palette. `theme.sgr(role)` resolves raw
 ANSI surfaces itself. `theme.current()` returns the selected Termflow
-`TerminalPalette`, or `None` for the existing default appearance.
+`TerminalPalette`, or `None` for the existing default appearance, and
+`theme.light_background()` the terminal's background when `default` paints for a light one.
 
 Selecting a bundled palette changes terminal foreground, background, and ANSI
 slots via Termflow's OSC sequences. CLAI resets them to terminal defaults when

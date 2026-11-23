@@ -674,7 +674,10 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
 # Group 1: variable name
 # Group 2: the ':-' separator (to detect if default syntax is used)
 # Group 3: the default value (can be empty)
-_ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
+# Group 4: the closing '}', empty when the reference is never closed. Matching an unclosed reference
+# (left unexpanded) consumes it, so a later `${` inside it isn't rescanned to the end of the string;
+# requiring the '}' makes expansion quadratic in the string's length.
+_ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?(\}?)')
 
 
 _SHUTDOWN_GRACE_SECONDS = 3
@@ -2308,6 +2311,25 @@ def _resource_content_to_pai(
         assert_never(resource)
 
 
+def _substitute_env_var(match: re.Match[str]) -> str:
+    """The replacement for one `_ENV_VAR_PATTERN` match: an unclosed reference stays as written."""
+    if not match.group(4):
+        return match.group(0)
+    var_name = match.group(1)
+    has_default = match.group(2) is not None
+    default_value = match.group(3) if has_default else None
+
+    # Check if variable exists in environment
+    if var_name in os.environ:
+        return os.environ[var_name]
+    elif has_default:
+        # Use default value if the :- syntax was present (even if empty string)
+        return default_value or ''
+    else:
+        # No default value and variable not set - raise error
+        raise ValueError(f'Environment variable ${{{var_name}}} is not defined')
+
+
 def _expand_env_vars(value: Any) -> Any:
     """Recursively expand environment variables in a JSON structure.
 
@@ -2326,7 +2348,7 @@ def _expand_env_vars(value: Any) -> Any:
     if isinstance(value, str):
         # Find all environment variable references in the string
         # Supports both ${VAR_NAME} and ${VAR_NAME:-default} syntax
-        value = _ENV_VAR_PATTERN.sub(_env_var_replacement, value)
+        value = _ENV_VAR_PATTERN.sub(_substitute_env_var, value)
 
         return value
     elif isinstance(value, dict):
@@ -2335,23 +2357,6 @@ def _expand_env_vars(value: Any) -> Any:
         return [_expand_env_vars(item) for item in value]  # type: ignore[misc]
     else:
         return value
-
-
-def _env_var_replacement(match: re.Match[str]) -> str:
-    """The value a `${VAR_NAME}` or `${VAR_NAME:-default}` reference expands to."""
-    var_name = match.group(1)
-    has_default = match.group(2) is not None
-    default_value = match.group(3) if has_default else None
-
-    # Check if variable exists in environment
-    if var_name in os.environ:
-        return os.environ[var_name]
-    elif has_default:
-        # Use default value if the :- syntax was present (even if empty string)
-        return default_value or ''
-    else:
-        # No default value and variable not set - raise error
-        raise ValueError(f'Environment variable ${{{var_name}}} is not defined')
 
 
 class _MCPServerConfig(TypedDict, total=False):

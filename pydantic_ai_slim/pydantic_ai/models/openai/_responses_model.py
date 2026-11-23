@@ -67,7 +67,13 @@ from ..._utils import (
     number_to_datetime,
 )
 from ...durable_exec._operation_backend import in_durable_unit
-from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
+from ...exceptions import (
+    ModelConnectionError,
+    SuspendedResponseExpired,
+    UnsupportedSettingWarning,
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -1000,7 +1006,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> usage.RequestUsage:
         check_allow_model_requests()
         if not self.profile.get('openai_supports_input_token_counting', True):
-            raise UserError(
+            raise _TokenCountingUnavailableError(
                 f'Server-side token counting is not available for {self.system} models '
                 f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
             )

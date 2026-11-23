@@ -89,7 +89,9 @@ A sideband does not own the call. Closing it detaches the server while the brows
 
 Retained session audio and images are capped by default, and the caps can be removed.
 
-Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [seeding a session](docs/realtime/history.md#seeding-a-session), [retaining audio](docs/realtime/history.md#retaining-audio), and [realtime usage and limits](docs/realtime/observability.md#usage-and-limits).
+`append_voice_instructions()` gives GPT-Live's voice model instructions in the application's voice, so pass it only text the application wrote. A phone bridge's webhook and media stream take requests from anyone who can reach them: check Twilio's signatures with its SDK, and open a session only for a call the checked webhook answered.
+
+Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [steering GPT-Live's voice](docs/realtime/openai.md#voice-instructions), [seeding a session](docs/realtime/history.md#seeding-a-session), [retaining audio](docs/realtime/history.md#retaining-audio), and [realtime usage and limits](docs/realtime/observability.md#usage-and-limits).
 
 ### URL fetching and provider file references
 
