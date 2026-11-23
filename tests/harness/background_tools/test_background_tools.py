@@ -2483,6 +2483,20 @@ class TestTelemetry:
         assert background.end_time is not None and placeholder.end_time is not None
         assert background.end_time > placeholder.end_time
 
+        # A tool without background metadata runs inline: no mark and no span of its own.
+        inline_agent = Agent(TestModel(call_tools=['quick']), capabilities=[BackgroundTools(), instrumentation])
+
+        @inline_agent.tool_plain
+        def quick() -> str:
+            return 'ok'
+
+        await inline_agent.run('go')
+
+        assert 'background_tools.backgrounded' not in (_span(exporter, 'execute_tool quick').attributes or {})
+        assert [span.name for span in exporter.get_finished_spans() if span.name.startswith('background_tools ')] == [
+            'background_tools execute slow'
+        ]
+
     @pytest.mark.parametrize(
         'hook_error, tool_error, expected',
         [
