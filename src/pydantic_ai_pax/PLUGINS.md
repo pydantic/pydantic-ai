@@ -3217,8 +3217,9 @@ output without changing the draft. New output does not move a scrolled view.
 A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
-Assistant Markdown renders again at the new width and theme; tool and command
-output rewraps, and a theme change repaints its colours role by role. Output
+Assistant Markdown renders again at the new width and theme once its part
+ends; tool and command output rewraps, and a theme change repaints its colours
+role by role. Output
 coloured with `theme.color(...)` or the theme's diff and syntax colours follows
 `/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
