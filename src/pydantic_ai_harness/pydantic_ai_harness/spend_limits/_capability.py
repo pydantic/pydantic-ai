@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._telemetry import record_decision
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
@@ -761,40 +760,21 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return delimited(token, str(response_index)) if response_index else token
 
     def _check(self, budget: Budget[AgentDepsT], limits: Ceilings, spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
-        """Raise if `spent` has reached either of the budget's ceilings, the dollar one checked first."""
+        """Raise if `spent` has reached either of the budget's ceilings."""
         usd, tokens = limits
         if usd is not None and spent.usd >= usd:
-            self._refuse(budget, ctx, 'usd', usd, spent.usd)
+            self._refuse(budget, ctx, f'spent ${spent.usd} of ${usd}')
         if tokens is not None and spent.tokens >= tokens:
-            self._refuse(budget, ctx, 'tokens', tokens, spent.tokens)
+            self._refuse(budget, ctx, f'used {spent.tokens} of {tokens} tokens')
 
-    def _refuse(
-        self,
-        budget: Budget[AgentDepsT],
-        ctx: RunContext[AgentDepsT],
-        limit_kind: Literal['usd', 'tokens'],
-        limit: Decimal | int,
-        spent: Decimal | int,
-    ) -> None:
-        """Record the refusal by the `limit_kind` ceiling as a span and raise."""
-        detail = f'spent ${spent} of ${limit}' if limit_kind == 'usd' else f'used {spent} of {limit} tokens'
-        record_decision(
-            ctx,
-            'spend budget exhausted',
-            attributes={
-                'spend.budget': budget.name,
-                'spend.window': budget.window,
-                'spend.limit_kind': limit_kind,
-                # OpenTelemetry has no decimal type; a dollar amount is recorded as a float.
-                'spend.limit': float(limit) if isinstance(limit, Decimal) else limit,
-                'spend.spent': float(spent) if isinstance(spent, Decimal) else spent,
-            },
-            # A scope key is usually a tenant or user id, and a trace has a wider audience than the
-            # application that produced it. `budget.scope` is user code, so it runs only when recorded.
-            content={'spend.scope': budget.scope(ctx)}
-            if budget.scope is not None and ctx.trace_include_content
-            else None,
-        )
+    def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
+        """Record the refusal as a span and raise."""
+        attributes: dict[str, str] = {'spend.budget': budget.name, 'spend.window': budget.window}
+        if ctx.trace_include_content and budget.scope is not None:
+            # A scope key is usually a tenant or user id, and a trace has a wider
+            # audience than the application that produced it.
+            attributes['spend.scope'] = budget.scope(ctx)
+        ctx.tracer.start_span('spend budget exhausted', attributes=attributes).end()
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 
     @durable_operation('read')

@@ -380,7 +380,9 @@ class Skills(AbstractCapability[AgentDepsT]):
         scanner = entry.source.scanner
         scanned = text[max(0, offset - _SCAN_OVERLAP) : end + _SCAN_OVERLAP]
         if scanner is not None and (scan := scanner.scan(scanned, source=f'skill:{skill}/{path}')).flagged:
-            record_flagged(ctx, scan, artifact='skill', action='withheld')
+            record_flagged(
+                ctx.tracer, scan, artifact='skill', action='withheld', include_content=ctx.trace_include_content
+            )
             raise ModelRetry(f'{path!r} in skill {skill!r} was withheld: an artifact scan flagged it.')
         if end >= len(text):
             return window
@@ -400,7 +402,13 @@ class Skills(AbstractCapability[AgentDepsT]):
         entries, skipped_entries = await self._read(ctx.workspace)
         for skipped in skipped_entries:
             if skipped.scan is not None:
-                record_flagged(ctx, skipped.scan, artifact='skill', action='skipped')
+                record_flagged(
+                    ctx.tracer,
+                    skipped.scan,
+                    artifact='skill',
+                    action='skipped',
+                    include_content=ctx.trace_include_content,
+                )
         advice = self._advice(tuple(entry.skill for entry in entries.values()))
         for message in (*(skipped.message for skipped in skipped_entries), *advice):
             warnings.warn(message, UserWarning, stacklevel=2)
