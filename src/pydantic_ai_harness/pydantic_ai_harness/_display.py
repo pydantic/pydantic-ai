@@ -19,8 +19,8 @@ from .computer_use import Display, DisplayAction, SupportsCursorPosition, Suppor
 T = TypeVar('T')
 
 
-def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
-    """The display size `desktop=` asks for, or `None` for no display."""
+def checked_desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
+    """The display size `desktop=` asks for, or `None` for no display, refusing a size that isn't one."""
     if desktop is True:
         return (1280, 800)
     if not desktop:
@@ -28,6 +28,11 @@ def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
     if len(desktop) != 2 or min(desktop) < 1:
         raise UserError(f'`desktop` must be a `(width, height)` of at least 1 pixel each, got {desktop!r}.')
     return desktop
+
+
+DEFAULT_DESKTOP_BASE_IMAGE = 'debian:bookworm-slim'
+"""The image a new sandbox with a desktop and no `image` runs, where the backend's own default has no `apt-get` to
+install the display's programs with."""
 
 
 def png_from_base64(encoded: str | None, source: str) -> bytes:
@@ -48,49 +53,50 @@ class DisplayDriver(Display, SupportsZoom, SupportsCursorPosition, Protocol):
 class LazyDisplay:
     """The display a backend hands out for its whole life. It starts on first use, and again after a failure.
 
-    `scope` wraps every call, including the start, for example to turn a provider's errors into workspace errors. The
-    backend also calls `start` before each shell command, so a program the command opens shows on the screen.
+    `operation` wraps every call, including the start, for example to turn a provider's errors into workspace errors.
+    The backend also calls `start` before each shell command, so a program the command opens shows on the screen.
 
     A call that only looks, such as a screenshot, is retried once after a failure, and the retry restarts a lost
     display. An action is never retried, so nothing is done twice.
 
-    It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
+    It implements [`Display`][pydantic_ai_harness.computer_use.Display], `SupportsZoom` and `SupportsCursorPosition`.
     """
 
     def __init__(
         self,
         driver: DisplayDriver,
-        start: Callable[[], Awaitable[None]],
+        start_display: Callable[[], Awaitable[None]],
         *,
-        scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
+        operation: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
     ):
         self._driver = driver
-        self._start = start
-        self._scope = scope
+        self._start_display = start_display
+        self._operation = operation
         self._running = False
-        self._lock = anyio.Lock()
+        self._start_lock = anyio.Lock()
 
-    def reset(self) -> None:
+    def mark_stopped(self) -> None:
         """Forget that the display runs, so the next call starts it, such as after the environment restarted."""
         self._running = False
 
     async def start(self) -> None:
         """Start the display, unless it is known to be running."""
-        async with self._scope():
+        async with self._operation():
             await self._start_unless_running()
 
     async def _start_unless_running(self) -> None:
         # One start at a time: two would both find no display and start two.
-        async with self._lock:
+        async with self._start_lock:
             if not self._running:
-                await self._start()
+                await self._start_display()
                 self._running = True
 
-    async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
-        retry = observe
+    async def _run_on_driver(self, call: Callable[[DisplayDriver], Awaitable[T]], *, retry_once: bool) -> T:
+        """Start the display unless it runs, then make `call`. With `retry_once`, a failed call is made once more."""
+        may_retry = retry_once
         while True:
             try:
-                async with self._scope():
+                async with self._operation():
                     await self._start_unless_running()
                     return await call(self._driver)
             except UnsupportedActionError:
@@ -102,21 +108,21 @@ class LazyDisplay:
                 # Retrying can't help an unavailable environment, and would double a timeout.
                 if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
                     raise
-                if not retry:
+                if not may_retry:
                     raise
-                retry = False
+                may_retry = False
 
     async def display_size(self) -> tuple[int, int]:
-        return await self._call(lambda driver: driver.display_size(), observe=True)
+        return await self._run_on_driver(lambda driver: driver.display_size(), retry_once=True)
 
     async def screenshot(self) -> bytes:
-        return await self._call(lambda driver: driver.screenshot(), observe=True)
+        return await self._run_on_driver(lambda driver: driver.screenshot(), retry_once=True)
 
     async def act(self, action: DisplayAction) -> None:
-        await self._call(lambda driver: driver.act(action), observe=False)
+        await self._run_on_driver(lambda driver: driver.act(action), retry_once=False)
 
     async def zoom(self, region: Region) -> bytes:
-        return await self._call(lambda driver: driver.zoom(region), observe=True)
+        return await self._run_on_driver(lambda driver: driver.zoom(region), retry_once=True)
 
     async def cursor_position(self) -> Point:
-        return await self._call(lambda driver: driver.cursor_position(), observe=True)
+        return await self._run_on_driver(lambda driver: driver.cursor_position(), retry_once=True)
