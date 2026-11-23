@@ -108,6 +108,22 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: any-ratchet
+        name: Any and cast in the harness
+        # Like `complexity`, `--staged` checks only what is staged, against `HEAD` and during a merge `MERGE_HEAD`.
+        entry: uv
+        args: [run, --no-sync, scripts/check_any_ratchet.py, --staged]
+        files: ^(src/pydantic_ai_harness|tests/harness)/
+        types: [python]
+        language: system
+        pass_filenames: false
+      - id: pragma-comments
+        name: Text after coverage pragmas
+        entry: uv
+        args: [run, --no-sync, scripts/check_pragma_comments.py, --staged]
+        types: [python]
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv

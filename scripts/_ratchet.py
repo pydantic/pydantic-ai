@@ -1,17 +1,18 @@
-"""The base-ref comparison that `scripts/check_complexity.py` and `scripts/check_test_waits.py` share.
+"""The base-ref comparison that the `scripts/check_*.py` ratchets share.
 
 A check reads each changed `.py` file under its roots on both sides of a change and compares what it measures, so
 a rule ratchets with no committed baseline: whatever the base already has is allowed, and the change may not add to
 it. `--staged` compares the index with `HEAD`, for pre-commit; `--base REF` compares the working tree, untracked
-files included, with `REF`, for CI.
+files included, with `REF`, for CI. `count_growth` and `ratchet_growth` serve a check that counts findings per file.
 """
 
 from __future__ import annotations
 
 import argparse
 import subprocess
-from collections.abc import Callable, Hashable, Sequence
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Callable, Hashable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeVar
 
@@ -130,3 +131,87 @@ def escape(value: str, prop: bool = False) -> str:
     """Escape a GitHub workflow command's message, or with `prop` one of its properties."""
     value = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
     return value.replace(':', '%3A').replace(',', '%2C') if prop else value
+
+
+@dataclass
+class Finding:
+    line: int
+    text: str
+    """The source line it is on, stripped, which pairs it across the two sides of a change and between files."""
+
+
+@dataclass
+class Growth:
+    path: str
+    rule: str
+    old: int
+    new: int
+    added: list[Finding]
+    """The findings the change added to this file, without those that moved here from another changed file."""
+
+
+Scan = Callable[[str | None], Mapping[str, list[Finding]]]
+
+
+def _texts(findings: list[Finding]) -> Counter[str]:
+    return Counter(f.text for f in findings)
+
+
+def count_growth(changes: Sequence[Change], scan: Scan) -> list[Growth]:
+    """Each rule whose count in a file a change raised, less the findings that moved in from another changed file.
+
+    A finding moved when the change removed a line with the same text from another changed file.
+    """
+    scans = [(c, scan(c.old_source), scan(c.new_source)) for c in changes]
+    moves: dict[str, Counter[str]] = {}
+    for _, old, new in scans:
+        for rule, found in old.items():
+            moves.setdefault(rule, Counter()).update(_texts(found) - _texts(new.get(rule, [])))
+    growth: list[Growth] = []
+    for change, old, new in scans:
+        for rule, found in new.items():
+            was = old.get(rule, [])
+            fresh = _texts(found) - _texts(was)
+            moved_in = moves.get(rule, Counter[str]())
+            added: list[Finding] = []
+            moved = 0
+            for f in found:
+                if not fresh[f.text]:
+                    continue
+                fresh[f.text] -= 1
+                if moved_in[f.text]:
+                    moved_in[f.text] -= 1
+                    moved += 1
+                else:
+                    added.append(f)
+            if len(found) - len(was) - moved > 0:
+                growth.append(Growth(change.new_path or '', rule, len(was), len(found), added))
+    return growth
+
+
+def ratchet_growth(options: Options, roots: Sequence[str], scan: Scan) -> list[Growth]:
+    """What `count_growth` finds for this run's change; during a merge, only what is worse than in both parents."""
+    growth = count_growth(read_changes(options, roots), scan)
+    theirs = merge_head() if options.staged else None
+    if theirs:
+        their_growth = count_growth(read_changes(replace(options, base=theirs), roots), scan)
+        growth = worse_than_both(growth, their_growth, key=lambda g: (g.path, g.rule), before=lambda g: g.old)
+    return growth
+
+
+def print_growth(growth: Sequence[Growth], advice: Mapping[str, str], title: str, guide: str, github: bool) -> None:
+    """List each file whose count grew with the findings the change added, then what to do about each rule."""
+    for g in growth:
+        print(f'{g.path}: {g.rule} {g.old} -> {g.new}')
+        for f in g.added:
+            print(f'    {g.path}:{f.line}: {f.text}')
+            if github:
+                heading = escape(f'{title}: {g.rule} {g.old} -> {g.new}', prop=True)
+                print(
+                    f'::error file={escape(g.path, prop=True)},line={f.line},title={heading}::{escape(advice[g.rule])}'
+                )
+    if growth:
+        print()
+        for rule in sorted({g.rule for g in growth}):
+            print(f'{rule}: {advice[rule]}')
+        print(f'See {guide}.')

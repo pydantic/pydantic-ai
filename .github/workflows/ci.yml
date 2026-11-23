@@ -337,7 +337,9 @@ jobs:
       - name: Test the cognitive complexity and test waits checks
         env:
           UV_NO_SYNC: "1"
-        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
+        run: >-
+          uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
+          scripts/test_check_any_ratchet.py scripts/test_check_pragma_comments.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -415,9 +417,9 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          # `complexity` and `test-waits` check only staged changes, and a checkout stages none; the `complexity`
-          # job runs them.
-          SKIP: no-commit-to-branch,complexity,test-waits
+          # `complexity`, `test-waits`, `any-ratchet` and `pragma-comments` check only staged changes, and a
+          # checkout stages none; the `complexity` job runs them.
+          SKIP: no-commit-to-branch,complexity,test-waits,any-ratchet,pragma-comments
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
@@ -611,6 +613,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: uv run --only-group lint scripts/check_test_waits.py --base HEAD^1 --format github
 
+      # Fails when a change adds an `Any` or a `cast()` to Pydantic AI Harness or its tests.
+      - name: Check Any and cast in the harness against the base
+        if: ${{ !cancelled() }}
+        run: uv run --only-group lint scripts/check_any_ratchet.py --base HEAD^1 --format github
+
+      # Fails when a change adds text after a coverage pragma on its line.
+      - name: Check text after coverage pragmas against the base
+        if: ${{ !cancelled() }}
+        run: uv run --only-group lint scripts/check_pragma_comments.py --base HEAD^1 --format github
+
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
@@ -742,7 +754,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity,test-waits
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity,test-waits,any-ratchet,pragma-comments
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})

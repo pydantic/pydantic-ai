@@ -336,6 +336,10 @@ include = [
     "scripts/test_check_complexity.py",
     "scripts/check_test_waits.py",
     "scripts/test_check_test_waits.py",
+    "scripts/check_any_ratchet.py",
+    "scripts/test_check_any_ratchet.py",
+    "scripts/check_pragma_comments.py",
+    "scripts/test_check_pragma_comments.py",
     "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
@@ -493,6 +497,8 @@ quote-style = "single"
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
 "scripts/test_check_test_waits.py" = ["D"]
+"scripts/test_check_any_ratchet.py" = ["D"]
+"scripts/test_check_pragma_comments.py" = ["D"]
 "!src/pydantic_ai_pax/**/*.py" = ["BLE001"]
 # `scripts/check_complexity.py` gates cognitive complexity on the `[tool.complexipy]` roots, so mccabe (`C901`)
 # stays on only where ruff lints and complexipy does not. `scripts/test_check_complexity.py` keeps these keys
@@ -550,6 +556,10 @@ include = [
     "scripts/test_check_complexity.py",
     "scripts/check_test_waits.py",
     "scripts/test_check_test_waits.py",
+    "scripts/check_any_ratchet.py",
+    "scripts/test_check_any_ratchet.py",
+    "scripts/check_pragma_comments.py",
+    "scripts/test_check_pragma_comments.py",
     "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
@@ -572,6 +582,8 @@ executionEnvironments = [
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
     { root = "scripts/test_check_test_waits.py", extraPaths = ["scripts"], reportPrivateUsage = false },
+    { root = "scripts/test_check_any_ratchet.py", extraPaths = ["scripts"], reportPrivateUsage = false },
+    { root = "scripts/test_check_pragma_comments.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
