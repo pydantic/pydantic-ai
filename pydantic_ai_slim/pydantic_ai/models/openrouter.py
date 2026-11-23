@@ -480,10 +480,10 @@ def _openrouter_metadata_raw_message(metadata: Mapping[str, Any] | None) -> str 
         raw_error = json.loads(raw)
     except json.JSONDecodeError:
         return raw
-    if not isinstance(raw_error, dict):
+    if not is_str_dict(raw_error):
         return None
     nested_error = raw_error.get('error')
-    if not isinstance(nested_error, dict):
+    if not is_str_dict(nested_error):
         return None
     message = nested_error.get('message')
     return message if isinstance(message, str) else None
@@ -1224,11 +1224,12 @@ class OpenRouterModel(OpenAIChatModel):
         except ModelRequestRejectedError as error:
             if isinstance(error, ModelContextWindowExceededError):
                 raise
-
+            if not isinstance(error, ModelHTTPError):
+                raise
             body = error.body
-            error_body = body.get('error', body) if isinstance(body, Mapping) else None
-            metadata = error_body.get('metadata') if isinstance(error_body, Mapping) else None
-            nested_message = _openrouter_metadata_raw_message(metadata if isinstance(metadata, Mapping) else None)
+            error_body = body.get('error', body) if is_str_dict(body) else None
+            metadata = error_body.get('metadata') if is_str_dict(error_body) else None
+            nested_message = _openrouter_metadata_raw_message(metadata if is_str_dict(metadata) else None)
             if nested_message is None:
                 raise
 
