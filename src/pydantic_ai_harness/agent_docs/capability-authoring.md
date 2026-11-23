@@ -439,13 +439,9 @@ operator reading a trace and a developer reading the code name the same outcome 
 
 Code that still calls `ctx.tracer.start_span` or `start_as_current_span`, or checks
 `ctx.trace_include_content` to gate recording content itself, predates these functions and moves onto
-<<<<<<< HEAD
-them in follow-ups; don't copy it. Checking it to skip building costly content, as above, is fine.
+them in follow-ups; don't copy it. To skip building costly content, use `records_content(ctx)`, as above.
 Smart search (`smart_search/_toolset.py`) keeps its own span on purpose: the span records no failure
 and leaves it to the enclosing tool span, which redacts it by `include_content`.
-=======
-them in follow-ups; don't copy it. To skip building costly content, use `records_content(ctx)`, as above.
->>>>>>> origin/aditya/telemetry-conventions
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.
