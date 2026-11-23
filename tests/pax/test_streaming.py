@@ -164,6 +164,24 @@ async def test_part_end_with_a_replaced_preview_queued_returns_promptly_and_writ
     ]
 
 
+async def test_a_failed_write_at_part_end_is_not_written_again() -> None:
+    class FailsOnce(io.StringIO):
+        failed = False
+
+        def flush(self) -> None:
+            if not self.failed and self.getvalue():
+                self.failed = True
+                raise OSError('terminal closed')
+
+    output = FailsOnce()
+    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='once\n')))
+    with pytest.raises(OSError, match='terminal closed'):
+        await renderer.finish()
+    await asyncio.sleep(0.05)  # real-wait: a drainer still running would write again by now
+    assert output.getvalue().count('once') == 1
+
+
 async def test_abort_discards_pending_output() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)

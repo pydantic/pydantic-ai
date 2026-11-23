@@ -232,8 +232,11 @@ class PartWriter(SmoothWriter):
         """Write what is still queued at once, so the next tool line or the prompt does not wait for it to be typed."""
         try:
             self._flush_all()
-        finally:
-            await super().close()
+        except BaseException:
+            # A failed write must not be retried by the drainer, nor hidden by joining it.
+            self.abort()
+            raise
+        await super().close()
 
 
 def thinking_heading(console: Console) -> str:
