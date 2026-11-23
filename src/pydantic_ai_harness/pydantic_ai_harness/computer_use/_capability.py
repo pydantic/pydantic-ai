@@ -25,8 +25,7 @@ from pydantic_ai.computer_use import (
     ComputerToolAction,
     CursorPosition,
     Drag,
-    KeyDown,
-    KeyUp,
+    MouseButton,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -128,81 +127,42 @@ on another event loop, so calls on separate loops don't take turns. A lock is dr
 it."""
 
 _RELEASE_TIMEOUT = 5
-"""Seconds to wait, at most, for the screen and for each release, when a call or a run's end releases what is held."""
+"""Seconds to wait, at most, for the screen and for each button release, when a call or a run's end releases buttons."""
 
 _SETTLE_INTERVAL = 0.05
 """Seconds between the screenshots that check whether the screen stopped changing."""
 
 
-_Release = MouseUp | KeyUp
-"""The action that releases one held input: a `mouse_up` for a mouse button, or a `key_up` with one key for a key."""
-
-
-def _presses(action: ComputerToolAction) -> list[_Release]:
-    """What releases each input that `action` presses and leaves pressed."""
-    if isinstance(action, MouseDown):
-        return [MouseUp(button=action.button)]
-    if isinstance(action, KeyDown):
-        return [KeyUp(keys=(key,)) for key in action.keys]
-    return []
-
-
-def _releases(action: ComputerToolAction) -> list[_Release]:
-    """The held inputs that `action` releases."""
-    if isinstance(action, MouseUp | Click):
-        return [MouseUp(button=action.button)]
-    if isinstance(action, Drag):
-        return [MouseUp(button='left')]
-    if isinstance(action, KeyUp):
-        return [KeyUp(keys=(key,)) for key in action.keys]
-    return []
-
-
-def _say(held: Sequence[_Release], one: str, many: str) -> list[str]:
-    """A sentence for the held mouse buttons and one for the held keys, from `one` or `many` by how many there are.
-
-    The templates fill `{names}`, such as `left and right`, and `{kinds}`, such as `mouse buttons`.
-    """
-    buttons = [release.button for release in held if isinstance(release, MouseUp)]
-    keys = [key for release in held if isinstance(release, KeyUp) for key in release.keys]
-    said: list[str] = []
-    for kind, names in (('mouse button', buttons), ('key', keys)):
-        if names:
-            template = one if len(names) == 1 else many
-            said.append(template.format(names=' and '.join(names), kinds=kind if len(names) == 1 else f'{kind}s'))
-    return said
-
-
 @dataclass
-class _RunPresses:
-    """The mouse buttons and keys a run has pressed, which its `computer` calls record and its `wrap_run` releases.
+class _RunButtons:
+    """The mouse buttons a run has pressed. Its `computer` calls keep this record, and its `wrap_run` releases them.
 
-    The run's hooks can't read the pressed inputs from the messages. They see the messages only as the run began, and
+    The run's hooks can't read the pressed buttons from the messages. They see the messages only as the run began, and
     a run the caller stops early may end before its last call's result is in them.
     """
 
     run_id: str | None
-    held: list[_Release] = field(default_factory=list[_Release])
-    """The inputs that the last successful call said are still pressed. The next call starts with these."""
-    stray: list[_Release] = field(default_factory=list[_Release])
-    """Inputs that may be pressed without the model knowing, because a call was interrupted or a release failed."""
+    held: list[MouseButton] = field(default_factory=list[MouseButton])
+    """The buttons that the last successful call said are still pressed. The next call starts with these."""
+    stray: list[MouseButton] = field(default_factory=list[MouseButton])
+    """Buttons that may be pressed without the model knowing, because a call was interrupted or a release failed."""
 
-    def might_be_held(self) -> list[_Release]:
-        """Every input that may still be pressed, which the run's end releases."""
+    def might_be_held(self) -> list[MouseButton]:
+        """Every button that may still be pressed, which the run's end releases."""
         return list(dict.fromkeys([*self.held, *self.stray]))
 
 
-_RUN_PRESSES: ContextVar[_RunPresses | None] = ContextVar('_RUN_PRESSES', default=None)
-"""The pressed inputs of the run whose `wrap_run` releases them at its end.
+_RUN_BUTTONS: ContextVar[_RunButtons | None] = ContextVar('_RUN_BUTTONS', default=None)
+"""The buttons of the run whose `wrap_run` releases them at its end.
 
 It isn't kept on the run's `for_run` copy of the capability. A durable engine runs the tool from the toolset the agent
 was built with, so the tool belongs to that instance, not to the run's copy.
 """
 
 
-def _run_presses(ctx: RunContext[Any]) -> _RunPresses | None:
-    """This run's pressed inputs, or `None` if its `wrap_run` didn't run, as for a capability loaded mid-run."""
-    run = _RUN_PRESSES.get()
+def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
+    """This run's buttons, or `None` if its `wrap_run` didn't run, as for a capability loaded mid-run."""
+    run = _RUN_BUTTONS.get()
     # A record with another run's ID belongs to an outer run, such as the run whose tool started this one.
     return run if run is not None and run.run_id == ctx.run_id else None
 
@@ -231,10 +191,10 @@ class _Plan:
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: bool
     """Whether the actions to run differ from the ones the model asked for."""
-    held: list[_Release]
-    """The inputs the last call that succeeded said are still pressed."""
+    held: list[MouseButton]
+    """The mouse buttons the last call that succeeded said are still pressed."""
     keeps_held: bool
-    """Whether inputs left pressed stay pressed until the run ends, rather than being released when the call ends."""
+    """Whether buttons left pressed stay pressed until the run ends, rather than being released when the call ends."""
     confirmed: bool = False
     """Whether a person approved the call because its provider asked for a confirmation."""
 
@@ -247,8 +207,8 @@ class _NotRun:
     kind: Literal['tool', 'retry', 'unavailable', 'config'] = 'tool'
     """`tool` tells the model the call failed. `retry` asks the model to fix the call. `unavailable` ends the run with
     `WorkspaceUnavailableError`, and `config` ends it with `UserError`."""
-    held: list[_Release] = field(default_factory=list[_Release])
-    """Inputs a failed call couldn't release, so they may still be pressed. Set only for a failure the model sees."""
+    held: list[MouseButton] = field(default_factory=list[MouseButton])
+    """Buttons a failed call couldn't release, so they may still be pressed. Set only for a failure the model sees."""
 
     @classmethod
     def of(cls, error: ToolFailed | WorkspaceUnavailableError | UserError) -> _NotRun:
@@ -270,29 +230,29 @@ class _NotRun:
 
 
 def _not_run_error(
-    outcome: _NotRun, run: _RunPresses, stray: list[_Release], plan: _Plan, actions: list[ComputerToolAction]
+    outcome: _NotRun, run: _RunButtons, stray: list[MouseButton], plan: _Plan, actions: list[ComputerToolAction]
 ) -> Exception:
-    """The error for a call that didn't run, keeping the inputs a failed call couldn't release for the run's end."""
+    """The error for a call that didn't run, keeping the buttons a failed call couldn't release for the run's end."""
     if outcome.kind in ('tool', 'retry'):
         run.stray = [*stray, *outcome.held]
     else:
         # Set here, not when the call pressed them, so a durable run's replay, which skips the call, releases the same
-        # inputs when the run ends. A lost workspace may have gone after the presses. A configuration error is found
+        # buttons when the run ends. A lost workspace may have gone after the presses. A configuration error is found
         # before any action runs.
         run.stray = [*stray, *plan.held]
         if outcome.kind == 'unavailable':
-            run.stray.extend(release for action in actions for release in _presses(action))
+            run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
     return outcome.error()
 
 
 def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> None:
-    """Add the inputs that `actions` press to the run's stray inputs.
+    """Add the buttons that `actions` press to the run's stray buttons.
 
-    A call cut off after acting can't say which inputs are pressed. A call that finishes replaces them with the
-    inputs it says may be pressed.
+    A call cut off after acting can't say which buttons are pressed. A call that finishes replaces them with the
+    buttons it says may be pressed.
     """
-    if (run := _run_presses(ctx)) is not None:
-        run.stray.extend(release for action in actions for release in _presses(action))
+    if (run := _run_buttons(ctx)) is not None:
+        run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
 
 
 def _points(action: ComputerToolAction) -> Sequence[Point]:
@@ -418,11 +378,11 @@ async def _perform(
     actions: list[ComputerToolAction],
     mapping: _CoordinateMapping,
     settle_seconds: float,
-    held: list[_Release],
+    held: list[MouseButton],
 ) -> tuple[int, str | None, _Steps]:
     """Run the actions in order until one fails. Return how many ran, why the next one failed, and the steps they took.
 
-    `held` starts as the inputs pressed before the call, and ends as the ones that may still be pressed.
+    `held` starts as the buttons pressed before the call, and ends as the ones that may still be pressed.
     """
     steps = _Steps(display, mapping, settle_seconds)
     for index, action in enumerate(actions):
@@ -431,58 +391,56 @@ async def _perform(
     return len(actions), None, steps
 
 
-async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[_Release], *, last: bool) -> str | None:
+async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseButton], *, last: bool) -> str | None:
     """Run one action and keep `held` up to date. Return why it failed, if it did."""
-    pressing = [release for release in _presses(action) if release not in held]
-    # Count the press before it runs, because a press can take effect and still raise an error.
-    held.extend(pressing)
+    pressing = action.button if isinstance(action, MouseDown) and action.button not in held else None
+    if pressing:
+        # Count the press before it runs, because a press can take effect and still raise an error.
+        held.append(pressing)
     try:
         await steps.run(action, last=last)
     except WorkspaceUnavailableError:
         raise
     except WorkspaceError as e:
-        if isinstance(e, UnsupportedActionError):
-            for release in pressing:
-                held.remove(release)  # the display refused the press, so nothing is pressed
+        if pressing and isinstance(e, UnsupportedActionError):
+            held.remove(pressing)  # the display refused the press, so nothing is pressed
         return str(e) or type(e).__name__
-    for release in _releases(action):
-        if release in held:
-            held.remove(release)
+    released = action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
+    if released in held:
+        held.remove(released)
     return None
 
 
-async def _release(display: Display, held: list[_Release]) -> None:
-    """Release each input in `held`, and remove it from `held` once released. An input whose release fails stays.
+async def _release(display: Display, held: list[MouseButton]) -> None:
+    """Release each button in `held`, and remove it from `held` once released. A button whose release fails stays.
 
     A lost workspace ends the run, so `WorkspaceUnavailableError` is raised instead.
     """
-    # The last input pressed is released first, so a shift-drag drops with shift still held.
-    for release in reversed(list(held)):
+    # The last button pressed is released first.
+    for button in reversed(list(held)):
         with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
             try:
-                await display.act(release)
+                await display.act(MouseUp(button=button))
             except WorkspaceUnavailableError:
                 raise
             except Exception:
                 continue
-            held.remove(release)
+            held.remove(button)
 
 
-async def _release_for_failure(display: Display, held: list[_Release]) -> tuple[str, list[_Release]]:
-    """Release every input in `held` after a call failed. Return what to tell the model and the ones still pressed."""
+async def _release_for_failure(display: Display, held: list[MouseButton]) -> tuple[str, list[MouseButton]]:
+    """Release every button in `held` after a call failed. Return what to tell the model and the ones still pressed."""
     pressed = list(held)
     stuck = list(held)
     await _release(display, stuck)
     held.clear()
-    released = [release for release in pressed if release not in stuck]
-    said = [
-        *_say(released, 'The {names} {kinds} was released.', 'The {names} {kinds} were released.'),
-        *_say(
-            stuck,
-            'Releasing the {names} {kinds} failed, so it may still be held.',
-            'Releasing the {names} {kinds} failed, so they may still be held.',
-        ),
-    ]
+    said: list[str] = []
+    if released := [button for button in pressed if button not in stuck]:
+        buttons = 'button was' if len(released) == 1 else 'buttons were'
+        said.append(f'The {" and ".join(released)} mouse {buttons} released.')
+    if stuck:
+        buttons = 'button failed, so it' if len(stuck) == 1 else 'buttons failed, so they'
+        said.append(f'Releasing the {" and ".join(stuck)} mouse {buttons} may still be held.')
     return ' '.join(said), stuck
 
 
@@ -666,11 +624,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         acts = not all(isinstance(action, _LookingAction) for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
-        run = _run_presses(ctx)
+        run = _run_buttons(ctx)
         keeps_held = run is not None
-        # Without the run's record, as for a capability loaded mid-run, each call releases its own inputs, and
+        # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons, and
         # this record is never read.
-        run = run or _RunPresses(run_id=ctx.run_id)
+        run = run or _RunButtons(run_id=ctx.run_id)
         plan = _Plan(
             # The model pointed on the latest screenshot before its call.
             seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
@@ -695,7 +653,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     async def _call(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> tuple[ToolReturn, list[_Release]] | _NotRun:
+    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
         """Run the call on the display: here, or as a durable unit in a durable run."""
         if not ctx.in_durable_context:
             # Run here, so an error keeps its traceback.
@@ -716,8 +674,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     @durable_operation('call')
     async def _on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> tuple[ToolReturn, list[_Release]] | _NotRun:
-        """Everything a call does on the screen, as one durable step: the result and the inputs still pressed."""
+    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+        """Everything a call does on the screen, as one durable step: the result and the buttons still pressed."""
         try:
             return await self._run_on_display(ctx, actions, plan)
         except (ToolFailed, WorkspaceUnavailableError, UserError) as e:
@@ -725,7 +683,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     async def _run_on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> tuple[ToolReturn, list[_Release]] | _NotRun:
+    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
         display = _required_display(ctx)
         if ctx.workspace.ref is None:
             # Reading the size creates a new environment, so this call also takes the lock for that environment's ref.
@@ -746,7 +704,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 _leave_presses_for_run_end(ctx, actions)
                 return await self._act_and_look(display, pixels, mapping, plan, held)
             except (ToolFailed, ModelRetry) as e:
-                # A failed call releases every input that may be pressed, so only a successful call reports any.
+                # A failed call releases every button that may be pressed, so only a successful call reports any.
                 released, stuck = await _release_for_failure(display, held)
                 message = f'{e.message.rstrip(".")}. {released}' if released else e.message
                 return _NotRun(message, 'retry' if isinstance(e, ModelRetry) else 'tool', held=stuck)
@@ -761,11 +719,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         actions: list[ComputerToolAction],
         mapping: _CoordinateMapping,
         plan: _Plan,
-        held: list[_Release],
-    ) -> tuple[ToolReturn, list[_Release]] | _NotRun:
-        """Run the actions and take the screenshot. Return the result and the inputs still pressed, or why it failed.
+        held: list[MouseButton],
+    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+        """Run the actions and take the screenshot. Return the result and the buttons still pressed, or why it failed.
 
-        If it raises `ToolFailed`, `held` is left as the inputs that may be pressed, for the caller to release.
+        If it raises `ToolFailed`, `held` is left as the buttons that may be pressed, for the caller to release.
         """
         performed, error, steps = await _perform(display, actions, mapping, self.settle_seconds, held)
         result = ComputerResult(performed=performed)
@@ -779,7 +737,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             summary.append(f'Ran {_plural(len(actions), "action")}.')
             if not plan.keeps_held:
                 # Loaded mid-run through `defer_loading=True`, after the run's `wrap_run` hooks were chosen. No run end
-                # will release the inputs, so release them now.
+                # will release the buttons, so release them now.
                 await _release(display, held)
         else:
             result['error'] = error
@@ -790,7 +748,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             if released:
                 summary.append(released)
         png, size = await _screenshot(steps, summary)
-        summary.extend(_say(held, 'The {names} {kinds} is still pressed.', 'The {names} {kinds} are still pressed.'))
+        if held:
+            buttons = 'button is' if len(held) == 1 else 'buttons are'
+            summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
         summary.append(f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *steps.outputs, BinaryImage(data=png, media_type='image/png')]
         return ToolReturn(content, metadata=result), held
@@ -842,31 +802,30 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return width, height
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Release any mouse buttons and keys still pressed when the run ends, even if the caller stops it."""
-        run = _RunPresses(ctx.run_id)
-        token = _RUN_PRESSES.set(run)
+        """Release any mouse buttons still pressed when the run ends, however it ends, even if the caller stops it."""
+        run = _RunButtons(ctx.run_id)
+        token = _RUN_BUTTONS.set(run)
         try:
             return await handler()
         finally:
-            _RUN_PRESSES.reset(token)
+            _RUN_BUTTONS.reset(token)
             await self._release_held(ctx, run.might_be_held())
 
-    async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[_Release]) -> None:
+    async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
         if held:
             with anyio.CancelScope(shield=True):
                 try:
                     await self._release_on_display(ctx, held)
                 except Exception:
-                    # The run's result matters more than an input left pressed on the screen.
-                    held_inputs = ' and '.join(_say(held, 'the {names} {kinds}', 'the {names} {kinds}'))
-                    _logger.warning('Could not release %s when the run ended', held_inputs, exc_info=True)
+                    # The run's result matters more than a button left pressed on the screen.
+                    _logger.warning('Could not release the mouse buttons %s when the run ended', held, exc_info=True)
 
     @durable_operation('release')
-    async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[_Release]) -> None:
+    async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
         display = _required_display(ctx)
         try:
             with anyio.move_on_after(_RELEASE_TIMEOUT):
                 async with _taking_turns(_screen_keys(ctx, display)):
                     await _release(display, held)
         except WorkspaceUnavailableError:
-            pass  # the workspace is gone, and its pressed inputs with it
+            pass  # the workspace is gone, and its pressed buttons with it
