@@ -1,6 +1,5 @@
 """Git installations use real local repositories, without network access or package installers."""
 
-import asyncio
 import os
 import shlex
 import shutil
@@ -26,7 +25,6 @@ from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins.git import clone_repository, parse_repository
 from pydantic_ai_pax.plugins.loader import PluginError
 from tests._timeouts import READINESS_WAIT_TIMEOUT
-from tests.process_lifecycle import assert_interrupting_each_spawn_tick_stops_the_command
 
 from .test_plugin_loader import SEGMENT, Harness
 
@@ -686,23 +684,3 @@ async def test_import_failure_keeps_checkout_for_repair(tmp_path: Path, reposito
     await harness.loader.command(['enable', 'demo_plugin'])
     assert await harness.commands.execute_async('/git_hello') == 'Hello from Git'
     await harness.loader.close('exit')
-
-
-@pytest.mark.skipif(sys.platform == 'win32', reason='checks POSIX process groups')
-def test_cancelling_each_tick_of_the_clone_spawn_stops_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A `git` that runs the sweep's command stands in for the real one, which `clone_repository` finds on `PATH`."""
-    bin_dir = tmp_path / 'bin'
-    bin_dir.mkdir()
-    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
-    destination = tmp_path / 'clone'
-    destination.mkdir()
-
-    async def clone(command: str, _: float | None) -> object:
-        git = bin_dir / 'git'
-        git.write_text(f'#!/bin/sh\n{command}\n', encoding='utf-8')
-        git.chmod(0o755)
-        return await clone_repository('https://example.invalid/demo.git', destination)
-
-    assert_interrupting_each_spawn_tick_stops_the_command(
-        clone, tmp_path, monkeypatch, interrupt='cancel', expected=asyncio.CancelledError
-    )

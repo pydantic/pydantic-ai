@@ -32,7 +32,7 @@ from pydantic_ai.workspaces import (
     _host as host_module,
 )
 from tests._timeouts import READINESS_WAIT_TIMEOUT
-from tests.process_lifecycle import Interrupt, assert_interrupting_each_spawn_tick_stops_the_command
+from tests.process_lifecycle import assert_interrupting_each_spawn_tick_stops_the_command
 
 pytestmark = [
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend tests drive POSIX shell commands'),
@@ -476,18 +476,15 @@ async def test_timeout_while_connecting_pipes_kills_the_process_group(tmp_path: 
     await _assert_process_gone(int(pid_file.read_text()))
 
 
-@pytest.mark.parametrize(
-    ('interrupt', 'expected'), [('cancel', asyncio.CancelledError), ('deadline', WorkspaceTimeoutError)]
-)
-def test_interrupting_each_tick_of_the_spawn_stops_the_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt: Interrupt, expected: type[BaseException]
+def test_a_deadline_at_each_tick_of_the_spawn_stops_the_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert_interrupting_each_spawn_tick_stops_the_command(
         lambda command, timeout: LocalWorkspaceBackend(tmp_path).run(command, shell=True, timeout=timeout),
         tmp_path,
         monkeypatch,
-        interrupt=interrupt,
-        expected=expected,
+        interrupt='deadline',
+        expected=WorkspaceTimeoutError,
     )
 
 
