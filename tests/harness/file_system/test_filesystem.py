@@ -958,7 +958,7 @@ class TestReadFile:
         result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == (
             f'[big.png | image/png | {len(raw)} bytes]\n'
-            'Too large to view: over the 25,000,000-pixel limit for downscaling.\n'
+            'Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
         )
 
     async def test_read_image_pillow_refuses_as_a_bomb_is_described(
@@ -970,7 +970,7 @@ class TestReadFile:
         result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == (
             f'[big.png | image/png | {len(raw)} bytes]\n'
-            'Too large to view: over the 25,000,000-pixel limit for downscaling.\n'
+            'Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
         )
 
     async def test_read_large_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
