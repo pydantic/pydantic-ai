@@ -614,6 +614,7 @@ class StreamRenderer:
                     continuation=continuation,
                 ),
                 width=self.console.width,
+                streaming=True,
             )
             if isinstance(surface, PromptSurface)
             else None
@@ -692,10 +693,15 @@ class StreamRenderer:
         if self._markdown is not None:
             self._markdown.finish()
         writer, self._writer = self._writer, None
-        visible = self._heading_printed
+        visible, block = self._heading_printed, self._block
         self._reset()
-        if writer is not None:
-            await writer.close()
+        try:
+            if writer is not None:
+                await writer.close()
+        finally:
+            # A cancelled close leaves the streamed rows; nothing else can reach the block to end it.
+            if block is not None:
+                block.end()
         if visible:
             self.console.print()
         self.console.file.flush()
