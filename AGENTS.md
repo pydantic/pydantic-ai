@@ -177,3 +177,5 @@ Additionally, always read the directory-specific instructions when working in th
 - [tests/harness/AGENTS.md](tests/harness/AGENTS.md)
 
 When two instructions disagree, a gate's behavior wins over any instruction, and the `AGENTS.md` nearest the file you are changing wins over `agent_docs/`. Fix the instruction that lost. State a rule in one file, and link to it from the others.
+
+End each hard rule you add or edit in this file, `agent_docs/`, `tests/AGENTS.md` or a skill with its enforcer: [gate: `<path>`] names the check that fails a change breaking the rule, and `[review]` says only a reviewer can. A hard rule is a list item or sentence that says must, never, always, do not or don't. Prefer a gate where one can exist, and keep the rule's prose to what the gate's failure does not already say. [gate: `scripts/check_enforcer_tags.py`]
