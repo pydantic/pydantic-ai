@@ -88,7 +88,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -100,7 +100,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import desktop_display
+from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
@@ -479,14 +479,12 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._working_dir = absolute_path('working_dir', working_dir)
         # A Sprite this backend creates starts without `working_dir`; it is made on first acquisition.
         self._working_dir_pending = sandbox is None and ref is None and self._working_dir is not None
-        self._env = dict(env or {})
-        self._desktop_size = desktop_size(desktop)
-        self._display, self._env = desktop_display(
+        self._display = x11_display(
             self._run_argv,
-            self._desktop_size,
-            self._env,
+            checked_desktop_size(desktop),
             lambda: f'Sprite {self._ref.id if self._ref else "(not created)"}',
         )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
         # `working_dir` as the Sprite resolves it (`pwd -P`): the protocol reports a canonical absolute path.
         self._resolved_working_dir: str | None = None
         self._client = client

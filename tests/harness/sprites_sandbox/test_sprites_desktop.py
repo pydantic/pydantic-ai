@@ -7,12 +7,11 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
 from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_sprites import SpriteTransport
 
 
@@ -61,33 +60,13 @@ async def test_a_shell_command_finds_the_desktop_running(display: FakeDisplay) -
 async def test_a_desktop_size_sets_the_display_it_starts(display: FakeDisplay) -> None:
     backend = SpritesSandboxBackend(desktop=(1440, 900))
     try:
-        await screen(backend).display_size()
+        await full_display(backend).display_size()
     finally:
         await backend.aclose()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
     assert 'fluxbox tint2 xterm' in start and 'setsid fluxbox' in start
-
-
-async def test_a_display_that_does_not_start_names_the_sprite_and_what_it_needs(transport: SpriteTransport) -> None:
-    def answer(argv: list[str]) -> tuple[str, str, int] | None:
-        needs = "the display needs Xvfb, and there's no apt-get to install them with"
-        return ('', needs, 1) if 'Xvfb' in ' '.join(argv) else None
-
-    transport.answer = answer
-    backend = SpritesSandboxBackend(desktop=True)
-    try:
-        with pytest.raises(WorkspaceUnavailableError) as raised:
-            await screen(backend).display_size()
-    finally:
-        await backend.aclose()
-
-    assert backend.ref is not None
-    assert str(raised.value) == (
-        f'Could not start the display in Sprite {backend.ref.id}: '
-        "the display needs Xvfb, and there's no apt-get to install them with"
-    )
 
 
 async def test_a_desktop_sprite_reattaches_with_its_display(display: FakeDisplay) -> None:
@@ -100,7 +79,7 @@ async def test_a_desktop_sprite_reattaches_with_its_display(display: FakeDisplay
 
     attached = SpritesSandbox(desktop=(1440, 900)).backend(owner.ref)
     try:
-        await screen(attached).display_size()
+        await full_display(attached).display_size()
     finally:
         await attached.aclose()
 

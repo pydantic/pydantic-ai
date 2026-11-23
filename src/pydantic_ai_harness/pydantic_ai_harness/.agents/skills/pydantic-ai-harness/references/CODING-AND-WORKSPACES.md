@@ -420,8 +420,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   what the child prints later.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
-- `SpritesSandbox(desktop=True)` gives the Sprite the same desktop, whose programs the first use installs. A cold
-  wake closes the agent's windows. Within the same run, the display restarts on the next screenshot or action, and
+- `SpritesSandbox(desktop=True)` gives the Sprite a 1280x800 screen for `ComputerUse()`, with a window manager, a
+  panel and a terminal, whose programs the first use installs with `apt-get`. A cold wake closes the agent's windows. Within the same run, the display restarts on the next screenshot or action, and
   until then a program started from the shell can't open a window; a later run's first command starts it.
 
 ### KubernetesSandbox
