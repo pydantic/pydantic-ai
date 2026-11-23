@@ -1548,6 +1548,8 @@ def _raise_framework_error(kind: str) -> None:
         raise ContentFilterError('Content filter triggered.')
     if kind == 'incomplete_tool_call':
         raise IncompleteToolCall('Token limit exceeded while generating a tool call.')
+    if kind == 'usage_limit':
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
     raise _AppConfigError('The app is misconfigured.')
 
 
@@ -1605,6 +1607,13 @@ class NonRetryableSubclassWorkflow:
             'IncompleteToolCall',
             'Token limit exceeded while generating a tool call.',
             id='incomplete-tool-call',
+        ),
+        pytest.param(
+            'usage_limit',
+            'UsageLimitExceeded',
+            'The next request would exceed the request_limit of 1. Consider raising the limit, or see the docs on usage '
+            'limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits',
+            id='usage-limit-exceeded',
         ),
         pytest.param('app_config', '_AppConfigError', 'The app is misconfigured.', id='user-error-subclass'),
     ],
