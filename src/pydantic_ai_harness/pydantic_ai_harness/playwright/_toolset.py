@@ -150,8 +150,8 @@ from pydantic_ai_harness._browser_egress import (
     EgressPolicy as EgressPolicy,
     EgressRequest as EgressRequest,
     RequestKind as RequestKind,
-    decide,
     is_blocked_address as is_blocked_address,
+    refusal_reason,
 )
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
@@ -1316,7 +1316,7 @@ class PlaywrightBrowserSession:
         is asked about: the route guard, the socket guard, the `navigate`
         pre-check, and the post-action re-check.
         """
-        return await decide(self.policy, request)
+        return await refusal_reason(self.policy, request)
 
     async def _route_guard(self, route: PlaywrightRoute, request: PlaywrightRequest) -> None:
         """Network-layer egress policy: abort what the policy refuses, pass the rest.

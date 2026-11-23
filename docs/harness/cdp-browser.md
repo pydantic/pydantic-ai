@@ -125,7 +125,7 @@ acceptable.
 
 Chrome launches when the run starts, before the first model request, and the run fails if it cannot start. Unlike
 Playwright Browser, a run that never calls the tool still launches one. When the run ends, Chrome is asked to close,
-its process group is killed, and its profile directory is removed. Concurrent runs each get their own Chrome.
+its process group is killed, and its profile directory is removed once Chrome's processes release it. Concurrent runs each get their own Chrome.
 
 Durable execution (such as [Temporal](../durable_execution/temporal.md)) is rejected at agent construction: a live
 browser cannot survive activity replay or a worker restart.

@@ -13,6 +13,7 @@ fake of the protocol, so these are what it cannot show. Re-check them against a 
 - `Fetch.enable` on a target pauses each request the target makes in a `Fetch.requestPaused` event until
   `Fetch.continueRequest` or `Fetch.failRequest` answers it. WebSocket connections are not paused. Source:
   <https://chromedevtools.github.io/devtools-protocol/tot/Fetch/>.
+- A shared worker target has a `Fetch` domain, and its requests are paused on its own session.
 - A dedicated worker target has no `Fetch` domain (`Fetch.enable` answers "'Fetch.enable' wasn't found"); its
   requests are paused on the session of the page that started it.
 - A page target's main frame id is its target id.
@@ -128,7 +129,10 @@ def find_chrome() -> str:
     else:
         candidates = ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']
     for candidate in candidates:
-        if found := shutil.which(candidate) or (Path(candidate).is_file() and candidate):
+        # A bare name is only looked up on `PATH`, never in the working directory.
+        if found := shutil.which(candidate) or (
+            Path(candidate).is_absolute() and Path(candidate).is_file() and candidate
+        ):
             return found
     raise FileNotFoundError(
         'Chrome not found, set `CHROME_PATH` or pass `chrome_path` to the Chrome or Chromium binary'

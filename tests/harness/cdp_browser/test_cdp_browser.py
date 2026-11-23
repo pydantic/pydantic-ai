@@ -172,10 +172,11 @@ class TestCDPBrowser:
 
         await Agent(FunctionModel(respond), capabilities=[CDPBrowser(allowed_domains=['example.com'])]).run('hi')
         assert seen[0] is not None and 'Chrome DevTools Protocol' in seen[0]
-        assert seen[0].splitlines()[-1] == snapshot(
-            'Reachable hosts: example.com (and their subdomains) (private/internal addresses blocked). '
-            'A request to any other host fails with `net::ERR_BLOCKED_BY_CLIENT`.'
+        assert seen[0].splitlines()[-2] == snapshot(
+            "Hosts reachable by navigation and by page scripts' data requests (`fetch`, XHR): example.com (and their "
+            'subdomains) (private/internal addresses blocked). A refused request'
         )
+        assert seen[0].splitlines()[-1] == snapshot('fails with `net::ERR_BLOCKED_BY_CLIENT`.')
 
     async def test_every_target_is_guarded(self, chrome: FakeChrome):
         """Requests from the page, its frames, a popup and workers all wait for the egress policy's verdict.
@@ -188,8 +189,10 @@ class TestCDPBrowser:
             {'sessionId': 'popup-session', 'targetId': 'POPUP-TARGET', 'type': 'page'},
             {'sessionId': 'worker-session', 'targetId': 'WORKER-TARGET', 'type': 'worker'},
             {'sessionId': 'shared-session', 'targetId': 'SHARED-TARGET', 'type': 'shared_worker'},
+            # stands in for any target type Chrome offers no `Fetch` domain on
+            {'sessionId': 'worklet-session', 'targetId': 'WORKLET-TARGET', 'type': 'auction_worklet'},
         ]
-        chrome.error_targets = {'shared_worker'}
+        chrome.error_targets = {'auction_worklet'}
         requests = [
             pause_expression('https://example.com/'),
             pause_expression('https://other.org/'),
@@ -201,6 +204,9 @@ class TestCDPBrowser:
             ),
             pause_expression('https://other.org/', frame_id='POPUP-TARGET', session_id='popup-session'),
             pause_expression('https://other.org/frame', session_id='unknown-session'),
+            pause_expression(
+                'http://10.0.0.2/', resource_type='Fetch', frame_id='SHARED-TARGET', session_id='shared-session'
+            ),
         ]
         agent = Agent(
             calls_then_reply(*(evaluate(request) for request in requests)),
@@ -217,6 +223,7 @@ class TestCDPBrowser:
                 ('http://10.0.0.1/', 'fail'),
                 ('https://other.org/', 'fail'),
                 ('https://other.org/frame', 'continue'),
+                ('http://10.0.0.2/', 'fail'),
             ]
         )
         assert commands(chrome, 'iframe-session') == snapshot(
@@ -230,7 +237,10 @@ class TestCDPBrowser:
             ]
         )
         assert commands(chrome, 'worker-session') == ['Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger']
-        assert commands(chrome, 'shared-session') == ['Fetch.enable']
+        assert commands(chrome, 'shared-session') == snapshot(
+            ['Fetch.enable', 'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger', 'Fetch.failRequest']
+        )
+        assert commands(chrome, 'worklet-session') == ['Fetch.enable']
 
     async def test_malformed_messages_are_ignored(self, chrome: FakeChrome):
         """Messages no real Chrome sends are skipped rather than failing the run."""
@@ -486,6 +496,21 @@ class TestCDPBrowserLaunch:
         await agent.run('hi')
         launched = chrome.launches[0][0]
         assert launched == (str(windows_chrome) if expected == 'windows' else '/usr/bin/chromium')
+
+    async def test_a_bare_name_in_the_working_directory_is_not_chrome(
+        self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        (tmp_path / 'chromium').touch()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv('CHROME_PATH', raising=False)
+        monkeypatch.setattr(sys, 'platform', 'linux')
+
+        def nowhere(name: str) -> None:
+            return None
+
+        monkeypatch.setattr(shutil, 'which', nowhere)
+        with pytest.raises(FileNotFoundError, match='Chrome not found'):
+            await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
 
     async def test_chrome_path_from_the_environment(self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('CHROME_PATH', '/env/chrome')

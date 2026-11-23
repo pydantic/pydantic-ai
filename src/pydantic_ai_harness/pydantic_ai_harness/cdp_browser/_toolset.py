@@ -17,7 +17,13 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._browser_egress import DATA_RESOURCE_TYPES, EgressPolicy, EgressRequest, RequestKind, decide
+from pydantic_ai_harness._browser_egress import (
+    DATA_RESOURCE_TYPES,
+    EgressPolicy,
+    EgressRequest,
+    RequestKind,
+    refusal_reason,
+)
 from pydantic_ai_harness._typeguards import is_str_keyed_dict
 from pydantic_ai_harness.cdp_browser._client import CDPClient, CDPError, CDPSession, launch_chrome
 
@@ -92,7 +98,8 @@ returning the whole HTML. Prefer one JavaScript expression that returns structur
 so if what you need is missing, wait briefly and evaluate again.
 
 `Page.captureScreenshot` returns the image itself. Page dialogs (`alert`, `confirm`, `prompt`) are dismissed.
-Reachable hosts: {hosts}. A request to any other host fails with `net::ERR_BLOCKED_BY_CLIENT`.\
+Hosts reachable by navigation and by page scripts' data requests (`fetch`, XHR): {hosts}. A refused request
+fails with `net::ERR_BLOCKED_BY_CLIENT`.\
 """
 
 
@@ -251,7 +258,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
             top_level=top_level,
         )
         session = CDPSession(self._client, session_id)
-        if await decide(self.policy, egress) is None:
+        if await refusal_reason(self.policy, egress) is None:
             await session.send('Fetch.continueRequest', {'requestId': request_id})
         else:
             await session.send('Fetch.failRequest', {'requestId': request_id, 'errorReason': 'BlockedByClient'})
@@ -330,7 +337,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         """Refuse a navigation before it is sent, so the model learns why rather than reading a network error."""
         if urlparse(url).scheme not in ('http', 'https'):
             raise ModelRetry(f'Only http and https URLs can be opened, got {url!r}')
-        if (reason := await decide(self.policy, EgressRequest(url=url, kind='navigation'))) is not None:
+        if (reason := await refusal_reason(self.policy, EgressRequest(url=url, kind='navigation'))) is not None:
             raise ModelRetry(f'{url!r} is refused by the egress policy: {reason}')
 
     async def _stop_page_script(self, tab: CDPSession) -> None:

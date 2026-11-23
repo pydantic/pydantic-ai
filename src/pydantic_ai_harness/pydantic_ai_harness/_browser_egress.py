@@ -363,7 +363,7 @@ class EgressPolicy:
         return domains
 
 
-async def decide(policy: EgressPolicy, request: EgressRequest) -> str | None:
+async def refusal_reason(policy: EgressPolicy, request: EgressRequest) -> str | None:
     """Why `policy` refuses `request`, or `None` to allow it, resolving the host first when the policy needs it.
 
     Every enforcement point of every browser capability goes through here rather than calling `refuse`

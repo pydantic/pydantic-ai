@@ -15,8 +15,8 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
   that reaches the server,
 - the private-name block: a hostname resolving to loopback through a public wildcard DNS service (skipped when
   that name does not resolve),
-- the request guard in targets of their own: a cross-site iframe, a dedicated worker and a popup each fail to
-  reach a host the policy refuses, while the same request from the page reaches an allowed one,
+- the request guard in targets of their own: a cross-site iframe, a dedicated worker, a shared worker and a popup
+  each fail to reach a host the policy refuses, and the iframe and workers reach it when nothing refuses it,
 - service worker registration is blocked,
 - dialogs are dismissed, so `alert` and `confirm` do not block the page,
 - a screenshot comes back as image content,
@@ -236,12 +236,18 @@ async def _check_private_name_block() -> None:
 
 def _targets_page(secret_url: str, child_url: str) -> bytes:
     worker = f"fetch('{secret_url}').then(r => r.text(), e => 'refused: ' + e.message).then(t => postMessage(t));"
+    shared = (
+        f"onconnect = c => fetch('{secret_url}').then(r => r.text(), e => 'refused: ' + e.message)"
+        '.then(t => c.ports[0].postMessage(t));'
+    )
     return f"""<title>targets</title>
 <script>
 window.results = {{}};
 addEventListener('message', e => {{ if (e.data && e.data.from) window.results[e.data.from] = e.data.text; }});
 const w = new Worker(URL.createObjectURL(new Blob([{worker!r}], {{type: 'text/javascript'}})));
 w.onmessage = e => {{ window.results.worker = e.data; }};
+const s = new SharedWorker(URL.createObjectURL(new Blob([{shared!r}], {{type: 'text/javascript'}})));
+s.port.onmessage = e => {{ window.results.shared = e.data; }};
 </script>
 <iframe src="{child_url}"></iframe>""".encode()
 
@@ -270,16 +276,16 @@ async def _check_other_targets() -> None:
                 )
                 assert not secret.hits, (secret.hits, results)
                 observed = results[1]
-                assert observed.count('refused: Failed to fetch') == 2, observed
+                assert observed.count('refused: Failed to fetch') == 3, observed
                 assert child.hits, 'the iframe never loaded, so it proves nothing'
-                print('cross-site iframe, dedicated worker and popup to a refused host blocked ok')
+                print('cross-site iframe, dedicated worker, shared worker and popup to a refused host blocked ok')
 
                 open_results = await _run_tools(
                     CDPBrowser[object](chrome_sandbox=_SANDBOX, block_private_addresses=False),
                     [_navigate(page_url), _evaluate(wait)],
                 )
-                assert open_results[-1].count(_SECRET) == 2, f'control failed: {open_results}'
-                print('control: the same iframe and worker reach the server when nothing refuses it')
+                assert open_results[-1].count(_SECRET) == 3, f'control failed: {open_results}'
+                print('control: the same iframe and workers reach the server when nothing refuses it')
 
 
 async def _check_page_behavior() -> None:
