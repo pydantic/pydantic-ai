@@ -3,23 +3,42 @@
 This replays each recorded stream, from OpenAI and the OpenAI-compatible providers whose model classes build on
 `OpenAIChatModel`, through both `OpenAIStreamedResponse` (or the model's subclass of it) and
 `OpenAIChatModel._process_response` for the complete `ChatCompletion` that the SDK's `ChatCompletionStreamState`
-accumulates from the same chunks.
+accumulates from the same chunks, and replays it again re-chunked, as `tests/models/stream_parity.py` describes.
+
+`STREAM_PARITY` says which model class recorded each stream: the class whose claim names the stream's host, else
+`OpenAIChatModel`. A stream from a host another driver's class claims, like Groq's, is left to that driver.
 """
 
 from __future__ import annotations as _annotations
 
-import dataclasses
+import itertools
 from collections.abc import Callable
+from functools import cache
+from random import Random
 from typing import Any, cast
 
 import httpx2
 import pytest
 
-from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 
 from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
+from .stream_parity import (
+    STREAM_PARITY,
+    ReplayedBy,
+    Strategy,
+    StreamParityDriver,
+    assert_rechunked_streams_match,
+    claim_of,
+    claimant,
+    comparable_response,
+    merge_chat_chunks,
+    parse_sse,
+    rechunk_sse,
+    split_chat_chunk,
+)
 
 with try_import() as imports_successful:
     from openai import APIError, AsyncOpenAI, AsyncStream
@@ -44,59 +63,51 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-# Providers with their own SDK or model class, whose streams another test covers.
-_OTHER_MODEL_HOSTS = ('api.groq.com', 'api.mistral.ai', 'router.huggingface.co')
+_CLAIM = claim_of('OpenAIChatModel')
+_MODEL_CLASSES = frozenset(
+    name for name, entry in STREAM_PARITY.items() if isinstance(entry, ReplayedBy) and entry.module == __name__
+)
 
 
-def _model(uri: str, model_name: str, client: AsyncOpenAI) -> OpenAIChatModel:
-    factories: list[tuple[str, Callable[[], OpenAIChatModel]]] = [
-        (
-            'githubcopilot.com',
-            lambda: GitHubCopilotModel(model_name, provider=GitHubCopilotProvider(openai_client=client)),
+def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIChatModel:
+    model_name: str = interaction['request']['parsed_body']['model']
+    uri: str = interaction['request']['uri']
+    factories: dict[str, Callable[[], OpenAIChatModel]] = {
+        'GitHubCopilotModel': lambda: GitHubCopilotModel(
+            model_name, provider=GitHubCopilotProvider(openai_client=client)
         ),
-        ('crusoecloud.com', lambda: CrusoeModel(model_name, provider=CrusoeProvider(openai_client=client))),
-        ('api.z.ai', lambda: ZaiModel(model_name, provider=ZaiProvider(openai_client=client))),
-        (
-            'snowflakecomputing.com',
-            lambda: SnowflakeModel(model_name, provider=SnowflakeProvider(openai_client=client)),
-        ),
-        ('openrouter.ai', lambda: OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=client))),
-        ('api.deepseek.com', lambda: OpenAIChatModel(model_name, provider=DeepSeekProvider(openai_client=client))),
-    ]
-    for host, factory in factories:
-        if host in uri:
-            return factory()
+        'CrusoeModel': lambda: CrusoeModel(model_name, provider=CrusoeProvider(openai_client=client)),
+        'ZaiModel': lambda: ZaiModel(model_name, provider=ZaiProvider(openai_client=client)),
+        'SnowflakeModel': lambda: SnowflakeModel(model_name, provider=SnowflakeProvider(openai_client=client)),
+        'OpenRouterModel': lambda: OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=client)),
+    }
+    if factory := factories.get(claimant(uri, _events(interaction)) or ''):
+        return factory()
+    if 'api.deepseek.com' in uri:
+        return OpenAIChatModel(model_name, provider=DeepSeekProvider(openai_client=client))
     return OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=client))
 
 
+def _events(interaction: dict[str, Any]) -> str:
+    return interaction['response']['body']['string']
+
+
+# Both tests read the streams, so the cassettes are scanned once.
+@cache
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for name, interaction in recorded_interactions('/chat/completions', 'data: {'):
+    for name, interaction in recorded_interactions(_CLAIM.endpoint, 'data: {'):
         uri: str = interaction['request']['uri']
         body = interaction['response'].get('body', {}).get('string')
         if (
-            uri.endswith('/chat/completions')
-            and not any(host in uri for host in _OTHER_MODEL_HOSTS)
+            uri.endswith(_CLAIM.endpoint)
             and isinstance(body, str)
             # A stream may start with an SSE comment, like OpenRouter's `: OPENROUTER PROCESSING`.
             and body.lstrip().startswith(('data:', ':'))
+            and claimant(uri, body) in _MODEL_CLASSES
         ):
             streams[name] = interaction
     return streams
-
-
-def _comparable(response: ModelResponse) -> dict[str, Any]:
-    fields = {field.name: getattr(response, field.name) for field in dataclasses.fields(response)}
-    del fields['timestamp']
-    fields['parts'] = [
-        {'type': type(part).__name__, **dataclasses.asdict(part)} | _comparable_args(part) for part in response.parts
-    ]
-    return fields
-
-
-def _comparable_args(part: ModelResponsePart) -> dict[str, Any]:
-    # Streamed tool call args are the JSON string the deltas built, where a complete message may have a dict.
-    return {'args': part.args_as_dict()} if isinstance(part, BaseToolCallPart) else {}
 
 
 class _CompletionAccumulator:
@@ -177,43 +188,51 @@ class _CompletionAccumulator:
         return completion
 
 
-async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    uri: str = interaction['request']['uri']
-    request_body: dict[str, Any] = interaction['request']['parsed_body']
-    events = interaction['response']['body']['string'].encode()
-    client = AsyncOpenAI(
+def _client(interaction: dict[str, Any], events: str) -> AsyncOpenAI:
+    return AsyncOpenAI(
         api_key='test',
-        base_url=uri.removesuffix('/chat/completions'),
+        base_url=interaction['request']['uri'].removesuffix('/chat/completions'),
         http_client=httpx2.AsyncClient(
             transport=httpx2.MockTransport(
-                lambda _: httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=events)
+                lambda _: httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=events.encode())
             )
         ),
     )
-    model = _model(uri, request_body['model'], client)
+
+
+async def _open_stream(interaction: dict[str, Any], client: AsyncOpenAI) -> AsyncStream[ChatCompletionChunk]:
+    return await client.chat.completions.create(
+        model=interaction['request']['parsed_body']['model'], messages=[], stream=True
+    )
+
+
+async def _replay(interaction: dict[str, Any], events: str) -> ModelResponse:
+    client = _client(interaction, events)
+    model = _model(interaction, client)
     # Continuous usage stats change how chunks are read, and aren't recorded in the response.
-    stream_options: dict[str, Any] = request_body.get('stream_options') or {}
+    stream_options: dict[str, Any] = interaction['request']['parsed_body'].get('stream_options') or {}
     model_settings = OpenAIChatModelSettings(
         openai_continuous_usage_stats=stream_options.get('continuous_usage_stats', False)
     )
-
-    async def open_stream() -> AsyncStream[ChatCompletionChunk]:
-        return await client.chat.completions.create(model=request_body['model'], messages=[], stream=True)
-
-    accumulator = _CompletionAccumulator()
-    try:
-        async for chunk in await open_stream():
-            accumulator.handle_chunk(chunk)
-    except APIError:
-        return None
-    complete = model._process_response(accumulator.get_final_completion())  # pyright: ignore[reportPrivateUsage]
-
     streamed = await model._process_streamed_response(  # pyright: ignore[reportPrivateUsage]
-        await open_stream(), ModelRequestParameters(), model_settings
+        await _open_stream(interaction, client), ModelRequestParameters(), model_settings
     )
     async for _ in streamed:
         pass
-    return _comparable(streamed.get()), _comparable(complete)
+    return streamed.get()
+
+
+async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, object], dict[str, object]] | None:
+    events = _events(interaction)
+    client = _client(interaction, events)
+    accumulator = _CompletionAccumulator()
+    try:
+        async for chunk in await _open_stream(interaction, client):
+            accumulator.handle_chunk(chunk)
+    except APIError:
+        return None
+    complete = _model(interaction, client)._process_response(accumulator.get_final_completion())  # pyright: ignore[reportPrivateUsage]
+    return comparable_response(await _replay(interaction, events)), comparable_response(complete)
 
 
 async def test_recorded_streams_match_the_complete_completion() -> None:
@@ -221,8 +240,8 @@ async def test_recorded_streams_match_the_complete_completion() -> None:
     # Guards against a cassette format change silently leaving nothing to compare.
     assert len(streams) > 60
 
-    streamed: dict[str, dict[str, Any]] = {}
-    complete: dict[str, dict[str, Any]] = {}
+    streamed: dict[str, dict[str, object]] = {}
+    complete: dict[str, dict[str, object]] = {}
     errored: list[str] = []
     for name, interaction in streams.items():
         if (result := await _streamed_and_complete(interaction)) is None:
@@ -232,3 +251,32 @@ async def test_recorded_streams_match_the_complete_completion() -> None:
     # A stream that ends in an error has no complete response to compare with.
     assert errored == ['models/cassettes/test_openrouter/test_openrouter_stream_error.yaml#0']
     assert streamed == complete
+
+
+def _rechunk(events: str, strategy: Strategy, rng: Random) -> str | None:
+    return rechunk_sse(events, strategy, rng, split=split_chat_chunk, merge=merge_chat_chunks)
+
+
+DRIVER = StreamParityDriver(wire=_events, replay=_replay, rechunk=_rechunk)
+
+
+@pytest.fixture(scope='module')
+def recorded_streams() -> dict[str, dict[str, Any]]:
+    return {
+        name: interaction
+        for name, interaction in _recorded_streams().items()
+        # A stream that ends in an error builds no response to rebuild.
+        if not any('error' in (event.data or {}) for event in parse_sse(_events(interaction))[0])
+    }
+
+
+# Splits the replays across tests so that no single test carries all of them against the per-test budget.
+_STRIDE = 2
+
+
+# A full sweep over every recording under many seeds stays out of the suite on purpose; see `stream_parity.py`.
+@pytest.mark.parametrize('offset', range(_STRIDE))
+async def test_rechunked_streams_match_the_recorded_stream(
+    offset: int, recorded_streams: dict[str, dict[str, Any]]
+) -> None:
+    await assert_rechunked_streams_match(DRIVER, itertools.islice(recorded_streams.items(), offset, None, _STRIDE))

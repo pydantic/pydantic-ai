@@ -15,24 +15,43 @@ history), so `_merge_chunks` builds the complete response from the chunks by the
 
 The joining rule is what the non-streamed responses in the thought signature cassettes look like, and every stream
 that signs a part in the middle of its text matches under it, which is independent evidence that the merge is sound.
+
+Each recorded stream is also replayed re-chunked, as `tests/models/stream_parity.py` describes.
 """
 
 from __future__ import annotations as _annotations
 
-import dataclasses
+import itertools
 import re
 from collections.abc import AsyncIterator
+from functools import cache
+from random import Random
 from typing import Any
 
 import httpx2
 import pytest
+from pydantic import JsonValue
 
-from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponsePart, NativeToolReturnPart
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, WebFetchTool, WebSearchTool
 
 from ...cassette_utils import recorded_interactions, recorded_request_body
 from ...conftest import try_import
+from ..stream_parity import (
+    JsonObject,
+    Strategy,
+    StreamParityDriver,
+    assert_rechunked_streams_match,
+    claim_of,
+    comparable_response,
+    cut,
+    generated_tool_call_id,
+    json_object,
+    json_objects,
+    rechunk_sse,
+    with_field,
+)
 
 with try_import() as imports_successful:
     from google.genai.types import Candidate, Content, GenerateContentResponse, Part
@@ -43,12 +62,15 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
 _MODEL_NAME_PATTERN = re.compile(r'/models/([^/:]+):streamGenerateContent')
+_CLAIM = claim_of('GoogleModel')
 
 
+# Both tests read the streams, so the cassettes are scanned once.
+@cache
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
-    for name, interaction in recorded_interactions(':streamGenerateContent'):
-        if ':streamGenerateContent' in interaction['request']['uri']:
+    for name, interaction in recorded_interactions(_CLAIM.endpoint):
+        if _CLAIM.endpoint in interaction['request']['uri']:
             streams[name] = interaction
     return streams
 
@@ -120,62 +142,59 @@ def _merge_chunks(chunks: list[GenerateContentResponse]) -> GenerateContentRespo
     return GenerateContentResponse(candidates=[merged] if parts or candidate_fields else None, **response_fields)
 
 
-def _comparable(response: ModelResponse) -> dict[str, Any]:
-    fields = {field.name: getattr(response, field.name) for field in dataclasses.fields(response)}
-    del fields['timestamp']
-    # A return part stamps the time it was built.
-    fields['parts'] = [
-        {'type': type(part).__name__, **dataclasses.asdict(part), 'timestamp': None} | _comparable_tool_fields(part)
-        for part in response.parts
-    ]
-    return fields
+def _comparable(response: ModelResponse) -> dict[str, object]:
+    # Gemini doesn't id code execution calls or the native tool calls rebuilt from grounding metadata.
+    return comparable_response(response, generated_tool_call_id)
 
 
-def _comparable_tool_fields(part: ModelResponsePart) -> dict[str, Any]:
-    fields: dict[str, Any] = {}
-    if isinstance(part, BaseToolCallPart | NativeToolReturnPart) and part.tool_call_id.startswith('pyd_ai_'):
-        # Gemini doesn't id code execution calls or the native tool calls rebuilt from grounding metadata, so
-        # each side generates its own.
-        fields['tool_call_id'] = '<generated>'
-    if isinstance(part, BaseToolCallPart):
-        # A streamed tool call's args can be the JSON string its deltas built, where a complete response has a dict.
-        fields['args'] = part.args_as_dict()
-    return fields
-
-
-async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    model_name = _MODEL_NAME_PATTERN.search(interaction['request']['uri'])
-    assert model_name is not None
+def _events(interaction: dict[str, Any]) -> str:
     # vcrpy recorded the raw text as `string`; cassetter writes a typed `{type, content}` mapping.
     recorded_body = interaction['response']['body']
-    body = (recorded_body['string'] if 'string' in recorded_body else recorded_body['content']).encode()
+    return recorded_body['string'] if 'string' in recorded_body else recorded_body['content']
+
+
+def _model(interaction: dict[str, Any], events: str) -> GoogleModel:
+    model_name = _MODEL_NAME_PATTERN.search(interaction['request']['uri'])
+    assert model_name is not None
     headers = {key: values[0] for key, values in interaction['response']['headers'].items()}
     headers.pop('content-encoding', None)
     headers.pop('content-length', None)
     provider = GoogleProvider(
         api_key='test',
         http_client=httpx2.AsyncClient(
-            transport=httpx2.MockTransport(lambda _: httpx2.Response(200, headers=headers, content=body))
+            transport=httpx2.MockTransport(lambda _: httpx2.Response(200, headers=headers, content=events.encode()))
         ),
     )
-    model = GoogleModel(model_name.group(1), provider=provider)
-    model_request_parameters = ModelRequestParameters(
-        native_tools=_native_tools(recorded_request_body(interaction['request']))
+    return GoogleModel(model_name.group(1), provider=provider)
+
+
+def _model_request_parameters(interaction: dict[str, Any]) -> ModelRequestParameters:
+    return ModelRequestParameters(native_tools=_native_tools(recorded_request_body(interaction['request'])))
+
+
+async def _open_stream(model: GoogleModel) -> AsyncIterator[GenerateContentResponse]:
+    # One recorded response is compared, so a long decode's continuation token must not send another request.
+    return await model.client.aio.models.generate_content_stream(
+        model=model.model_name, contents='', config={'automatic_continuation': False}
     )
 
-    async def open_stream() -> AsyncIterator[GenerateContentResponse]:
-        # One recorded response is compared, so a long decode's continuation token must not send another request.
-        return await provider.client.aio.models.generate_content_stream(
-            model=model.model_name, contents='', config={'automatic_continuation': False}
-        )
 
-    chunks = [chunk async for chunk in await open_stream()]
-    complete = model._process_response(_merge_chunks(chunks), model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-
-    streamed = await model._process_streamed_response(await open_stream(), model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+async def _replay(interaction: dict[str, Any], events: str) -> ModelResponse:
+    model = _model(interaction, events)
+    streamed = await model._process_streamed_response(  # pyright: ignore[reportPrivateUsage]
+        await _open_stream(model), _model_request_parameters(interaction)
+    )
     async for _ in streamed:
         pass
-    return _comparable(streamed.get()), _comparable(complete)
+    return streamed.get()
+
+
+async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, object], dict[str, object]]:
+    events = _events(interaction)
+    model = _model(interaction, events)
+    chunks = [chunk async for chunk in await _open_stream(model)]
+    complete = model._process_response(_merge_chunks(chunks), _model_request_parameters(interaction))  # pyright: ignore[reportPrivateUsage]
+    return _comparable(await _replay(interaction, events)), _comparable(complete)
 
 
 async def test_recorded_streams_match_the_complete_response() -> None:
@@ -183,8 +202,97 @@ async def test_recorded_streams_match_the_complete_response() -> None:
     # Guards against a cassette format change silently leaving nothing to compare.
     assert len(streams) >= 20
 
-    streamed: dict[str, dict[str, Any]] = {}
-    complete: dict[str, dict[str, Any]] = {}
+    streamed: dict[str, dict[str, object]] = {}
+    complete: dict[str, dict[str, object]] = {}
     for name, interaction in streams.items():
         streamed[name], complete[name] = await _streamed_and_complete(interaction)
     assert streamed == complete
+
+
+# The response's fields that hold for every chunk of it, which each piece of a cut chunk carries.
+_RESPONSE_IDENTITY = ('modelVersion', 'responseId', 'createTime')
+
+
+def _split(chunk: JsonObject, rng: Random) -> tuple[JsonObject, JsonObject] | None:
+    """A chunk cut in two at a seeded offset of one of its unsigned text parts.
+
+    The first piece carries the parts before the cut and the head of the cut part, and the URL context metadata that
+    Gemini sends before the text; the second carries the rest of the chunk, so its usage, finish reason, grounding and
+    continuation token still arrive with the parts they come after. A signed part isn't cut: which piece would carry
+    its signature is up to Gemini.
+    """
+    candidates = json_objects(chunk.get('candidates'))
+    if len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    content = json_object(candidate.get('content'))
+    parts = json_objects(content.get('parts'))
+    texts = [index for index, part in enumerate(parts) if set(part) <= {'text', 'thought'}]
+    if not texts:
+        return None
+    index = rng.choice(texts)
+    text = parts[index]['text']
+    if not isinstance(text, str) or (pieces := cut(text, rng)) is None:
+        return None
+    head_candidate: JsonObject = {
+        key: value for key, value in candidate.items() if key in ('index', 'urlContextMetadata')
+    }
+    head_candidate['content'] = with_field(
+        content, 'parts', [*parts[:index], with_field(parts[index], 'text', pieces[0])]
+    )
+    head: JsonObject = {key: value for key, value in chunk.items() if key in _RESPONSE_IDENTITY}
+    head['candidates'] = [head_candidate]
+    tail_candidate = {key: value for key, value in candidate.items() if key != 'urlContextMetadata'}
+    tail_candidate['content'] = with_field(
+        content, 'parts', [with_field(parts[index], 'text', pieces[1]), *parts[index + 1 :]]
+    )
+    return head, with_field(chunk, 'candidates', [tail_candidate])
+
+
+def _merge(first: JsonObject, second: JsonObject) -> JsonObject | None:
+    """The one chunk that carries two adjacent chunks' parts, if the first carries nothing the second doesn't repeat.
+
+    The second's usage replaces the first's, as Gemini's usage is the running total.
+    """
+    first_candidates, second_candidates = json_objects(first.get('candidates')), json_objects(second.get('candidates'))
+    if len(first_candidates) != 1 or len(second_candidates) != 1:
+        return None
+    (first_candidate,), (second_candidate,) = first_candidates, second_candidates
+    if any(
+        value != second.get(key) for key, value in first.items() if key not in ('candidates', 'usageMetadata')
+    ) or any(value != second_candidate.get(key) for key, value in first_candidate.items() if key != 'content'):
+        return None
+    first_content, second_content = (
+        json_object(first_candidate.get('content')),
+        json_object(second_candidate.get('content')),
+    )
+    parts: list[JsonValue] = [*json_objects(first_content.get('parts')), *json_objects(second_content.get('parts'))]
+    if not parts:
+        return None
+    return with_field(
+        second, 'candidates', [with_field(second_candidate, 'content', with_field(second_content, 'parts', parts))]
+    )
+
+
+def _rechunk(events: str, strategy: Strategy, rng: Random) -> str | None:
+    return rechunk_sse(events, strategy, rng, split=_split, merge=_merge)
+
+
+DRIVER = StreamParityDriver(wire=_events, replay=_replay, rechunk=_rechunk, comparable=_comparable)
+
+
+@pytest.fixture(scope='module')
+def recorded_streams() -> dict[str, dict[str, Any]]:
+    return _recorded_streams()
+
+
+# Splits the replays across tests so that no single test carries all of them against the per-test budget.
+_STRIDE = 2
+
+
+# A full sweep over every recording under many seeds stays out of the suite on purpose; see `stream_parity.py`.
+@pytest.mark.parametrize('offset', range(_STRIDE))
+async def test_rechunked_streams_match_the_recorded_stream(
+    offset: int, recorded_streams: dict[str, dict[str, Any]]
+) -> None:
+    await assert_rechunked_streams_match(DRIVER, itertools.islice(recorded_streams.items(), offset, None, _STRIDE))

@@ -3,32 +3,52 @@
 `BedrockStreamedResponse` must build the same response from the stream's events as `BedrockConverseModel._process_response`
 does from the complete `Converse` output. botocore has no `ConverseStream` accumulator, so this folds each recorded
 stream's events into the `Converse` output shape (AWS documents `ConverseStream` as the streaming form of `Converse`)
-and replays each recording through both.
+and replays each recording through both, and replays it again re-chunked, as `tests/models/stream_parity.py`
+describes.
 """
 
 from __future__ import annotations as _annotations
 
-import dataclasses
+import binascii
+import itertools
 import json
+import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
+from random import Random
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote
 
 import anyio.to_thread
 import pytest
 from cassetter import Cassette, HttpInteraction, RecordMode
+from pydantic import JsonValue
 
-from pydantic_ai.messages import BaseToolCallPart, ModelRequest, ModelResponse, ModelResponsePart
+from pydantic_ai.messages import ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 
 from ...conftest import try_import
+from ..stream_parity import (
+    JsonObject,
+    Strategy,
+    StreamParityDriver,
+    assert_rechunked_streams_match,
+    claim_of,
+    comparable_response,
+    cut,
+    json_object,
+    merge_deltas,
+    split_deltas,
+    with_field,
+)
 
 with try_import() as imports_successful:
     import boto3
     from botocore.awsrequest import AWSPreparedRequest, AWSResponse
     from botocore.compat import HTTPHeaders
+    from botocore.eventstream import EventStreamBuffer
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -43,19 +63,22 @@ pytestmark = [
 ]
 
 _TESTS_DIR = Path(__file__).parents[2]
+_CLAIM = claim_of('BedrockConverseModel')
 
 
+# Both tests read the streams, so the cassettes are scanned once.
+@cache
 def _recorded_streams() -> dict[str, HttpInteraction]:
     streams: dict[str, HttpInteraction] = {}
     for path in sorted(_TESTS_DIR.rglob('*.yaml')):
-        if '/converse-stream' not in path.read_text():
+        if _CLAIM.endpoint not in path.read_text():
             continue
         # cassetter reads both its own format and the vcrpy one older cassettes were recorded in.
         cassette = Cassette(path, record_mode=RecordMode.NONE)
         cassette.load()
         for index, interaction in enumerate(cassette.interactions):
             # An error response has no stream to compare.
-            if interaction.request.uri.endswith('/converse-stream') and interaction.response.status == 200:
+            if interaction.request.uri.endswith(_CLAIM.endpoint) and interaction.response.status == 200:
                 streams[f'{path.relative_to(_TESTS_DIR)}#{index}'] = interaction
     return streams
 
@@ -75,18 +98,35 @@ class _RecordedBody:
 
 @dataclass
 class _Replay:
-    """A real `bedrock-runtime` client whose `ConverseStream` calls get `interaction`'s recorded response."""
+    """A real `bedrock-runtime` client whose `ConverseStream` calls get `interaction`'s recorded response.
+
+    The response streams `body` in place of the recorded body, when it's set.
+    """
 
     client: BedrockRuntimeClient
     interaction: HttpInteraction | None = None
+    body: bytes | None = None
 
     def send(self, request: AWSPreparedRequest, **_: Any) -> AWSResponse:
         assert self.interaction is not None
         response = self.interaction.response
         headers = HTTPHeaders.from_dict({key: value[0] for key, value in response.headers.items()})
-        body = response.body.content
-        assert isinstance(body, bytes)
+        body = _body(self.interaction) if self.body is None else self.body
         return AWSResponse(request.url, response.status, headers, _RecordedBody(body))
+
+
+@dataclass(frozen=True)
+class _Recording:
+    """A recorded `ConverseStream` interaction, and the client that replays it."""
+
+    interaction: HttpInteraction
+    replay: _Replay
+
+
+def _body(interaction: HttpInteraction) -> bytes:
+    body = interaction.response.body.content
+    assert isinstance(body, bytes)
+    return body
 
 
 @pytest.fixture
@@ -157,28 +197,26 @@ def _fold(events: list[dict[str, Any]], *, keeps_whitespace_blocks: bool) -> dic
     return {'output': {'message': {'role': 'assistant', 'content': content}}, **response}
 
 
-def _comparable(response: ModelResponse) -> dict[str, Any]:
-    fields = {field.name: getattr(response, field.name) for field in dataclasses.fields(response)}
-    del fields['timestamp']
-    # A return part stamps the time it was built.
-    fields['parts'] = [
-        {'type': type(part).__name__, **dataclasses.asdict(part), 'timestamp': None} | _comparable_args(part)
-        for part in response.parts
-    ]
-    return fields
+def _model_name(interaction: HttpInteraction) -> str:
+    return unquote(interaction.request.uri.split('/model/')[1].removesuffix(_CLAIM.endpoint))
 
 
-def _comparable_args(part: ModelResponsePart) -> dict[str, Any]:
-    # Streamed tool call args are the JSON string the deltas built, where a complete response has a dict.
-    return {'args': part.args_as_dict()} if isinstance(part, BaseToolCallPart) else {}
+async def _replay(recording: _Recording, body: bytes) -> ModelResponse:
+    model_name = _model_name(recording.interaction)
+    model = BedrockConverseModel(model_name, provider=BedrockProvider(bedrock_client=recording.replay.client))
+    recording.replay.interaction, recording.replay.body = recording.interaction, body
+    async with model.request_stream([ModelRequest.user_text_prompt('')], None, ModelRequestParameters()) as streamed:
+        async for _ in streamed:
+            pass
+    return streamed.get()
 
 
 async def _streamed_and_complete(
     interaction: HttpInteraction, replay: _Replay
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    model_name = unquote(interaction.request.uri.split('/model/')[1].removesuffix('/converse-stream'))
+) -> tuple[dict[str, object], dict[str, object]]:
+    model_name = _model_name(interaction)
     model = BedrockConverseModel(model_name, provider=BedrockProvider(bedrock_client=replay.client))
-    replay.interaction = interaction
+    replay.interaction, replay.body = interaction, None
 
     def recorded_response() -> dict[str, Any]:
         output = replay.client.converse_stream(modelId=model_name, messages=[])
@@ -190,11 +228,8 @@ async def _streamed_and_complete(
 
     response = cast('ConverseResponseTypeDef', await anyio.to_thread.run_sync(recorded_response))
     complete = await model._process_response(response)  # pyright: ignore[reportPrivateUsage]
-
-    async with model.request_stream([ModelRequest.user_text_prompt('')], None, ModelRequestParameters()) as streamed:
-        async for _ in streamed:
-            pass
-    return _comparable(streamed.get()), _comparable(complete)
+    streamed = await _replay(_Recording(interaction, replay), _body(interaction))
+    return comparable_response(streamed), comparable_response(complete)
 
 
 async def test_recorded_streams_match_the_complete_response(replay: _Replay) -> None:
@@ -202,8 +237,133 @@ async def test_recorded_streams_match_the_complete_response(replay: _Replay) -> 
     # Guards against a cassette format change silently leaving nothing to compare.
     assert len(streams) > 10
 
-    streamed: dict[str, dict[str, Any]] = {}
-    complete: dict[str, dict[str, Any]] = {}
+    streamed: dict[str, dict[str, object]] = {}
+    complete: dict[str, dict[str, object]] = {}
     for name, interaction in streams.items():
         streamed[name], complete[name] = await _streamed_and_complete(interaction, replay)
     assert streamed == complete
+
+
+_EventStreamMessage = tuple[dict[str, str], JsonObject]
+"""An event stream message's string headers, like `:event-type`, and its JSON payload."""
+
+
+def _decode(body: bytes) -> list[_EventStreamMessage]:
+    buffer = EventStreamBuffer()
+    buffer.add_data(body)
+    messages: list[_EventStreamMessage] = []
+    for message in buffer:
+        # The stubs type `EventStreamMessage.headers` as an `int`; its response dict carries the parsed headers.
+        recorded_headers: dict[str, object] = message.to_response_dict()['headers']
+        headers: dict[str, str] = {}
+        for name, value in recorded_headers.items():
+            assert isinstance(value, str), (name, value)
+            headers[name] = value
+        payload: JsonValue = json.loads(message.payload)
+        assert isinstance(payload, dict)
+        messages.append((headers, payload))
+    return messages
+
+
+def _encode(messages: list[_EventStreamMessage]) -> bytes:
+    """The event stream that carries `messages`, framed as AWS's `vnd.amazon.eventstream` with string headers."""
+    encoded = b''
+    for headers, payload in messages:
+        header_bytes = b''.join(
+            bytes([len(name.encode())])
+            + name.encode()
+            + b'\x07'
+            + struct.pack('>H', len(value.encode()))
+            + value.encode()
+            for name, value in headers.items()
+        )
+        payload_bytes = json.dumps(payload).encode()
+        prelude = struct.pack('>II', 16 + len(header_bytes) + len(payload_bytes), len(header_bytes))
+        message = prelude + struct.pack('>I', binascii.crc32(prelude)) + header_bytes + payload_bytes
+        encoded += message + struct.pack('>I', binascii.crc32(message))
+    return encoded
+
+
+def _delta_text(payload: JsonObject) -> tuple[str, str | None, str] | None:
+    """Where a `contentBlockDelta` carries text, thinking or tool input: the delta's key, its nested key and the text."""
+    delta = json_object(payload.get('delta'))
+    for key, nested in (('text', None), ('toolUse', 'input'), ('reasoningContent', 'text')):
+        value = delta.get(key) if nested is None else json_object(delta.get(key)).get(nested)
+        if (
+            isinstance(value, str)
+            and (nested is None or set(json_object(delta.get(key))) == {nested})
+            and len(delta) == 1
+        ):
+            return key, nested, value
+    return None
+
+
+def _with_delta_text(payload: JsonObject, key: str, nested: str | None, text: str) -> JsonObject:
+    delta = json_object(payload.get('delta'))
+    value = text if nested is None else with_field(json_object(delta.get(key)), nested, text)
+    return with_field(payload, 'delta', with_field(delta, key, value))
+
+
+def _split(message: _EventStreamMessage, rng: Random) -> tuple[_EventStreamMessage, _EventStreamMessage] | None:
+    headers, payload = message
+    if headers.get(':event-type') != 'contentBlockDelta' or (found := _delta_text(payload)) is None:
+        return None
+    key, nested, text = found
+    if (pieces := cut(text, rng)) is None:
+        return None
+    return (headers, _with_delta_text(payload, key, nested, pieces[0])), (
+        headers,
+        _with_delta_text(payload, key, nested, pieces[1]),
+    )
+
+
+def _merge(first: _EventStreamMessage, second: _EventStreamMessage) -> _EventStreamMessage | None:
+    (first_headers, first_payload), (second_headers, second_payload) = first, second
+    if (
+        first_headers.get(':event-type') != 'contentBlockDelta'
+        or second_headers.get(':event-type') != 'contentBlockDelta'
+        or first_payload.get('contentBlockIndex') != second_payload.get('contentBlockIndex')
+        or (first_found := _delta_text(first_payload)) is None
+        or (second_found := _delta_text(second_payload)) is None
+        or first_found[:2] != second_found[:2]
+    ):
+        return None
+    key, nested, text = first_found
+    return first_headers, _with_delta_text(first_payload, key, nested, text + second_found[2])
+
+
+def _rechunk(body: bytes, strategy: Strategy, rng: Random) -> bytes | None:
+    messages = _decode(body)
+    if strategy == 'split-delta':
+        rechunked = split_deltas(messages, rng, _split)
+    else:
+        assert strategy == 'merge-deltas', strategy
+        rechunked = merge_deltas(messages, rng, _merge)
+    return None if rechunked is None else _encode(rechunked)
+
+
+def _recorded_body(recording: _Recording) -> bytes:
+    return _body(recording.interaction)
+
+
+DRIVER = StreamParityDriver(wire=_recorded_body, replay=_replay, rechunk=_rechunk)
+
+
+@pytest.fixture(scope='module')
+def recorded_streams() -> dict[str, HttpInteraction]:
+    return _recorded_streams()
+
+
+# Splits the replays across tests so that no single test carries all of them against the per-test budget.
+_STRIDE = 2
+
+
+# A full sweep over every recording under many seeds stays out of the suite on purpose; see `stream_parity.py`.
+@pytest.mark.parametrize('offset', range(_STRIDE))
+async def test_rechunked_streams_match_the_recorded_stream(
+    offset: int, recorded_streams: dict[str, HttpInteraction], replay: _Replay
+) -> None:
+    recordings = itertools.islice(recorded_streams.items(), offset, None, _STRIDE)
+    await assert_rechunked_streams_match(
+        DRIVER, ((name, _Recording(interaction, replay)) for name, interaction in recordings)
+    )

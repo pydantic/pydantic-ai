@@ -2,20 +2,23 @@
 
 `OpenAIResponsesStreamedResponse` must build the same response as `OpenAIResponsesModel._process_response` does for the
 complete `Response` that the stream's terminal event (`response.completed`, `.incomplete` or `.failed`) carries. This
-replays each recorded stream, from OpenAI and the other providers recorded through the Responses API, through both.
+replays each recorded stream, from OpenAI and the other providers recorded through the Responses API, through both,
+and replays it again re-chunked, as `tests/models/stream_parity.py` describes.
 """
 
 from __future__ import annotations as _annotations
 
 import dataclasses
+import itertools
 from collections.abc import Sequence
+from functools import cache
+from random import Random
 from typing import Any, cast
 
 import httpx2
 import pytest
 
 from pydantic_ai.messages import (
-    BaseToolCallPart,
     CompactionPart,
     ModelResponse,
     ModelResponsePart,
@@ -29,6 +32,19 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
+from .stream_parity import (
+    JsonObject,
+    SseEvent,
+    Strategy,
+    StreamParityDriver,
+    assert_rechunked_streams_match,
+    comparable_response,
+    cut,
+    parse_sse,
+    rechunk_sse,
+    render_sse,
+    with_field,
+)
 
 with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI, AsyncOpenAI
@@ -54,6 +70,8 @@ def _response_body(interaction: dict[str, Any]) -> str | None:
     return content if isinstance(content, str) else None
 
 
+# Both tests read the streams, so the cassettes are scanned once.
+@cache
 def _recorded_streams() -> dict[str, dict[str, Any]]:
     streams: dict[str, dict[str, Any]] = {}
     for name, interaction in recorded_interactions('"type":"response.'):
@@ -99,15 +117,10 @@ def _model_request_parameters(interaction: dict[str, Any]) -> ModelRequestParame
     return ModelRequestParameters()
 
 
-def _comparable(response: ModelResponse) -> dict[str, Any]:
-    fields = {field.name: getattr(response, field.name) for field in dataclasses.fields(response)}
-    del fields['timestamp']
-    # A return part stamps the time it was built.
-    fields['parts'] = [
-        {'type': type(part).__name__, **dataclasses.asdict(part), 'timestamp': None} | _comparable_details(part)
-        for part in _mcp_list_tools_results_after_calls(response.parts)
-    ]
-    return fields
+def _comparable(response: ModelResponse) -> dict[str, object]:
+    return comparable_response(
+        dataclasses.replace(response, parts=_mcp_list_tools_results_after_calls(response.parts)), _comparable_details
+    )
 
 
 def _mcp_list_tools_results_after_calls(parts: Sequence[ModelResponsePart]) -> list[ModelResponsePart]:
@@ -130,9 +143,6 @@ def _mcp_list_tools_results_after_calls(parts: Sequence[ModelResponsePart]) -> l
 
 
 def _comparable_details(part: ModelResponsePart) -> dict[str, Any]:
-    if isinstance(part, BaseToolCallPart):
-        # Streamed tool call args are the JSON string the deltas built, where a complete response has a dict.
-        return {'args': part.args_as_dict()}
     # Reasoning and compaction `encrypted_content` is encrypted anew for every event that carries the item
     # (`output_item.added`, `output_item.done` and the terminal response), so only its presence compares.
     if isinstance(part, ThinkingPart):
@@ -163,10 +173,14 @@ def _comparable_details(part: ModelResponsePart) -> dict[str, Any]:
     return {}
 
 
-async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _events(interaction: dict[str, Any]) -> str:
     events = _response_body(interaction)
     assert events is not None
-    client = AsyncOpenAI(
+    return events
+
+
+def _client(interaction: dict[str, Any], events: str) -> AsyncOpenAI:
+    return AsyncOpenAI(
         api_key='test',
         base_url=str(interaction['request']['uri']).split('/responses')[0],
         http_client=httpx2.AsyncClient(
@@ -175,6 +189,10 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
             )
         ),
     )
+
+
+async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    client = _client(interaction, _events(interaction))
     model = _model(interaction, client)
     model_request_parameters = _model_request_parameters(interaction)
 
@@ -217,3 +235,118 @@ async def test_recorded_streams_match_the_complete_response() -> None:
     for name, interaction in streams.items():
         streamed[name], complete[name] = await _streamed_and_complete(interaction)
     assert streamed == complete
+
+
+async def _replay(interaction: dict[str, Any], events: str) -> ModelResponse:
+    client = _client(interaction, events)
+    model = _model(interaction, client)
+    streamed = await model._process_streamed_response(  # pyright: ignore[reportPrivateUsage]
+        await client.responses.create(model=model.model_name, input=[], stream=True),
+        {},
+        _model_request_parameters(interaction),
+    )
+    async for _ in streamed:
+        pass
+    return streamed.get()
+
+
+# The events whose `delta` carries a piece of text, thinking, tool input or code, which an event may cut anywhere.
+_DELTA_EVENTS = frozenset(
+    {
+        'response.output_text.delta',
+        'response.refusal.delta',
+        'response.reasoning_text.delta',
+        'response.reasoning_summary_text.delta',
+        'response.function_call_arguments.delta',
+        'response.custom_tool_call_input.delta',
+        'response.mcp_call_arguments.delta',
+        'response.code_interpreter_call_code.delta',
+    }
+)
+# The fields that say which block a delta event belongs to.
+_BLOCK_FIELDS = ('type', 'item_id', 'output_index', 'content_index', 'summary_index')
+
+
+def _split(event: JsonObject, rng: Random) -> tuple[JsonObject, JsonObject] | None:
+    delta = event.get('delta')
+    if event.get('type') not in _DELTA_EVENTS or not isinstance(delta, str) or (pieces := cut(delta, rng)) is None:
+        return None
+    head = with_field(event, 'delta', pieces[0])
+    if 'logprobs' in event:
+        head['logprobs'] = []
+    return head, with_field(event, 'delta', pieces[1])
+
+
+def _merge(first: JsonObject, second: JsonObject) -> JsonObject | None:
+    first_delta, second_delta = first.get('delta'), second.get('delta')
+    if (
+        first.get('type') not in _DELTA_EVENTS
+        or any(first.get(field) != second.get(field) for field in _BLOCK_FIELDS)
+        or not isinstance(first_delta, str)
+        or not isinstance(second_delta, str)
+    ):
+        return None
+    merged = with_field(first, 'delta', first_delta + second_delta)
+    first_logprobs, second_logprobs = first.get('logprobs'), second.get('logprobs')
+    if isinstance(first_logprobs, list) and isinstance(second_logprobs, list):
+        merged['logprobs'] = first_logprobs + second_logprobs
+    return merged
+
+
+def _drop_argument_deltas(events: list[SseEvent], rng: Random) -> list[SseEvent] | None:
+    """`events` without the argument deltas of a seeded half of the function calls whose `done` event repeats them."""
+    streamed: dict[str, str] = {}
+    done: dict[str, str] = {}
+    for event in events:
+        data = event.data or {}
+        item_id, delta, arguments = data.get('item_id'), data.get('delta'), data.get('arguments')
+        if not isinstance(item_id, str):
+            continue
+        if data.get('type') == 'response.function_call_arguments.delta' and isinstance(delta, str):
+            streamed[item_id] = streamed.get(item_id, '') + delta
+        elif data.get('type') == 'response.function_call_arguments.done' and isinstance(arguments, str):
+            done[item_id] = arguments
+    candidates = sorted(
+        item_id for item_id, arguments in streamed.items() if arguments and done.get(item_id) == arguments
+    )
+    if not candidates:
+        return None
+    chosen = {item_id for item_id in candidates if rng.random() < 0.5} or {rng.choice(candidates)}
+    return [
+        event
+        for event in events
+        if not (
+            (data := event.data or {}).get('type') == 'response.function_call_arguments.delta'
+            and data.get('item_id') in chosen
+        )
+    ]
+
+
+def _rechunk(events: str, strategy: Strategy, rng: Random) -> str | None:
+    if strategy != 'drop-argument-deltas':
+        return rechunk_sse(events, strategy, rng, split=_split, merge=_merge)
+    parsed, newline = parse_sse(events)
+    kept = _drop_argument_deltas(parsed, rng)
+    return None if kept is None else render_sse(kept, newline)
+
+
+DRIVER = StreamParityDriver(
+    wire=_events, replay=_replay, rechunk=_rechunk, strategies=('split-delta', 'merge-deltas', 'drop-argument-deltas')
+)
+
+
+@pytest.fixture(scope='module')
+def recorded_streams() -> dict[str, dict[str, Any]]:
+    return _recorded_streams()
+
+
+# Splits the replays across tests so that no single test carries all of them against the per-test budget.
+_STRIDE = 4
+
+
+# A full sweep over every recording under many seeds stays out of the suite on purpose; see `stream_parity.py`.
+@pytest.mark.parametrize('offset', range(_STRIDE))
+async def test_rechunked_streams_match_the_recorded_stream(
+    offset: int, recorded_streams: dict[str, dict[str, Any]]
+) -> None:
+    await assert_rechunked_streams_match(DRIVER, itertools.islice(recorded_streams.items(), offset, None, _STRIDE))
