@@ -1,6 +1,7 @@
 """Git worktrees for isolated CLI workspaces."""
 
 import asyncio
+import locale
 import os
 import re
 import sqlite3
@@ -428,5 +429,5 @@ def _git(*args: str) -> str:
         text=True,
         # Git for Windows emits UTF-8; POSIX Git preserves path/ref bytes for Python's default decoder, which is UTF-8
         # in UTF-8 mode and the locale's encoding otherwise.
-        encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
+        encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else locale.getencoding(),
     ).stdout.removesuffix('\n')

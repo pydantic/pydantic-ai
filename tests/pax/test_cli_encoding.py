@@ -1,5 +1,6 @@
 """Windows Git and gh output use UTF-8; POSIX Git keeps locale decoding."""
 
+import locale
 import os
 import subprocess
 import sys
@@ -18,9 +19,17 @@ from tests.pax.test_session_browser import repository
 
 @pytest.fixture
 def non_utf8_locale(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Patch the default codec selection, preserving real subprocess pipe decoding
-    # even when the interpreter was started in UTF-8 mode.
+    # A cp1251 locale outside UTF-8 mode, even when the interpreter was started in UTF-8 mode, preserving real
+    # subprocess pipe decoding: patch the codec subprocess picks when no encoding is named, and the one pax names.
     monkeypatch.setattr(subprocess, '_text_encoding', lambda: 'cp1251')
+    monkeypatch.setattr(locale, 'getencoding', lambda: 'cp1251')
+    no_utf8_mode = SimpleNamespace(utf8_mode=0)
+    monkeypatch.setattr(project_identity_module, 'sys', SimpleNamespace(platform=sys.platform, flags=no_utf8_mode))
+    monkeypatch.setattr(
+        worktrees_module,
+        'sys',
+        SimpleNamespace(platform=sys.platform, flags=no_utf8_mode, stdin=sys.stdin, stderr=sys.stderr),
+    )
 
 
 @pytest.fixture

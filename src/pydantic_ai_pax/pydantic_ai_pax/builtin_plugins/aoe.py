@@ -8,6 +8,7 @@ title with `aoe session rename`.
 """
 
 import asyncio
+import locale
 import logging
 import math
 import os
@@ -92,7 +93,7 @@ def run_command(*argv: str) -> subprocess.CompletedProcess[str] | None:
             capture_output=True,
             text=True,
             # Python's default decoder: UTF-8 in UTF-8 mode, the locale's encoding otherwise.
-            encoding='utf-8' if sys.flags.utf8_mode else 'locale',
+            encoding='utf-8' if sys.flags.utf8_mode else locale.getencoding(),
             timeout=_COMMAND_TIMEOUT,
             check=False,
         )

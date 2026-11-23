@@ -1,5 +1,6 @@
 """Read-only repository identities for the session browsers, without changing saved workspaces."""
 
+import locale
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -43,7 +44,7 @@ def project_identity(workspace: str) -> ProjectIdentity:
             capture_output=True,
             text=True,
             # Git for Windows emits UTF-8; POSIX Git preserves ref bytes for Python's default decoder.
-            encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
+            encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else locale.getencoding(),
             timeout=2,
             check=False,
         ).stdout.strip()
@@ -80,7 +81,7 @@ def worktree_roots(identity: ProjectIdentity) -> list[str]:
             capture_output=True,
             text=True,
             # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's default decoder.
-            encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
+            encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else locale.getencoding(),
             timeout=2,
         ).stdout
     except (OSError, subprocess.SubprocessError):
@@ -173,6 +174,6 @@ def _git_path(*, workspace: str, option: str) -> str:
         text=True,
         # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's default decoder, which is UTF-8 in
         # UTF-8 mode and the locale's encoding otherwise.
-        encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
+        encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else locale.getencoding(),
         timeout=2,
     ).stdout.removesuffix('\n')
