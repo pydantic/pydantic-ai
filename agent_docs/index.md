@@ -62,6 +62,7 @@
 - Raise `ModelRetry` for recoverable tool errors (timeouts, validation failures, missing params) — enables automatic retry with corrected input instead of terminal failure — Distinguishes transient/fixable errors from hard failures, allowing the agent to self-correct rather than propagating error messages to users
 <!-- rule:400 -->
 - Use `assert` for invariants that should never fail, not `RuntimeError('Internal error')` or `pragma: no cover` — Asserts document assumptions and fail fast in development; `RuntimeError` obscures programming errors as runtime issues and `pragma: no cover` hides untested branches
+- Never `assert` on a value that model, provider, tool or user data can reach; raise a typed error instead — `python -O` strips `assert`, so the check vanishes in optimized runs (https://github.com/pydantic/pydantic-ai/pull/13268, https://github.com/pydantic/pydantic-ai/pull/8751) [review]
 <!-- rule:32 -->
 - Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Provides consistent, unambiguous quoting that clearly delimits values and handles edge cases like empty strings or special characters.
 <!-- rule:353 -->
