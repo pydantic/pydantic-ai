@@ -103,11 +103,12 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     smaller than the header and hint themselves cannot be met; the result still carries them.
     """
 
-    max_image_side: int | None = MAX_IMAGE_SIDE
+    max_image_side: int | None = field(default=MAX_IMAGE_SIDE, kw_only=True)
     """Longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to fit.
 
     The copy keeps the aspect ratio and the file's format, and is never upscaled.
-    Defaults to 1024. `None` sends images at their full size.
+    Defaults to 1024. `None` sends images at their full size. Downscaling needs
+    Pillow, which the `coder` extra installs; without it, images are sent as they are.
     """
 
     max_list_results: int = 1000

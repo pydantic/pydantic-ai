@@ -9,6 +9,7 @@ import posixpath
 import re
 import socket
 import stat
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
@@ -328,8 +329,10 @@ def _unhashed_toolset(*, max_image_side: int | None = 1024) -> FileSystemToolset
     )
 
 
-def _encoded_image(size: tuple[int, int], image_format: str = 'PNG', *, noise: bool = False) -> bytes:
-    image = Image.frombytes('RGB', size, os.urandom(size[0] * size[1] * 3)) if noise else Image.new('RGB', size, 'teal')
+def _encoded_image(
+    size: tuple[int, int], image_format: str = 'PNG', *, noise: bool = False, mode: str = 'RGB'
+) -> bytes:
+    image = Image.frombytes(mode, size, os.urandom(size[0] * size[1] * 3)) if noise else Image.new(mode, size)
     output = BytesIO()
     image.save(output, format=image_format)
     return output.getvalue()
@@ -867,7 +870,8 @@ class TestReadFile:
         )
         assert isinstance(content, BinaryContent)
         assert content.media_type == media_type
-        assert _shown_size(content) == shown
+        with Image.open(BytesIO(content.data)) as image:
+            assert (image.format, image.size) == (image_format, shown)
 
     async def test_read_image_is_downscaled_as_it_is_displayed(self, tmp_path: Path) -> None:
         output = BytesIO()
@@ -909,6 +913,22 @@ class TestReadFile:
             'Shown downscaled from 2000x1600 to 1900x1520 pixels.\n'
             'Too large to view: the limit is 5000000 bytes.\n'
         )
+
+    async def test_read_image_too_large_to_decode_is_returned_unchanged(self, tmp_path: Path) -> None:
+        # 30 megapixels in a small file: decoding it to downscale would take far more memory than the file.
+        raw = _encoded_image((6000, 5000), mode='1')
+        (tmp_path / 'huge.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('huge.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [f'[huge.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
+
+    async def test_read_image_without_pillow_is_returned_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setitem(sys.modules, 'PIL', None)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [f'[big.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
 
     async def test_read_image_without_max_image_side_is_returned_unchanged(self, tmp_path: Path) -> None:
         raw = _encoded_image((3000, 2000))

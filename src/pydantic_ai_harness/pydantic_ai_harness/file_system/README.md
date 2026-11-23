@@ -367,9 +367,10 @@ applies the same rule to absolute symlink targets.
   ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
   An image larger than `max_image_side` pixels on its longest side (1024 by
   default) is downscaled to it first, in its own format and aspect ratio, and
-  the header names both sizes; the hash is still that of the file. A file over
-  5 MB even then, the strictest mainstream per-image limit, is described
-  instead, as is any other binary file.
+  the header names both sizes; the hash is still that of the file. Downscaling
+  needs Pillow, which the `coder` extra installs; without it, images are sent as
+  they are. A file over 5 MB even then, the strictest mainstream per-image
+  limit, is described instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.

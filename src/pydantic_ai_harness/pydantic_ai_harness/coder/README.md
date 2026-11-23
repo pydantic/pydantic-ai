@@ -26,7 +26,7 @@ flowchart LR
 
 ## Usage
 
-Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, ripgrep (`rg`), which backs the `list_files` and `grep` tools, and Pillow, which downscales large images `read_file` returns. Without the extra, importing `Coder` raises an `ImportError` naming it:
 
 uv:
 

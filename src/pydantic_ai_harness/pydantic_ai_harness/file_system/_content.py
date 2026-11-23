@@ -7,8 +7,6 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from io import BytesIO
 
-from PIL import Image, ImageOps
-
 from pydantic_ai.exceptions import ModelRetry
 
 
@@ -84,6 +82,13 @@ Providers reject images over their own dimension limits, or downscale them anywa
 at the cost of the tokens spent sending the full size.
 """
 
+_MAX_DECODE_PIXELS = 25_000_000
+"""Largest image, in pixels, `downscale_image` decodes; a larger one is sent as it is, within `MAX_MEDIA_BYTES`.
+
+A small compressed file can declare enough pixels to take hundreds of MB and seconds
+of CPU to decode, below Pillow's own decompression-bomb limit.
+"""
+
 _PIL_FORMATS = {'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/gif': 'GIF', 'image/webp': 'WEBP'}
 
 
@@ -99,14 +104,19 @@ class DownscaledImage:
 def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledImage | None:
     """`data` with its longest side brought down to `max_side` pixels, in its own format and aspect ratio.
 
-    `None` when the image already fits, or is not an image Pillow can decode,
-    such as a truncated file: then the file is sent as it is. EXIF orientation is
-    applied first, since the re-encoded copy carries no metadata.
+    `None` when the image already fits, is over `_MAX_DECODE_PIXELS`, or is not an
+    image Pillow can decode, such as a truncated file, and when Pillow is not
+    installed: then the file is sent as it is. EXIF orientation is applied first,
+    since the re-encoded copy carries no metadata.
     """
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return None
     image_format = _PIL_FORMATS[media_type]
     try:
         with Image.open(BytesIO(data), formats=[image_format]) as image:
-            if max(image.size) <= max_side:
+            if max(image.size) <= max_side or image.width * image.height > _MAX_DECODE_PIXELS:
                 return None
             oriented = ImageOps.exif_transpose(image)
             if oriented.mode in ('1', 'P', 'PA'):
