@@ -297,6 +297,7 @@ jobs:
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_latest_versions_canary_report.py
           .github/scripts/test_lock_overrides.py
+          .github/scripts/test_packaging_smoke.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
           .github/scripts/test_feature_digest.py
@@ -2481,6 +2482,13 @@ jobs:
     name: latest versions canary
     if: startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/latest-versions-canary.yml
+
+  # Advisory release check, like `latest-versions-canary`: each package this tag publishes installs on its own,
+  # bare and per extra, and imports every module it ships. No job needs it.
+  packaging-smoke:
+    name: packaging smoke
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/packaging-smoke.yml
 
   coverage:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}

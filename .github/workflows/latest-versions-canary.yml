@@ -51,15 +51,24 @@ on:
     paths:
       - '.github/workflows/latest-versions-canary.yml'
   # `ci.yml` calls this on `v*` tag pushes as an advisory check — see the note above.
+  # `packaging-smoke.yml` calls it with `resolve-only` on pull requests that change what the resolution reads, so a
+  # change that breaks the resolution at the newest versions fails its own PR, as #13704 broke it:
+  # https://github.com/pydantic/pydantic-ai/issues/13714.
   workflow_call:
+    inputs:
+      resolve-only:
+        description: Resolve, install and report what moved, without running the test suite.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 # Named literally rather than via `github.workflow`, which resolves to the *caller's* name
 # under `workflow_call` and would put the tag-path run in a group belonging to `CI`.
+# The `resolve-only` run gets its own group, so a PR that edits this workflow runs both.
 concurrency:
-  group: latest-versions-canary-${{ github.ref }}
+  group: latest-versions-canary-${{ github.ref }}${{ inputs.resolve-only && '-resolve-only' || '' }}
   cancel-in-progress: true
 
 env:
@@ -292,6 +301,7 @@ jobs:
       # `xunit1` because only that JUnit family records each test's file, which the report needs.
       # Its exit status tells the report whether a failed session finished or stopped short.
       - id: test
+        if: ${{ !inputs.resolve-only }}
         run: |
           status=0
           uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup \

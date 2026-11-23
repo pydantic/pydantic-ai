@@ -718,13 +718,14 @@ def test_aggregate_requires_the_selected_lightweight_job():
     assert harness_skips <= set(check['needs'])
 
 
-def test_latest_versions_canary_runs_on_tags_without_gating_any_job():
+@pytest.mark.parametrize('advisory', ['latest-versions-canary', 'packaging-smoke'])
+def test_advisory_release_check_runs_on_tags_without_gating_any_job(advisory: str):
     jobs = _workflow()['jobs']
-    canary = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['latest-versions-canary'])
+    canary = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[advisory])
     assert canary['if'] == "startsWith(github.ref, 'refs/tags/')"
     for name, job in jobs.items():
         needs = DEPENDENT_JOB_ADAPTER.validate_python(job).get('needs', [])
-        assert 'latest-versions-canary' not in ([needs] if isinstance(needs, str) else needs), name
+        assert advisory not in ([needs] if isinstance(needs, str) else needs), name
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():

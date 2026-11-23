@@ -1,0 +1,123 @@
+# description: Installs each published package bare and once per extra from its built wheel into a fresh environment and imports every module it ships, on pull requests that change dependency inputs, on dispatch, and when another workflow calls it.
+name: Packaging Smoke
+
+# `uv.lock` installs every workspace package, extra and dev group into one environment, so a shipped module that
+# imports a package its own distribution does not declare passes `ci.yml` and fails a clean install:
+# https://github.com/pydantic/pydantic-ai/pull/9620 (`sniffio`, which AnyIO 4.12 stopped installing).
+# `.github/scripts/packaging_smoke.py` builds the wheels and installs each package on its own, resolving the rest
+# from PyPI as a user's install does: no lock and no workspace uv settings. A module may fail to import only with an
+# `ImportError` that names an extra to install. The script's docstring has the full rule.
+#
+# Red here means a fresh `pip install` of that package, or of that extra, cannot import one of its modules. Declare
+# the missing requirement, or guard the import with an install hint. The resolution takes the newest releases our
+# declared ranges allow, so a dependency release can also turn this red; the failure names the module and the
+# package it could not import. The script's `BASELINE` lists the failures `main` had when this check was added:
+# `stale baseline` fails once a listed failure is gone, so the fix removes its entry.
+#
+# On pull requests it also runs the resolve stages of `latest-versions-canary.yml`, which read the same inputs.
+
+on:
+  pull_request:
+    paths:
+      - '**/pyproject.toml'
+      - 'uv.lock'
+      - 'uv.toml'
+      - '.github/workflows/packaging-smoke.yml'
+      - '.github/scripts/packaging_smoke.py'
+  workflow_dispatch:
+  workflow_call:
+  # TEMPORARY: measures this workflow on the branch that adds it; removed before its pull request opens.
+  push:
+    branches: [ci-package-shape]
+
+permissions:
+  contents: read
+
+# Named literally rather than via `github.workflow`, which resolves to the caller's name under `workflow_call`.
+concurrency:
+  group: packaging-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # `ci.yml` sets this at workflow level, which does not cross the `workflow_call` boundary.
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  packaging-smoke:
+    name: packaging smoke (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Each shard reports its own failures, so one red shard does not hide another's.
+      fail-fast: false
+      matrix:
+        # The script splits the shapes round-robin over `strategy.job-total` shards, so changing this list's
+        # length is the whole change.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 3.14, the interpreter of `ci.yml`'s coverage legs. No cache: the installs resolve outside `uv.lock`, so a
+      # cache keyed on it would hold other wheels, and each shard downloads a different set.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+          enable-cache: false
+
+      - name: Install and import each shape
+        env:
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: >-
+          uv run --no-project --with 'packaging>=24'
+          python .github/scripts/packaging_smoke.py --shard "$SHARD" --jobs 4
+          --report "$RUNNER_TEMP/packaging-smoke-report.json"
+
+      # A failed shard still writes its report, so `stale baseline` runs whenever every shard finished.
+      - name: Upload the baseline report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packaging-smoke-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/packaging-smoke-report.json
+          retention-days: 7
+
+  # Each shard runs a quarter of the shapes, so only every shard's report together shows a `BASELINE` entry that no
+  # shape reports any more.
+  stale-baseline:
+    name: stale baseline
+    needs: packaging-smoke
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packaging-smoke-report-*
+          path: ${{ runner.temp }}/reports
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+          enable-cache: false
+
+      - name: Fail on a baseline entry no shape reported
+        run: >-
+          uv run --no-project --with 'packaging>=24'
+          python .github/scripts/packaging_smoke.py --stale-check "$RUNNER_TEMP"/reports/*/packaging-smoke-report.json
+
+  # A change to what the resolution reads, such as a requirement or a `[tool.uv]` setting, can break the canary's
+  # resolution at the newest versions while the committed lock still resolves: #13704 did
+  # (https://github.com/pydantic/pydantic-ai/issues/13714). Resolving here fails that PR instead of the next nightly.
+  canary-resolve:
+    name: canary resolve
+    # TEMPORARY: the branch clause measures this job; removed before this branch's pull request opens.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/ci-package-shape'
+    uses: ./.github/workflows/latest-versions-canary.yml
+    with:
+      resolve-only: true
