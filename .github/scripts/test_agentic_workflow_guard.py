@@ -1084,15 +1084,13 @@ def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_mill
     unit = 1 if per_million else 1_000_000
     config: dict[str, object] = {
         'apiProxy': {
-            'defaultAiCreditsPricing': {'input': 0.6, 'cachedInput': 0.03, 'output': 2.4}
+            'defaultAiCreditsPricing': {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
             if stale_fallback
-            else {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50},
+            else {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4},
             'providers': {
                 'anthropic': {
                     'models': {
-                        'glm-5.3-flash': {
-                            'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.50 / unit}
-                        }
+                        'glm-5.4': {'cost': {'input': 1.4 / unit, 'cache_read': 0.26 / unit, 'output': 4.4 / unit}}
                     }
                 }
             },

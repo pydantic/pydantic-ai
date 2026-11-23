@@ -170,6 +170,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
     """
 
+    google_minimal_thinking_budget: int
+    """The `thinking_budget` that unified `thinking='minimal'` sends on a model that takes `thinking_budget`.
+    Default: `128`, the smallest budget Gemini 2.5 Pro accepts.
+
+    `GoogleModel` sets 512 for `gemini-2.5-flash-lite` on the Gemini API, which rejects budgets below 512 there.
+    See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
