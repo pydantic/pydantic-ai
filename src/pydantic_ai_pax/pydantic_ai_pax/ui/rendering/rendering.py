@@ -2,6 +2,7 @@
 
 import io
 import re
+from collections import deque
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
@@ -13,7 +14,8 @@ from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from termflow import Parser, Renderer
-from termflow.ansi import UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
+from termflow.ansi import DIM_ON, UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
+from termflow.ansi.utils import ANSI_ESCAPE_RE
 from termflow.parser.events import (
     CodeBlockEndEvent,
     CodeBlockLineEvent,
@@ -24,7 +26,7 @@ from termflow.parser.events import (
 from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
 from termflow.render.heading import _heading_codes  # pyright: ignore[reportPrivateUsage]
 from termflow.render.style import RenderFeatures, RenderStyle
-from termflow.stream import SmoothWriter
+from termflow.stream import SmoothWriter, split_by_visible
 from termflow.syntax import LANGUAGE_ALIASES
 
 from pydantic_ai import (
@@ -44,7 +46,7 @@ from pydantic_ai_pax.config import ToolCallDisplay
 from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
 from pydantic_ai_pax.ui.prompt.prompt_selection import trim_url
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
-from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock
+from pydantic_ai_pax.ui.prompt.prompt_transcript import DROP, PREVIEW, MarkdownBlock
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.grep_output import GrepOutput
 from pydantic_ai_pax.ui.rendering.tool_group import ToolCallGroup
@@ -165,34 +167,73 @@ class LinkOutput(io.StringIO):
 
 
 class PartWriter(SmoothWriter):
-    """Types a streaming part out smoothly, and writes what is still queued in one go once the part ends."""
+    """Types a streaming part out smoothly; a finished line or code block replaces its preview in one write.
+
+    When the part ends, whatever is still queued is written at once.
+    """
 
     def __init__(
         self, target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
     ) -> None:
-        """Termflow's pause hook writes the whole queue at once, so the writer pauses itself when the part closes."""
-        self._ending = False
-        self._polled = False
+        """Type into `target` at the given pace."""
         super().__init__(
             target,
             tick_interval=tick_interval,
             catch_up_seconds=catch_up_seconds,
             min_chars_per_tick=min_chars_per_tick,
-            is_paused=self._paused_for_end,
         )
+        self._queued: deque[tuple[str, str]] = deque()
+        """Writes made whole by `commit`, each with the text typed after it, waiting behind `_pending`."""
 
-    def _paused_for_end(self) -> bool:
-        # Termflow flushes when a pause begins, and its first poll only records the starting state. A part that
-        # closes before that poll would look paused from the start and never flush, so the first poll is never paused.
-        if not self._polled:
-            self._polled = True
-            return False
-        return self._ending
+    def write(self, text: str) -> int:
+        """Queue `text` to be typed after everything already queued."""
+        if self._queued:
+            whole, typed = self._queued[-1]
+            self._queued[-1] = (whole, typed + text)
+            return len(text)
+        return super().write(text)
+
+    def commit(self, text: str) -> None:
+        """Queue `text` to appear in one write, once everything queued before it is typed."""
+        self._queued.append((text, ''))
+
+    def _remaining_units(self) -> int:
+        # A whole write takes one unit, so the drainer keeps running until it is out.
+        queued = sum(1 + len(ANSI_ESCAPE_RE.sub('', typed)) for _, typed in self._queued)
+        return super()._remaining_units() + queued
+
+    def _drain_units(self, n: int) -> None:
+        emitted: list[str] = []
+        while n > 0 and (self._pending or self._queued):
+            if self._pending:
+                emit, self._pending, used = split_by_visible(self._pending, n)
+                emitted.append(emit)
+                n -= used
+            else:
+                whole, self._pending = self._queued.popleft()
+                emitted.append(whole)
+                n -= 1
+        # The drainer asks only while units remain, so something is always emitted.
+        self._target.write(''.join(emitted))
+        self._target.flush()
+
+    def _flush_all(self) -> None:
+        """Write everything left at once, in order: Termflow's hook for when output must not wait."""
+        while self._queued:
+            whole, typed = self._queued.popleft()
+            self._pending += whole + typed
+        super()._flush_all()
+
+    def _discard_all(self) -> None:
+        super()._discard_all()
+        self._queued.clear()
 
     async def close(self) -> None:
-        """Write the queued rest on the next tick, so the next tool line or the prompt does not wait for it to be typed."""
-        self._ending = True
-        await super().close()
+        """Write what is still queued at once, so the next tool line or the prompt does not wait for it to be typed."""
+        try:
+            self._flush_all()
+        finally:
+            await super().close()
 
 
 def thinking_heading(console: Console) -> str:
@@ -203,7 +244,13 @@ def thinking_heading(console: Console) -> str:
 
 
 class MarkdownPipeline:
-    """Termflow's line parser and renderer, with whole code fences highlighted by Rich."""
+    """Termflow's line parser and renderer, with code fences highlighted by Rich.
+
+    With `preview`, for output a `MarkdownBlock` shows, the unfinished line appears as it streams and
+    a code block's lines as they arrive. A finished line, or the closing fence, replaces that preview
+    with its proper rendering: the fence lexes the whole block, so multiline strings and comments
+    keep their state.
+    """
 
     def __init__(
         self,
@@ -212,15 +259,19 @@ class MarkdownPipeline:
         console: Console,
         thinking: bool,
         hyperlinks: bool,
+        preview: bool = False,
         continuation: tuple[Parser, str] | None = None,
     ) -> None:
         """Render to `output` at `console`'s width."""
         self.output = output
         self.console = console
         self.thinking = thinking
+        self.preview = preview
         self._parser = Parser()
+        self._rendered = io.StringIO()
+        """What the events of one line rendered, written to `output` at once."""
         self._renderer = MarkdownRenderer(
-            output=output,  # pyright: ignore[reportArgumentType] -- Termflow annotates TextIO but only writes and flushes.
+            output=self._rendered,
             width=console.width,
             style=markdown_style(),
             features=RenderFeatures(clipboard=False, hyperlinks=hyperlinks, images=False),
@@ -228,6 +279,10 @@ class MarkdownPipeline:
         )
         self._code_lines: list[str] = []
         self._code_language = 'text'
+        self._code_shown = False
+        """Whether the open code block's lines are on screen as a preview."""
+        self._partial = 0
+        """How much of the unfinished line is on screen as a preview."""
         if continuation is not None:
             self._parser, self._code_language = deepcopy(continuation)
         self._continued_fence = continuation is not None and self._parser.state.is_in_code()
@@ -235,6 +290,31 @@ class MarkdownPipeline:
     def continuation(self) -> tuple[Parser, str]:
         """Snapshot parsing context before finishing this display segment."""
         return deepcopy(self._parser), self._code_language
+
+    def partial(self, line: str) -> None:
+        """Show the unfinished `line` as plain text until `line` renders it, outside code blocks and tables."""
+        if not self._partial and not self._previews(line):
+            return
+        if not self._partial:
+            self.output.write(PREVIEW + (DIM_ON if self.thinking else ''))
+        self.output.write(line[self._partial :])
+        self._partial = len(line)
+
+    def _previews(self, line: str) -> bool:
+        """Whether to start showing `line`; leading spaces wait for the text that says whether it is a table row.
+
+        A table renders only once it ends, so its rows, and text arriving while it is still open, are not shown early.
+        Nor is an opening fence, which its newline turns into the code block's rule.
+        """
+        stripped = line.lstrip()
+        state = self._parser.state
+        return (
+            self.preview
+            and bool(stripped)
+            and not stripped.startswith(('|', '```', '~~~'))
+            and not state.is_in_code()
+            and not state.is_in_table()
+        )
 
     def line(self, line: str) -> None:
         """Render one complete source line."""
@@ -245,37 +325,73 @@ class MarkdownPipeline:
         self._render_events(self._parser.finalize())
 
     def _render_events(self, events: list[ParseEvent]) -> None:
+        if self._partial:
+            self._rendered.write(DROP)
+            self._partial = 0
         for event in events:
-            if isinstance(event, CodeBlockStartEvent):
-                self._code_language = (event.language or 'text').split()[0]
-                self._code_lines = []
-                self._continued_fence = False
-            elif isinstance(event, CodeBlockLineEvent):
-                self._code_lines.append(event.line)
-            elif isinstance(event, CodeBlockEndEvent):
-                # Steering immediately before the closing fence has no code left to display.
-                if self._continued_fence and not self._code_lines:
-                    self._continued_fence = False
-                    continue
-                self._continued_fence = False
-                # Lex the whole fence so multiline strings and comments keep their state.
-                with self.console.capture() as capture:
-                    self.console.rule(Text(self._code_language), align='left', style=theme.color(theme.MUTED))
-                    self.console.print(
-                        Syntax(
-                            '\n'.join(self._code_lines),
-                            LANGUAGE_ALIASES.get(self._code_language.lower(), self._code_language.lower()),
-                            theme=theme.syntax_theme(),
-                            background_color='default',
-                            word_wrap=True,
-                        ),
-                        style=Style(dim=self.thinking),
-                    )
-                    self.console.rule(style=theme.color(theme.MUTED))
-                self.output.write(capture.get())
-                self._code_lines = []
+            if isinstance(event, (CodeBlockStartEvent, CodeBlockLineEvent, CodeBlockEndEvent)):
+                self._render_code(event)
             else:
                 self._renderer.render(event)
+        text = self._rendered.getvalue()
+        self._rendered.seek(0)
+        self._rendered.truncate()
+        if DROP in text and isinstance(self.output, PartWriter):
+            self.output.commit(text)
+        elif text:
+            self.output.write(text)
+            self.output.flush()
+
+    def _render_code(self, event: CodeBlockStartEvent | CodeBlockLineEvent | CodeBlockEndEvent) -> None:
+        if isinstance(event, CodeBlockStartEvent):
+            self._code_language = (event.language or 'text').split()[0]
+            self._code_lines = []
+            self._continued_fence = False
+            if self.preview:
+                self._show_code_rule()
+        elif isinstance(event, CodeBlockLineEvent):
+            self._code_lines.append(event.line)
+            if self.preview:
+                if not self._code_shown:
+                    self._show_code_rule()
+                # Lexed alone, a line inside a multiline string may be off until the fence lexes the block.
+                self._rendered.write(self._code(event.line))
+        elif self._continued_fence and not self._code_lines:
+            # Steering immediately before the closing fence has no code left to display.
+            self._continued_fence = False
+        else:
+            self._continued_fence = False
+            if self._code_shown:
+                self._rendered.write(DROP)
+                self._code_shown = False
+            self._rendered.write(
+                self._code_rule() + self._code('\n'.join(self._code_lines)) + self._code_rule(end=True)
+            )
+            self._code_lines = []
+
+    def _show_code_rule(self) -> None:
+        self._rendered.write(PREVIEW + self._code_rule())
+        self._code_shown = True
+
+    def _code_rule(self, *, end: bool = False) -> str:
+        with self.console.capture() as capture:
+            title = '' if end else Text(self._code_language)
+            self.console.rule(title, align='left', style=theme.color(theme.MUTED))
+        return capture.get()
+
+    def _code(self, code: str) -> str:
+        with self.console.capture() as capture:
+            self.console.print(
+                Syntax(
+                    code,
+                    LANGUAGE_ALIASES.get(self._code_language.lower(), self._code_language.lower()),
+                    theme=theme.syntax_theme(),
+                    background_color='default',
+                    word_wrap=True,
+                ),
+                style=Style(dim=self.thinking),
+            )
+        return capture.get()
 
 
 def render_markdown(
@@ -504,6 +620,7 @@ class StreamRenderer:
             console=self.console,
             thinking=self._thinking,
             hyperlinks=self.console.is_terminal,
+            preview=self._block is not None,
             continuation=continuation,
         )
 
@@ -530,6 +647,9 @@ class StreamRenderer:
         while '\n' in self._buffer:
             line, self._buffer = self._buffer.split('\n', 1)
             self._line(line)
+        if self._buffer:
+            assert self._markdown is not None
+            self._markdown.partial(self._buffer)
 
     def _line(self, line: str) -> None:
         assert self._markdown is not None

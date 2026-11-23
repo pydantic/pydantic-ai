@@ -1603,16 +1603,17 @@ window if you previously saved a slower preference. This response-only setting
 accepts 0.1 to 5 seconds; thinking retains its separate 0.4-second window.
 Empty thinking parts show no heading. The CLI disables core's first-run
 observability banner.
-Cancellation discards queued output. Incomplete Markdown lines are still buffered
-until a newline or part end; smoothing does not remove that parsing delay.
+Cancellation discards queued output. In the interactive prompt, an unfinished line
+shows as plain text while it streams, and renders as Markdown (bold, code spans,
+links, list bullets) once its newline arrives. Table rows show once the table is complete.
 Thinking signatures without text cannot be shown. A supplied agent's existing
 stream handler is preserved. Custom renderer integrations must await `finish()`
 and use `await abort()` on cancellation.
 
 Response and thinking parts end with a blank separator line; responses have no
 repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
-before the tool's arguments finish streaming. Incomplete lines within a text part
-still wait for a newline or part boundary, as in Code Puppy's Markdown path.
+before the tool's arguments finish streaming. Redirected output and `-p` print
+each line once it is complete.
 
 Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
 without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
@@ -1643,10 +1644,12 @@ rows that each link to all of it.
 
 ### Code highlighting
 
-Fenced code uses the fence's language for syntax highlighting. CLAI renders a
-block when its closing fence arrives, or when the text part ends if the fence
-is unfinished. This keeps multiline strings and comments correctly colored.
-Prose outside fences still streams line by line. Unlabelled and Markdown fences
+Fenced code uses the fence's language for syntax highlighting. In the interactive
+prompt each code line shows as it arrives, highlighted on its own, so a line inside
+a multiline string or comment can be coloured as code for a moment. When the closing
+fence arrives, or the text part ends if the fence is unfinished, the whole block is
+highlighted again in place, so multiline strings and comments end up correctly
+coloured. Redirected output prints the block once, at that point. Unlabelled and Markdown fences
 stay literal, including indentation and blank lines; unknown languages use plain
 text. Long code lines wrap to the terminal width. Response and reasoning code
 blocks use the terminal foreground and ANSI syntax colours, rather than pale

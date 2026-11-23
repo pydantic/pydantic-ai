@@ -14,6 +14,8 @@ from termflow.ansi.utils import visible_length
 from termflow.themes import PALETTES
 
 from pydantic_ai_pax.ui.prompt.prompt_transcript import (
+    DROP,
+    PREVIEW,
     MarkdownBlock,
     TranscriptBuffer,
     TranscriptDecoder,
@@ -309,6 +311,17 @@ def test_oversized_markdown_keeps_a_bounded_tail_and_does_not_evict_itself() -> 
     assert plain(buffer, width=40) == ['new', 'next', '']
 
 
+def test_a_long_preview_cannot_evict_the_lines_it_is_shown_after() -> None:
+    """A preview is replaced at its newline or fence, so only what replaces it may push lines out."""
+    buffer = TranscriptBuffer(max_lines=4, max_chars=30)
+    block = _block(buffer)
+    block.write('a\nb\n')
+    block.write(f'{PREVIEW}1\n2\n3\n4\n5\n{"p" * 20}')
+    assert plain(buffer, width=40) == ['a', 'b', '2', '3', '4', '5', 'p' * 20, ''], 'the preview prunes itself'
+    block.write(f'{DROP}c\n')
+    assert plain(buffer, width=40) == ['a', 'b', 'c', '']
+
+
 def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
     buffer = TranscriptBuffer(max_chars=10)
     block = _block(buffer)
@@ -373,12 +386,12 @@ def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output(
     transcript.write('notice\n')
     block = _block(transcript)
     block.extend('answer')
-    block.write('answer\n')
+    block.write(f'answer\n{PREVIEW}mo')
     for _ in range(2):
         assert TranscriptBuffer.rebind(transcript) is transcript
-        assert plain(transcript, width=40) == ['notice', 'answer', '']
+        assert plain(transcript, width=40) == ['notice', 'answer', 'mo', '']
     block.extend(' more')
-    block.write('more\n')
+    block.write(f'{DROP}more\n')
     assert plain(transcript, width=40) == ['notice', 'answer', 'more', '']
     transcript.max_lines = 1
     transcript.write('latest\n')

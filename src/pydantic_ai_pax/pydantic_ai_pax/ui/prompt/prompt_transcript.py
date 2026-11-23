@@ -20,6 +20,12 @@ from pydantic_ai_pax.ui.rendering.recolor import recolor
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
 _OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')
+PREVIEW, DROP = '\ufdd2', '\ufdd3'
+"""Marks in a Markdown part's stream: what follows `PREVIEW` shows until `DROP` removes it.
+
+Model text cannot forge them: `terminal_text` escapes these noncharacters.
+"""
+_MARKS = re.compile(f'([{PREVIEW}{DROP}])')
 _CONSOLE = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor')
 """Only decodes recorded styling into segments; it never writes to a terminal."""
 
@@ -86,16 +92,33 @@ def _encode(text: Text) -> str:
     )
 
 
-def wrap(line: Text, *, width: int) -> tuple[str, ...]:
-    """Split a styled line into rows of at most `width` cells, counting wide characters as two."""
+def _moves_word(plain: str, *, space: int, width: int) -> bool:
+    """Whether the word after `space` moves to the next row; one wider than a row is split where it is, as Termflow does."""
+    end = plain.find(' ', space)
+    return visible_length(plain[space : len(plain) if end < 0 else end]) <= width
+
+
+def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
+    """Split a styled line into rows of at most `width` cells, counting wide characters as two.
+
+    `words` breaks after the last space that fits, as Termflow wraps prose, so a previewed line keeps its
+    rows once it renders.
+    """
     text = _clean(line)
     offsets: list[int] = []
-    cells = 0
+    cells = start = 0
+    space = -1
+    """The index after the last space, where a row may break."""
     for index, char in enumerate(text.plain):
-        size = visible_length(char)
-        if cells and cells + size > width:
-            offsets.append(index)
-            cells = 0
+        # `_clean` replaced control characters, so ASCII takes one cell; the streaming line wraps every frame.
+        size = 1 if char.isascii() else visible_length(char)
+        if words and char == ' ':
+            # A space past the width is cropped from the end of its row.
+            space = index + 1
+        elif cells and cells + size > width:
+            start = space if words and space > start and _moves_word(text.plain, space=space, width=width) else index
+            offsets.append(start)
+            cells = visible_length(text.plain[start:index])
         cells += size
     rows: list[str] = []
     for piece in text.divide(offsets):
@@ -155,9 +178,10 @@ class _Line:
     `theme_name` is `None` for branding, which no theme recolours.
     """
 
-    def __init__(self, text: Text, *, theme_name: str | None) -> None:
+    def __init__(self, text: Text, *, theme_name: str | None, words: bool = False) -> None:
         self.text = text
         self.theme_name = theme_name
+        self.words = words
         self._rows: tuple[tuple[int, str], tuple[str, ...]] = ((0, ''), ())
 
     @classmethod
@@ -165,6 +189,7 @@ class _Line:
         line.__class__ = cls
         # Lines retained before themes were recorded were painted in the theme of the reload.
         vars(line).setdefault('theme_name', theme.name())
+        vars(line).setdefault('words', False)
         return line
 
     def _themed(self) -> Text:
@@ -177,7 +202,7 @@ class _Line:
     def rows(self, *, width: int) -> tuple[str, ...]:
         key = (width, theme.name())
         if self._rows[0] != key:
-            self._rows = (key, wrap(self._themed(), width=width))
+            self._rows = (key, wrap(self._themed(), width=width, words=self.words))
         return self._rows[1]
 
     def continued(self, *, width: int) -> tuple[bool, ...]:
@@ -189,7 +214,11 @@ class _Line:
 
 
 class _Lines:
-    """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one."""
+    """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one.
+
+    What follows `PREVIEW` goes to `preview`, shown after the lines until `DROP` discards it. A preview
+    has the same limits as its stream but prunes only itself, so it never evicts the lines it follows.
+    """
 
     def __init__(self, *, max_chars: int = 4_000_000, max_lines: int = 10_000) -> None:
         self.max_chars, self.max_lines = max_chars, max_lines
@@ -200,18 +229,35 @@ class _Lines:
         self.pending_theme = theme.painted_in()
         """The theme the unfinished line started in, which its completion keeps."""
         self._decoder = TranscriptDecoder()
+        self.preview: _Lines | None = None
 
     @classmethod
     def rebind(cls, stream: '_Lines') -> '_Lines':
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
         vars(stream).setdefault('pending_theme', theme.name())
+        if (preview := vars(stream).setdefault('preview', None)) is not None:
+            cls.rebind(preview)
         for line in stream.lines:
             _Line.rebind(line)
         return stream
 
     def write(self, text: str) -> None:
         self.revision += 1
+        for part in _MARKS.split(text):
+            if part == PREVIEW:
+                # The preview goes on from the unfinished line, as a reasoning heading's text does.
+                self.preview = _Lines(max_chars=self.max_chars, max_lines=self.max_lines)
+                self.preview.pending, self.preview.pending_theme = self.pending, self.pending_theme
+                self.preview._decoder.style = self._decoder.style
+            elif part == DROP:
+                self.preview = None
+            elif self.preview is None:
+                self._write(part)
+            else:
+                self.preview._write(part)
+
+    def _write(self, text: str) -> None:
         started = self.pending_theme if self.pending else theme.painted_in()
         self.pending = _OSC.sub(replay_osc, self.pending + text)
         *done, self.pending = self.pending.split('\n')
@@ -233,7 +279,11 @@ class _Lines:
         return decoder.decode_line(complete if escape < 0 else complete[:escape])
 
     def all(self) -> list[_Line]:
-        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme)] if self.pending else self.lines
+        if self.preview is not None:
+            return [*self.lines, *self.preview.all()]
+        if not self.pending:
+            return self.lines
+        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme, words=True)]
 
 
 class Render(Protocol):
@@ -282,6 +332,7 @@ class MarkdownBlock(io.StringIO):
     @property
     def chars(self) -> int:
         """Retained source plus visible output, for the transcript memory limit."""
+        # A preview is left out: it lasts until its newline or fence, and its own limits bound it.
         return len(self.source or '') + self._stream.chars + len(self._stream.pending)
 
     def write(self, text: str) -> int:
