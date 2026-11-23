@@ -6,9 +6,9 @@ https://github.com/pydantic/pydantic-ai/pull/10963. Record the real output throu
 replay it with `_command_fixtures.Replay` instead.
 
 The check counts, in each changed test file, the `CompletedProcess(...)` calls whose `stdout` or `stderr` is anything
-but empty output or an attribute, such as `recording.stdout`: a literal, an f-string, a name bound to either, or a
-`json.dumps(...)` of hand-built data. Empty output claims nothing about what a command prints, so it is not counted. A
-change may not raise a file's count; what the base already has is allowed.
+but empty output or an attribute: any other expression, a name or a call such as `json.dumps(...)` included. Pass a
+recorded value inline as the attribute, such as `recording.stdout`. Empty output claims nothing about what a command
+prints, so it is not counted. A change may not raise a file's count; what the base already has is allowed.
 
 During a merge, `--staged` reports a file only when its count is higher than in both parents.
 
