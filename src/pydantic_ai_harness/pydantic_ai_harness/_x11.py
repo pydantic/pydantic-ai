@@ -302,12 +302,13 @@ _FIND_BROWSER = (
 )
 """Sets `browser` to the first of `_BROWSERS` the image has, or to nothing, with its label and any flag it needs."""
 
-_BUTTON_STYLE = (
+TINT2_BUTTON_STYLE = (
     'button_font = Sans 12',
     'button_font_color = #ffffff 100',
     'button_padding = 8 4 6',
     'button_background_id = 2',
 )
+"""How the panel's labelled buttons look, shared with boxd's panel."""
 
 
 _WRITE_DESKTOP_SETTINGS = (
@@ -346,7 +347,7 @@ _WRITE_DESKTOP_SETTINGS = (
             'button = new',
             'button_icon = mini.xterm',
             'button_text = Terminal',
-            *_BUTTON_STYLE,
+            *TINT2_BUTTON_STYLE,
             'button_lclick_command = xterm',
             'taskbar_padding = 2 2 4',
             'task_text = 1',
@@ -357,7 +358,7 @@ _WRITE_DESKTOP_SETTINGS = (
     )
     # Each `P` in `panel_items` is the next button.
     + ' "panel_items = P${browser:+P}T"; [ -z "$browser" ] || printf \'%s\\n\' "button = new" '
-    + f'"button_icon = $browser" "button_text = $browser_label" {shlex.join(_BUTTON_STYLE)} '
+    + f'"button_icon = $browser" "button_text = $browser_label" {shlex.join(TINT2_BUTTON_STYLE)} '
     + f'"button_lclick_command = $browser$browser_flag"; }} >"{_TINT2_DIR}/tint2rc"; '
 )
 """Writes the fluxbox, tint2 and xterm settings, keeping any file already there."""
