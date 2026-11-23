@@ -1,0 +1,71 @@
+# description: Sends each Monday one probe per member of the provider fact sets the gateway reaches, and notifies Slack
+# when a fact no longer holds. dsfaccini owns a red run.
+name: Provider Facts Health
+
+on:
+  schedule:
+    # Run weekly on Monday at 11:00 UTC, an hour after Gateway Model Health.
+    - cron: '0 11 * * 1'
+  workflow_dispatch: {}
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: 3.12
+  UV_FROZEN: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  provider-facts-health:
+    environment:
+      name: provider-facts-health
+    runs-on: ubuntu-latest
+    # About 150 requests one after another, some reasoning and some compiling a schema: an estimate, not a reading.
+    timeout-minutes: 60
+    env:
+      CI: true
+      PYDANTIC_AI_GATEWAY_API_KEY: ${{ secrets.PYDANTIC_AI_GATEWAY_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-suffix: provider-facts-health
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run provider fact probes
+        run: uv run pytest tests/providers/facts/test_gateway_probes.py -q --run-gateway-live
+
+      - name: Notify Slack on failure
+        if: failure() && !cancelled()
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":x: Provider facts health failed in ${{ github.repository }} on ${{ github.ref_name }}."
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: ":x: *Provider facts health failed*"
+              - type: section
+                fields:
+                  - type: mrkdwn
+                    text: "*Repository*\n<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                  - type: mrkdwn
+                    text: "*Owner*\ndsfaccini"
+                  - type: mrkdwn
+                    text: "*Trigger*\n${{ github.event_name }}"
+                  - type: mrkdwn
+                    text: "*Ref*\n`${{ github.ref_name }}`"
+                  - type: mrkdwn
+                    text: "*Run*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>"

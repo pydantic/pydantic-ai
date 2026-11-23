@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import os
 from typing import get_args
 
 import pytest
@@ -24,18 +23,6 @@ if not imports_successful():
     pytest.skip('gateway model checks require provider packages to be installed', allow_module_level=True)
 
 pytestmark = [pytest.mark.filterwarnings('ignore::DeprecationWarning')]
-
-
-@pytest.fixture(scope='module')
-def gateway_live_api_key(pytestconfig: pytest.Config, gateway_api_key: str | None) -> str:
-    if not pytestconfig.getoption('--run-gateway-live'):
-        pytest.skip('gateway catalog smoke tests require --run-gateway-live')
-    if not gateway_api_key:
-        message = 'gateway catalog smoke tests require `PYDANTIC_AI_GATEWAY_API_KEY` or `PAIG_API_KEY`'
-        if os.getenv('CI'):
-            pytest.fail(message)
-        pytest.skip(message)
-    return gateway_api_key
 
 
 def _gateway_known_model_names() -> list[str]:

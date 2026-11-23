@@ -1246,7 +1246,7 @@ def pytest_addoption(parser: Any) -> None:
         '--run-gateway-live',
         action='store_true',
         default=False,
-        help='Run live gateway smoke tests that make real paid model requests.',
+        help='Run live gateway tests that make real paid model requests.',
     )
     parser.addoption(
         '--strict-vcr-cassette-usage',
@@ -1686,6 +1686,19 @@ def anthropic_api_key() -> str:
 @pytest.fixture(scope='session')
 def gateway_api_key() -> str | None:
     return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
+
+
+@pytest.fixture(scope='session')
+def gateway_live_api_key(pytestconfig: pytest.Config, gateway_api_key: str | None) -> str:
+    """The gateway key for a test that makes real paid requests, which runs only under `--run-gateway-live`."""
+    if not pytestconfig.getoption('--run-gateway-live'):
+        pytest.skip('live gateway tests require --run-gateway-live')
+    if not gateway_api_key:
+        message = 'live gateway tests require `PYDANTIC_AI_GATEWAY_API_KEY` or `PAIG_API_KEY`'
+        if os.getenv('CI'):
+            pytest.fail(message)
+        pytest.skip(message)
+    return gateway_api_key
 
 
 @pytest.fixture(scope='session')
