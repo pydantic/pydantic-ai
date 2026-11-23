@@ -88,15 +88,23 @@ GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
         'pydantic_ai_slim/pydantic_ai/ui/vercel_ai/_event_stream.py:VercelAIEventStream.before_response',
         'pydantic_ai_slim/pydantic_ai/ui/vercel_ai/_event_stream.py:VercelAIEventStream.before_stream',
         'src/pydantic_ai_harness/pydantic_ai_harness/tool_output_limits/_capability.py:_aiter',
+        'src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/posthog.py:SavedKeyAuth.async_auth_flow',
+        'src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/local_client.py:LocalClient._received',
         # Test code, left suspended the same way.
         'tests/continuation_utils.py:ScriptedStreamedResponse._get_event_iterator',
+        'tests/harness/boxd_sandbox/fake_boxd.py:_FakeExecCall._chunks',
+        'tests/harness/code_mode/test_temporal.py:test_uncaught_remote_setup_error_fails_workflow_task.<locals>.<genexpr>',
         'tests/harness/guardrails/test_stream_guardrail.py:TestStreamGuardrail.test_block_and_redaction_spans_gate_content.<locals>.events',
+        'tests/harness/modal_sandbox/fake_modal.py:_FakeStream.__aiter__',
+        'tests/harness/render_sandbox/workspace_helpers.py:_supervise',
         'tests/harness/sub_agents/test_tasks.py:parent_model.<locals>.stream',
         'tests/models/google/test_agentic_video.py:_stream_response_parts.<locals>.response_chunks',
         'tests/models/test_continuation_stream.py:_FakeStream._get_event_iterator',
         'tests/models/test_openai_responses.py:test_background_mode_streaming_continuation_vcr.<locals>.<genexpr>',
         'tests/models/test_openai_responses.py:test_background_mode_streaming_starting_after_vcr.<locals>.<genexpr>',
         'tests/models/test_streamed_continuation.py:_ScriptedStreamedResponse._get_event_iterator',
+        'tests/realtime/simulation/_gemini.py:FakeGeminiSession.receive',
+        'tests/realtime/simulation/_wire.py:FakeWebSocket.__aiter__',
         'tests/realtime/test_google.py:_DroppableSession.receive',
         'tests/realtime/test_google.py:_RecordingSession.receive',
         'tests/realtime/test_openai.py:FakeWebSocket.__aiter__',
@@ -107,9 +115,14 @@ GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
         'tests/realtime/test_session.py:test_send_audio_first_chunk_bad_rolls_back_turn_state.<locals>.first_chunk_bad',
         'tests/realtime/test_session.py:test_send_audio_iterable_waits_for_next_chunk_after_close.<locals>.microphone',
         'tests/realtime/test_session.py:test_tool_close_ends_async_audio_sender_cleanly.<locals>.microphone',
+        'tests/realtime/test_xai.py:FakeWebSocket.__aiter__',
+        'tests/realtime/test_xai.py:_PhasedWebSocket.__aiter__',
+        'tests/realtime/test_xai.py:_StaysOpen.__aiter__',
         'tests/realtime/ws_cassettes.py:ReplayWebSocket.__aiter__',
         'tests/realtime_connections.py:lifecycle_events',
         'tests/refactor_capture.py:RefactorCapture._recorded_ui_events.<locals>.recorded',
+        'tests/test_examples.py:stream_model_logic.<locals>.stream_part_response',
+        'tests/test_examples.py:stream_model_logic.<locals>.stream_text_response',
         'tests/test_ui.py:DummyUIEventStream.before_request',
         'tests/test_ui.py:DummyUIEventStream.before_response',
         'tests/test_ui.py:DummyUIEventStream.handle_part_end',
@@ -201,7 +214,7 @@ _original_finalizer_hook: Callable[[asyncio.BaseEventLoop, AsyncGeneratorType[ob
 def _tracking_finalizer_hook(self: asyncio.BaseEventLoop, agen: AsyncGeneratorType[object, object]) -> None:
     path = Path(agen.ag_code.co_filename).resolve()
     if _state.test_running and path.is_relative_to(_ROOT) and not {'.venv', 'site-packages'} & set(path.parts):
-        site = f'{path.relative_to(_ROOT)}:{agen.__qualname__}'
+        site = f'{path.relative_to(_ROOT).as_posix()}:{agen.__qualname__}'
         if site not in GC_FINALIZED_BASELINE:
             _state.finalized_generators.append(site)
     _original_finalizer_hook(self, agen)
