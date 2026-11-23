@@ -225,6 +225,11 @@ def _read_pax_docs(path: str = '') -> str:
 def _read_clai_docs(path: str = '') -> str:
     """Read Pax's docs: the list of docs, one doc, or one section of a doc.
 
+    The docs ship with the installed package: Pax's user reference, plugin contract, and
+    customization guide, and the READMEs of the harness capabilities it runs on. A long doc
+    returns an outline of section paths. A long section returns its own text (truncated if
+    needed), followed by an outline of any subsections.
+
     Args:
         path: Empty to list the docs. A doc id such as `reference` or `harness/coder` for that doc.
             `doc#section` such as `reference#saved-api-keys` for one section with its subsections.
@@ -297,6 +302,8 @@ def _search_pax_docs(query: str) -> str:
 def _search_clai_docs(query: str) -> str:
     """Search Pax's docs and return the best matching sections, with a short snippet of each.
 
+    Matches words, and words that contain them, in the headings and text of every doc
+    `read_clai_docs` lists.
     Read a result in full with `read_clai_docs(path)`.
 
     Args:

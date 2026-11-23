@@ -241,7 +241,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return () => window.clearTimeout(timer)
   }, [load, version, query])
 
-  // Other CLAIs save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
+  // Other Pax processes save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
   useEffect(() => {
     if (unsaved) return
     const interval = window.setInterval(() => void load(), 15000)

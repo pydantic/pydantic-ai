@@ -104,7 +104,7 @@ class Chosen:
 
 
 _THEN = 'Then sign in (or sign up) in your browser,\nand pick a project to send traces to.\nIts write token is saved in /keys.'
-SIGNING_IN = 'Approve the sign-in in your browser.\nCLAI then lists the projects you can\nsend traces to.'
+SIGNING_IN = 'Approve the sign-in in your browser.\nPax then lists the projects you can\nsend traces to.'
 """The sign-in's waiting screen, above the link; one short line each, as the terminal's preview panel cuts long ones."""
 
 

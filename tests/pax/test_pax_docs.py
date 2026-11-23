@@ -96,6 +96,14 @@ def test_legacy_tools_suggest_callable_names() -> None:
     )
 
 
+def test_legacy_tools_keep_the_full_descriptions() -> None:
+    for current, legacy in (
+        (pax_docs._read_pax_docs, pax_docs._read_clai_docs),  # pyright: ignore[reportPrivateUsage]
+        (pax_docs._search_pax_docs, pax_docs._search_clai_docs),  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert (current.__doc__ or '').replace('_pax_docs', '_clai_docs') == legacy.__doc__
+
+
 def read_docs(path: str = '', *, expect_retry: bool = False) -> str:
     """Call `read_pax_docs` through `PaxDocs`, not its private implementation."""
     return _call_docs_tool('read_pax_docs', {'path': path}, expect_retry=expect_retry)
