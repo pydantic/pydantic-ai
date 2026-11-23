@@ -205,8 +205,9 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
             `(width, height)`. Without root or passwordless `sudo` nothing is installed, so the image needs the
-            display's programs; otherwise the first use of the display raises `WorkspaceUnavailableError` naming
-            what is missing. No port is opened for it.
+            display's programs, listed under "What the display needs" in the `ComputerUse` docs; otherwise the
+            first use of the display raises `WorkspaceUnavailableError` naming what is missing. No port is opened
+            for it.
     """
 
     # File operations don't use sandboxd's file API: it serves only paths under its root and moves
@@ -252,7 +253,6 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         # Set on a new claim, as other sandboxes do: commands create `working_dir` until one has entered it.
         # An attached claim must already have it.
         self._working_dir_pending = False
-        self._env = dict(env or {})
         self._client: AsyncSandboxClient[AsyncSandbox] | None = None
         self._session: _Session | None = None
         self._lock = anyio.Lock()
@@ -267,8 +267,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
             checked_desktop_size(desktop),
             lambda: f'Kubernetes sandbox {self._ref.id if self._ref else "(not created)"}',
         )
-        if self._display:
-            self._env = {'DISPLAY': DISPLAY, **self._env}
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
 
     @property
     def display(self) -> Display | None:
