@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, NativeOutput
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
@@ -26,6 +26,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
 
     from .mock_openai import completion_message
 
@@ -76,6 +77,41 @@ async def test_open_weight_family_thinking_wire_shape(
         model = OpenAIChatModel(case.model_name, provider=TogetherProvider(api_key='test', http_client=client))
         settings: ModelSettings = {} if case.thinking is None else {'thinking': case.thinking}
         await Agent(model).run('hello', model_settings=settings)
+
+    body = request_capture.body('/chat/completions')
+    assert {key: value for key, value in body.items() if key == 'reasoning_effort'} == case.expected
+
+
+@dataclass(frozen=True)
+class VercelEffortCase:
+    id: str
+    model_name: str
+    thinking: ThinkingLevel
+    expected: dict[str, JsonValue]
+
+
+VERCEL_EFFORT_CASES = [
+    # Vercel lists Hy3's efforts as `none`, `low` and `high`, so the unified levels go to the nearest of those.
+    VercelEffortCase('hy3-on', 'tencent/hy3', True, snapshot({'reasoning_effort': 'high'})),
+    VercelEffortCase('hy3-medium', 'tencent/hy3', 'medium', snapshot({'reasoning_effort': 'high'})),
+    VercelEffortCase('hy3-low', 'tencent/hy3', 'low', snapshot({'reasoning_effort': 'low'})),
+    VercelEffortCase('hy3-off', 'tencent/hy3', False, snapshot({'reasoning_effort': 'none'})),
+    # Step 5 always reasons and Vercel lists `low` as its lowest effort.
+    VercelEffortCase('step-5-off', 'stepfun/step-5-preview', False, snapshot({'reasoning_effort': 'low'})),
+    # Ling lists only an on/off toggle on Vercel, so no effort goes out.
+    VercelEffortCase('ling-on', 'inclusionai/ling-3.1-flash', True, snapshot({})),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in VERCEL_EFFORT_CASES])
+async def test_vercel_open_weight_family_sends_listed_efforts(
+    allow_model_requests: None, request_capture: RequestCapture, case: VercelEffortCase
+):
+    """Vercel's docs don't say what it does with an effort the model's catalog entry doesn't list, so only listed
+    efforts go out: https://vercel.com/docs/ai-gateway/models-and-providers/reasoning."""
+    async with gateway_client(request_capture) as client:
+        model = OpenAIChatModel(case.model_name, provider=VercelProvider(api_key='test', http_client=client))
+        await Agent(model).run('hello', model_settings={'thinking': case.thinking})
 
     body = request_capture.body('/chat/completions')
     assert {key: value for key, value in body.items() if key == 'reasoning_effort'} == case.expected

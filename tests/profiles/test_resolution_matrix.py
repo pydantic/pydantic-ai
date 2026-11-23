@@ -4917,24 +4917,34 @@ def test_ollama_open_weight_family(model_name: str, thinking: dict[str, bool]):
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize(
-    ('model_name', 'thinking'),
+    ('model_name', 'thinking', 'reasoning_efforts'),
     [
-        ('nvidia/nemotron-3-ultra-550b-a55b', _HYBRID_THINKING),
-        ('nvidia/nemotron-3.5-lightning-free', _OPT_IN_THINKING),
-        ('thinkingmachines/inkling-small', _HYBRID_THINKING),
-        ('xiaomi/mimo-v2.6-flash', _OPT_IN_THINKING),
-        ('stepfun/step-3.7-flash', _ALWAYS_THINKING),
-        ('tencent/hy4', _HYBRID_THINKING),
-        ('inclusionai/ling-3.0-flash', _HYBRID_THINKING),
+        ('nvidia/nemotron-3-ultra-550b-a55b', _HYBRID_THINKING, {'none', 'low', 'medium', 'high'}),
+        # Vercel's catalog lists no reasoning controls for Nemotron 3 Super, and only an on/off toggle for Ling.
+        ('nvidia/nemotron-3-super-120b-a12b', _HYBRID_THINKING, set[str]()),
+        ('nvidia/nemotron-3.5-lightning-free', _OPT_IN_THINKING, {'none', 'low', 'medium', 'high'}),
+        (
+            'thinkingmachines/inkling-small',
+            _HYBRID_THINKING,
+            {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'},
+        ),
+        ('xiaomi/mimo-v2.6-flash', _OPT_IN_THINKING, {'none', 'minimal', 'low', 'medium', 'high'}),
+        ('stepfun/step-3.7-flash', _ALWAYS_THINKING, {'low', 'medium', 'high'}),
+        ('tencent/hy3', _HYBRID_THINKING, {'none', 'low', 'high'}),
+        ('tencent/hy4', _HYBRID_THINKING, {'none', 'high'}),
+        ('inclusionai/ling-3.0-flash', _HYBRID_THINKING, set[str]()),
     ],
 )
-def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool]):
-    """Vercel's open-weight family slugs add only their thinking flags to the profile `tencent/hy-mt2-pro` keeps."""
+def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool], reasoning_efforts: set[str]):
+    """Vercel's open-weight family slugs add their thinking flags, and the efforts Vercel's catalog lists for the model
+    (https://ai-gateway.vercel.sh/v1/models), to the profile `tencent/hy-mt2-pro` keeps."""
     default = VercelProvider.model_profile('tencent/hy-mt2-pro')
     assert _normalize(default) == snapshot(
         {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
     )
-    assert _normalize(VercelProvider.model_profile(model_name)) == _normalize(default) | thinking
+    assert _normalize(VercelProvider.model_profile(model_name)) == _normalize(default) | thinking | {
+        'openai_reasoning_efforts': frozenset(reasoning_efforts)
+    }
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
