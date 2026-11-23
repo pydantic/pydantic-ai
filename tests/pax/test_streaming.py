@@ -184,23 +184,23 @@ async def test_a_failed_write_at_part_end_is_not_written_again() -> None:
 
 async def test_a_part_whose_typing_already_failed_ends_with_that_error() -> None:
     failed = asyncio.Event()
+    tries: list[str] = []
 
-    class FailsFirst(io.StringIO):
+    class Fails(io.StringIO):
         def write(self, text: str) -> int:
-            if not failed.is_set():
-                failed.set()
-                raise OSError('first')
-            return super().write(text)
+            tries.append(text)
+            failed.set()
+            raise OSError('terminal closed')
 
-    output = FailsFirst()
+    output = Fails()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 100 + '\n')))
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await failed.wait()  # the drainer's first tick fails
     await asyncio.sleep(0)  # and its task finishes with that error
-    with pytest.raises(OSError, match='first'):
+    with pytest.raises(OSError, match='terminal closed'):
         await renderer.finish()
-    assert 'x' not in output.getvalue()
+    assert len(tries) == 1
 
 
 async def test_abort_discards_pending_output() -> None:
