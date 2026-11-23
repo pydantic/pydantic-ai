@@ -47,6 +47,8 @@ The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol),
 - macOS on Apple silicon.
 - Linux on x86_64 or aarch64 with glibc 2.34 or newer. The user running the agent needs read and write access to `/dev/kvm`.
 
+smolvm itself also runs on Windows x86_64, with the Windows Hypervisor Platform, but smolmachines has no Windows build, so `SmolSandbox` doesn't run there.
+
 The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
@@ -246,7 +248,7 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 
 ## Telemetry
 
-`SmolSandbox` traces starting or reconnecting to the VM as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) also records the VM on the agent run span as `pydantic_ai.workspace.provider` (`smol`) and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span.
+`SmolSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` (`smol`) and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 Treat the recorded id like a ref: any process of your OS user on this machine can attach to the VM with it.
 

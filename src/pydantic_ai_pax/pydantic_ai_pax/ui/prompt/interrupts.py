@@ -28,6 +28,7 @@ class Interrupts:
         self._cancel: Callable[[bool], None] | None = None
         self._handler: _Handler | None = None
         """The Ctrl-C handler of the operation `run` awaits now."""
+        self._started: float | None = None
 
     def press(self) -> bool:
         """Share the double-press window between running and input modes."""
@@ -40,6 +41,11 @@ class Interrupts:
     def active(self) -> bool:
         """Whether an operation currently accepts editor cancellation."""
         return self._cancel is not None
+
+    @property
+    def elapsed(self) -> float:
+        """Seconds the operation `run` awaits now has been running; `0` when none is."""
+        return 0 if self._started is None else self._clock() - self._started
 
     def cancel(self, *, exit_on_repeat: bool = True) -> bool:
         """Interrupt active work from an editor key without sending a process signal."""
@@ -81,6 +87,7 @@ class Interrupts:
         outer, self._handler = self._handler, _Handler(handle=on_signal, loop=loop)
         handler = self._handler
         self._cancel = cancel
+        self._started = self._clock()
         try:
             self._take(handler)
             try:
@@ -97,6 +104,7 @@ class Interrupts:
             return True
         finally:
             self._cancel = None
+            self._started = None
             self._give(handler)
             self._handler = outer
 

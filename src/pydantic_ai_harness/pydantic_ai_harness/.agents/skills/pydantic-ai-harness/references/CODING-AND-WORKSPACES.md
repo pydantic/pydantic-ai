@@ -53,9 +53,9 @@ except UserError as e:
   provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a section on it:
   - E2B: `E2BSandbox(network={'rules': {host: [{'transform': {'headers': {...}}}]}})`; HTTPS only.
   - boxd: `BoxdSandbox(secrets=['GH_TOKEN'])`, naming a secret made beforehand with
-    `secrets.set(name, value, scope='private-unattached', domains=[...])`; without `domains` the real value is set.
-    boxd also substitutes request bodies, so a command can store the value on a named host (a GitHub
-    issue or gist) and read it back: use a fine-grained token without Gists access.
+    `secrets.set(name, value, scope='private-unattached', domains=[...], replace_in=['headers'])`; without
+    `domains` the real value is set. Without `replace_in`, boxd also substitutes the URL and body, so a command
+    can store the value on a named host (a GitHub issue or gist) and read it back.
   - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
     `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
   - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`
@@ -321,7 +321,7 @@ model reads with file tools; short values are masked everywhere).
 | --- | --- | --- | --- | --- | --- | --- |
 | Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` | `[daytona]` | `[boxd]` |
 | Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` | `DAYTONA_API_KEY` | `BOXD_API_KEY` |
-| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
+| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400), optional `idle_timeout`; then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
 | New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `secrets`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` |
