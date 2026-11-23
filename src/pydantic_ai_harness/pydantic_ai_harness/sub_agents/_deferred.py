@@ -17,6 +17,7 @@ from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from functools import cache
 from typing import Any, Protocol, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
@@ -32,8 +33,17 @@ STATE_KEY = 'sub_agent_run'
 AGENT_PATH_KEY = 'agent_path'
 """The key of a child call's metadata in `delegated_requests()` naming the delegates it was made under, outermost first."""
 
-_REQUESTS: TypeAdapter[DeferredToolRequests] = TypeAdapter(DeferredToolRequests)
-_RESULTS: TypeAdapter[DeferredToolResults] = TypeAdapter(DeferredToolResults)
+
+# This module's adapters are built on first use, not at import: their schemas cover every message type.
+@cache
+def _requests_adapter() -> TypeAdapter[DeferredToolRequests]:
+    return TypeAdapter(DeferredToolRequests)
+
+
+@cache
+def _results_adapter() -> TypeAdapter[DeferredToolResults]:
+    return TypeAdapter(DeferredToolResults)
+
 
 _V = TypeVar('_V')
 
@@ -93,7 +103,7 @@ class InMemoryDeferredStateStore:
 
 @dataclass(frozen=True)
 class _StoredState:
-    """What a `DeferredStateStore` keeps for a stopped delegation, serialized with `_STORED`."""
+    """What a `DeferredStateStore` keeps for a stopped delegation, serialized with `_stored_adapter()`."""
 
     agent_name: str
     task: str
@@ -102,7 +112,9 @@ class _StoredState:
     messages: list[ModelMessage]
 
 
-_STORED: TypeAdapter[_StoredState] = TypeAdapter(_StoredState)
+@cache
+def _stored_adapter() -> TypeAdapter[_StoredState]:
+    return TypeAdapter(_StoredState)
 
 
 @dataclass(frozen=True)
@@ -129,12 +141,12 @@ async def deferral_metadata(
     """
     state_id = secrets.token_urlsafe(16)
     stored = _StoredState(agent_name, task, tool_call_id, requests, list(messages))
-    await store.save(state_id, _STORED.dump_json(stored))
+    await store.save(state_id, _stored_adapter().dump_json(stored))
     return {
         STATE_KEY: {
             'state_id': state_id,
             'agent_name': agent_name,
-            'requests': _REQUESTS.dump_python(requests, mode='json'),
+            'requests': _requests_adapter().dump_python(requests, mode='json'),
         }
     }
 
@@ -165,7 +177,7 @@ def _invalid(error: Exception) -> UserError:
 
 def _child_requests(state: dict[str, Any]) -> tuple[str, DeferredToolRequests]:
     try:
-        return str(state['agent_name']), _REQUESTS.validate_python(state['requests'])
+        return str(state['agent_name']), _requests_adapter().validate_python(state['requests'])
     except (KeyError, ValidationError) as error:
         raise UserError(
             'A delegate call in these `DeferredToolRequests` has a forwarded sub-agent state that is not valid. Pass '
@@ -221,7 +233,7 @@ def _flatten(
         return flat, paths
     # Questions keep their kind, so `kind()` reads it as on the requests they came from. `DeferredToolRequests` takes a
     # call's kind only through its serialized form, which stored requests rely on to keep their questions.
-    return _REQUESTS.validate_python({**_REQUESTS.dump_python(flat), '_kinds': questions}), paths
+    return _requests_adapter().validate_python({**_requests_adapter().dump_python(flat), '_kinds': questions}), paths
 
 
 def _prefixed(prefix: str, mapping: Mapping[str, _V]) -> dict[str, _V]:
@@ -313,7 +325,7 @@ def delegated_results(
                 mapping.pop(flat, None)
         routed.approvals[call.tool_call_id] = ToolApproved()
         routed.metadata[call.tool_call_id] = {
-            STATE_KEY: {**state, 'results': _RESULTS.dump_python(child_results, mode='json')}
+            STATE_KEY: {**state, 'results': _results_adapter().dump_python(child_results, mode='json')}
         }
     return routed
 
@@ -353,11 +365,11 @@ def _resumed(
     task: str,
     tool_call_id: str | None,
 ) -> ResumedState:
-    stored = _STORED.validate_json(blob)
+    stored = _stored_adapter().validate_json(blob)
     if (stored.agent_name, stored.task, stored.tool_call_id) != (agent_name, task, tool_call_id):
         raise UserError('The sub-agent state named in `deferred_tool_results` was saved for another delegation.')
     try:
-        results = _RESULTS.validate_python(state['results'])
+        results = _results_adapter().validate_python(state['results'])
     except (KeyError, ValidationError) as error:
         raise _invalid(error) from error
     requests = stored.requests

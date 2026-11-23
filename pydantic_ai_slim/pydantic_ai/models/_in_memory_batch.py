@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from functools import cache
 
 from pydantic import TypeAdapter
 from pydantic_core import to_json
@@ -16,7 +17,13 @@ from . import Model
 from ._batch_codec import unrun_error
 from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
-_RESPONSE_ADAPTER = TypeAdapter(ModelResponse)
+
+@cache
+def _response_adapter() -> TypeAdapter[ModelResponse]:
+    # Built on first use, not at import: the schema covers every message part type.
+    return TypeAdapter(ModelResponse)
+
+
 _ERROR_ADAPTER = TypeAdapter(dict[str, object])
 
 
@@ -74,7 +81,7 @@ class InMemoryBatchModel(Model):
                 body = to_json({'error': encoded.body}).decode()
                 results.append(BatchResult(custom_id=encoded.custom_id, status='errored', body=body))
             else:
-                body = _RESPONSE_ADAPTER.dump_json(response).decode()
+                body = _response_adapter().dump_json(response).decode()
                 results.append(BatchResult(custom_id=encoded.custom_id, status='succeeded', body=body))
         batch = Batch(
             id=f'batch_{uuid.uuid4().hex}',
@@ -99,7 +106,7 @@ class InMemoryBatchModel(Model):
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
         if result.status == 'succeeded' and result.body is not None:
-            return _RESPONSE_ADAPTER.validate_json(result.body)
+            return _response_adapter().validate_json(result.body)
         if result.status == 'errored' and result.body is not None:
             error = _ERROR_ADAPTER.validate_json(result.body)
             if isinstance(token := error.get('error'), str):

@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Awaitable
 from dataclasses import KW_ONLY, dataclass
 from datetime import timedelta
-from functools import partial
+from functools import cache, partial
 from typing import TYPE_CHECKING, Protocol, overload
 
 from pydantic import JsonValue, TypeAdapter
@@ -23,7 +23,12 @@ from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResu
 
 from .abstract import AbstractCapability, CapabilityOrdering
 
-_RESULTS_ADAPTER = TypeAdapter(DeferredToolResults)
+
+@cache
+def _results_adapter() -> TypeAdapter[DeferredToolResults]:
+    # Built on first use, not at import: the schema covers every message part type.
+    return TypeAdapter(DeferredToolResults)
+
 
 _DEFAULT_WAIT_NAME = 'deferred_tool_calls'
 
@@ -227,7 +232,7 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
                 calls={call.tool_call_id: ToolFailed(message) for call in requests.calls},
             )
         try:
-            decision = _RESULTS_ADAPTER.validate_python(payload)
+            decision = _results_adapter().validate_python(payload)
             # `build_results` checks `approvals` and `calls` only; without this, a decision could set the
             # `tool_call_metadata` of a call an earlier handler already resolved.
             pending_ids = {call.tool_call_id for call in (*requests.approvals, *requests.calls)}
@@ -257,4 +262,4 @@ async def _ask(
         results = await await_maybe(handler(ctx, requests, token))
     else:
         results = await await_maybe(await run_in_executor(handler, ctx, requests, token))
-    return None if results is None else _RESULTS_ADAPTER.dump_python(results, mode='json')
+    return None if results is None else _results_adapter().dump_python(results, mode='json')

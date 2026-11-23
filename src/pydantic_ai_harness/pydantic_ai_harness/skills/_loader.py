@@ -248,34 +248,35 @@ def _extract_frontmatter(text: str, source: str) -> tuple[str, str]:
     return frontmatter, body
 
 
-def _parse_frontmatter(frontmatter: str, source: str) -> _SkillFrontmatter:
-    # Agent Skills frontmatter fields are strings. BaseLoader preserves valid
-    # scalar names such as `123` and `on` instead of applying YAML implicit types.
-    # PyYAML otherwise also accepts duplicate mapping keys and keeps the last value.
-    class UniqueKeyLoader(yaml.BaseLoader):
-        def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Hashable, object]:
-            keys: set[str] = set()
-            for key_node, _ in node.value:
-                if not isinstance(key_node, yaml.ScalarNode):
-                    raise yaml.constructor.ConstructorError(
-                        'while constructing a mapping',
-                        node.start_mark,
-                        'found a non-scalar key',
-                        key_node.start_mark,
-                    )
-                key: str = key_node.value
-                if key in keys:
-                    raise yaml.constructor.ConstructorError(
-                        'while constructing a mapping',
-                        node.start_mark,
-                        f'found duplicate key {key!r}',
-                        key_node.start_mark,
-                    )
-                keys.add(key)
-            return super().construct_mapping(node, deep=deep)
+# Agent Skills frontmatter fields are strings. BaseLoader preserves valid
+# scalar names such as `123` and `on` instead of applying YAML implicit types.
+# PyYAML otherwise also accepts duplicate mapping keys and keeps the last value.
+class _UniqueKeyLoader(yaml.BaseLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Hashable, object]:
+        keys: set[str] = set()
+        for key_node, _ in node.value:
+            if not isinstance(key_node, yaml.ScalarNode):
+                raise yaml.constructor.ConstructorError(
+                    'while constructing a mapping',
+                    node.start_mark,
+                    'found a non-scalar key',
+                    key_node.start_mark,
+                )
+            key: str = key_node.value
+            if key in keys:
+                raise yaml.constructor.ConstructorError(
+                    'while constructing a mapping',
+                    node.start_mark,
+                    f'found duplicate key {key!r}',
+                    key_node.start_mark,
+                )
+            keys.add(key)
+        return super().construct_mapping(node, deep=deep)
 
+
+def _parse_frontmatter(frontmatter: str, source: str) -> _SkillFrontmatter:
     try:
-        parsed: object = yaml.load(frontmatter, Loader=UniqueKeyLoader)
+        parsed: object = yaml.load(frontmatter, Loader=_UniqueKeyLoader)
     except yaml.YAMLError as exc:
         raise ValueError(f'Invalid YAML frontmatter in {source}: {exc}') from exc
 
