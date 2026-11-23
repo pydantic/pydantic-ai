@@ -109,8 +109,9 @@ Each call the tool manager makes on a hook `TOOL_HOOKS` lists is one line of kin
 capability it's called on, with the arguments it's handed, an exception among them as its class and message, and the
 result it returns or the error it raises. The run context and a wrap hook's handler are left out. The capture wraps the
 hooks where `AbstractCapability` or a subclass defines them, whether the subclass is defined before the capture starts
-or after. A call on a hook while a recorded call on the same hook runs, like the one a combined capability makes on
-each capability it combines, isn't recorded again.
+or after. A call on a hook while a recorded call on the same hook runs in the same agent run, like the one a combined
+capability makes on each capability it combines, isn't recorded again; one an agent run inside a hook or a tool makes
+is.
 
 Each exception a `pytest.raises` or `pytest.RaisesGroup` block catches is one line of kind `exception`, with its class,
 message and notes, whether it suppresses its context, and, described alike, the exceptions it groups, its `__cause__`
@@ -203,7 +204,7 @@ import pydantic_ai.realtime
 import pydantic_ai.realtime.model as realtime_model
 import pydantic_ai.ui._web.api as web_api
 import pydantic_ai.ui._web.app as web_app
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart
@@ -372,9 +373,11 @@ TOOL_HOOKS = (
     'on_tool_execute_error',
     'after_tool_execute',
 )
-# The tool hooks whose recorded calls are running, so the calls a combined capability makes on the ones it combines
-# aren't recorded again.
-_RUNNING_TOOL_HOOKS: ContextVar[frozenset[str]] = ContextVar('_RUNNING_TOOL_HOOKS', default=frozenset())
+# The tool hooks whose recorded calls are running, by name and agent run: the calls a combined capability makes on the
+# ones it combines aren't recorded again, and the ones an agent run inside a hook or a tool makes are.
+_RUNNING_TOOL_HOOKS: ContextVar[frozenset[tuple[str, str | None]]] = ContextVar(
+    '_RUNNING_TOOL_HOOKS', default=frozenset()
+)
 # Set while a recorded connection `send`, or a recorded call on a realtime double, runs.
 _RECORDING_CONNECTION_SEND: ContextVar[bool] = ContextVar('_RECORDING_CONNECTION_SEND', default=False)
 _RECORDING_DOUBLE_SEND: ContextVar[bool] = ContextVar('_RECORDING_DOUBLE_SEND', default=False)
@@ -1284,9 +1287,11 @@ class RefactorCapture:
 
         @functools.wraps(original)
         async def recording_hook(capability: AbstractCapability[object], *args: object, **kwargs: object) -> object:
+            ctx = args[0] if args else kwargs.get('ctx')
+            key = (name, ctx.run_id if isinstance(ctx, RunContext) else None)
             try:
                 running = _RUNNING_TOOL_HOOKS.get()
-                if name in running:
+                if key in running:
                     return await original(capability, *args, **kwargs)
                 record: dict[str, object] = {
                     'kind': 'hook',
@@ -1302,7 +1307,7 @@ class RefactorCapture:
                     },
                 }
                 self.records.append(record)
-                token = _RUNNING_TOOL_HOOKS.set(running | {name})
+                token = _RUNNING_TOOL_HOOKS.set(running | {key})
                 try:
                     result = await original(capability, *args, **kwargs)
                 except Exception as e:

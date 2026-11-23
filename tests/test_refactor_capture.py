@@ -741,6 +741,27 @@ def test_tool_hooks():
     asyncio.run(Rewrites().before_tool_execute(None, call=call, tool_def=None, args={{'n': 0}}))
 
 
+def call_once(tool_name):
+    def respond(messages, info):
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, tool_call_id=tool_name)])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return respond
+
+
+def test_tool_hooks_of_a_nested_run():
+    inner = Agent(FunctionModel(call_once('echo')))
+    inner.tool_plain(lambda: 'echoed', name='echo')
+    outer = Agent(FunctionModel(call_once('delegate')))
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return (await inner.run('echo')).output
+
+    outer.run_sync('delegate')
+
+
 @dataclass
 class FakeSession:
     create_message: AsyncMock
@@ -1814,9 +1835,10 @@ def test_capture_records_tool_hooks_sampling_exceptions_and_warnings(run: RunCap
     The agent combines `Rewrites`, a capability defined once the capture started, with `Untouched`; the calls the
     combined capability makes on them aren't recorded again, and the one the test makes on `Rewrites` directly is. The
     first tool call fails once `Rewrites` raised its argument, and `Rewrites` recovers it; the second fails validation.
-    A session that isn't a mock keeps no calls to record.
+    The calls of an agent run inside a tool, while the outer run's `wrap_tool_execute` call runs, are recorded too. A
+    session that isn't a mock keeps no calls to record.
     """
-    run(tmp_path, tool_plumbing=True).assert_outcomes(passed=6)
+    run(tmp_path, tool_plumbing=True).assert_outcomes(passed=7)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -1895,6 +1917,32 @@ n
 """,
             ),
             ('Rewrites.before_tool_execute', 'direct', ['args', 'call', 'tool_def'], {'n': 0}, {'n': 1}, None),
+            ('CombinedCapability.wrap_tool_validate', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.before_tool_validate', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.after_tool_validate', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.wrap_tool_execute', 'delegate', ['args', 'call', 'tool_def'], {}, 'done', None),
+            ('CombinedCapability.before_tool_execute', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.wrap_tool_validate', 'echo', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.before_tool_validate', 'echo', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.after_tool_validate', 'echo', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.wrap_tool_execute', 'echo', ['args', 'call', 'tool_def'], {}, 'echoed', None),
+            ('CombinedCapability.before_tool_execute', 'echo', ['args', 'call', 'tool_def'], {}, {}, None),
+            (
+                'CombinedCapability.after_tool_execute',
+                'echo',
+                ['args', 'call', 'result', 'tool_def'],
+                {},
+                'echoed',
+                None,
+            ),
+            (
+                'CombinedCapability.after_tool_execute',
+                'delegate',
+                ['args', 'call', 'result', 'tool_def'],
+                {},
+                'done',
+                None,
+            ),
         ]
     )
     assert [
@@ -2088,7 +2136,7 @@ n
                 'node': 'test_tool_plumbing.py::test_warnings',
                 'category': 'builtins.UserWarning',
                 'message': 'reported in the test module',
-                'frame': {'module': 'test_tool_plumbing', 'function': 'test_warnings', 'line': 111},
+                'frame': {'module': 'test_tool_plumbing', 'function': 'test_warnings', 'line': 132},
             },
             {
                 'node': 'test_tool_plumbing.py::test_warnings',
