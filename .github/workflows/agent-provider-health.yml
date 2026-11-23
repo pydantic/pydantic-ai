@@ -8,15 +8,11 @@ on:
     workflows:
       - Pydantic AI Bug Hunter
       - Pydantic AI Community Demand
-      - Pydantic AI Docs Drift
       - Pydantic AI Feature Digest
       - CI Review
       - Pydantic AI Provider Mapping Sweep
-      - Pydantic AI Provider Parity Explore
-      - Pydantic AI Regression Detector
       - Pydantic AI Round-Trip Sweep
       - Pydantic AI Stale Issues Finder
-      - Pydantic AI Streaming Resilience Sweep
       - Pydantic AI Weekly Agent Instructions Audit
     types: [completed]
   schedule:

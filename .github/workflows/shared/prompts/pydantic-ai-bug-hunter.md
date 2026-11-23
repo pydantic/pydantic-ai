@@ -75,7 +75,7 @@ jq '.[] | {number, title, labels: [.labels[].name], url}' \
 ```
 
 Scan titles for the generated prefixes (`[bug-hunter]`,
-`[provider-mapping-sweep]`, `[streaming-resilience-sweep]`, `[roundtrip-sweep]`)
+`[provider-mapping-sweep]`, `[roundtrip-sweep]`)
 and scan both titles and `labels[].name` for keywords related to whatever
 subsystem you're investigating.
 If a matching issue already covers the same root cause, call

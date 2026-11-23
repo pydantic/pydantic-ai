@@ -435,12 +435,8 @@ def test_launcher_runs_the_staged_runner(tmp_path: Path):
     'prompt_name',
     [
         'pydantic-ai-bug-hunter.md',
-        'pydantic-ai-docs-drift.md',
         'pydantic-ai-provider-mapping-sweep.md',
-        'pydantic-ai-provider-parity-explore.md',
-        'pydantic-ai-regression-detector.md',
         'pydantic-ai-roundtrip-sweep.md',
-        'pydantic-ai-streaming-resilience-sweep.md',
     ],
 )
 def test_issue_filing_prompts_use_prefetched_context(prompt_name: str):
