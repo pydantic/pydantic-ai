@@ -25,11 +25,15 @@ def fake_run(args):
     CompletedProcess(args, 0, '', '')
     CompletedProcess(args, 1)
     CompletedProcess(args, 0, recorded.stdout, recorded.stderr)
+    output = json.dumps([{'number': 1}])
+    CompletedProcess(args, 0, output, '')
+    CompletedProcess(args, 0, stdout=json.dumps({'state': 'open'}))
+    CompletedProcess(args, 0, None, None)
 """
 
 
-def test_literal_outputs_are_counted_and_empty_or_recorded_ones_are_not():
-    assert hand_written_outputs(_STUBS) == [6, 7, 8, 9]
+def test_hand_written_outputs_are_counted_and_empty_or_recorded_ones_are_not():
+    assert hand_written_outputs(_STUBS) == [6, 7, 8, 9, 14, 15]
     assert hand_written_outputs(None) == []
 
 

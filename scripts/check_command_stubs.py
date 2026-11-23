@@ -5,9 +5,10 @@ command prints. `gh`, `git` and `griffecli` printed something else in shipped de
 https://github.com/pydantic/pydantic-ai/pull/10963. Record the real output through `.github/scripts/_commands.py` and
 replay it with `_command_fixtures.Replay` instead.
 
-The check counts, in each changed test file, the `CompletedProcess(...)` calls whose `stdout` or `stderr` is a
-non-empty string or bytes literal or an f-string. Empty output claims nothing about what a command prints, so it is
-not counted. A change may not raise a file's count; what the base already has is allowed.
+The check counts, in each changed test file, the `CompletedProcess(...)` calls whose `stdout` or `stderr` is anything
+but empty output or an attribute, such as `recording.stdout`: a literal, an f-string, a name bound to either, or a
+`json.dumps(...)` of hand-built data. Empty output claims nothing about what a command prints, so it is not counted. A
+change may not raise a file's count; what the base already has is allowed.
 
 During a merge, `--staged` reports a file only when its count is higher than in both parents.
 
@@ -41,7 +42,7 @@ class Growth:
 
 
 def hand_written_outputs(source: str | None) -> list[int]:
-    """The line of each `CompletedProcess` call in `source` whose output is a non-empty literal."""
+    """The line of each `CompletedProcess` call in `source` whose output is neither empty nor an attribute."""
     if source is None:
         return []
     lines: list[int] = []
@@ -57,8 +58,7 @@ def hand_written_outputs(source: str | None) -> list[int]:
             *(keyword.value for keyword in node.keywords if keyword.arg in {'stdout', 'stderr'}),
         ]
         if any(
-            isinstance(output, ast.JoinedStr)
-            or (isinstance(output, ast.Constant) and isinstance(output.value, str | bytes) and output.value)
+            not isinstance(output, ast.Attribute) and not (isinstance(output, ast.Constant) and not output.value)
             for output in outputs
         ):
             lines.append(node.lineno)
