@@ -280,16 +280,9 @@ async def test_claude_toolset_calls_stop_at_the_failed_call(
     await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(task)
 
     assert provider.actions == actions
-    # The failed call's result says what failed, as a regular result. The call after it is answered as an error.
+    # The failed call and the call after it are both answered as errors, with text only.
     *_, failed, not_run = _results(request_capture.bodies('/v1/messages')[1])
-    assert failed == (
-        False,
-        [
-            "Action 1 of 1 (hold_keys) failed: the fake display cannot perform 'hold_keys'. Screenshot attached "
-            '(1280x800).',
-            'image',
-        ],
-    )
+    assert failed == (True, ["the fake display cannot perform 'hold_keys'"])
     assert not_run == (True, ['Not executed: an earlier computer action in this turn failed.'])
 
 

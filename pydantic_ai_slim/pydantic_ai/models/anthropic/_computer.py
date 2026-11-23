@@ -15,6 +15,7 @@ from typing import Annotated, Any, TypeGuard
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
     BetaContentBlock,
+    BetaTextBlockParam,
     BetaToolComputerUse20250124Param,
     BetaToolComputerUse20251124Param,
     BetaToolResultBlockParam,
@@ -24,8 +25,8 @@ from anthropic.types.beta import (
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
-from ...computer_use import ComputerCallPart
-from ...messages import ToolCallPart
+from ...computer_use import ComputerCallPart, ComputerReturnPart
+from ...messages import ToolCallPart, ToolReturnPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
 from .._computer_calls import key_from_x11
 
@@ -79,9 +80,15 @@ def stored_computer_call(part: ToolCallPart, provider_name: str, sent: NativeCom
     return block
 
 
-def map_computer_result(result: BetaToolResultBlockParam) -> BetaToolResultBlockParam:
-    """A `computer` call's `tool_result` for a toolset call, which names the toolset it answers."""
+def map_computer_result(part: ToolReturnPart, result: BetaToolResultBlockParam) -> BetaToolResultBlockParam:
+    """A `computer` call's `tool_result` for a toolset call, which names the toolset it answers.
+
+    A call whose action failed is an error result with only the error's text, as the toolset asks.
+    """
     result['toolset_name'] = 'computer'
+    if isinstance(part, ComputerReturnPart) and (outcome := part.result) is not None and 'error' in outcome:
+        result['is_error'] = True
+        result['content'] = [BetaTextBlockParam(type='text', text=outcome['error'])]
     return result
 
 

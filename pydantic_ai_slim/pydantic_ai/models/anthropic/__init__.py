@@ -3236,7 +3236,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Map a tool result. A result for a computer toolset call names the toolset."""
         result = await self._map_tool_return_part(part, map_context)
         if _guard_tool_call_id(t=part) in map_context.toolset_computer_call_ids:
-            return _computer.map_computer_result(result)
+            return _computer.map_computer_result(part, result)
         return result
 
     def _map_system_prompt_part(

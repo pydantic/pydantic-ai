@@ -147,11 +147,13 @@ async def test_each_toolset_call_is_one_computer_call_with_its_own_result(allow_
         ('toolu_3', 'hold_key', 'computer'),
     ]
     results = second['messages'][-1]['content']
-    assert [(r['tool_use_id'], r['toolset_name'], r['content'][0]['text']) for r in results] == [
-        ('toolu_1', 'computer', 'Ran 1 of 1 actions.'),
-        ('toolu_2', 'computer', 'Ran 2 of 2 actions.'),
-        ('toolu_3', 'computer', "Ran 0 of 1 actions. The next one failed: the fake display cannot perform 'hold_keys'"),
+    # A failed call is an error result with only the error's text, as the toolset asks.
+    assert [(r['tool_use_id'], r['toolset_name'], r['is_error'], r['content']) for r in results] == [
+        ('toolu_1', 'computer', False, results[0]['content']),
+        ('toolu_2', 'computer', False, results[1]['content']),
+        ('toolu_3', 'computer', True, [{'type': 'text', 'text': "the fake display cannot perform 'hold_keys'"}]),
     ]
+    assert [r['content'][0]['text'] for r in results[:2]] == ['Ran 1 of 1 actions.', 'Ran 2 of 2 actions.']
 
 
 async def test_a_screenshot_of_a_region_runs_as_a_zoom(allow_model_requests: None) -> None:
