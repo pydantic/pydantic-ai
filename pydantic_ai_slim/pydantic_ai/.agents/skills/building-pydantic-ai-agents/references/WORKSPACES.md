@@ -104,11 +104,12 @@ in it; after `workspace='new'` nothing is carried forward.
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
 the concrete backend for provider-specific methods (not from workflow code under durable
-execution). Sandbox providers (Modal, E2B, Sprites, Daytona, boxd, Kubernetes agent-sandbox, local smolvm microVMs, local Docker containers, and self-hosted OpenSandbox servers), `SSHWorkspace` for a remote host, and `BubblewrappedWorkspace`
-for confining another workspace's commands to its working directory ship as capabilities in the
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
-subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its `backend`
-fixture.
+execution). Sandboxes, containers, SSH hosts and other workspaces ship as capabilities in the
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/); the
+[supported workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#supported-workspaces) table lists
+them. To add one, [write a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)
+and check it by subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its
+`backend` fixture.
 
 Exception contract a backend must follow: `WorkspaceUnavailableError` when the environment is gone
 or unreachable (ends the run; never reaches the model); `WorkspaceTimeoutError` for a command over

@@ -1,0 +1,338 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "287"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.2-sol
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            What is the smallest prime number strictly greater than 7741? Reason it
+            through, then reply with it.
+        reasoning:
+          effort: medium
+          context: all_turns
+        store: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "7661"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_05e362e93c2371e0016aff865f861887d2aa6d0c4be5866b67
+        object: response
+        created_at: 1795130975
+        status: completed
+        access_programs:
+          cyber: standard
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795130983
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.2-sol
+        moderation: null
+        output:
+        - id: rs_05e362e93c2371e0016aff8660d48887d2953b545147acb9d7
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq_4ZnOMzKz2QitkKlsimNEErqgutzS0w5joBugmyia0NNlWagdS_kcnuGK2EpS3uzLnacX_EBdhIB9QQt9q97_IdqvAga1EyuELV32LRPcoZXKjS0k3BBXhxV0U5lkDrK5RYgKA-Mij7D2nOpFuQh9DHw8OKNLkalO0rpdj-rtXclqEg5xwEkoVaS31kJkpNHYCkC4JxkvX6SXrpXI0r_lHEwmk8ayXMDPaIkGPISlfPKG4v_WeoMgCQ5C1f6yKT1kOZ-IUyQJRlW5UJ-0LNgtQeUhQCkR1Xj55iYph-9kinbbfQ_Jk6HGV-83XWem95TY13gSRQLhkPqbFsE8ZiLLYzFcQEamRwQxs1ggxzrV-ZQ4-7OwF1KD5cp82IC-Wgap8fPJFfAEnzFbK49iQxPe2jKdJVse93DrsglNc0yR3T5WILct6q4J5VL-hnDHmBywcKIVdxodfoUPv_qe-5Mfh3sQO9jUBKktnP3nlN8QoL1ZJ4FMaBQ8vy2bq1v5IJQ0hy8T9ZP63TAad8QLP1jZPMGN8_gFsFIpk4huZw6pPhTLn3N9l1-5HGEBiDoMlMN5nEgBVEhzDXQp132ajpolnuCrqBPM9R5svXoAWC2zQA7VrG0adpnTp_RIturkuTdqe2uLcJK2uSbo6p_LMZpAslIV4to12aq7wc6y3963pkFCDh5YSK2OoMa0mJAwHVNx1bbcgkUueiavTk1ajcLAshwquxDumbQ49-6Ov9aX7BTqCMw9nN_x5sGxQVfF8ZJTGisEKSrl6s9j8htt6it_EmnPbTLYiEGRtawiRCtiuSzGiWZdtw9mQxeh0U6t5FhZy6nHjBTQez3NO9_y3kpk5Jz4gZHfdDT1ancxeh5JGORF5hJyAWkAnu0P0gMPtK1-2tVdJ527yAc8g_SB-Ow3TdMg9fv5TLSRGsSIC37DZML714WeRFnysvlnh9dpAJgnTNX-v-lEsuL-ULTKW6VndlHKC01pfWQ0rUcmMzq_oYfDMZlPywPTLbSAReXIoUVJpRcPeUCOamAGx_MMvRi0ZS-QM6m9pnZCYzKUvLoXBe8X0jtzY-JBrPbpeT8SpOFFldUmhDnAjoqm44vQARpNOixUCN0dXcoNKWuP2CWUkwwZ4N0XcCDvSKvVQyEGZP10-XS5SLW-__bONkEUBhyNOqIA-i4gA74Kj-3gLJHfZCVAIPqpKaHbLZdlqgq0KCqWuYcNR7H5uQUG678eMxcNvG3yRYR5EZGSO4s3OvdgyGHv6U2EIghxIy5MdWpL1Uy2rYYWqNpeqJaaOrjOIu2rxb7ufDMBdnnDuxpMDIuWHlEm6qVmkPPGfsqUPIi8m5LyPrmYp65O3sHJNXJLtW8YheDM_HLaipQddr7oMDu9-pWD3FT5OSqOpWUi6ALyXdK0mR8ZC_jiyrqh4R-qnUsa855__6JYG-1JzLqvp0vyzNA-2rzVCH3jySEZ6RjzbsiXdau85wUmyAA2xjNsrCimBgKKZz-uB8CWITSxqlASwIBSqTEgoNRMfVB70uA0mVqz5gB2bRfIlhLfSBbP3K00q-zXOAeikUIe8Rm4-xlOsYvjbA7vCQbKkOHEEbIy2td9UI66urGy3XPcp1Zr753Lerijk3xRCCEExgliQrzi34gf65zDyXavmlVvFhvlF2R69BJHvQcp9w9L4Vy3w0Om6GhRY_T5bbG2ZnLKZvt6WAfi5FxZdS-GMOXgrskRFJ8QrnW0rdFntlGl5dAbauX4uu3V0gkxainxeCQO-9f2V6_sxsIrrc2mFFTvgeIXo73ZJj4mfPpgnI1aELUQsF47Hi0wFBDz6NRqX6VUZJ_cHgZn6U-0wEzHDmWMq62UYA3AIkMWAHBxV0Lib-ERiCCa_vZx-BVrPU4opTgXp8ZqmyfXLaxFOcGvYd0S1eDVI-qG69uXQuDR2q40q2-sAGM0IRjbNFrMSOaqU7tIfqigTkj5yCnzlXrJ05WP-aNLWk1KFKHabaYhLHGf9Li73yRl-auQRhOlpcyZxHGjxq1kJ70lfrpeDdR6plAjK7Udftus94QNdXRVc28ugGW0azj3qE14s8gAxImGqs14sSZQrg-dQb8HIokii55qnnk5-o_RWO5LmaPn3J0XYCy7S-7rtwNIhBxAOuTt7eQyc1JznPD7YIAnH5NIdkMziOx4d5o53jjXqwhIym5ptMnJpjcpxJmCutxWQRTlMWZXHBCjihkcqAjTKMeHcDW2aXpoqsKeEYfy7vq2QftUCi1-w17CjZ__egk-t4W7abA54GQaokqrQuoauspUG0rAdVoFVgWvDBbHNHvKNLn-wQds1fGTD8ZNOtb19y4TFicNTx_Q32QqYmZwagC-uHT6AFIqiHuHS9IyN31aotaSyzbjrYBrzISkdidZ25OML6tevAju3iSwrV2U9YDrFHGsOIVwwtXuBrowt59jpv0jYgBD-_oqM3APCisEbCREcvpWq-o6XQZcLKggml3-ZvEYhcdhsCcLtLCAp2rHj7uPQI1tBmS9k9B7u-0DUD3EVvRD5LHEXfWbVoWUDL6p6C-B9sLYqDaW2bnZp5NIMIC0OgE0JEQnpYsXLLl0Ce41noRWzoFgEYveV7fyB5B0jVTugikWuzYyW3osMp1I6vZYU9ouF82dY-2zNVhJ8i6mxjqFS-AcgusKmNH9AAsESFSDs7FmAoJ-N8_6Nx5ipXPHiziMxKdrTJPybRggKUouDOJD9960Ih0zxKY8Z3Bchfk7VKYCYnCe6N0SjMlklU5J7277d2lU0Wnf1PLhcNjKElvYTdFPSVYtysfl5nezVWqn5c94vGoFWItieJMMeQp2axXjWbn56Avt6S3NY_8-JdTJ86CaS6EhXfKzewk5DRIyA6PROGQ_-Ckh7XVYL9wLGKQ_4g9g26oAeyIDmYbr3LC7zsUh24PsSk01lWr4xGpOSWiYLAl2bufUzaF73loAX0d9FsMjo-UT-z56VgAmHPABUzG5KkR6u2lxlfY2_BvjK3bCzCUG9iorbfPMJbrQGscPeLBujOEHxqOZF5Jqs6IyB_0YA9xQ86zKRbClOsEaW8hwQN5Wnxxirl3yHaSRwEIaoESTa9DD4PiFn3BdRGOWbr7e9_jcdLOyY9B6yLPdI-v319S1H8UC_W4dq9fUN8FmuxPV5z-foVG5INBPM7r9JRBrK5y5oZYf_M80S6rVeKaIa4NOTG7nG3DYguZd9MfzBt8fFnB-SPKgTHBIxYlkVblpkS_2zgvdgluPCMu_QCPzM-P2KG7AxlvfthsSQ0M7233DYACSdKx2nejDmyJ3jWflNh0Hk98AmUXlgdeSfn3B9vWPZcqtmVlR0n5ifShNugN5l8BZlXudTSlPhjQdfSyLEN5ZS-zi5_6PoRGRiL2Yiu_SGHHO3nmeWKAKgcgBf6ALG33RFgzArnWh8U6EdlfmHrmkanSAtOKAsJ6yqrztrNRI45LFLS4wqAudJaQCKKPfrcmVufR3kQfPSlVpLijgc7rg0rdldgzDX8MOl_I5H3HvkOIl-8i7wFJ4NQmfLitMU7Pnz_0kwMuZXYVxdj2Yy4_srQ6FFwOiB9JO7pJwHnHhnLeCR6YJ6HmAJJa_AYQspuZX0Zi45LUd-vCuDn2AKNg1uYSFedonSDz6pHeA3uNqWOG2kZRhwC93qiika0DgyT1IN461hgszcAufytHGXAiQ0BRGiHiNhGZeNEJWGoOVr-inCiRLpkgcXtq5bAXzj1bGhBWE-SWtdmzbLT_e-D9fceoGUWI6kYEbT4xK97L0FBFlt6ceZ9CrvQCIBfoFnZ0IMEdVC3vevWtj0GQeJRYMmV3BC14QiVy3uyxQygbsZVbwanUZsxkSxdidZgiUa3HBiNPWlHV2hry_xxnT5hME2tJqjQ91OxyX8jSFSDZ8j0xk9UM9AiC_Z4ezSJWSIP5vNBjfSUr0i16TCjiH1KppLI9xndfhbNtGS2rqiitkyRiL_Wfk_m7R1mD9LIZ3OiCxBaMOrzbLeDuu-KgxPX90hjl7LenAqOTFPrsCczbZ9yqViokBtMkGus53XZdRCQ8etXeMpoZYxVUBcPawvnhnaEFUQogxqgVxpBZzgG3dhoA4usKt47wsXqLWj4Zm6VFVQ75sQJ69oUkGCEipnHCPiSzydR-HlxMZEp4xDdbZTISfaI3oxSbp05RJXWeBwv05wr6I8qi_U9965qKerGu2WifP__dHUCO_EIPFc_zqz3Lw4avBR8npiiBxcAzJOuphO22KArOVAd-wkmKMmetirOpvOQC4qUfgHh63m326t1w2aCx1JDEIzC0pjxPpP7nIG0xiNaF1ycda_L58Kbbbf98GIXobVRgndb6xeBokDuHJ-EoTvK6UJNBXn-_G5c0dy8Rw9321JFDg_1johzwPMa7veuLSPewad7zqRrQk0LeCvVmaaN4e21rz8U7wWYqv_6QofGDacs-2Z5k4Dr135D7NgHOI3Jh0hxCzaMkmnoABIilOhaF2H3MmaiUTRiYafzAE2hm_rJLcwneRDXA5REhmeqMCX96s-5aFvhUt_hyRZ2nj7z0MusG5jFJ6LuXdT5XTTabaJ6tO-YIopYTloP0jAE-aglWmApQNXWXnEkYEzM74ay_Ez5p7xcMxFjKFLn9GbRROQk6AdGvAsl3saxsP-yqNIcq7XshHGBgf1zfWOlx0PvcnkHTzUp68tDmiWWFepXX3sNDvJbkm15xqDloOqzs4pcw3R2iyYOGlo1lVEIUq0bITImVLdL1PTo66LpsagdDzHUTNDTSc9-tgAv3cdKHgaW6TnLSj5VDPAaXkvZRLgjqgDDayjfJYTqlKQIgQhDdytrQh5kXYTxSgZIJUIowHUINgLfW1Aq3w4-5B-MSDcptzd_OaoyTYk-WXaUYSz63wQNvJnMcQN0c1aLpXCRSXW-VEY-BZ5dPEgJI_OWYTIEFo4LuwF_jM7gsLJQ4MygLVExYVexjTz4AAAFxL3OWk2ueROBMB9LsqSUmHw_FF6SRAI5AcHvjjMjFwXQKs0HZqTZJ8VX2FM2HgZ7Lmou-KRfif7jTApZllEK2Uh8ftPyfDL7ojSF2JDOlm076RmLspEkGpEuFhXQLFee0sgui1ebsdaEZRd-2pCDHr5kjBOIO8yS2vVEbeGTjTueJXyTaOYTl81LOsHIrunzJ-JEyDgGDbKIk9KVH8ICdHrzlL2yVebzDubwjUE_hcQMlEgLRFR-alNFZ8G0Dhtr07krSy37WCRvJ3C2naYbA2-Vcmw0P7Sw0NrZAyVmv4FobwIBUs8hgV9ECStj-mUyNLpGiJ_rXVSL2JyLiAb1urEJnNGTsxbDLl9HO2X3BFgctXuyw4KZFp5sGHels11o=
+          summary: []
+        - id: msg_05e362e93c2371e0016aff8666e94c87d2abb96bca4de73da8
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "7753"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 28
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 390
+          output_tokens_details:
+            reasoning_tokens: 382
+          total_tokens: 418
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-19T23:29:43.191488+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6333"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.2-sol
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            What is the smallest prime number strictly greater than 7741? Reason it
+            through, then reply with it.
+        - id: rs_05e362e93c2371e0016aff8660d48887d2953b545147acb9d7
+          summary: []
+          encrypted_content: >-
+            gAAAAABq_4ZnOMzKz2QitkKlsimNEErqgutzS0w5joBugmyia0NNlWagdS_kcnuGK2EpS3uzLnacX_EBdhIB9QQt9q97_IdqvAga1EyuELV32LRPcoZXKjS0k3BBXhxV0U5lkDrK5RYgKA-Mij7D2nOpFuQh9DHw8OKNLkalO0rpdj-rtXclqEg5xwEkoVaS31kJkpNHYCkC4JxkvX6SXrpXI0r_lHEwmk8ayXMDPaIkGPISlfPKG4v_WeoMgCQ5C1f6yKT1kOZ-IUyQJRlW5UJ-0LNgtQeUhQCkR1Xj55iYph-9kinbbfQ_Jk6HGV-83XWem95TY13gSRQLhkPqbFsE8ZiLLYzFcQEamRwQxs1ggxzrV-ZQ4-7OwF1KD5cp82IC-Wgap8fPJFfAEnzFbK49iQxPe2jKdJVse93DrsglNc0yR3T5WILct6q4J5VL-hnDHmBywcKIVdxodfoUPv_qe-5Mfh3sQO9jUBKktnP3nlN8QoL1ZJ4FMaBQ8vy2bq1v5IJQ0hy8T9ZP63TAad8QLP1jZPMGN8_gFsFIpk4huZw6pPhTLn3N9l1-5HGEBiDoMlMN5nEgBVEhzDXQp132ajpolnuCrqBPM9R5svXoAWC2zQA7VrG0adpnTp_RIturkuTdqe2uLcJK2uSbo6p_LMZpAslIV4to12aq7wc6y3963pkFCDh5YSK2OoMa0mJAwHVNx1bbcgkUueiavTk1ajcLAshwquxDumbQ49-6Ov9aX7BTqCMw9nN_x5sGxQVfF8ZJTGisEKSrl6s9j8htt6it_EmnPbTLYiEGRtawiRCtiuSzGiWZdtw9mQxeh0U6t5FhZy6nHjBTQez3NO9_y3kpk5Jz4gZHfdDT1ancxeh5JGORF5hJyAWkAnu0P0gMPtK1-2tVdJ527yAc8g_SB-Ow3TdMg9fv5TLSRGsSIC37DZML714WeRFnysvlnh9dpAJgnTNX-v-lEsuL-ULTKW6VndlHKC01pfWQ0rUcmMzq_oYfDMZlPywPTLbSAReXIoUVJpRcPeUCOamAGx_MMvRi0ZS-QM6m9pnZCYzKUvLoXBe8X0jtzY-JBrPbpeT8SpOFFldUmhDnAjoqm44vQARpNOixUCN0dXcoNKWuP2CWUkwwZ4N0XcCDvSKvVQyEGZP10-XS5SLW-__bONkEUBhyNOqIA-i4gA74Kj-3gLJHfZCVAIPqpKaHbLZdlqgq0KCqWuYcNR7H5uQUG678eMxcNvG3yRYR5EZGSO4s3OvdgyGHv6U2EIghxIy5MdWpL1Uy2rYYWqNpeqJaaOrjOIu2rxb7ufDMBdnnDuxpMDIuWHlEm6qVmkPPGfsqUPIi8m5LyPrmYp65O3sHJNXJLtW8YheDM_HLaipQddr7oMDu9-pWD3FT5OSqOpWUi6ALyXdK0mR8ZC_jiyrqh4R-qnUsa855__6JYG-1JzLqvp0vyzNA-2rzVCH3jySEZ6RjzbsiXdau85wUmyAA2xjNsrCimBgKKZz-uB8CWITSxqlASwIBSqTEgoNRMfVB70uA0mVqz5gB2bRfIlhLfSBbP3K00q-zXOAeikUIe8Rm4-xlOsYvjbA7vCQbKkOHEEbIy2td9UI66urGy3XPcp1Zr753Lerijk3xRCCEExgliQrzi34gf65zDyXavmlVvFhvlF2R69BJHvQcp9w9L4Vy3w0Om6GhRY_T5bbG2ZnLKZvt6WAfi5FxZdS-GMOXgrskRFJ8QrnW0rdFntlGl5dAbauX4uu3V0gkxainxeCQO-9f2V6_sxsIrrc2mFFTvgeIXo73ZJj4mfPpgnI1aELUQsF47Hi0wFBDz6NRqX6VUZJ_cHgZn6U-0wEzHDmWMq62UYA3AIkMWAHBxV0Lib-ERiCCa_vZx-BVrPU4opTgXp8ZqmyfXLaxFOcGvYd0S1eDVI-qG69uXQuDR2q40q2-sAGM0IRjbNFrMSOaqU7tIfqigTkj5yCnzlXrJ05WP-aNLWk1KFKHabaYhLHGf9Li73yRl-auQRhOlpcyZxHGjxq1kJ70lfrpeDdR6plAjK7Udftus94QNdXRVc28ugGW0azj3qE14s8gAxImGqs14sSZQrg-dQb8HIokii55qnnk5-o_RWO5LmaPn3J0XYCy7S-7rtwNIhBxAOuTt7eQyc1JznPD7YIAnH5NIdkMziOx4d5o53jjXqwhIym5ptMnJpjcpxJmCutxWQRTlMWZXHBCjihkcqAjTKMeHcDW2aXpoqsKeEYfy7vq2QftUCi1-w17CjZ__egk-t4W7abA54GQaokqrQuoauspUG0rAdVoFVgWvDBbHNHvKNLn-wQds1fGTD8ZNOtb19y4TFicNTx_Q32QqYmZwagC-uHT6AFIqiHuHS9IyN31aotaSyzbjrYBrzISkdidZ25OML6tevAju3iSwrV2U9YDrFHGsOIVwwtXuBrowt59jpv0jYgBD-_oqM3APCisEbCREcvpWq-o6XQZcLKggml3-ZvEYhcdhsCcLtLCAp2rHj7uPQI1tBmS9k9B7u-0DUD3EVvRD5LHEXfWbVoWUDL6p6C-B9sLYqDaW2bnZp5NIMIC0OgE0JEQnpYsXLLl0Ce41noRWzoFgEYveV7fyB5B0jVTugikWuzYyW3osMp1I6vZYU9ouF82dY-2zNVhJ8i6mxjqFS-AcgusKmNH9AAsESFSDs7FmAoJ-N8_6Nx5ipXPHiziMxKdrTJPybRggKUouDOJD9960Ih0zxKY8Z3Bchfk7VKYCYnCe6N0SjMlklU5J7277d2lU0Wnf1PLhcNjKElvYTdFPSVYtysfl5nezVWqn5c94vGoFWItieJMMeQp2axXjWbn56Avt6S3NY_8-JdTJ86CaS6EhXfKzewk5DRIyA6PROGQ_-Ckh7XVYL9wLGKQ_4g9g26oAeyIDmYbr3LC7zsUh24PsSk01lWr4xGpOSWiYLAl2bufUzaF73loAX0d9FsMjo-UT-z56VgAmHPABUzG5KkR6u2lxlfY2_BvjK3bCzCUG9iorbfPMJbrQGscPeLBujOEHxqOZF5Jqs6IyB_0YA9xQ86zKRbClOsEaW8hwQN5Wnxxirl3yHaSRwEIaoESTa9DD4PiFn3BdRGOWbr7e9_jcdLOyY9B6yLPdI-v319S1H8UC_W4dq9fUN8FmuxPV5z-foVG5INBPM7r9JRBrK5y5oZYf_M80S6rVeKaIa4NOTG7nG3DYguZd9MfzBt8fFnB-SPKgTHBIxYlkVblpkS_2zgvdgluPCMu_QCPzM-P2KG7AxlvfthsSQ0M7233DYACSdKx2nejDmyJ3jWflNh0Hk98AmUXlgdeSfn3B9vWPZcqtmVlR0n5ifShNugN5l8BZlXudTSlPhjQdfSyLEN5ZS-zi5_6PoRGRiL2Yiu_SGHHO3nmeWKAKgcgBf6ALG33RFgzArnWh8U6EdlfmHrmkanSAtOKAsJ6yqrztrNRI45LFLS4wqAudJaQCKKPfrcmVufR3kQfPSlVpLijgc7rg0rdldgzDX8MOl_I5H3HvkOIl-8i7wFJ4NQmfLitMU7Pnz_0kwMuZXYVxdj2Yy4_srQ6FFwOiB9JO7pJwHnHhnLeCR6YJ6HmAJJa_AYQspuZX0Zi45LUd-vCuDn2AKNg1uYSFedonSDz6pHeA3uNqWOG2kZRhwC93qiika0DgyT1IN461hgszcAufytHGXAiQ0BRGiHiNhGZeNEJWGoOVr-inCiRLpkgcXtq5bAXzj1bGhBWE-SWtdmzbLT_e-D9fceoGUWI6kYEbT4xK97L0FBFlt6ceZ9CrvQCIBfoFnZ0IMEdVC3vevWtj0GQeJRYMmV3BC14QiVy3uyxQygbsZVbwanUZsxkSxdidZgiUa3HBiNPWlHV2hry_xxnT5hME2tJqjQ91OxyX8jSFSDZ8j0xk9UM9AiC_Z4ezSJWSIP5vNBjfSUr0i16TCjiH1KppLI9xndfhbNtGS2rqiitkyRiL_Wfk_m7R1mD9LIZ3OiCxBaMOrzbLeDuu-KgxPX90hjl7LenAqOTFPrsCczbZ9yqViokBtMkGus53XZdRCQ8etXeMpoZYxVUBcPawvnhnaEFUQogxqgVxpBZzgG3dhoA4usKt47wsXqLWj4Zm6VFVQ75sQJ69oUkGCEipnHCPiSzydR-HlxMZEp4xDdbZTISfaI3oxSbp05RJXWeBwv05wr6I8qi_U9965qKerGu2WifP__dHUCO_EIPFc_zqz3Lw4avBR8npiiBxcAzJOuphO22KArOVAd-wkmKMmetirOpvOQC4qUfgHh63m326t1w2aCx1JDEIzC0pjxPpP7nIG0xiNaF1ycda_L58Kbbbf98GIXobVRgndb6xeBokDuHJ-EoTvK6UJNBXn-_G5c0dy8Rw9321JFDg_1johzwPMa7veuLSPewad7zqRrQk0LeCvVmaaN4e21rz8U7wWYqv_6QofGDacs-2Z5k4Dr135D7NgHOI3Jh0hxCzaMkmnoABIilOhaF2H3MmaiUTRiYafzAE2hm_rJLcwneRDXA5REhmeqMCX96s-5aFvhUt_hyRZ2nj7z0MusG5jFJ6LuXdT5XTTabaJ6tO-YIopYTloP0jAE-aglWmApQNXWXnEkYEzM74ay_Ez5p7xcMxFjKFLn9GbRROQk6AdGvAsl3saxsP-yqNIcq7XshHGBgf1zfWOlx0PvcnkHTzUp68tDmiWWFepXX3sNDvJbkm15xqDloOqzs4pcw3R2iyYOGlo1lVEIUq0bITImVLdL1PTo66LpsagdDzHUTNDTSc9-tgAv3cdKHgaW6TnLSj5VDPAaXkvZRLgjqgDDayjfJYTqlKQIgQhDdytrQh5kXYTxSgZIJUIowHUINgLfW1Aq3w4-5B-MSDcptzd_OaoyTYk-WXaUYSz63wQNvJnMcQN0c1aLpXCRSXW-VEY-BZ5dPEgJI_OWYTIEFo4LuwF_jM7gsLJQ4MygLVExYVexjTz4AAAFxL3OWk2ueROBMB9LsqSUmHw_FF6SRAI5AcHvjjMjFwXQKs0HZqTZJ8VX2FM2HgZ7Lmou-KRfif7jTApZllEK2Uh8ftPyfDL7ojSF2JDOlm076RmLspEkGpEuFhXQLFee0sgui1ebsdaEZRd-2pCDHr5kjBOIO8yS2vVEbeGTjTueJXyTaOYTl81LOsHIrunzJ-JEyDgGDbKIk9KVH8ICdHrzlL2yVebzDubwjUE_hcQMlEgLRFR-alNFZ8G0Dhtr07krSy37WCRvJ3C2naYbA2-Vcmw0P7Sw0NrZAyVmv4FobwIBUs8hgV9ECStj-mUyNLpGiJ_rXVSL2JyLiAb1urEJnNGTsxbDLl9HO2X3BFgctXuyw4KZFp5sGHels11o=
+          type: reasoning
+        - role: assistant
+          id: msg_05e362e93c2371e0016aff8666e94c87d2abb96bca4de73da8
+          content:
+          - text: "7753"
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        - role: user
+          content: Add 1000 to that prime.
+        prompt_cache_options:
+          comparison_response_id: resp_05e362e93c2371e0016aff865f861887d2aa6d0c4be5866b67
+        reasoning:
+          effort: medium
+          context: all_turns
+        store: false
+        text:
+          format:
+            type: json_schema
+            name: Answer
+            schema:
+              properties:
+                total:
+                  type: integer
+              required:
+              - total
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2538"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_05e362e93c2371e0016aff866810cc87d29e73267ed4630020
+        object: response
+        created_at: 1795130984
+        status: completed
+        access_programs:
+          cyber: standard
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795130986
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations:
+        - id: rs_05e362e93c2371e0016aff8660d48887d2953b545147acb9d7
+          type: reasoning
+          action: removed
+          reason: prefix_mismatch
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.2-sol
+        moderation: null
+        output:
+        - id: msg_05e362e93c2371e0016aff8669e20c87d2aa2fb209c18f044d
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "{\"total\":8753}"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: unavailable
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_05e362e93c2371e0016aff865f861887d2aa6d0c4be5866b67
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: json_schema
+            description: null
+            name: Answer
+            schema:
+              properties:
+                total:
+                  type: integer
+              required:
+              - total
+              type: object
+              additionalProperties: false
+            strict: true
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 79
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 13
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 92
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-19T23:29:46.592074+00:00
