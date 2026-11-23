@@ -431,6 +431,7 @@ async def test_the_desktop_start_lets_chromium_start(fake_daytona: FakeDaytona) 
     assert ALLOW_CHROMIUM in sandbox.exec_commands
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX shell scripts')
 @pytest.mark.parametrize(
     ('uid', 'namespaces_work', 'flag_added'),
     [
