@@ -21,7 +21,7 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
 - dialogs are dismissed, so `alert` and `confirm` do not block the page,
 - a screenshot comes back as image content,
 - a command that never answers times out, and the tab answers the next one,
-- the documented limit still holds: a WebSocket handshake reaches a host the policy refuses `fetch` to.
+- a WebSocket to a host the policy refuses never reaches it, and one to an allowed host connects and echoes.
 
 WebSocket connections are a documented limit of the guard and are not checked.
 """
@@ -34,6 +34,7 @@ import tempfile
 from pathlib import Path
 
 from blockbuster import blockbuster_ctx
+from websockets.asyncio.server import ServerConnection, serve
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -312,21 +313,35 @@ async def _check_page_behavior() -> None:
     print('service worker blocked, dialogs dismissed, screenshot attached, hung command recovered ok')
 
 
-async def _check_websocket_limit() -> None:
-    """CDP `Fetch` does not pause WebSocket handshakes; if this starts failing, the docs' stated limit is stale."""
-    async with await _serve('127.0.0.1', _SECRET_ROUTES) as secret:
-        policy = EgressPolicy(blocked_domains=['127.0.0.1'], block_private_addresses=False)
-        fetch = f"fetch('http://127.0.0.1:{secret.port}/f', {{mode: 'no-cors'}}).then(() => 'sent', e => 'refused')"
+async def _check_websocket_guard() -> None:
+    """A socket to a refused host never reaches it, and one to an allowed host connects and carries data."""
+    handshakes: list[str] = []
+
+    async def echo(connection: ServerConnection) -> None:
+        handshakes.append(connection.request.path if connection.request else '')
+        async for message in connection:
+            await connection.send(message)
+
+    async with serve(echo, '127.0.0.1', 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
         socket = (
-            f"new Promise(r => {{ const s = new WebSocket('ws://127.0.0.1:{secret.port}/'); "
-            "s.onerror = () => r('error'); s.onopen = () => r('open'); })"
+            f"new Promise(r => {{ const s = new WebSocket('ws://127.0.0.1:{port}/socket'); "
+            "s.onerror = () => r('refused'); s.onopen = () => s.send('ping'); s.onmessage = e => r(e.data); })"
         )
+        by_name = EgressPolicy(blocked_domains=['127.0.0.1'], block_private_addresses=False)
+        for browser in (
+            CDPBrowser[object](chrome_sandbox=_SANDBOX),
+            CDPBrowser[object](chrome_sandbox=_SANDBOX, policy=by_name),
+        ):
+            results = await _run_tools(browser, [_evaluate(socket)])
+            assert 'refused' in results[0], results
+        assert not handshakes, handshakes
         results = await _run_tools(
-            CDPBrowser[object](chrome_sandbox=_SANDBOX, policy=policy), [_evaluate(fetch), _evaluate(socket)]
+            CDPBrowser[object](chrome_sandbox=_SANDBOX, block_private_addresses=False), [_evaluate(socket)]
         )
-        assert "'refused'" in results[0], results
-        assert secret.hits == ['/'], f'the WebSocket handshake no longer reaches a refused host: {secret.hits}'
-        print('documented limit holds: a WebSocket handshake reaches a host the policy refuses')
+        assert 'ping' in results[0], f'control failed, the socket never echoed: {results}'
+        assert handshakes == ['/socket'], handshakes
+        print('WebSocket to a refused host blocked ok (control connected and echoed)')
 
 
 async def _main() -> None:
@@ -335,7 +350,7 @@ async def _main() -> None:
     await _check_private_name_block()
     await _check_other_targets()
     await _check_page_behavior()
-    await _check_websocket_limit()
+    await _check_websocket_guard()
     print('all checks passed')
 
 

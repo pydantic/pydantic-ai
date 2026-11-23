@@ -13,8 +13,8 @@ fake of the protocol, so these are what it cannot show. Re-check them against a 
 - `Fetch.enable` on a target pauses each request the target makes in a `Fetch.requestPaused` event until
   `Fetch.continueRequest` or `Fetch.failRequest` answers it. Source:
   <https://chromedevtools.github.io/devtools-protocol/tot/Fetch/>.
-- A WebSocket handshake is not paused, so it reaches a host the policy refuses. The Fetch domain does not say so;
-  observed on Chrome 158, and checked by `scripts/cdp_browser_smoke.py`.
+- A WebSocket handshake is not paused. The Fetch domain does not say so; observed on Chrome 158, and the reason
+  `_websocket_proxy.py` exists.
 - A shared worker target has a `Fetch` domain, and its requests are paused on its own session.
 - A dedicated worker target has no `Fetch` domain (`Fetch.enable` answers "'Fetch.enable' wasn't found"); its
   requests are paused on the session of the page that started it.
@@ -34,7 +34,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from functools import partial
@@ -78,7 +78,7 @@ class CDPError(RuntimeError):
 
 @asynccontextmanager
 async def launch_chrome(
-    *, headless: bool = True, chrome_path: str | None = None, sandbox: bool = True
+    *, extra_args: Sequence[str] = (), headless: bool = True, chrome_path: str | None = None, sandbox: bool = True
 ) -> AsyncGenerator[CDPClient]:
     """Start Chrome with a throwaway profile and yield a `CDPClient` connected to it.
 
@@ -96,6 +96,7 @@ async def launch_chrome(
             '--remote-debugging-port=0',
             '--no-first-run',
             '--no-default-browser-check',
+            *extra_args,
             'about:blank',
         ]
         if headless:

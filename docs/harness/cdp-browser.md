@@ -96,7 +96,7 @@ first, so a name pointing at one of those addresses is refused too, as is one wh
 two seconds.
 
 `allowed_domains` limits top-level navigation and the requests page scripts use to move data (`fetch`, XHR,
-EventSource, `sendBeacon`) to the listed hosts and their subdomains. Passive subresources and sub-frame documents
+EventSource, `sendBeacon`, WebSocket) to the listed hosts and their subdomains. Passive subresources and sub-frame documents
 stay reachable, so a permitted page keeps its assets and its identity-provider frames. The private-address block
 applies to every request. For a denylist, apex-only matching or other kinds of request, pass an `EgressPolicy`:
 
@@ -112,11 +112,16 @@ policy allows or refuses it. That covers navigations a page script starts and re
 not only `Page.navigate`. A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`, and pages cannot register
 service workers. A target whose requests cannot be intercepted is never resumed, so it makes none.
 
+`Fetch` interception does not pause WebSocket handshakes, so Chrome is launched with a local proxy that carries
+every WebSocket and nothing else. The proxy applies the same policy to the socket's host and port, and connects to
+the addresses it checked. A socket it refuses fails to connect. A custom `EgressPolicy.refuse` sees the socket as
+`ws://host:port/`, without its real scheme or path. Chrome's own proxy settings are replaced, so a system proxy is
+not used.
+
 What the guard does not cover:
 
-- WebSocket connections, which `Fetch` interception does not pause.
-- DNS rebinding: Chrome resolves a name again before it connects, so a record that changes between the two lookups
-  gets past the block.
+- DNS rebinding on requests other than WebSockets: Chrome resolves a name again before it connects, so a record
+  that changes between the two lookups gets past the block.
 - Speculative connections: Chrome can open a TCP connection to a refused host before the request is refused,
   without sending it.
 

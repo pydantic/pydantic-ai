@@ -26,6 +26,7 @@ from pydantic_ai_harness._browser_egress import (
 )
 from pydantic_ai_harness._typeguards import is_str_keyed_dict
 from pydantic_ai_harness.cdp_browser._client import CDPClient, CDPError, CDPSession, launch_chrome
+from pydantic_ai_harness.cdp_browser._websocket_proxy import proxy_args, websocket_proxy
 
 DEFAULT_ALLOWED_CDP_METHODS: tuple[str, ...] = (
     'Page.navigate',
@@ -103,8 +104,8 @@ so if what you need is missing, wait briefly and evaluate again.
 
 
 DEFAULT_REACH = (
-    "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) "
-    'may reach'
+    "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`, "
+    'WebSocket) may reach'
 )
 """What the allowlist bounds under `DEFAULT_ALLOWLIST_REACH`; any other reach is named by `EgressPolicy.describe()`."""
 
@@ -186,8 +187,14 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         if self._entered == 0:
             stack = AsyncExitStack()
             try:
+                proxy_port = await stack.enter_async_context(websocket_proxy(self.policy))
                 self._client = await stack.enter_async_context(
-                    launch_chrome(headless=self.headless, chrome_path=self.chrome_path, sandbox=self.chrome_sandbox)
+                    launch_chrome(
+                        extra_args=proxy_args(proxy_port),
+                        headless=self.headless,
+                        chrome_path=self.chrome_path,
+                        sandbox=self.chrome_sandbox,
+                    )
                 )
                 self._tab = await self._open_tab(self._client)
             except BaseException:

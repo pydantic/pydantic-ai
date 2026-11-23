@@ -47,8 +47,8 @@ class CDPBrowser(AbstractCapability[AgentDepsT]):
 
     Only the commands in `allowed_methods` can be sent. Every request any frame or worker makes is paused until the
     egress policy allows it: by default every public host is reachable and private, loopback, link-local and other
-    reserved addresses are refused. WebSocket connections are outside that guard, and Chrome resolves a name again
-    before it connects, so DNS rebinding is not closed either.
+    reserved addresses are refused. WebSocket connections go through a local proxy that applies the same policy.
+    For other requests Chrome resolves a name again before it connects, so DNS rebinding is not closed.
 
     Durable execution (e.g. `TemporalDurability`) is not supported: a live browser cannot survive activity replay
     or worker restart, so combining both on one agent raises `UserError` at agent construction.

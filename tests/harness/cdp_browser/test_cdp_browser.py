@@ -10,9 +10,14 @@ there is no provider request for a cassette to record. The agents run on `Functi
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
 import shutil
 import sys
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 import anyio
@@ -34,14 +39,16 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness import CDPBrowser
+from pydantic_ai_harness import CDPBrowser, _browser_egress as egress_module
 from pydantic_ai_harness.cdp_browser import (
     DEFAULT_ALLOWED_CDP_METHODS,
     CDPBrowserToolset,
     EgressPolicy,
+    EgressRequest,
     _client as client_module,
     _toolset as toolset_module,
 )
+from tests._ports import reserve_loopback_port
 from tests.conftest import no_leaked_tasks
 
 from ._fake_chrome import PAGE_SESSION, FakeChrome, pause_expression
@@ -178,8 +185,8 @@ class TestCDPBrowser:
         await Agent(FunctionModel(respond), capabilities=[CDPBrowser(allowed_domains=['example.com'])]).run('hi')
         assert seen[0] is not None and 'Chrome DevTools Protocol' in seen[0]
         assert seen[0].splitlines()[-1] == snapshot(
-            "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) "
-            'may reach: example.com (and their subdomains) (private/internal addresses blocked). '
+            "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`, "
+            'WebSocket) may reach: example.com (and their subdomains) (private/internal addresses blocked). '
             'A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.'
         )
 
@@ -318,7 +325,12 @@ class TestCDPBrowser:
         browser = CDPBrowser(allowed_domains=domains)
         domains.append('other.org')
         await Agent(FunctionModel(respond), capabilities=[browser]).run('hi')
-        assert seen[0] is not None and 'other.org' in seen[0].splitlines()[-1]
+        assert seen[0] is not None
+        assert seen[0].splitlines()[-1] == snapshot(
+            "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`, "
+            'WebSocket) may reach: example.com, other.org (and their subdomains) (private/internal addresses blocked). '
+            'A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.'
+        )
 
     async def test_malformed_messages_are_ignored(self, chrome: FakeChrome):
         """Messages no real Chrome sends are skipped rather than failing the run."""
@@ -367,8 +379,8 @@ class TestCDPBrowser:
 
     async def test_an_event_that_never_arrives_times_out(self, chrome: FakeChrome):
         """An abandoned waiter is dropped by the next event, or failed with the connection when none comes."""
-        navigate = {'method': 'Page.navigate', 'params': {'url': 'https://example.com'}}
-        stopped = {**navigate, 'wait_for_event': 'Page.frameStoppedLoading', 'timeout': 0.05}
+        navigate: dict[str, object] = {'method': 'Page.navigate', 'params': {'url': 'https://example.com'}}
+        stopped: dict[str, object] = {**navigate, 'wait_for_event': 'Page.frameStoppedLoading', 'timeout': 0.05}
         result = await Agent(
             calls_then_reply(stopped, {**navigate, 'wait_for_event': 'Page.loadEventFired'}, stopped),
             capabilities=[CDPBrowser()],
@@ -610,6 +622,189 @@ class TestCDPBrowserLaunch:
         monkeypatch.setenv('CHROME_PATH', '/env/chrome')
         await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
         assert chrome.launches[0][0] == '/env/chrome'
+
+
+def proxy_port(chrome: FakeChrome) -> int:
+    return int(next(arg for arg in chrome.launches[-1] if arg.startswith('--proxy-server=')).rsplit(':', 1)[1])
+
+
+def ipv4(host: str, port: int) -> bytes:
+    return b'\x01' + ipaddress.IPv4Address(host).packed + port.to_bytes(2)
+
+
+def ipv6(host: str, port: int) -> bytes:
+    return b'\x04' + ipaddress.IPv6Address(host).packed + port.to_bytes(2)
+
+
+def name(host: str, port: int) -> bytes:
+    return b'\x03' + bytes([len(host)]) + host.encode() + port.to_bytes(2)
+
+
+async def socks_connect(
+    port: int, destination: bytes, *, greeting: bytes = b'\x05\x01\x00', command: int = 1
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
+    """Speak SOCKS5 to the proxy as Chrome does; the reply is empty when the proxy closes without answering."""
+    reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    writer.write(greeting)
+    await writer.drain()
+    if await reader.read(2) != b'\x05\x00':
+        return reader, writer, b''
+    writer.write(bytes([5, command, 0]) + destination)
+    await writer.drain()
+    return reader, writer, await reader.read(10)
+
+
+@dataclass
+class EchoServer:
+    port: int
+    connections: list[asyncio.StreamWriter]
+
+
+class AllowsEverything(EgressPolicy):
+    """A policy override, whose hosts are still resolved so the proxy has addresses to connect to."""
+
+    def refuse(self, request: EgressRequest) -> str | None:
+        return None
+
+
+@pytest.fixture
+async def echo_server() -> AsyncIterator[EchoServer]:
+    connections: list[asyncio.StreamWriter] = []
+
+    async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        connections.append(writer)
+        with suppress(ConnectionError):
+            while data := await reader.read(1024):
+                writer.write(data)
+                await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(echo, '127.0.0.1', 0)
+    yield EchoServer(server.sockets[0].getsockname()[1], connections)
+    server.close()
+    await server.wait_closed()
+
+
+class TestWebSocketGuard:
+    """Chrome sends every WebSocket to the proxy; these tests speak to it directly, as Chrome does."""
+
+    async def test_chrome_is_launched_with_only_websockets_on_the_proxy(self, chrome: FakeChrome):
+        async with CDPBrowserToolset[None]():
+            port = proxy_port(chrome)
+            assert [arg for arg in chrome.launches[-1] if 'proxy' in arg] == [
+                f'--proxy-server=http=direct://;https=direct://;socks=socks5://127.0.0.1:{port}',
+                '--proxy-bypass-list=<-loopback>',
+            ]
+
+    async def test_an_allowed_socket_is_relayed(self, chrome: FakeChrome, echo_server: EchoServer):
+        async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
+            reader, writer, reply = await socks_connect(proxy_port(chrome), ipv4('127.0.0.1', echo_server.port))
+            assert reply[:2] == b'\x05\x00'
+            writer.write(b'ping')
+            await writer.drain()
+            assert await reader.readexactly(4) == b'ping'
+            writer.close()
+            await writer.wait_closed()
+
+    @pytest.mark.parametrize(
+        ('address', 'host'),
+        [
+            pytest.param(ipv4, '127.0.0.1', id='ipv4'),
+            pytest.param(ipv6, '::1', id='ipv6'),
+            pytest.param(name, 'private.example', id='name-resolving-to-a-private-address'),
+            pytest.param(name, 'a/b', id='name-that-does-not-parse-back'),
+        ],
+    )
+    async def test_a_refused_socket_never_connects(
+        self,
+        chrome: FakeChrome,
+        echo_server: EchoServer,
+        monkeypatch: pytest.MonkeyPatch,
+        address: Callable[[str, int], bytes],
+        host: str,
+    ):
+        async def private_address(host: str) -> tuple[str, ...]:
+            return ('127.0.0.1',)
+
+        monkeypatch.setattr(egress_module, 'getaddrinfo', private_address)
+        async with CDPBrowserToolset[None]():
+            _, writer, reply = await socks_connect(proxy_port(chrome), address(host, echo_server.port))
+            writer.close()
+            await writer.wait_closed()
+        assert reply[:2] == b'\x05\x02'
+        assert echo_server.connections == []
+
+    async def test_a_name_connects_to_the_addresses_the_policy_checked(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The first address has nothing listening, so the relay moves on to the next one."""
+
+        async def two_addresses(host: str) -> tuple[str, ...]:
+            return ('127.0.0.2', '127.0.0.1')
+
+        monkeypatch.setattr(egress_module, 'getaddrinfo', two_addresses)
+        async with CDPBrowserToolset[None](policy=AllowsEverything()):
+            reader, writer, reply = await socks_connect(proxy_port(chrome), name('pinned.example', echo_server.port))
+            assert reply[:2] == b'\x05\x00'
+            writer.write(b'ping')
+            await writer.drain()
+            assert await reader.readexactly(4) == b'ping'
+            writer.close()
+            await writer.wait_closed()
+
+    async def test_a_name_that_does_not_resolve_is_refused(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def no_answer(host: str) -> tuple[str, ...]:
+            raise OSError('no such host')
+
+        monkeypatch.setattr(egress_module, 'getaddrinfo', no_answer)
+        async with CDPBrowserToolset[None](policy=AllowsEverything()):
+            _, writer, reply = await socks_connect(proxy_port(chrome), name('gone.example', echo_server.port))
+            writer.close()
+            await writer.wait_closed()
+        assert reply[:2] == b'\x05\x02'
+
+    @pytest.mark.parametrize(
+        ('greeting', 'command', 'destination'),
+        [
+            pytest.param(b'\x04\x01\x00', 1, None, id='not-socks5'),
+            pytest.param(b'\x05\x01\x02', 1, None, id='no-unauthenticated-method'),
+            pytest.param(b'\x05\x01\x00', 2, None, id='not-connect'),
+            pytest.param(b'\x05\x01\x00', 1, b'\x09', id='unknown-address-type'),
+            pytest.param(b'\x05\x01\x00', 1, b'\x03\x02\xff\xff\x00\x50', id='name-not-ascii'),
+        ],
+    )
+    async def test_a_malformed_request_is_closed_unrelayed(
+        self, chrome: FakeChrome, echo_server: EchoServer, greeting: bytes, command: int, destination: bytes | None
+    ):
+        async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
+            _, writer, reply = await socks_connect(
+                proxy_port(chrome),
+                destination or ipv4('127.0.0.1', echo_server.port),
+                greeting=greeting,
+                command=command,
+            )
+            writer.close()
+            await writer.wait_closed()
+        assert reply == b''
+        assert echo_server.connections == []
+
+    async def test_a_destination_that_refuses_closes_the_socket(self, chrome: FakeChrome):
+        async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
+            _, writer, reply = await socks_connect(proxy_port(chrome), ipv4('127.0.0.1', reserve_loopback_port()))
+            writer.close()
+            await writer.wait_closed()
+        assert reply == b''
+
+    async def test_the_end_of_the_run_closes_open_sockets(self, chrome: FakeChrome, echo_server: EchoServer):
+        with no_leaked_tasks():
+            async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
+                reader, writer, reply = await socks_connect(proxy_port(chrome), ipv4('127.0.0.1', echo_server.port))
+                assert reply[:2] == b'\x05\x00'
+            assert await reader.read() == b''
+            writer.close()
+            await writer.wait_closed()
 
 
 class TestDurabilityRejection:
