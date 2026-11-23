@@ -193,6 +193,7 @@ async def set_github_secret(token: str) -> None:  # a fine-grained GitHub token,
             token,
             scope='private-unattached',  # your own, reaching only machines whose spec names it
             domains=['github.com', 'api.github.com', 'uploads.github.com'],
+            replace_in=['headers'],  # not the URL or body, so a command can't post the real token
         )
 
 
@@ -206,7 +207,7 @@ git config --global credential.https://github.com.helper '!f() { echo username=x
 ```
 
 - Only HTTPS requests get the real value. Use `https://` remotes, not `git@github.com:owner/repo.git`.
-- boxd swaps the value into the whole request, body included, so a command can still write the real token into something GitHub stores, such as an issue or a gist, and read it back. Use a fine-grained token that reaches only the repositories the agent works on and can't create gists, not your `gh auth token`.
+- `replace_in=['headers']` swaps the value only into request headers, which covers `gh` and git's Basic auth. Without it, boxd also swaps it into the URL and body, so a command could write the real token into something GitHub stores, such as an issue or a gist, and read it back. Either way, use a fine-grained token that reaches only the repositories the agent works on, not your `gh auth token`.
 - boxd turns the real value back into the placeholder in responses, but may miss an encoded copy. List only hosts that never send request headers back.
 - An attached machine keeps the secrets it was created with. Calling `secrets.set` again swaps the value right away, and the placeholder stays the same.
 

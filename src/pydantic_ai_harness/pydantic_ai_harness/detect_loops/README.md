@@ -7,20 +7,14 @@ Notice when an agent repeats the same actions without making progress, and inter
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ```mermaid
-flowchart TB
+flowchart LR
     accTitle: Detect Loops: interrupt an agent that repeats itself
-    accDescr: The model calls your tool, and the tool result and the next request pass through DetectLoops, which checks whether the same call gave the same result 3 times. If no, the request goes on to the model. If yes, with action='nudge' a system prompt joins the next request to the model, and with action='error' LoopDetectedError ends the run.
-    model(["model"])
-    tool["your tool"]
-    detect["DetectLoops()<br/>same call, same result,<br/>3 times?"]:::capability
-    nudge["system prompt joins<br/>the next request"]:::capability
-    error["LoopDetectedError<br/>ends the run"]:::blocked
-    model -->|"tool call"| tool
-    tool -->|"tool result, next request"| detect
-    detect -->|"no"| model
-    detect -->|"yes, action='nudge'"| nudge
-    nudge --> model
-    detect -.-x|"yes, action='error'"| error
+    accDescr: Left to right, the model makes a tool call to your tool, and DetectLoops checks whether the same call gave the same result 3 times. If no, the next request goes to the model. If yes, with action='nudge' the next request goes to the model with a system prompt added, and with action='error' a dotted edge leads to LoopDetectedError, which ends the run.
+    model(["model"]) -->|tool call| tool["your tool"]
+    tool --> check{"DetectLoops()<br/>same call, same result,<br/>3 times?"}:::capability
+    check -->|no| next(["next request<br/>to model"])
+    check -->|"yes, nudge"| nudge["next request +<br/>system prompt"]:::capability
+    check -.-x|"yes, error"| error["LoopDetectedError<br/>ends the run"]:::blocked
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
 ```
@@ -90,6 +84,29 @@ A model can also loop inside one response: going over the same reasoning in its 
 `stream_channels` (default `('thinking', 'text', 'tool_args')`) picks which of a response's parts `stream_detector` checks, and `stream_detector=None` turns those checks off. Each part is checked every `stream_check_every` (default `256`) characters as it streams, and once more when it ends. Only [function tool](https://pydantic.dev/docs/ai/tools-toolsets/tools/) and output tool calls are checked, not [native tool](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/) calls.
 
 A response that isn't streamed, such as one from `agent.run()` without an `event_stream_handler`, gets the same checks once it has arrived, at the same offsets, so it reaches the same decisions. `DetectLoops` doesn't make a run stream.
+
+Here the model writes the same sentence 100 times in one response. `action='error'` ends the run at the first check that finds the loop, at 2,048 characters, so the loop it reports has 51 repeats:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopDetectedError
+
+
+def repeating_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Let me check the config file once more. ' * 100)])
+
+
+agent = Agent(FunctionModel(repeating_model), capabilities=[DetectLoops(action='error')])
+
+try:
+    agent.run_sync('Why does the build fail?')
+except LoopDetectedError as error:
+    print(error.loop.pattern, error.loop.count)
+    #> repeated_stream_text 51
+```
 
 ### The default heuristic
 

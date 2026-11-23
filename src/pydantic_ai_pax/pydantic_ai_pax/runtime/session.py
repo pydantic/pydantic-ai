@@ -174,24 +174,32 @@ def _supplies_workspace(
     )
 
 
-def _overrides_get_workspace(
-    leaf: AbstractCapability[DepsT], *, include_dynamic: bool, messages: Sequence[ModelMessage]
-) -> bool:
-    while isinstance(leaf, WrapperCapability):
-        if type(leaf).get_workspace is not WrapperCapability.get_workspace:
-            return True
+def _workspace_leaf(leaf: AbstractCapability[DepsT]) -> AbstractCapability[DepsT] | None:
+    """The capability `leaf` takes its workspace from: itself, or the one its plain wrappers pass `get_workspace` to.
+
+    A wrapper overriding `get_workspace` is that capability itself. `None` for a wrapper around several
+    capabilities, as `apply` visits them on their own.
+    """
+    while isinstance(leaf, WrapperCapability) and type(leaf).get_workspace is WrapperCapability.get_workspace:
         wrapped: list[AbstractCapability[DepsT]] = []
         leaf.wrapped.apply(wrapped.append)
         if len(wrapped) != 1 or wrapped[0] is not leaf.wrapped:
-            # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
-            return False
+            return None
         leaf = leaf.wrapped
-    if isinstance(leaf, ConversationWorkspace):
-        return leaf.supplies(messages)
-    if isinstance(leaf, DynamicCapability):
+    return leaf
+
+
+def _overrides_get_workspace(
+    leaf: AbstractCapability[DepsT], *, include_dynamic: bool, messages: Sequence[ModelMessage]
+) -> bool:
+    if (supplier := _workspace_leaf(leaf)) is None:
+        return False
+    if isinstance(supplier, ConversationWorkspace):
+        return supplier.supplies(messages)
+    if isinstance(supplier, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
-        return include_dynamic and not isinstance(leaf, WorkspacelessCapability)
-    return type(leaf).get_workspace is not AbstractCapability.get_workspace
+        return include_dynamic and not isinstance(supplier, WorkspacelessCapability)
+    return type(supplier).get_workspace is not AbstractCapability.get_workspace
 
 
 class ConversationWorkspace(AbstractCapability[DepsT]):
@@ -205,6 +213,45 @@ class ConversationWorkspace(AbstractCapability[DepsT]):
     def supplies(self, messages: Sequence[ModelMessage]) -> bool:
         """Whether the workspace of a run continuing `messages` comes from this capability."""
         return False
+
+    def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> 'ShellLineWorkspace | None':
+        """Where a `!command` line typed in a conversation continuing `messages` runs, while `supplies` is true.
+
+        `None` runs it on this machine, in the session's directory.
+        """
+        return None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ShellLineWorkspace:
+    """The workspace a `!command` line runs in instead of this machine, such as the conversation's sandbox."""
+
+    workspace: WorkspaceBackend
+    name: str
+    """Where the command runs, as CLAI's messages say it: `the Daytona sandbox`."""
+
+
+def shell_line_workspace(
+    plugins: Sequence[AgentCapability[DepsT]], messages: Sequence[ModelMessage]
+) -> ShellLineWorkspace | None:
+    """The workspace a `!command` line runs in for a conversation over `messages`; `None` runs it on this machine.
+
+    Pass the capabilities a run's workspace is chosen from, the agent's own and the run's. Like that choice,
+    a leaf loaded only on request (`defer_loading`) does not count, and plain wrappers are looked through,
+    so a `!` line runs in the sandbox a
+    `ConversationWorkspace` gives the agent's commands. Another capability overriding `get_workspace` is
+    not asked, and its `!` lines run on this machine.
+    """
+    leaves: list[AbstractCapability[DepsT]] = []
+    for plugin in plugins:
+        if isinstance(plugin, AbstractCapability):
+            cast('AbstractCapability[DepsT]', plugin).apply(leaves.append)
+    for leaf in leaves:
+        if leaf.defer_loading:
+            continue
+        if isinstance(supplier := _workspace_leaf(leaf), ConversationWorkspace) and supplier.supplies(messages):
+            return supplier.shell_line_workspace(messages)
+    return None
 
 
 class WorkspacelessCapability(DynamicCapability[DepsT]):

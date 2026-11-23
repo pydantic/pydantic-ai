@@ -71,7 +71,8 @@ they agree in the same PR.
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
   The one exception is a built-in that moves some conversations elsewhere, as
   `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
-  run's own history, the same history `get_workspace` resolves from.
+  run's own history, the same history `get_workspace` resolves from. Answer
+  `shell_line_workspace` from that history too, so `!` lines run where the runs do.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -397,9 +398,13 @@ Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
 streamed fences, shell command headers, and theme previews. Shell command headers
 add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
-a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
-green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
+a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use a dark green and red;
+bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette until their lightness differs, so colour-blind readers can tell them apart.
+On a light terminal (`app.chat` asks for the background once, `ui/terminal_background.py`, and
+passes it to `theme.use(background=...)`), `default` paints brand roles in the fixed `theme._ON_LIGHT`
+shades and diffs on pale lines with Pygments' `xcode` style; code fences keep the terminal's ANSI
+colours. On a dark or unknown background it is unchanged.
 `theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
 (or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 
@@ -577,11 +582,15 @@ selects painted cells in `PromptSurface` and its release copies them through
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+A `MarkdownBlock` shows its streamed rows until its writer calls `end`, and
+renders its source again only after that: rendering a streaming part again per
+frame costs the whole part every frame.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)` and pin the question text in their rows, not the
 transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 a tool-call group its call names, and a shell call's header its command, for width/theme repaint
-(syntax colours share hex values with brand roles under a palette, so translating them would guess);
+(syntax colours share hex values with brand roles under a palette, so translating them would guess;
+a part still streaming is translated like tool output until it ends, then renders again);
 tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`

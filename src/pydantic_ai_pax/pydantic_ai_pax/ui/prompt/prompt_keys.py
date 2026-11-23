@@ -9,6 +9,7 @@ from contextlib import ExitStack
 
 from prompt_toolkit.input import Input
 from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
+from prompt_toolkit.input.typeahead import get_typeahead
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
@@ -152,6 +153,8 @@ class PromptKeys:
             stack.close()
             raise
         self._stack = stack
+        for key in get_typeahead(self.source):  # Keys typed while startup asked the terminal for its background.
+            self.dispatch(key)
         self.read()
 
     def stop(self) -> None:

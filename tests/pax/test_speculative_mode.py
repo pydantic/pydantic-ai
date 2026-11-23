@@ -922,6 +922,8 @@ class TestSandboxCallDisplay:
             '\u25cf flaky',
             '\u25cf broken',
         ]
+        # Each retried call gets a failure row under its own header.
+        assert len([line for line in output.getvalue().splitlines() if line.startswith('  \u23bf ')]) == 2
 
     async def test_launch_evicted_while_running_is_not_held(self) -> None:
         show = ShowSandboxCalls[None]()
