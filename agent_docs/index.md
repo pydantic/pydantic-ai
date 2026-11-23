@@ -109,7 +109,7 @@
 - Remove tests when redundant, obsolete, or duplicative — each test should verify distinct, valuable behavior that currently exists — Reduces maintenance burden and keeps test suite focused on actual behavior; prevents false confidence from tests covering non-existent code paths or duplicating coverage without verifying edge cases
 <!-- rule:97 -->
 - Avoid `# pragma: no cover` — write tests instead. Only use for truly untestable code (defensive guards, platform branches, optional deps unavailable in CI) — Coverage pragmas hide gaps in test coverage; proper tests prevent regressions and document expected behavior, while pragmas should only mark code paths that cannot be executed in testing environments
-- Write nothing after a `# pragma: ...` marker on its line — no trailing prose, no second `#` comment (tooling directives like `# pyright: ignore[...]` are the exception). When the exclusion needs a rationale, put it on its own comment line above the statement — Keeps the marker itself machine-readable and uniform across the codebase, while the reason stays visible to the next reader
+- Write nothing after a `# pragma: ...` marker on its line but tooling directives like `# pyright: ignore[...]`, and put any rationale on its own comment line above the statement. `scripts/check_pragma_comments.py` fails a change that adds such text, in pre-commit and CI
 
 ## Documentation
 
