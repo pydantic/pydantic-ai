@@ -247,7 +247,8 @@ def shipped_model_classes() -> tuple[dict[str, type[AdapterModel]], tuple[str, .
                     continue
                 for obj in vars(module).values():
                     if _is_model_class(obj) and obj.__module__.startswith('pydantic_ai.'):
-                        assert found.setdefault(obj.__name__, obj) is obj, f'two model classes are named {obj.__name__}'
+                        existing = found.setdefault(obj.__name__, obj)
+                        assert existing is obj, f'two model classes are named {obj.__name__}'
     return found, tuple(skipped)
 
 

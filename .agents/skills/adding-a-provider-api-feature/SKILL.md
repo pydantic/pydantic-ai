@@ -84,7 +84,7 @@ Live-recorded **wire-contract cassette** asserting the exact outbound body (mode
 
 The new public symbol's docstring lists **which providers support it** and how each interprets the value. Add/refresh the `docs/**.md` section and any sibling docstrings that now under-claim ("only OpenAI" → the full provider list). Describe the mechanism only as far as the provider documents it — don't assert a mechanism a provider's docs leave unstated. Update the relevant agent skill.
 
-`ModelSettings`' `Supported by:` lists are enforced: `tests/models/test_model_settings_support.py` probes each model class's outgoing request and asserts every list names exactly the classes that send the field. Forwarding a new setting means editing its list, and a new `Model` class means adding a `Case` there. `tool_choice` and `thinking` are exempt via `HAND_MAINTAINED` and stay hand-maintained.
+`ModelSettings`' `Supported by:` lists are enforced: `tests/models/test_model_settings_support.py` probes each model class's outgoing request and asserts every list names exactly the classes that send the field. Forwarding a new setting means editing its list. A new `Model` class means adding a `Case` there, and a `CASES` entry in `tests/model_adapter_cases.py`, whose builds that test reuses. `tool_choice` and `thinking` are exempt via `HAND_MAINTAINED` and stay hand-maintained.
 
 ## Recurring maintainer principles (quoted)
 
