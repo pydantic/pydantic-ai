@@ -538,9 +538,10 @@ without blocking a merge.
   When pytest exits 1, the script reruns the failed tests once with `--last-failed`, and the step takes the rerun's
   exit status. The rerun stays inside the job's `timeout-minutes`, and so within the queue's 60-minute check
   timeout. A rerun that passes lets the merge group merge, even when the failure was a real nondeterministic bug.
-  A first run that also failed a check of the whole session, such as a stale `subprocess` marker, fails without a
-  rerun: a rerun of the failed tests cannot repeat that check. `fail_session` in `tests/cost_guards.py` records each
-  such failure for the script. `harness-bubblewrap-integration` runs pytest through `make` and is not rerun.
+  A first run that failed a check the rerun cannot repeat fails without a rerun. A check of the whole session, such
+  as a stale `subprocess` marker, needs more tests than the rerun selects. The per-test time budget can pass on the
+  rerun's less loaded runner. `fail_session` in `tests/cost_guards.py` records each such failure for the script.
+  `harness-bubblewrap-integration` runs pytest through `make` and is not rerun.
 - `tests-shuffled-nightly.yml` runs the `test-all-extras` selection every night, unsharded, on that job's newest
   Python. The run takes one `pytest-randomly` order from a seed it logs. When tests fail, the run reruns them once in
   the default order. A test that fails both times fails the run.

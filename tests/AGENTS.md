@@ -353,7 +353,7 @@ Every CI test job uploads a JUnit report of each pytest session. On a run that r
 
 The merge queue reruns failed tests once, and the nightly run reruns them once in the default order. A test that then passes gets an issue titled `Flaky <node id>` and labeled `flake`. In the nightly run, so does a test that fails its rerun too. Claim and fix it as "Flake claims" in `.agents/skills/pushing-commits-to-the-repo/SKILL.md` says.
 
-Fail a session for a problem no test failed on with `fail_session` in `tests/cost_guards.py`, never by setting `session.exitstatus` yourself. The merge queue does not rerun a session that `fail_session` failed: a rerun of only the failed tests cannot repeat a check of the whole session, so its pass would hide the problem.
+Fail a session for a problem no test failed on with `fail_session` in `tests/cost_guards.py`, never by setting `session.exitstatus` yourself. Also pass `fail_session` each failed test whose check depends on what else the session runs, as `tests/cost_guards.py` does for a test over the per-test time budget. The merge queue does not rerun a session that `fail_session` failed: a rerun of only the failed tests cannot repeat these checks, so its pass would hide the problem.
 
 ## Home directory
 

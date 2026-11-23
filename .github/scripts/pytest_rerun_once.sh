@@ -9,11 +9,11 @@
 # puts coverage in parallel mode, so the rerun writes data files of its own, which `coverage combine` merges with the
 # first run's.
 #
-# A check of the whole session can also fail it, such as a stale `subprocess` marker or a module over the collection
-# budget in `tests/cost_guards.py`. A rerun of the failed tests selects too little to judge such a check again, so its
-# pass would hide the failure. `fail_session` in `tests/cost_guards.py` appends each such failure to the file
-# `PYTEST_SESSION_FAILURES_FILE` names, and a first run that leaves the file non-empty fails without a rerun, which
-# could not change the outcome.
+# Some failures a rerun of only the failed tests can't repeat, so its pass would hide them. A check of the whole
+# session, such as a stale `subprocess` marker or a module over the collection budget in `tests/cost_guards.py`, needs
+# more tests than the rerun selects. A test over the per-test time budget can pass on the rerun's less loaded runner.
+# `fail_session` in `tests/cost_guards.py` appends each such failure to the file `PYTEST_SESSION_FAILURES_FILE` names,
+# and a first run that leaves the file non-empty fails without a rerun, which could not change the outcome.
 set -uo pipefail
 
 if [[ "${GITHUB_EVENT_NAME:-}" != merge_group ]]; then
@@ -27,7 +27,7 @@ if [[ $status -ne 1 ]]; then
   exit "$status"
 fi
 if [[ -s $session_failures ]]; then
-  echo '::error::Tests failed a check of the whole session, which a rerun of the failed tests cannot repeat, so they are not rerun:'
+  echo '::error::Tests failed a check that a rerun of only the failed tests cannot repeat, so they are not rerun:'
   cat "$session_failures"
   exit "$status"
 fi

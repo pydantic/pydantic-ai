@@ -332,6 +332,8 @@ def test_guards_work_under_xdist(
     run: RunPytest, pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '0.05')
+    # High enough that the tests that only pass stay within it on a loaded runner.
+    monkeypatch.setenv(BUDGET_ENV_VAR, '0.2')
     failures = tmp_path / 'session-failures'
     monkeypatch.setenv(SESSION_FAILURES_ENV_VAR, str(failures))
     # Workers import `tests.cost_guards` from a fresh interpreter, and xdist replaces their `sys.path` with the one
@@ -364,6 +366,9 @@ def test_guards_work_under_xdist(
 
             assert {SESSION_FAILURES_ENV_VAR!r} not in os.environ
 
+        def test_over_budget():
+            time.sleep(0.3)
+
         @pytest.mark.subprocess(reason='used to launch Python')
         def test_stale():
             pass
@@ -376,9 +381,11 @@ def test_guards_work_under_xdist(
         '-n',
         '2',
     )
-    result.assert_outcomes(passed=3, failed=1)
+    result.assert_outcomes(passed=3, failed=2)
     assert failures.read_text(encoding='utf-8') == (
-        'stale subprocess marker: test_guarded.py::test_stale\nslow test module collection: test_guarded.py\n'
+        'test over the per-test budget: test_guarded.py::test_over_budget\n'
+        'stale subprocess marker: test_guarded.py::test_stale\n'
+        'slow test module collection: test_guarded.py\n'
     )
     result.stdout.fnmatch_lines(
         [
@@ -386,13 +393,18 @@ def test_guards_work_under_xdist(
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
             '*slow test module collection*',
             'test_guarded.py took *s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
-            '*worker startup and collection of 4 tests took *s (slowest worker collected in *s)',
+            '*worker startup and collection of 5 tests took *s (slowest worker collected in *s)',
         ]
     )
 
 
-def test_the_time_budget_fails_slow_tests_unless_marked(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+def test_the_time_budget_fails_slow_tests_unless_marked(
+    run: RunPytest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv(BUDGET_ENV_VAR, '0.05')
+    # A rerun of `test_slow` alone, on a less loaded runner, could pass, so the merge queue doesn't rerun it.
+    failures = tmp_path / 'session-failures'
+    monkeypatch.setenv(SESSION_FAILURES_ENV_VAR, str(failures))
     result = run(
         """
         @pytest.fixture(scope='module')
@@ -412,6 +424,7 @@ def test_the_time_budget_fails_slow_tests_unless_marked(run: RunPytest, monkeypa
         clock=FakeClock(),
     )
     result.assert_outcomes(passed=2, failed=1)
+    assert failures.read_text(encoding='utf-8') == 'test over the per-test budget: test_guarded.py::test_slow\n'
     result.stdout.fnmatch_lines(
         [
             '*`test_guarded.py::test_slow` took 0.10s in setup and call, over the 0.05s per-test budget '

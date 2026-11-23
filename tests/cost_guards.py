@@ -11,8 +11,8 @@ towards. The plugin:
 - when `PYTEST_COLLECT_BUDGET_SECONDS` is set, imports the dependencies many test modules share before collection,
   and fails the session when a test module takes longer than that to collect.
 
-Each check that fails the session without failing a test goes through `fail_session`, which `tests/span_schema.py`
-also calls.
+Each failure that a rerun of only the failed tests can't repeat goes through `fail_session`, which
+`tests/span_schema.py` also calls.
 """
 
 from __future__ import annotations as _annotations
@@ -341,6 +341,8 @@ def pytest_runtest_makereport(
         spent = max(state.setup_seconds + report.duration - state.shared_setup_seconds, 0)
         if budget and spent > budget and report.passed and item.get_closest_marker('slow') is None:
             _fail_report(report, _over_budget_message(item, spent, budget, state))
+            # For the process that owns the terminal, to which `pytest-xdist` forwards the report.
+            report.over_test_budget = True  # pyright: ignore[reportAttributeAccessIssue]
 
     if not report.passed:
         state.eligible_for_stale_check = False
@@ -441,6 +443,7 @@ class _SessionAggregate:
     slowest_worker_collection: float = 0.0
     slowest_modules: dict[str, float] = field(default_factory=dict[str, float])
     over_collection_budget: dict[str, float] = field(default_factory=dict[str, float])
+    over_test_budget: list[str] = field(default_factory=list[str])
 
     def stale_markers(self) -> list[str]:
         return sorted(
@@ -454,6 +457,8 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     if not _aggregates:
         return
     aggregate = _aggregates[-1]
+    if getattr(report, 'over_test_budget', False):
+        aggregate.over_test_budget.append(report.nodeid)
     info: _MarkerInfo | None = getattr(report, 'python_subprocess_marker', None)
     if info is None:
         return
@@ -473,25 +478,23 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 @pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     aggregate = session.config.stash.get(_AGGREGATE_KEY, None)
-    if aggregate is None or session.shouldstop or session.shouldfail:
+    if aggregate is None or exitstatus not in (pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED):
         return
-    if exitstatus not in (pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED):
-        return
-    aggregate.stale = aggregate.stale_markers()
-    if aggregate.stale or aggregate.over_collection_budget:
-        fail_session(
-            session,
-            [
-                *(f'stale subprocess marker: {location}' for location in aggregate.stale),
-                *(f'slow test module collection: {module}' for module in sorted(aggregate.over_collection_budget)),
-            ],
-        )
+    # Each of these tests already failed the session, but a rerun of fewer tests, on a less loaded runner, can pass it.
+    problems = [f'test over the per-test budget: {node_id}' for node_id in aggregate.over_test_budget]
+    if not (session.shouldstop or session.shouldfail):
+        aggregate.stale = aggregate.stale_markers()
+        problems += [f'stale subprocess marker: {location}' for location in aggregate.stale]
+        problems += [f'slow test module collection: {module}' for module in sorted(aggregate.over_collection_budget)]
+    if problems:
+        fail_session(session, problems)
 
 
 def fail_session(session: pytest.Session, problems: Sequence[str]) -> None:
-    """Fail the session for problems no test failed on, and append them to the file `SESSION_FAILURES_ENV_VAR` names.
+    """Fail the session, and append `problems` to the file `SESSION_FAILURES_ENV_VAR` names.
 
-    A rerun of only the failed tests selects too little to find these problems again, so
+    A rerun of only the failed tests can't find these problems again: it selects too little to judge a check of the
+    whole session, and loads the runner too little to judge the per-test budget. So
     `.github/scripts/pytest_rerun_once.sh`, which sets the variable, does not rerun a session that left the file
     non-empty.
     """

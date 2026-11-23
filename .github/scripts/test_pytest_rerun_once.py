@@ -50,12 +50,16 @@ def test_the_merge_queue_reruns_failed_tests_once_and_takes_the_reruns_status(
 
 @pytest.mark.parametrize(
     ('session_failure', 'expected'),
-    [('', (0, [ARGS, RERUN])), ('stale subprocess marker: tests/test_a.py::test_x', (1, [ARGS]))],
+    [
+        pytest.param('', (0, [ARGS, RERUN]), id='flaky-test-only'),
+        pytest.param('stale subprocess marker: tests/test_a.py::test_x', (1, [ARGS]), id='stale-marker'),
+        pytest.param('test over the per-test budget: tests/test_a.py::test_x', (1, [ARGS]), id='over-budget'),
+    ],
 )
-def test_a_first_run_that_also_failed_a_check_of_the_whole_session_fails_without_a_rerun(
+def test_a_first_run_that_failed_a_check_the_rerun_cannot_repeat_fails_without_a_rerun(
     tmp_path: Path, session_failure: str, expected: tuple[int, list[str]]
 ):
-    """A rerun of the failed tests would pass, but cannot repeat the check that failed the session."""
+    """A rerun of only the failed tests would pass, but cannot repeat what `fail_session` recorded."""
     assert run(tmp_path, 'merge_group', 1, 0, session_failure=session_failure) == expected
 
 
