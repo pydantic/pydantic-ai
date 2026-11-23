@@ -179,7 +179,8 @@ audio over a WebSocket to your backend, which bridges it to the session, as the
 with [TwiML](https://www.twilio.com/docs/voice/twiml/stream) that connects the call to a `<Stream>`, and Twilio
 then opens the stream's WebSocket and exchanges [JSON messages](https://www.twilio.com/docs/voice/media-streams/websocket-messages)
 on it. The [Twilio example](../examples/realtime-twilio.md) runs the whole call, webhook included. The stream
-end of it is:
+end of it is below. Its mu-law helpers come from the example's `audio` module, which you can copy or import from
+the `pydantic-ai-examples` package; they aren't part of Pydantic AI.
 
 ```python
 import base64
@@ -197,6 +198,8 @@ from pydantic_ai.messages import RealtimeInputSpeechStartEvent
 
 agent = Agent(deps_type=str, instructions='You answer the phone for a restaurant. Keep replies short.')
 app = FastAPI()
+# The calls your signed `/twiml` webhook answered, as in the example: only their streams get a session.
+answered_calls: set[str] = set()
 
 
 @agent.instructions
@@ -229,6 +232,10 @@ async def media_stream(websocket: WebSocket):
     messages = twilio_messages(websocket)
     await anext(messages)  # `connected`
     start = await anext(messages)
+    if start['start']['callSid'] not in answered_calls:
+        await websocket.close(code=1008)
+        return
+    answered_calls.discard(start['start']['callSid'])
     stream_sid = start['streamSid']
     marks = PlaybackMarks()
 
@@ -312,8 +319,8 @@ What a bridge has to get right:
 - **Signatures.** Check `X-Twilio-Signature` on Twilio's requests with the `RequestValidator` of
   [Twilio's SDK](https://www.twilio.com/docs/usage/webhooks/webhooks-security), as Twilio asks, rather than with
   code of your own. Twilio signs the public URL it called, which a tunnel or proxy hides from your server, so
-  validate against that. The example validates the webhook and accepts a stream only for a call that webhook
-  answered.
+  validate against that. Then accept a stream only for a call that webhook answered, as the snippet does with
+  `answered_calls`, which the example's webhook fills.
 
 ## Hosting the backend {#hosting}
 
