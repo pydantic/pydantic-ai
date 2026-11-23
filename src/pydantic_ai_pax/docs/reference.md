@@ -50,15 +50,15 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
-| `/sandbox [e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
+| `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
 | `/SKILL-NAME [ARGS]` | Send an Agent Skill as your next prompt |
-| `!COMMAND` | Run a shell command; the command and output are saved for the next prompt |
-| `!!COMMAND` | Give an interactive program the whole terminal; only its exit status is saved |
+| `!COMMAND` | Run a shell command, in the sandbox in a `/sandbox` conversation; the command and output are saved for the next prompt |
+| `!!COMMAND` | Give an interactive program the whole terminal, on this machine only; only its exit status is saved |
 
 Plugins add their own commands, such as `/notion login` or `/google_workspace`. `/help` lists them.
 
@@ -1540,6 +1540,25 @@ status are saved. On Windows, the command shares CLAI's console in the same way.
 Without `!!`, a full-screen program on Windows cannot draw, because its output
 is a pipe.
 
+#### In a sandbox
+
+In a [`/sandbox`](#sandboxes-sandbox) conversation, a `!` line runs in the sandbox, where the
+agent's commands run, not on this machine:
+
+```text
+> !git status
+$ git status
+Runs in the Daytona sandbox; command and output saved for the next prompt
+...
+Done (0.8s)
+```
+
+It runs with the sandbox's shell in the sandbox's copy of the checkout, with the keys the agent got there
+with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
+input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
+never runs on this machine instead. `!!` needs this terminal, so in a sandbox CLAI refuses it and saves
+nothing. The command, output, and status are saved for the next prompt as on this machine.
+
 A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
 run in order with other queued input. `/help` lists the syntax.
 
@@ -2965,12 +2984,16 @@ A worktree separates working files, not permissions. CLAI's default tools can
 still access files outside it. Creation runs before the agent starts and emits
 no agent telemetry spans.
 
-### Cloud sandboxes: `/sandbox`
+### Sandboxes: `/sandbox`
 
-Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
-conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
-there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+<span id="cloud-sandboxes-sandbox"></span>
+
+Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`,
+`sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
+microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
+The others are cloud sandboxes. CLAI copies this checkout (the branch, its unpushed commits, and
+uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
+there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If CLAI stops
@@ -2983,6 +3006,8 @@ Without a `gh` login, the sandbox has no GitHub access, and its copy has no `ori
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
+| `local smol` | `pydantic-ai-pax[local]` on macOS (Apple silicon) and Linux; on Windows, `smolvm` on `PATH` | none | in the VM | anything run in the VM |
+| `local boxlite` | `pydantic-ai-pax[local]` on macOS (Apple silicon) and Linux, with Python 3.14 or older; not on Windows | none | in the VM | anything run in the VM |
 | `e2b` | `pydantic-ai-pax[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own |
 | `boxd` | `pydantic-ai-pax[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below |
 | `daytona` | `pydantic-ai-pax[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token |
@@ -3022,14 +3047,33 @@ sandbox answers without a token.
 `/sandbox delete` deletes with the sandbox. A sandbox deleted outside CLAI, in Daytona's dashboard or CLI
 or by Daytona's auto-delete, leaves its secret behind: delete it on Daytona's Secrets page.
 
-**In the sandbox** (`modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
+**In the sandbox** (`local smol`, `local boxlite`, `modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
 CLAI saves the token in the sandbox's home folder for `git` and `gh`. Anything run there, the agent
 included, can read it, and it goes when the sandbox does. A `kubernetes` sandbox is a pod CLAI claims from
 your [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool, on the cluster `kubectl`'s current
 context names, and reaches through `kubectl port-forward`. Its pod runs commands but takes no file
 uploads, so the token travels base64-encoded inside a command to the pod.
 
-How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
+`local smol` and `local boxlite` run a microVM on this machine, with its own kernel and filesystem; neither needs an
+account or key. Nothing of this machine is mounted into it, but it has network access, from this machine's network,
+so it can reach your local network too. Both run the `python:3.13` image, which the engine downloads the first time.
+
+`local boxlite` runs a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM in CLAI's process, on macOS
+(Apple silicon) and Linux, where it needs read and write access to `/dev/kvm`; BoxLite has no Windows build. One
+process at a time can use BoxLite's home directory (`~/.boxlite`), so a second CLAI session opening a `local boxlite`
+sandbox fails until the first exits.
+
+`local smol` runs a [SmolVM](https://github.com/smol-machines/smolvm) microVM, on macOS (Apple silicon), Linux, and
+Windows. On macOS and Linux the `local` extra installs smolmachines, which runs the VM in
+CLAI's process; Linux needs read and write access to `/dev/kvm`. On Windows, which smolmachines has no
+build for, unzip the `windows-x86_64` [smolvm release](https://github.com/smol-machines/smolvm/releases)
+into a folder on `PATH`, with the Windows Hypervisor Platform turned on; CLAI then drives `smolvm` itself,
+which macOS and Linux do too when the extra is not installed. That way of running it has not been tested on a
+Windows host yet.
+
+How long a sandbox lasts differs. A `local smol` or `local boxlite` VM keeps its files until `/sandbox delete`; it stops when CLAI
+does, and starts again when the conversation is reopened. Where CLAI drives the `smolvm` CLI, closing a session
+stops its VM, so a command another CLAI session is running there fails; run it again. An `e2b` sandbox that times out is paused, and Daytona stops an idle
 one; both keep their files, so delete them when you are done. Each turn attaches to the sandbox afresh, which
 starts or resumes one that was stopped or paused, files and all, so the turn after an idle stop works as usual.
 While a command runs in a Daytona sandbox, CLAI tells Daytona every 5 minutes that the sandbox is in use, so a

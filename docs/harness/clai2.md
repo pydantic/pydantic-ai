@@ -257,8 +257,8 @@ your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with
 ### Run a shell command: `!`
 
 Start a line with `!` to run it as a shell command, without asking the model. The command and
-its output are saved, so the model sees them on your next prompt. Use `!!` for
-interactive programs, such as `!!python`, to give them the whole terminal.
+its output are saved, so the model sees them on your next prompt. In a `/sandbox` conversation it runs in
+the sandbox. Use `!!` for interactive programs, such as `!!python`, to give them the whole terminal.
 
 ![Running git log and the project's CLI with !](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/shell.png)
 

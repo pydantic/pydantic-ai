@@ -3112,6 +3112,44 @@ async def test_live_tool_search_handoff_anthropic_openai_anthropic(
     _assert_anthropic_native_search_replay(anthropic_bodies[-1], 'tool_search_tool_result')
 
 
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='native tool search replays the local search_tools call as tool_search_call')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_local_tool_search_replays_on_native_tool_search_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A `search_tools` call made on a model without native tool search replays on one with it.
+
+    The local call carries a function-call (`fc_*`) item ID, which the Responses API rejects on the
+    `tool_search_call` item it is replayed as, so the item ID is omitted there.
+    """
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    search_calls = list(iter_message_parts(first.all_messages(), ModelResponse, ToolSearchCallPart))
+    assert search_calls and all(call.id and call.id.startswith('fc_') for call in search_calls)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel(
+            'gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        )
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    replayed_input = request_capture.body('/responses')['input']
+    assert isinstance(replayed_input, list)
+    assert [
+        (item.get('type'), 'id' in item)
+        for item in replayed_input
+        if isinstance(item, dict) and item.get('type') in ('reasoning', 'tool_search_call')
+    ] == snapshot([('reasoning', True), ('tool_search_call', False), ('reasoning', True)])
+
+
 def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
     """Compact one-line-per-part trace of a deferred-capability conversation.
 
