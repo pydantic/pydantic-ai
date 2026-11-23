@@ -72,7 +72,8 @@ class LiveOnly:
 
     reason: str
     tools: frozenset[str] | None = None
-    """The tools whose items only the watching browser fills it for, compared on the rest; `None` for every item."""
+    """The tools whose items the saved history cannot fill this field for; other tools' items compare it. `None` for
+    every tool."""
 
 
 COMPARED: dict[str, Compared] = {
