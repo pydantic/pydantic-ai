@@ -3,7 +3,7 @@ emoji: "♻️"
 name: "Pydantic AI Round-Trip Sweep"
 description: "Find serialize/deserialize state-loss bugs across a message round-trip boundary and file a reproducible report. Runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
 on:
-  schedule: daily
+  schedule: weekly on friday
   workflow_dispatch:
     inputs:
       recovery_issue:
