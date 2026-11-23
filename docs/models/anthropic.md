@@ -982,16 +982,15 @@ each Claude model the computer use tool it was trained on, as a [`ComputerTool`]
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
 | Claude Haiku 4.5 | `computer_20250124` |
 
-These get a regular function tool named `computer` instead: Claude models not in the table, every model on Google
-Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any model with `ComputerUse(native=False)`. The screen size
-that suits Claude is under [Screen size](../harness/computer-use.md#screen-size).
+Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead. For screen sizes, see
+[Screen size](../harness/computer-use.md#screen-size).
 
-To send Anthropic's tool to a model or client that isn't listed, after checking that it works there, add
-`ComputerTool` to the profile's
-[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. Your list replaces the model's
-own, so include every native tool you use. Choose the tool with
-[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version].
-If you don't set it, `computer_20250124` is sent.
+To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own
+list, and choose the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version]
+(default `computer_20250124`).
 
 ## Web Tool Callers
 

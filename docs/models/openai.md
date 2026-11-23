@@ -365,9 +365,25 @@ The Responses API has native tools that you can use instead of building your own
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
+#### Computer use {#computer-use}
+
 To let a model use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability.
-The models listed under [Computer Tool](../native-tools.md#computer-tool) get OpenAI's own computer tool. Other
-models, and any model with `ComputerUse(native=False)`, get a regular function tool instead.
+These models get OpenAI's own computer tool on `OpenAIResponsesModel` with `OpenAIProvider` or
+`BedrockMantleProvider`:
+
+- GPT-5.4, except GPT-5.4 nano
+- GPT-5.5
+- GPT-5.6
+- GPT-6
+
+OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the
+pointer position. Other models and providers, including Azure, and any model with `ComputerUse(native=False)`, get a
+regular function tool with all the actions.
+
+Pydantic AI picks the tool by provider class, not by the server it calls. If `OpenAIProvider(base_url=...)` points at
+a server without the computer tool, remove it in the model's `profile=` argument:
+`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Use
+`| {ComputerTool}` instead to send it through another provider whose server supports it.
 
 #### Referencing earlier responses
 

@@ -36,7 +36,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelResponse,
@@ -195,8 +195,6 @@ class _Plan:
     """The mouse buttons the last call that succeeded said are still pressed."""
     keeps_held: bool
     """Whether buttons left pressed stay pressed until the run ends, rather than being released when the call ends."""
-    confirmed: bool = False
-    """Whether a person approved the call because its provider asked for a confirmation."""
 
 
 @dataclass
@@ -617,11 +615,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     ) -> ToolReturn:
         made = _the_call(ctx)
         call = made[1] if made else None
-        confirmation = call.confirmation if call is not None else None
-        if confirmation is not None and not ctx.tool_call_approved:
-            # The provider asked for a person to approve this action before it runs. This is checked here, in the
-            # tool, so no hook can skip it.
-            raise ApprovalRequired(metadata={'reason': confirmation})
         acts = not all(isinstance(action, _LookingAction) for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
@@ -636,8 +629,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             changed=call is not None and call.actions != actions,
             held=list(run.held),
             keeps_held=keeps_held,
-            # Past the check above, a flagged call is an approved one.
-            confirmed=confirmation is not None,
         )
         stray = list(run.stray)
         # A call that never reports back, such as an interrupted one, may leave these pressed until the run ends. The
@@ -729,8 +720,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """
         performed, error, steps = await _perform(display, actions, mapping, self.settle_seconds, held)
         result = ComputerResult(performed=performed)
-        if plan.confirmed:
-            result['confirmed'] = True
         summary: list[str] = []
         if plan.changed:
             result['changed'] = True
