@@ -419,9 +419,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
 - `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
-  sets another size, fixed at creation. It can't press F13 to F24, keypad Enter, the keypad's `+ - * / .` keys, print
-  screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond U+FFFF
-  (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
+  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, use side mouse
+  buttons, or type characters beyond U+FFFF (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
   desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.

@@ -11,12 +11,11 @@ Below is how Daytona's default snapshot behaves. Re-run the live display tests i
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
 - `keyboard.type` types Unicode up to U+FFFF and newlines as Enter, and drops characters beyond U+FFFF, such as most
   emoji.
-- `keyboard.press` refuses shifted symbols such as `!`, X key names such as `KP_Enter`, and print screen, pause,
-  scroll lock, media and volume keys (`unsupported key "printscreen"`). The desktop keeps working after that.
-  `keyboard.down` refuses the same keys with a 500, as it does `menu` (live, 2026-11-18).
+- `keyboard.press` refuses shifted symbols such as `!`, X key names such as `KP_Enter`, and print screen, pause and
+  scroll lock (`unsupported key "printscreen"`). The desktop keeps working after that. `keyboard.down` refuses the
+  same keys with a 500, as it does `menu` (live, 2026-11-18).
 - The mouse has `left`, `right` and `middle` buttons only (`unsupported mouse button "back"`, a 400).
-- Its keypad digits are `num0` to `num9`, which follow Num Lock, and Num Lock is `num_lock`. Its other keypad names
-  type other keys (`num_plus` types `n`).
+- Num Lock is `num_lock`.
 - Pressing `f13` to `f24` crashes the computer-use process for good.
 - After the sandbox stops and starts, `get_status()` says `inactive` until `start()`. Input sent before that start
   breaks the desktop until the sandbox stops and starts again. Until then, input answers 500
