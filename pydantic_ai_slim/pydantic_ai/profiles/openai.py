@@ -622,7 +622,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_input_token_counting: bool
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
-    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    When `False`, `count_tokens()` raises a `UserError` that is also a `NotImplementedError` instead of calling a
+    missing endpoint.
     """
 
     openai_supports_batch_api: bool

@@ -33,6 +33,8 @@ For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFil
 
 Use capabilities when the user wants behavior that should survive model/provider changes.
 
+To add a capability for one run, pass `agent.run(..., capabilities=[...])`. `agent.override(capabilities=[...])` replaces the agent's capabilities for every run inside the block rather than merging with them; to add one there, list the agent's own beside it: `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`. Import `AgentInstructions` from `pydantic_ai` or `pydantic_ai.capabilities` to annotate `get_instructions()`.
+
 ## Enable Thinking Across Providers
 
 Use the unified `Thinking` capability or the `thinking` model setting.
@@ -161,7 +163,7 @@ An `on_*_error` hook only covers its stage's core operation. `ModelRetry` raised
 
 For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, so a call with invalid arguments is retried instead of reaching whoever resolves it. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. An `args_validator` deferral is held until `after_tool_validate` runs, but a `wrap_tool_validate` deferral raised after `handler()` returns happens after that gate has already completed. For a per-tool decision, use the tool's `args_validator` instead of a hook. An external tool's calls are executed outside the run, which can't approve them, so `ApprovalRequired` raised while validating one is a `UserError`: raise `CallDeferred` with the `metadata` its executor needs instead.
 
-Whoever resolves a deferral sees the arguments the model sent, not a validation hook's rewrite, and approving the call runs the validation hooks again, so the tool runs with the rewrite. To change arguments around an approval, rewrite them in `before_tool_execute` (for a `requires_approval=True` tool it runs only once the call is approved), or have the resolver pass `ToolApproved(override_args=...)`, which goes through validation, hooks included.
+Whoever resolves a deferral sees the model's arguments on the `ToolCallPart` and what validation made of them, hook rewrites included, in `DeferredToolRequests.validated_args` (keyed by `tool_call_id`, JSON-compatible). Approving the call validates the model's arguments again, hooks included, so a hook whose output isn't determined by the arguments alone can give the tool something other than what was shown. To change arguments around an approval, rewrite them in `before_tool_execute` (for a `requires_approval=True` tool it runs only once the call is approved), or have the resolver pass `ToolApproved(override_args=...)`, which goes through validation, hooks included.
 
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
 

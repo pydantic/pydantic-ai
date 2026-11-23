@@ -322,6 +322,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self._dispatch:
             capability._validate_runtime_capabilities(ctx, capabilities)
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        for capability in self._dispatch:
+            capability._validate_override_capabilities(capabilities)
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass
         # took this method over, and answering it by calling this method is a loop.
@@ -1347,4 +1351,4 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # Deferred capabilities are required to have an explicit `id` (enforced in
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
-    return capability.id is not None and capability.id in ctx._dispatch_active_capability_ids  # pyright: ignore[reportPrivateUsage]
+    return capability.id is not None and ctx._is_deferred_capability_dispatch_active(capability.id)  # pyright: ignore[reportPrivateUsage]

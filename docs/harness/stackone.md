@@ -58,7 +58,7 @@ export OPENAI_API_KEY='your-openai-api-key'
 ```
 
 `StackOne` reads `STACKONE_API_KEY` automatically. The example reads `STACKONE_ACCOUNT_ID` explicitly so the account
-ID is not hard-coded. You can pass `api_key=` directly instead, but keep secrets out of source control.
+ID is not hard-coded. You can pass `auth=` directly instead, but keep secrets out of source control.
 
 ## Run your first agent
 
@@ -80,6 +80,38 @@ print(result.output)
 
 By default, the model receives two tools. It searches for an action that matches the request, then executes the
 returned action ID. The final output depends on the linked provider and its data.
+
+## Authenticate each user
+
+`auth` takes the API key as a string, or a sync or async function of the run context that returns one. The function is
+called at the start of each run, so the key can come from deps or a secret store rather than the capability's
+configuration. The function never falls back to `STACKONE_API_KEY`: if it returns `None` or `''`, that run gets no
+StackOne tools. Each key must belong to the StackOne project that owns `account_id`.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import StackOne
+
+
+@dataclass
+class Deps:
+    stackone_api_key: str | None
+
+
+def stackone_api_key(ctx: RunContext[Deps]) -> str | None:
+    return ctx.deps.stackone_api_key
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    deps_type=Deps,
+    capabilities=[StackOne(account_id='your-linked-account-id', auth=stackone_api_key)],
+)
+```
+
+`auth` replaces `api_key`, which still works but emits a `HarnessDeprecationWarning`. Passing both raises an error.
 
 ## Control available actions
 
@@ -198,7 +230,7 @@ Handle the resulting deferred approval requests as described in the linked guide
 ## Define the agent in YAML or JSON
 
 The capability also works with Pydantic AI's [agent spec](../agent-spec.md) format for YAML or JSON.
-Keep the API key in `STACKONE_API_KEY` rather than storing it in the file:
+Keep the API key in `STACKONE_API_KEY` rather than storing it in the file. Specs take no `auth`, and a spec's `api_key` is deprecated:
 
 ```yaml
 # agent.yaml

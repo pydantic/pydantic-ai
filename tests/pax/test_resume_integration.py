@@ -1,0 +1,414 @@
+"""The command, startup flag, naming resolver and terminal worker share one service."""
+
+import os
+from builtins import BaseExceptionGroup
+from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
+from io import StringIO
+from pathlib import Path
+from uuid import UUID, uuid5
+
+import anyio
+import pytest
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+from termflow.tui.keys import Key
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_pax import DEFAULT_PLUGINS, chat
+from pydantic_ai_pax.cli.command_context import CommandContext
+from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.runtime.session import Session
+from pydantic_ai_pax.runtime.session_naming import SessionNamer
+from pydantic_ai_pax.runtime.sessions import Sessions
+from pydantic_ai_pax.ui.menus.session_browser import SessionBrowser
+from tests.pax.cli_runner import CliRunner
+
+
+async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def rebuild(factory: Callable[[], object]) -> object:
+        return factory()
+
+    monkeypatch.setattr('pydantic_ai_pax.app.reload_clai', rebuild)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('first\r/reload\rsecond\r/exit\r')
+        await chat(
+            Agent(TestModel(call_tools=[], custom_output_text='answer')),
+            deps=None,
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'settings.db'),
+        )
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    summaries = await store.listing()
+    assert len(summaries) == 1
+    saved = await store.get(conversation_id=summaries[0].id)
+    assert [
+        part.content
+        for message in saved.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == ['first', 'second']
+
+
+def cancel_browser(browser: SessionBrowser) -> str:
+    return ''
+
+
+async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+    await session.prompt('name this session')
+    saved_id = session.summary.id
+    await session.clear()
+
+    def select(browser: SessionBrowser) -> str:
+        browser.reload()
+        assert browser.selected is not None
+        assert 'name this session' in browser.preview(browser.selected.id)
+        browser.rename(browser.selected, 'Manual name')
+        return browser.selected.id
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    assert 'Manual name' in await service.command([])
+    assert session.summary.id == saved_id
+    with pytest.raises(ValueError, match='Usage:'):
+        await service.command(['one', 'two'])
+    assert 'Resumed' in await service.command([saved_id])
+    monkeypatch.setattr(SessionBrowser, 'run', cancel_browser)
+    assert await service.command([]) == ''
+    assert 'Background naming:' in await service.usage(console=Console(file=StringIO()))
+    result = await service.generate('Fix tests')
+    assert result is not None
+    context.set_setting(['sessions.naming_model', 'test'])
+    assert await service.generate('Fix tests') is not None
+
+    async def resolve(name: str) -> TestModel:
+        return TestModel()
+
+    session.resolve_model = resolve
+    assert await service.generate('Fix tests') is not None
+    context.set_setting(['sessions.naming', 'false'])
+    assert not service.namer.submit(saved_id, client=service.naming)
+    context.set_setting(['sessions.naming_model', 'null'])
+    assert context.settings.session_namer_model is None
+
+
+async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(tmp_path: Path) -> None:
+    """Naming is on by default, so opening `/resume` must not send a session held with one model to another's provider.
+
+    Choosing `sessions.naming_model` is choosing where names are made, so then every untitled session is queued.
+    """
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('saved turn')])]
+    local = await store.save(summary=ConversationSummary(workspace='/a', model='ollama:llama'), messages=messages)
+    same = await store.save(summary=ConversationSummary(workspace='/b', model='openai:gpt-5'), messages=messages)
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    session.model = 'openai:gpt-5'
+    context = CommandContext(
+        settings=Settings(model=None), store=SettingsStore(tmp_path / 'config.db'), apply_setting=lambda key, s: None
+    )
+    service = Sessions(session=session, store=store, context=context)
+    await service.listing()
+    # The namer queues a conversation once, so a refused `submit` shows the listing queued it.
+    assert not service.namer.submit(same.id, client=service.naming)
+    assert service.namer.submit(local.id, client=service.naming)
+    # Judged again when the worker reaches it, so switching `/model` after queueing sends nothing.
+    session.model = 'anthropic:claude-sonnet-4-5'
+    assert not await service.namer.name(conversation_id=same.id, client=service.naming)
+    session.model = 'openai:gpt-5'
+    # Saving the setting, even back to its default through off and on, is the choice the description names.
+    context.set_setting(['sessions.naming', 'false'])
+    context.set_setting(['sessions.naming', 'true'])
+    assert service.naming_may_see(local)
+    context.reset_setting('sessions.naming')
+    assert not service.naming_may_see(local)
+
+    chosen = Sessions(session=session, store=store, context=context, namer=SessionNamer(store=store))
+    context.set_setting(['sessions.naming_model', 'openai:gpt-5-mini'])
+    await chosen.listing()
+    assert not chosen.namer.submit(local.id, client=chosen.naming)
+
+    # On CLAI's default model neither side records a model, but sessions from another agent still wait.
+    context.set_setting(['sessions.naming_model', 'null'])
+    session.model = None
+    native = ConversationSummary(workspace='/a')
+    imported = ConversationSummary(id=str(uuid5(UUID(int=0), 'claude:session')), workspace='/a', tags=('claude',))
+    forked = ConversationSummary(workspace='/a', tags=('claude', 'tests'))
+    assert [service.naming_may_see(s) for s in (native, imported, forked)] == [True, False, False]
+    session.model = 'openai:gpt-5'
+
+    # Turned on while naming was opt-in: that saved choice already covered every session, and still does.
+    settings = SettingsStore(tmp_path / 'opted-in.db')
+    settings.set('sessions.naming', True)
+    opted_in = CommandContext(settings=settings.load(), store=settings, apply_setting=lambda key, s: None)
+    kept = Sessions(session=session, store=store, context=opted_in, namer=SessionNamer(store=store))
+    await kept.listing()
+    assert not kept.namer.submit(local.id, client=kept.naming)
+
+
+async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    prior = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await prior.prompt('saved turn')
+    started, release = anyio.Event(), anyio.Event()
+
+    async def wait(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        started.set()
+        await release.wait()
+        yield 'done'
+
+    session = Session(Agent(FunctionModel(stream_function=wait)), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+
+    def select(browser: SessionBrowser) -> str:
+        return prior.summary.id
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    async with anyio.create_task_group() as running:
+        running.start_soon(session.prompt, 'busy')
+        await started.wait()
+        assert await service.command([]) == (
+            f'A turn is running. Enter /resume {prior.summary.id} to restore that session once it ends.'
+        )
+        release.set()
+    assert session.summary.id != prior.summary.id
+    assert 'Resumed' in await service.command([])
+    assert session.summary.id == prior.summary.id
+
+
+async def test_browser_resumes_other_directory_without_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    previous_workspace = tmp_path / 'previous'
+    previous_workspace.mkdir()
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    agent = Agent(TestModel(call_tools=[], custom_output_text='saved answer'))
+    prior = Session(agent, deps=None, conversations=store, workspace=previous_workspace)
+    await prior.prompt('saved turn')
+    session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+
+    def select(browser: SessionBrowser) -> str:
+        keys = iter([Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])
+        browser.key_source = lambda: next(keys)
+        browser.output = StringIO()
+        return browser.loop()
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    assert 'Resumed' in await service.command([])
+    assert session.summary.id == prior.summary.id
+    assert session.messages == prior.messages
+    assert session.workspace == str(tmp_path)
+    assert Path.cwd() == tmp_path
+    assert (await store.get(conversation_id=prior.summary.id)).summary.workspace == str(previous_workspace)
+
+
+async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    prior = Session(Agent(TestModel()), deps=None, conversations=store)
+    await prior.prompt('earlier turn')
+    output = StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('followup\r/new\rother session\r/exit\r')
+        await chat(
+            Agent(TestModel(call_tools=[], custom_output_text='answer')),
+            deps=None,
+            console=Console(file=output),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            settings=Settings(model=None, session_namer=False),
+            builtin_plugins=DEFAULT_PLUGINS,
+            resume=prior.summary.id,
+        )
+    entries = await store.listing()
+    assert len(entries) == 2
+    assert (await store.get(conversation_id=prior.summary.id)).summary.message_count > prior.summary.message_count
+    assert 'Resumed' in output.getvalue()
+    # `/new` is `/clear`, so the banner follows the resumed conversation.
+    assert '/resume restores one' in output.getvalue().rsplit('Resumed', 1)[1]
+
+
+async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(SessionBrowser, 'run', cancel_browser)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('/exit\r')
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            resume='',
+        )
+    with pytest.raises(LookupError, match='No saved session'):
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            resume='missing',
+        )
+
+
+@pytest.mark.parametrize('args', [['--resume', 'missing'], ['--resume=missing', 'config']])
+def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, run_cli: CliRunner, args: list[str]) -> None:
+    result = run_cli('--database', str(tmp_path / 'settings.db'), *args, cwd=tmp_path)
+    assert result.returncode == 2
+    assert 'error:' in result.stderr
+    assert 'Traceback' not in result.stderr
+
+
+async def test_empty_usage_missing_model_and_recovery_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(Agent(), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+    assert await service.generate('no model') is None
+    assert 'Background naming:' not in await service.usage(console=Console(file=StringIO()))
+    saved = await store.save(summary=replace(session.summary, outcome='running', run_id='interrupted'), messages=[])
+    steps = session.step_store
+    assert steps is not None
+    await steps.register_run(RunRecord(run_id='interrupted', conversation_id=saved.id))
+    await steps.save_snapshot(
+        ContinuableSnapshot(
+            run_id='interrupted', step_index=0, messages=[ModelRequest(parts=[UserPromptPart('checkpoint text')])]
+        )
+    )
+    await steps.append_event(
+        StepEvent(run_id='interrupted', kind='tool_call_completed', step_index=0, tool_name='done')
+    )
+    await steps.append_event(StepEvent(run_id='interrupted', kind='tool_call_failed', step_index=0, tool_name='failed'))
+    await steps.record_tool_effect(
+        ToolEffectRecord(run_id='interrupted', tool_call_id='t1', tool_name='unknown', status='started')
+    )
+
+    no_snapshot = await store.save(summary=replace(saved, id='no-snapshot', revision=0, run_id='absent'), messages=[])
+
+    def inspect(browser: SessionBrowser) -> str:
+        browser.selected_id = saved.id
+        assert browser.selected is not None
+        text = browser.preview(saved.id)
+        assert 'checkpoint text' in text and 'unknown (t1)' in text and 'done' in text and 'failed' in text
+        assert 'checkpoint text' not in browser.preview(no_snapshot.id)
+        browser.rename(browser.selected, 'first')
+        with pytest.raises(ValueError, match='Session changed'):
+            browser.rename(browser.selected, 'stale')
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', inspect)
+    await service.command([])
+
+
+async def test_simultaneous_service_failures_remain_grouped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+
+    entered = anyio.Event()
+
+    async def broken_worker(self: SessionNamer) -> None:
+        entered.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            raise ValueError('worker cleanup failed')
+
+    async def broken_command(self: Sessions[None, str], args: list[str], *, unarchive: bool = True) -> str:
+        await entered.wait()
+        raise ValueError('browser failed')
+
+    monkeypatch.setattr(SessionNamer, 'run', broken_worker)
+    monkeypatch.setattr(Sessions, 'command', broken_command)
+    with pytest.raises(BaseExceptionGroup) as caught:
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            resume='',
+        )
+    assert len(caught.value.exceptions) == 2
+    assert 'browser failed' in [str(error) for error in caught.value.exceptions]
+
+
+async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+    await session.prompt('old work')
+    old = session.conversation_id
+    await session.clear()
+    await session.prompt('current work')
+    with pytest.raises(ValueError, match='The current session cannot be archived'):
+        await service.archive(session.conversation_id)
+    running = ConversationSummary(workspace=str(tmp_path), title='Busy', outcome='running', owner_pid=os.getpid())
+    busy = await store.save(summary=running, messages=[])
+    with pytest.raises(ValueError, match='A running session cannot be archived'):
+        await service.archive(busy.id)
+    assert (await service.archive(old)).archived_at is not None
+    assert old not in [entry.id for entry in await service.listing()]
+    assert [entry.id for entry in await service.listing(archived=True)] == [old]
+
+    def browse(browser: SessionBrowser) -> str:
+        assert old not in [entry.id for entry in browser.entries]
+        browser.archived = True
+        browser.reload()
+        entry = next(entry for entry in browser.entries if entry.id == old)
+        browser.archive(entry, False)
+        browser.archive(entry, True)
+        return old
+
+    monkeypatch.setattr(SessionBrowser, 'run', browse)
+    assert (await service.command([])).startswith('Resumed')
+    assert session.conversation_id == old and session.summary.archived_at is None
+    assert old in [entry.id for entry in await service.listing()]
+    copy = await service.start(resume=old, fork=True)
+    assert 'Resumed' in copy and session.conversation_id != old, 'a fork continues in the copy'
+    assert (await store.get(conversation_id=old)).summary.archived_at is None, 'it was unarchived above'
+    await service.archive(old)
+    await service.start(resume=old, fork=True)
+    assert (await store.get(conversation_id=old)).summary.archived_at is not None, 'the original stays archived'
+    assert session.summary.archived_at is None
+    # Picked in the browser, as `--resume --fork-session` does, it stays archived too.
+    assert (await service.start(resume='', fork=True)).startswith('Resumed')
+    assert (await store.get(conversation_id=old)).summary.archived_at is not None
+    assert session.conversation_id != old
+    await service.resume(old)
+    # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
+    await store.set_archived(conversation_id=old, archived=True)
+    await session.prompt('continued')
+    assert old in [entry.id for entry in await service.listing()]
+    assert (await service.unarchive(old)).archived_at is None

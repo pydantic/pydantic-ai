@@ -41,6 +41,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
     from pydantic_monty import (
@@ -62,8 +63,8 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     in_temporal_workflow,
-    is_sandbox_panic,
 )
+from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -285,7 +286,7 @@ def _apply_scheduler(
 
     async def flush_scheduler() -> None:
         # Let a call dispatched in the last loop iteration reach `scheduler.run`.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
         await scheduler.flush()
         if flush is not None:
             await flush()
@@ -341,7 +342,7 @@ class _LambdaBranches:
     async def flush(self) -> None:
         """Run the runs collected so far. `MontyExecutor` calls this before it resolves futures."""
         # Let a call dispatched in the last loop iteration reach `submit`.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
         pending, self._pending = self._pending, []
         # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
         groups: dict[int, list[_Branch]] = {}
@@ -954,6 +955,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if usage_limits is None and self.forward_usage:
             # Shared usage is checked against the parent's limits, so they bound the whole tree.
             usage_limits = ctx.usage_limits
+        # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
+        deny = find_deny_unanswered(ctx)
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
@@ -961,7 +964,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
-                capabilities=[serving_model],
+                capabilities=[serving_model, *([deny] if deny is not None else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:

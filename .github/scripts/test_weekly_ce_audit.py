@@ -80,8 +80,8 @@ def repository(tmp_path: Path) -> tuple[Path, str]:
         ('pydantic_ai_slim/pydantic_ai/.agents/skills/example/references/tools.md', 'report-only'),
         ('pydantic_ai_slim/pydantic_ai/AGENTS.md', 'report-only'),
         ('src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/example/SKILL.md', 'report-only'),
-        ('src/pydantic_clai2/pydantic_clai2/customization.md', 'report-only'),
-        ('src/pydantic_clai2/FILE_MAP.md', 'editable'),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/customization.md', 'report-only'),
+        ('src/pydantic_ai_pax/FILE_MAP.md', 'editable'),
         ('.macroscope/correctness/review-discipline.md', 'report-only'),
         ('.github/workflows/shared/engine-zai.md', 'report-only'),
         ('src/pydantic_ai_harness/gh-aw/pydantic.md', 'report-only'),
@@ -89,7 +89,7 @@ def repository(tmp_path: Path) -> tuple[Path, str]:
         ('docs/tools.md', 'excluded'),
         ('pydantic_ai_slim/pydantic_ai/guide.md', 'excluded'),
         ('src/pydantic_ai_harness/pydantic_ai_harness/guide.md', 'excluded'),
-        ('src/pydantic_clai2/pydantic_clai2/guide.md', 'excluded'),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/guide.md', 'excluded'),
         ('.claude/skills/branch-context/issue-brief.md', 'excluded'),
         ('.agents/memory/notes.md', 'excluded'),
         ('PAPERCUTS.md', 'excluded'),
@@ -276,7 +276,7 @@ def test_write_boundary_rejects_report_only_product_and_new_files(repository: tu
     [
         'pydantic_ai_slim/pydantic_ai/.agents/skills/example/SKILL.md',
         'src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/example/SKILL.md',
-        'src/pydantic_clai2/pydantic_clai2/customization.md',
+        'src/pydantic_ai_pax/pydantic_ai_pax/customization.md',
     ],
 )
 def test_write_boundary_rejects_distributed_instructions(repository: tuple[Path, str], path: str):
@@ -379,11 +379,11 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert pr['protected-files'] == 'request_review'
     assert '.github/**' in pr['excluded-files']
     assert '**/.agents/**/*.md' not in pr['allowed-files']
-    assert 'src/pydantic_clai2/pydantic_clai2/customization.md' not in pr['allowed-files']
+    assert 'src/pydantic_ai_pax/pydantic_ai_pax/customization.md' not in pr['allowed-files']
     for prefix in (
         'pydantic_ai_slim/pydantic_ai/**',
         'src/pydantic_ai_harness/pydantic_ai_harness/**',
-        'src/pydantic_clai2/pydantic_clai2/**',
+        'src/pydantic_ai_pax/pydantic_ai_pax/**',
     ):
         assert prefix in pr['excluded-files']
     assert 'create-issue' not in outputs
@@ -568,7 +568,7 @@ def test_compiled_publication_gate_and_health_dependencies():
     for prefix in (
         'pydantic_ai_slim/pydantic_ai/**',
         'src/pydantic_ai_harness/pydantic_ai_harness/**',
-        'src/pydantic_clai2/pydantic_clai2/**',
+        'src/pydantic_ai_pax/pydantic_ai_pax/**',
     ):
         assert prefix in exclusions
     detection = next(step for step in jobs['detection']['steps'] if step.get('id') == 'detection_agentic_execution')
