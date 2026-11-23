@@ -26,7 +26,7 @@ from .abstract import AbstractCapability, CapabilityOrdering
 
 @cache
 def _results_adapter() -> TypeAdapter[DeferredToolResults]:
-    # Built on first use, not at import: the schema covers every message part type.
+    # Built on first use, not at import: the schema is large.
     return TypeAdapter(DeferredToolResults)
 
 

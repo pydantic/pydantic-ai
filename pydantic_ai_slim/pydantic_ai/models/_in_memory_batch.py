@@ -20,7 +20,7 @@ from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 @cache
 def _response_adapter() -> TypeAdapter[ModelResponse]:
-    # Built on first use, not at import: the schema covers every message part type.
+    # Built on first use, not at import: the schema is large.
     return TypeAdapter(ModelResponse)
 
 
