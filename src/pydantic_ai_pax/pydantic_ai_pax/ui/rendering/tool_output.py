@@ -313,7 +313,7 @@ class ToolOutput:
         collapsed = partial(_row_ansi, draw=draw, colors=colors, expanded=False)
         expanded = partial(_row_ansi, draw=draw, colors=colors, expanded=True)
         block = surface.markdown(render=collapsed, width=self.console.width, expanded=expanded)
-        # Written without its source, so a row whose output is dropped later shows no hint.
+        # Written without its source, so a row whose output is dropped over the transcript budget shows no hint.
         block.write(collapsed(source='', width=self.console.width))
         return block
 

@@ -1591,8 +1591,7 @@ under its result row, and hides it again. A row whose output is hidden ends with
 `ctrl+o to expand` when the row has room. The output is what the tool returned to the model,
 with secrets masked: the end of a long output (about 16 KB), marked where earlier output was left
 out, and the full output stays in its log. Results that arrive later, while the output is shown,
-open shown too. When the transcript runs out of room, the oldest commands lose their output
-first, so earlier answers stay. `pax -p` and redirected output are unchanged.
+open shown too. `pax -p` and redirected output are unchanged.
 
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
