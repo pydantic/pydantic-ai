@@ -16,6 +16,10 @@ garbage. This plugin fails the test for what that cannot see:
   (https://github.com/pydantic/pydantic-ai/pull/10067). The autouse `track_httpx_clients` fixture closes every client
   a test leaves open, and fails the test only for one a run built: a client that test code built, or that a provider
   or agent built outside a run, is its builder's to close.
+- An async generator of this repository's code that the collector finalized, because nothing closed it after its
+  consumer stopped early (https://github.com/pydantic/pydantic-ai/pull/13859). asyncio then schedules its `aclose()` on
+  a loop that may never run it, so its `finally` blocks run late or not at all. `GC_FINALIZED_BASELINE` lists the ones
+  `main` still leaves to the collector.
 """
 
 from __future__ import annotations as _annotations
@@ -26,9 +30,10 @@ import os
 import threading
 import traceback
 import weakref
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import AsyncGeneratorType
 from typing import Any
 
 import pytest
@@ -40,6 +45,32 @@ _ASYNCIO = Path(asyncio.__file__).resolve().parent
 _TESTS = f'{_ROOT / "tests"}{os.sep}'
 _AGENT = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / 'agent' / '__init__.py')
 _AGENT_GRAPH = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / '_agent_graph.py')
+
+
+GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
+    {
+        # Each is left suspended when its consumer stops early and nothing closes it; R22 tracks fixing them.
+        'pydantic_ai_slim/pydantic_ai/_tool_execution.py:_iter_completed_or_buffered',
+        'pydantic_ai_slim/pydantic_ai/durable_exec/_base.py:BaseDurabilityCapability._single_event_stream',
+        'pydantic_ai_slim/pydantic_ai/models/__init__.py:StreamedResponse.__aiter__.<locals>.iterator_with_cancel_guard',
+        'pydantic_ai_slim/pydantic_ai/models/__init__.py:StreamedResponse.__aiter__.<locals>.iterator_with_final_event',
+        'pydantic_ai_slim/pydantic_ai/models/__init__.py:StreamedResponse.__aiter__.<locals>.iterator_with_part_end',
+        'pydantic_ai_slim/pydantic_ai/models/_continuation.py:_ContinuationStreamedResponse._iterator_with_cancel_guard',
+        'pydantic_ai_slim/pydantic_ai/models/anthropic/__init__.py:AnthropicModel._map_user_prompt',
+        'pydantic_ai_slim/pydantic_ai/models/test.py:TestStreamedResponse._get_event_iterator',
+        'pydantic_ai_slim/pydantic_ai/result.py:AgentStream._pull_shared',
+        'pydantic_ai_slim/pydantic_ai/result.py:AgentStream._stream_response_text',
+        'pydantic_ai_slim/pydantic_ai/result.py:AgentStream.stream_text',
+        'pydantic_ai_slim/pydantic_ai/result.py:StreamedRunResult.stream_text',
+        'pydantic_ai_slim/pydantic_ai/ui/_adapter.py:UIAdapter._saving_conversation',
+        'pydantic_ai_slim/pydantic_ai/ui/vercel_ai/_event_stream.py:VercelAIEventStream.before_stream',
+        'tests/refactor_capture.py:RefactorCapture._recorded_ui_events.<locals>.recorded',
+    }
+)
+"""This repository's async generators that the collector finalizes on `main` today, as `<path>:<qualname>`.
+
+`scripts/check_test_baselines.py` fails a change that adds one: fix the generator instead.
+"""
 
 
 _CREATOR = '_pydantic_ai_leak_guards_creator'
@@ -64,6 +95,8 @@ class _State:
     """HTTP clients an agent run built during the running test, each with the run's code that built it."""
     clients_left_open: list[str] = field(default_factory=list[str])
     """Where each such client that the test left for `track_httpx_clients` to close was built."""
+    finalized_generators: list[str] = field(default_factory=list[str])
+    """Each of this repository's async generators outside the baseline that the collector finalized in the test."""
 
 
 _state = _State()
@@ -108,9 +141,25 @@ def _tracking_del(self: asyncio.BaseEventLoop, *args: Any) -> None:
     _original_del(self, *args)
 
 
+# Not in the stubs. asyncio calls it when the collector finalizes an async generator iterated on the loop and not closed.
+_original_finalizer_hook: Callable[[asyncio.BaseEventLoop, AsyncGeneratorType[object, object]], None] = getattr(
+    asyncio.BaseEventLoop, '_asyncgen_finalizer_hook'
+)
+
+
+def _tracking_finalizer_hook(self: asyncio.BaseEventLoop, agen: AsyncGeneratorType[object, object]) -> None:
+    path = Path(agen.ag_code.co_filename).resolve()
+    if _state.test_running and path.is_relative_to(_ROOT) and not {'.venv', 'site-packages'} & set(path.parts):
+        site = f'{path.relative_to(_ROOT)}:{agen.__qualname__}'
+        if site not in GC_FINALIZED_BASELINE:
+            _state.finalized_generators.append(site)
+    _original_finalizer_hook(self, agen)
+
+
 # Patched once, at import, so a nested pytest session (`pytester`) that registers this module too cannot undo it.
 setattr(asyncio.BaseEventLoop, '__init__', _tracking_init)
 setattr(asyncio.BaseEventLoop, '__del__', _tracking_del)
+setattr(asyncio.BaseEventLoop, '_asyncgen_finalizer_hook', _tracking_finalizer_hook)
 
 
 def track_http_client(client: object) -> None:
@@ -160,6 +209,7 @@ def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, object, object
         _state.finalized_open.clear()
         _state.run_built_clients.clear()
         _state.clients_left_open.clear()
+        _state.finalized_generators.clear()
 
 
 @pytest.hookimpl(wrapper=True)
@@ -187,6 +237,12 @@ def pytest_runtest_makereport(
         problems.append(
             f'{item.nodeid} left {len(clients)} HTTP client(s) that an agent run built open, built by:{sites}\n'
             'The run that builds a client must close it, as it closes the model it builds from a name.'
+        )
+    if generators := _state.finalized_generators:
+        sites = ''.join(f'\n  {site}' for site in sorted(set(generators)))
+        problems.append(
+            f'{item.nodeid} left {len(generators)} async generator(s) for the collector to finalize:{sites}\n'
+            'Close each one where its consumer stops, with `aclose()` or `contextlib.aclosing()`.'
         )
     if problems and report.passed:
         report.outcome = 'failed'

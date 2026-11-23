@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import textwrap
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -147,5 +148,58 @@ def test_a_client_an_agent_run_leaves_open_fails_the_test_and_a_client_its_build
         [
             r'.*::test_run_leaves_the_model_it_built_open left 1 HTTP client\(s\) that an agent run built open, built by:',
             r'\s+pydantic_ai_slim/pydantic_ai/(agent/__init__|_agent_graph)\.py:\d+ in \w+',
+        ]
+    )
+
+
+async def numbers() -> AsyncIterator[int]:
+    """An async generator of this repository's code, for the sessions below to leave open or close."""
+    while True:
+        yield 1
+
+
+GENERATORS = """
+import asyncio
+
+from tests import leak_guards
+from tests.test_leak_guards import numbers
+
+
+def iterate_once(close: bool) -> None:
+    async def main() -> None:
+        generator = numbers()
+        await anext(generator)
+        if close:
+            await generator.aclose()
+
+    asyncio.run(main())
+"""
+
+
+def test_an_async_generator_left_for_the_collector_fails_the_test_unless_the_baseline_lists_it(
+    pytester: pytest.Pytester,
+):
+    result = run_session(
+        pytester,
+        GENERATORS
+        + textwrap.dedent(
+            """
+        def test_leaves_it():
+            iterate_once(close=False)
+
+        def test_closes_it():
+            iterate_once(close=True)
+
+        def test_leaves_one_the_baseline_lists(monkeypatch):
+            monkeypatch.setattr(leak_guards, 'GC_FINALIZED_BASELINE', frozenset({'tests/test_leak_guards.py:numbers'}))
+            iterate_once(close=False)
+        """
+        ),
+    )
+    result.assert_outcomes(passed=3, errors=1)
+    result.stdout.re_match_lines(
+        [
+            r'.*::test_leaves_it left 1 async generator\(s\) for the collector to finalize:',
+            r'\s+tests/test_leak_guards\.py:numbers',
         ]
     )

@@ -108,6 +108,13 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: test-baselines
+        name: Test gate baselines only shrink
+        entry: uv
+        args: [run, --no-sync, scripts/check_test_baselines.py, --staged]
+        files: ^tests/leak_guards\.py$
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv
