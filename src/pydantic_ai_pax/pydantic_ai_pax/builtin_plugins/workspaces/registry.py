@@ -1,6 +1,6 @@
-"""The workspaces, one folder each under CLAI's state directory, readable by you alone.
+"""The workspaces, one folder each under Pax's state directory, readable by you alone.
 
-`$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/ID/workspace.json` holds the record. Every CLAI process
+`$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/ID/workspace.json` holds the record. Every Pax process
 reads the same folders, so a workspace made in one session is listed and destroyed from another.
 """
 
@@ -36,8 +36,8 @@ def check_id(workspace_id: str) -> str:
 class Workspace:
     """One workspace: where its checkout is, what it was made from, and the session the orchestrator runs there.
 
-    A record an older CLAI wrote, with a `status` and the process of a CLAI of its own, reads the same: keys this
-    one does not know are ignored. The reverse does not hold: an older CLAI requires that `status`, so it neither
+    A record an older Pax wrote, with a `status` and the process of a Pax of its own, reads the same: keys this
+    one does not know are ignored. The reverse does not hold: an older Pax requires that `status`, so it neither
     lists nor destroys a workspace this one created or saved again.
     """
 
@@ -97,5 +97,5 @@ class Registry:
         return sorted(found, key=lambda workspace: workspace.created)
 
     def forget(self, workspace_id: str) -> None:
-        """Delete a workspace's folder, and what an older CLAI kept there."""
+        """Delete a workspace's folder, and what an older Pax kept there."""
         shutil.rmtree(self.folder(workspace_id), ignore_errors=True)

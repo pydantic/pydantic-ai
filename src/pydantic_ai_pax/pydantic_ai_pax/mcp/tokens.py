@@ -1,7 +1,7 @@
-"""Keep MCP OAuth tokens in the OS keyring, so restarting CLAI does not mean signing in again.
+"""Keep MCP OAuth tokens in the OS keyring, so restarting Pax does not mean signing in again.
 
 FastMCP stores tokens through an `AsyncKeyValue`. This one keeps every entry for a server in one
-credential (`mcp-NAME`) using CLAI's credential store: the keyring, chunked for Windows' size limit,
+credential (`mcp-NAME`) using Pax's credential store: the keyring, chunked for Windows' size limit,
 or a private file when no keyring exists. FastMCP keys entries by server URL, so a new URL signs in again.
 """
 

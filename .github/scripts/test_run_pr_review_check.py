@@ -297,7 +297,7 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(tmp_path: Path, monkeyp
     assert (provider, usage.steps, usage.tokens, usage.stopped) == (ZAI, 1, 21, False)
     assert launches.read_text().splitlines() == [
         'opencode-go/deepseek-v4.1-flash go-key ',
-        'zai-coding-plan/glm-5.3-flash  zai-key',
+        'zai-coding-plan/glm-5.4  zai-key',
     ]
 
 
@@ -317,7 +317,7 @@ def test_coding_plan_failure_names_its_error_type(
         _review(tmp_path)
     assert len(launches.read_text().splitlines()) == 2
     assert capsys.readouterr().out.splitlines()[-1] == (
-        'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan failed with error type unknown.'
+        'OpenCode run on zai-coding-plan/glm-5.4 on the primary Coding Plan failed with error type unknown.'
     )
 
 
@@ -547,7 +547,7 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
         **outcome,
         **{f'pr_review_checks.{key}': value for key, value in failure.items()},
         'pr_review_checks.provider': 'zai-coding-plan',
-        'pr_review_checks.model': 'zai-coding-plan/glm-5.3-flash',
+        'pr_review_checks.model': 'zai-coding-plan/glm-5.4',
         'pr_review_checks.plan': 'the primary Coding Plan',
         'pr_review_checks.attempts': '2',
     }
@@ -598,7 +598,7 @@ def test_review_span_marks_a_review_the_chain_restarted(
         'pr_review_checks.output_tokens': '0',
         'pr_review_checks.cache_read_tokens': '0',
         'pr_review_checks.provider': 'zai-coding-plan',
-        'pr_review_checks.model': 'zai-coding-plan/glm-5.3-flash',
+        'pr_review_checks.model': 'zai-coding-plan/glm-5.4',
         'pr_review_checks.plan': 'the backup Coding Plan',
         'pr_review_checks.attempts': '3',
         **restart,

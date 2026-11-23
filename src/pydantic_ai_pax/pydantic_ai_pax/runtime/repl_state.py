@@ -1,7 +1,7 @@
 """The `run_code` REPL state saved beside each conversation, so a session keeps its sandbox between prompts.
 
 Harness `CodeMode` starts every agent run with a fresh REPL, and each prompt is a run. `ReplStates`
-is the `CodeModeReplStore` CLAI gives it: one file per saved conversation, in a `sessions.repl`
+is the `CodeModeReplStore` Pax gives it: one file per saved conversation, in a `sessions.repl`
 directory beside `sessions.db`, so `/resume` and `--session-id` bring the REPL back with the history.
 Forks get their own copy and deleting a session removes its file.
 
@@ -28,7 +28,7 @@ MAX_STATE_BYTES = 32 * 1024 * 1024
 
 _ID = re.compile(r'[0-9a-z_-]+')
 """Conversation IDs that are safe as file names, lowercase so a case-insensitive file system cannot
-merge two of them. CLAI's own IDs are lowercase UUIDs; any other ID keeps its REPL to the run."""
+merge two of them. Pax's own IDs are lowercase UUIDs; any other ID keeps its REPL to the run."""
 
 _logger = logging.getLogger(__name__)
 

@@ -297,7 +297,7 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
 def test_without_a_task_owner(make_web: MakeWeb) -> None:
     web_ = make_web(Agent(TestModel()))
     assert web_.plugin.service.default().tasks() == []
-    assert web_.get('/api/tasks/any').json() == {'detail': 'This CLAI runs no delegated tasks.'}
+    assert web_.get('/api/tasks/any').json() == {'detail': 'This Pax runs no delegated tasks.'}
     assert web_.post('/api/tasks/any/stop').status_code == 404
     assert web_.post('/api/tasks/any/steer', {'text': 'hello'}).status_code == 404
 
