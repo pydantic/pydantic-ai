@@ -29,6 +29,7 @@ import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
+from pydantic_ai.workspaces._confine import confine
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
 from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
@@ -157,9 +158,8 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     directory itself (or of `.pydantic-ai-harness`) is refused too, not only one inside it.
     """
     real_working_dir = await workspace.realpath(await workspace.working_dir())
-    real_directory = posixpath.join(real_working_dir, METADATA_DIR, SPILL_DIR)
-    real_path = await workspace.realpath(path)
-    if not real_path.startswith(real_directory + '/'):
+    real_path = await confine(workspace, posixpath.join(real_working_dir, METADATA_DIR, SPILL_DIR), path)
+    if real_path is None:
         raise PermissionError(f'Handle {name!r} is outside the store directory.')
     return real_path
 
