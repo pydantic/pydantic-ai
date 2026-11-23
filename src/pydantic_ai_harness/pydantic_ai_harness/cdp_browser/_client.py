@@ -11,8 +11,10 @@ fake of the protocol, so these are what it cannot show. Re-check them against a 
   dedicated workers). `waitForDebuggerOnStart` holds each new target until `Runtime.runIfWaitingForDebugger`.
   Source: <https://chromedevtools.github.io/devtools-protocol/tot/Target/#method-setAutoAttach>.
 - `Fetch.enable` on a target pauses each request the target makes in a `Fetch.requestPaused` event until
-  `Fetch.continueRequest` or `Fetch.failRequest` answers it. WebSocket connections are not paused. Source:
+  `Fetch.continueRequest` or `Fetch.failRequest` answers it. Source:
   <https://chromedevtools.github.io/devtools-protocol/tot/Fetch/>.
+- A WebSocket handshake is not paused, so it reaches a host the policy refuses. The Fetch domain does not say so;
+  observed on Chrome 158, and checked by `scripts/cdp_browser_smoke.py`.
 - A shared worker target has a `Fetch` domain, and its requests are paused on its own session.
 - A dedicated worker target has no `Fetch` domain (`Fetch.enable` answers "'Fetch.enable' wasn't found"); its
   requests are paused on the session of the page that started it.
@@ -139,7 +141,8 @@ def find_chrome() -> str:
     )
 
 
-async def start_process(args: list[str]) -> Process:
+# The suite replaces this with a fake process; `scripts/cdp_browser_smoke.py` runs it against a real Chrome.
+async def start_process(args: list[str]) -> Process:  # pragma: no cover
     """Start Chrome as the leader of a new process group, so teardown can reach every process it starts."""
     return await anyio.open_process(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
@@ -207,6 +210,7 @@ class CDPClient:
         self._event_waiters: list[tuple[str | None, str, asyncio.Future[dict[str, object]]]] = []
         self._handlers: dict[str, EventHandler] = {}
         self._handler_tasks: set[asyncio.Task[None]] = set()
+        self._session_futures: list[asyncio.Future[CDPSession]] = []
 
     @asynccontextmanager
     async def run(self) -> AsyncGenerator[None]:
@@ -220,6 +224,12 @@ class CDPClient:
                 task.cancel()
             with anyio.CancelScope(shield=True):
                 await asyncio.gather(reader, *self._handler_tasks, return_exceptions=True)
+
+    def session_future(self) -> asyncio.Future[CDPSession]:
+        """Return a future for a session the caller resolves, failed like every waiter if the connection closes first."""
+        future: asyncio.Future[CDPSession] = asyncio.get_running_loop().create_future()
+        self._session_futures.append(future)
+        return future
 
     def on(self, method: str, handler: EventHandler) -> None:
         """Call `handler` for every `method` event, each in its own task so it can send commands of its own."""
@@ -275,7 +285,11 @@ class CDPClient:
     def _fail_waiters(self) -> None:
         """Fail every outstanding request and event waiter once the connection is gone, so none hangs."""
         error = ConnectionError('Chrome DevTools connection closed')
-        waiters = [*self._pending.values(), *(future for _, _, future in self._event_waiters)]
+        waiters: list[asyncio.Future[dict[str, object]] | asyncio.Future[CDPSession]] = [
+            *self._pending.values(),
+            *(future for _, _, future in self._event_waiters),
+            *self._session_futures,
+        ]
         self._event_waiters.clear()
         for future in waiters:
             if not future.done():

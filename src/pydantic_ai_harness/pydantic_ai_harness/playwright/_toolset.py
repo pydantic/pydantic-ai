@@ -144,7 +144,6 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._browser_egress import (
     BLANK_PAGE as _BLANK_PAGE,
-    DATA_RESOURCE_TYPES as _DATA_RESOURCE_TYPES,
     DEFAULT_ALLOWLIST_REACH as DEFAULT_ALLOWLIST_REACH,
     DEFAULT_RESOLVED_KINDS as DEFAULT_RESOLVED_KINDS,
     EgressPolicy as EgressPolicy,
@@ -152,6 +151,7 @@ from pydantic_ai_harness._browser_egress import (
     RequestKind as RequestKind,
     is_blocked_address as is_blocked_address,
     refusal_reason,
+    request_kind,
 )
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
@@ -453,20 +453,6 @@ def _scroll_position(reported: object) -> str:
     if after == before:
         return f'Position unchanged, {after} of {furthest} px down.'
     return f'{after} of {furthest} px down.'
-
-
-def _request_kind(request: PlaywrightRequest, top_level: bool) -> RequestKind:
-    """Classify a Playwright request for the policy.
-
-    A document is a navigation only in the main frame; the same type inside an
-    embedded frame is what loads an identity provider or a payment step, which a
-    policy usually treats differently.
-    """
-    if request.resource_type in _DATA_RESOURCE_TYPES:
-        return 'data'
-    if request.is_navigation_request():
-        return 'navigation' if top_level else 'subframe'
-    return 'subresource'
 
 
 _CREDENTIAL_PARAMETERS = (
@@ -1332,7 +1318,7 @@ class PlaywrightBrowserSession:
             top_level = frame == frame.page.main_frame
         except PlaywrightError:
             top_level = True
-        kind = _request_kind(request, top_level)
+        kind = request_kind(request.resource_type, is_navigation=request.is_navigation_request(), top_level=top_level)
         reason = await self.decide(
             EgressRequest(
                 url=request.url,

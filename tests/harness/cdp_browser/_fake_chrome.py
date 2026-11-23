@@ -40,9 +40,8 @@ class FakeProcess:
         return self.returncode
 
     def exit(self, code: int) -> None:
-        if self.returncode is None:
-            self.returncode = code
-            self.exited.set()
+        self.returncode = code
+        self.exited.set()
 
     def kill(self) -> None:
         """What Windows teardown calls; like asyncio's, it raises for a process that already exited."""
@@ -79,6 +78,14 @@ class FakeChrome:
     """Methods to answer with a protocol error, and its message."""
     error_targets: set[str] = field(default_factory=set[str])
     """Target types whose `Fetch.enable` is answered with an error."""
+    unanswered_targets: set[str] = field(default_factory=set[str])
+    """Target types whose `Fetch.enable` is never answered."""
+    redirects: dict[str, str] = field(default_factory=dict[str, str])
+    """Navigation URLs that redirect, and where to: the redirect is paused as a request of its own, as Chrome does."""
+    close_after_auto_attach: bool = False
+    """Close the connection once the browser connection turns on auto-attach, before any tab is attached."""
+    hanging: anyio.Event = field(default_factory=anyio.Event)
+    """Set when the `hang` expression arrives."""
     bare_replies: set[str] = field(default_factory=set[str])
     """Methods to answer with no `result` at all."""
     child_targets: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
@@ -191,7 +198,10 @@ class FakeChrome:
             return
         if method == 'Target.setAutoAttach':
             await self._reply(message, {})
-            if session_id is None:
+            if session_id is None and self.close_after_auto_attach:
+                assert self._ws is not None
+                await self._ws.close()
+            elif session_id is None:
                 for event in self.browser_events:
                     await self.send_raw(event)
                 if self.attach_page:
@@ -199,6 +209,8 @@ class FakeChrome:
             elif session_id == PAGE_SESSION:
                 for child in self.child_targets:
                     await self._attach(child, PAGE_SESSION)
+        elif method == 'Fetch.enable' and self._target_type(session_id) in self.unanswered_targets:
+            return
         elif method == 'Fetch.enable' and self._target_type(session_id) in self.error_targets:
             await self.send_raw(
                 {'id': message['id'], 'error': {'code': -32601, 'message': "'Fetch.enable' wasn't found"}}
@@ -209,9 +221,19 @@ class FakeChrome:
             decided.set()
             await self._reply(message, {})
         elif method == 'Page.navigate':
+            url = str(params['url'])
             outcome = await self._pause(
-                {'url': params['url'], 'resourceType': 'Document', 'frameId': PAGE_TARGET_ID, 'sessionId': PAGE_SESSION}
+                {'url': url, 'resourceType': 'Document', 'frameId': PAGE_TARGET_ID, 'sessionId': PAGE_SESSION}
             )
+            if outcome == 'continue' and url in self.redirects:
+                outcome = await self._pause(
+                    {
+                        'url': self.redirects[url],
+                        'resourceType': 'Document',
+                        'frameId': PAGE_TARGET_ID,
+                        'sessionId': PAGE_SESSION,
+                    }
+                )
             if outcome == 'fail':
                 await self._reply(message, {'frameId': PAGE_TARGET_ID, 'errorText': 'net::ERR_BLOCKED_BY_CLIENT'})
             else:
@@ -237,6 +259,7 @@ class FakeChrome:
 
     async def _evaluate(self, message: dict[str, object], expression: str, session_id: str | None) -> None:
         if expression == 'hang':
+            self.hanging.set()
             return
         if expression == 'disconnect':
             assert self._ws is not None

@@ -138,7 +138,7 @@ async def resolve_host(host: str) -> tuple[str, ...] | None:
     if cached is not None and cached[0] > now:
         return cached[1]
     try:
-        addresses = await asyncio.wait_for(getaddrinfo(host), RESOLUTION_TIMEOUT_SECONDS)  # noqa: TID251  (not converted to anyio yet)
+        addresses = await asyncio.wait_for(getaddrinfo(host), RESOLUTION_TIMEOUT_SECONDS)  # noqa: TID251
     except (TimeoutError, OSError, UnicodeError):
         return None
     if len(resolution_cache) >= RESOLUTION_CACHE_MAX:
@@ -152,7 +152,8 @@ async def getaddrinfo(host: str) -> tuple[str, ...]:  # pragma: no cover
 
     The one place the capability performs a real lookup, and therefore the seam the
     test suite replaces so that no test depends on a resolver. What it does is
-    checked against live DNS in `scripts/playwright_smoke.py::_check_private_name_block` and `scripts/cdp_browser_smoke.py`.
+    checked against live DNS in `scripts/playwright_smoke.py::_check_private_name_block` and
+    `scripts/cdp_browser_smoke.py`.
     """
     infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
     return tuple(sorted({str(info[4][0]) for info in infos}))
@@ -184,6 +185,20 @@ Playwright's `resource_type` values, which are the Chrome DevTools Protocol's `N
 
 `ping` is `navigator.sendBeacon`, which is a send channel like the rest of them.
 """
+
+
+def request_kind(resource_type: str, *, is_navigation: bool, top_level: bool) -> RequestKind:
+    """Classify a request for the policy from its lowercased resource type, so both browsers judge it alike.
+
+    A document is a navigation only in the main frame; the same type inside an
+    embedded frame is what loads an identity provider or a payment step, which a
+    policy usually treats differently.
+    """
+    if resource_type in DATA_RESOURCE_TYPES:
+        return 'data'
+    if is_navigation:
+        return 'navigation' if top_level else 'subframe'
+    return 'subresource'
 
 
 @dataclass(frozen=True)

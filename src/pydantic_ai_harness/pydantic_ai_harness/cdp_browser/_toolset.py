@@ -18,12 +18,11 @@ from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._browser_egress import (
-    DATA_RESOURCE_TYPES,
     DEFAULT_ALLOWLIST_REACH,
     EgressPolicy,
     EgressRequest,
-    RequestKind,
     refusal_reason,
+    request_kind,
 )
 from pydantic_ai_harness._typeguards import is_str_keyed_dict
 from pydantic_ai_harness.cdp_browser._client import CDPClient, CDPError, CDPSession, launch_chrome
@@ -103,7 +102,10 @@ so if what you need is missing, wait briefly and evaluate again.
 """
 
 
-DEFAULT_REACH = "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) may reach"
+DEFAULT_REACH = (
+    "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) "
+    'may reach'
+)
 """What the allowlist bounds under `DEFAULT_ALLOWLIST_REACH`; any other reach is named by `EgressPolicy.describe()`."""
 
 
@@ -113,15 +115,6 @@ class AttachedTarget:
 
     target_id: str
     type: str
-
-
-def request_kind(resource_type: str, top_level: bool) -> RequestKind:
-    """Classify a paused request for the egress policy, from CDP's `Network.ResourceType` lowercased."""
-    if resource_type in DATA_RESOURCE_TYPES:
-        return 'data'
-    if resource_type == 'document':
-        return 'navigation' if top_level else 'subframe'
-    return 'subresource'
 
 
 def screenshot_return(result: dict[str, object], params: dict[str, object]) -> ToolReturn[str] | str:
@@ -159,11 +152,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
     ):
         self.policy = policy if policy is not None else EgressPolicy()
         # CDP mistakes are common and cheap to correct, so allow a few in a row
-        reach = (
-            DEFAULT_REACH if self.policy.allowlist_reach == DEFAULT_ALLOWLIST_REACH else 'Hosts the browser may reach'
-        )
-        instructions = INSTRUCTIONS.format(reach=reach, hosts=self.policy.describe())
-        super().__init__(id=id, instructions=instructions, max_retries=3)
+        super().__init__(id=id, instructions=self._describe_tool, max_retries=3)
         self.headless = headless
         self.chrome_path = chrome_path
         self.chrome_sandbox = chrome_sandbox
@@ -176,8 +165,14 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         self._first_page: asyncio.Future[CDPSession] | None = None
         self._targets: dict[str, AttachedTarget] = {}
 
+    def _describe_tool(self) -> str:
+        """The tool's instructions, read from the policy on each request so they name the hosts the guard allows."""
+        default = self.policy.allowlist_reach == DEFAULT_ALLOWLIST_REACH
+        reach = DEFAULT_REACH if default else 'Hosts the browser may reach'
+        return INSTRUCTIONS.format(reach=reach, hosts=self.policy.describe())
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CDPBrowserToolset[AgentDepsT]:
-        # a fresh toolset, so concurrent runs never share a browser
+        """Give each run a fresh toolset, so concurrent runs never share a browser."""
         return CDPBrowserToolset(
             headless=self.headless,
             chrome_path=self.chrome_path,
@@ -212,7 +207,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
 
     async def _open_tab(self, client: CDPClient) -> CDPSession:
         """Guard every target Chrome has or opens, and return the session of the tab it started with."""
-        self._first_page = asyncio.get_running_loop().create_future()
+        self._first_page = client.session_future()
         client.on('Target.attachedToTarget', self._attached)
         client.on('Fetch.requestPaused', self._request_paused)
         client.on('Page.javascriptDialogOpening', self._dialog_opening)
@@ -260,7 +255,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         top_level = target is not None and target.type == 'page' and params.get('frameId') == target.target_id
         egress = EgressRequest(
             url=str(request.get('url')),
-            kind=request_kind(resource_type, top_level),
+            kind=request_kind(resource_type, is_navigation=resource_type == 'document', top_level=top_level),
             resource_type=resource_type,
             method=str(request.get('method', 'GET')),
             top_level=top_level,
@@ -296,7 +291,8 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         Examples:
             `browser_cdp(method='Page.navigate', params={'url': url}, wait_for_event='Page.loadEventFired')`
             `browser_cdp(method='Runtime.evaluate', params={'expression': 'document.title', 'returnByValue': True})`
-            `browser_cdp(method='Input.dispatchMouseEvent', params={'type': 'mousePressed', 'x': 10, 'y': 20, 'button': 'left', 'clickCount': 1})`
+            `browser_cdp(method='Input.dispatchMouseEvent', params={'type': 'mousePressed', 'x': 10, 'y': 20,
+            'button': 'left', 'clickCount': 1})`
             `browser_cdp(method='Input.dispatchKeyEvent', params={'type': 'keyDown', 'key': 'Enter', 'text': '\r'})`
 
         Args:

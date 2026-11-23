@@ -11,7 +11,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._browser_egress import EgressPolicy
@@ -24,7 +24,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class CDPBrowser(AbstractCapability[AgentDepsT]):
-    """Lets the agent drive a Chrome tab by sending raw [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) commands.
+    """Lets the agent drive a Chrome tab by sending raw Chrome DevTools Protocol commands.
+
+    Protocol reference: <https://chromedevtools.github.io/devtools-protocol/>.
 
     Adds one tool, `browser_cdp`. Each run launches its own Chrome with a throwaway profile and closes it when the
     run ends. Raw CDP is a low-level API, so models do best with it when they write code that calls the tool in
@@ -90,7 +92,7 @@ class CDPBrowser(AbstractCapability[AgentDepsT]):
     """
 
     policy: EgressPolicy | None = None
-    """Full egress policy, the same `EgressPolicy` `PlaywrightBrowser` takes, for rules the two shorthands cannot express.
+    """Full egress policy, the same `EgressPolicy` `PlaywrightBrowser` takes, for rules the shorthands cannot express.
 
     Mutually exclusive with `allowed_domains` and `block_private_addresses`. Absent from `from_spec`, since a
     policy subclass can carry arbitrary code.
@@ -142,6 +144,7 @@ class CDPBrowser(AbstractCapability[AgentDepsT]):
         return self
 
     def get_toolset(self) -> CDPBrowserToolset[AgentDepsT]:
+        """Provide the `browser_cdp` tool."""
         return CDPBrowserToolset(
             headless=self.headless,
             chrome_path=self.chrome_path,

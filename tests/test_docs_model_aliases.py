@@ -33,6 +33,7 @@ EXEMPT_PAGES = {
     'migration.md': 'migration notes name the models of their version',
     'capabilities/thinking.md': 'thinking support and settings differ per model',
     'evals/evaluators/built-in.md': "documents the judge's default model",
+    'harness/cdp-browser.md': 'reports a benchmark run of the models it measured',
     'harness/clai2.md': 'generated from the CLAI README, which GitHub and PyPI render without resolving aliases',
     'harness/compaction.md': 'context windows differ per model',
     'harness/gh-aw.md': 'the engine runs `openai/` models on Chat Completions, where the aliased ones reject tools at their default reasoning effort',

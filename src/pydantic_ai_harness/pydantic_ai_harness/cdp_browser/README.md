@@ -66,6 +66,8 @@ With `wait_for_event`, such as `'Page.loadEventFired'`, it waits for that event 
 - Page dialogs (`alert`, `confirm`, `prompt`) are dismissed as they open, since an open dialog blocks every
   command. A `beforeunload` prompt is accepted, so the navigation that raised it goes through.
 - Downloads are denied.
+- Results come back whole. Under Code Mode they stay in the script; without it, add
+  [Tool Output Limits](../tool_output_limits/) to cap what reaches the model.
 
 The tool allows three retries in a row, since CDP mistakes are common and the model corrects them from the message.
 
@@ -130,11 +132,14 @@ Chrome launches when the run starts, before the first model request, and the run
 Playwright Browser, a run that never calls the tool still launches one. When the run ends, Chrome is asked to close,
 its process group is killed, and its profile directory is removed once Chrome's processes release it. Concurrent runs each get their own Chrome.
 
-Durable execution (such as [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/)) is rejected at agent construction: a live
-browser cannot survive activity replay or a worker restart.
+An agent with a durability capability (such as
+[Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/)'s `TemporalDurability`) is rejected
+at construction: a live browser cannot survive activity replay or a worker restart.
 
 `CDPBrowser` emits no spans of its own. Core's tool-call spans record each `browser_cdp` call, with its arguments and
-result under the usual content settings. Requests the egress policy refuses are not recorded.
+result under the usual content settings. Requests the egress policy refuses get no span: Chrome reports them on its
+event stream outside any tool call, and a refused navigation already shows in its tool result as
+`net::ERR_BLOCKED_BY_CLIENT`.
 
 ## Choosing a browser capability
 

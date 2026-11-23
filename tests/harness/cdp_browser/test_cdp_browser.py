@@ -15,6 +15,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -41,6 +42,7 @@ from pydantic_ai_harness.cdp_browser import (
     _client as client_module,
     _toolset as toolset_module,
 )
+from tests.conftest import no_leaked_tasks
 
 from ._fake_chrome import PAGE_SESSION, FakeChrome, pause_expression
 
@@ -117,6 +119,9 @@ class TestCDPBrowser:
                 'Runtime.runIfWaitingForDebugger',
             ]
         )
+        assert [params for _, method, params in chrome.received if method == 'Browser.setDownloadBehavior'] == [
+            {'behavior': 'deny'}
+        ] * 2
         # Chrome exited when it was asked to, so there was no process group left to kill.
         assert chrome.killed_groups == []
 
@@ -257,6 +262,63 @@ class TestCDPBrowser:
             ['Fetch.enable', 'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger', 'Fetch.failRequest']
         )
         assert commands(chrome, 'worklet-session') == ['Fetch.enable']
+        assert {params['errorReason'] for _, method, params in chrome.received if method == 'Fetch.failRequest'} == {
+            'BlockedByClient'
+        }
+
+    async def test_a_redirect_is_guarded_hop_by_hop(self, chrome: FakeChrome):
+        """Chrome pauses each redirect hop as a request of its own, so a hop to a refused host fails the navigation."""
+        chrome.redirects = {'https://example.com/out': 'http://10.0.0.1/'}
+        result = await Agent(
+            calls_then_reply({'method': 'Page.navigate', 'params': {'url': 'https://example.com/out'}}),
+            capabilities=[CDPBrowser()],
+        ).run('go')
+        assert tool_returns(result.all_messages()) == snapshot(
+            [{'frameId': 'PAGE-TARGET', 'errorText': 'net::ERR_BLOCKED_BY_CLIENT'}]
+        )
+        assert chrome.verdicts == [('https://example.com/out', 'continue'), ('http://10.0.0.1/', 'fail')]
+
+    async def test_a_target_chrome_never_answers_stays_paused(
+        self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The guard never resumes a target it could not guard, and the run still ends with the handler stopped."""
+        chrome.child_targets = [{'sessionId': 'frame-session', 'targetId': 'FRAME-TARGET', 'type': 'iframe'}]
+        chrome.unanswered_targets = {'iframe'}
+        # Chrome ignoring close keeps the connection open, so the waiting handler is still running at teardown.
+        chrome.ignore_close = True
+        monkeypatch.setattr(client_module, 'SHUTDOWN_GRACE_SECONDS', 0.01)
+        result = await Agent(calls_then_reply(evaluate('document.title')), capabilities=[CDPBrowser()]).run('go')
+        assert tool_returns(result.all_messages()) == [{'result': {'type': 'string', 'value': 'Example Domain'}}]
+        assert commands(chrome, 'frame-session') == ['Fetch.enable']
+        assert chrome.killed_groups == [chrome.process.pid]
+        assert not profile_of(chrome).exists()
+
+    async def test_a_cancelled_run_still_closes_chrome(self, chrome: FakeChrome):
+        """Teardown is shielded, so cancelling a run mid-command still closes Chrome and removes its profile."""
+        agent = Agent(calls_then_reply(evaluate('hang')), capabilities=[CDPBrowser()])
+        with no_leaked_tasks(), anyio.CancelScope() as scope:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(agent.run, 'go')
+                await chrome.hanging.wait()
+                scope.cancel()
+        assert scope.cancelled_caught
+        assert chrome.process.returncode == 0
+        assert commands(chrome, None)[-1] == 'Browser.close'
+        assert not profile_of(chrome).exists()
+
+    async def test_instructions_follow_the_policy(self, chrome: FakeChrome):
+        """A host added to the allowlist after construction is both allowed and named to the model."""
+        seen: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.instructions)
+            return ModelResponse(parts=[TextPart('ok')])
+
+        domains = ['example.com']
+        browser = CDPBrowser(allowed_domains=domains)
+        domains.append('other.org')
+        await Agent(FunctionModel(respond), capabilities=[browser]).run('hi')
+        assert seen[0] is not None and 'other.org' in seen[0].splitlines()[-1]
 
     async def test_malformed_messages_are_ignored(self, chrome: FakeChrome):
         """Messages no real Chrome sends are skipped rather than failing the run."""
@@ -304,20 +366,19 @@ class TestCDPBrowser:
         assert 'Runtime.terminateExecution' in commands(chrome, PAGE_SESSION)
 
     async def test_an_event_that_never_arrives_times_out(self, chrome: FakeChrome):
+        """An abandoned waiter is dropped by the next event, or failed with the connection when none comes."""
         navigate = {'method': 'Page.navigate', 'params': {'url': 'https://example.com'}}
+        stopped = {**navigate, 'wait_for_event': 'Page.frameStoppedLoading', 'timeout': 0.05}
         result = await Agent(
-            calls_then_reply(
-                {**navigate, 'wait_for_event': 'Page.frameStoppedLoading', 'timeout': 0.05},
-                {**navigate, 'wait_for_event': 'Page.loadEventFired'},
-            ),
+            calls_then_reply(stopped, {**navigate, 'wait_for_event': 'Page.loadEventFired'}, stopped),
             capabilities=[CDPBrowser()],
         ).run('go')
-        assert tool_returns(result.all_messages()) == snapshot(
-            [
-                "Timed out after 0.05s waiting for 'Page.frameStoppedLoading'; the command returned {'frameId': 'PAGE-TARGET'}",
-                {'result': {'frameId': 'PAGE-TARGET'}, 'event': {'timestamp': 1.0}},
-            ]
-        )
+        timed_out = "Timed out after 0.05s waiting for 'Page.frameStoppedLoading'; the command returned {'frameId': 'PAGE-TARGET'}"
+        assert tool_returns(result.all_messages()) == [
+            timed_out,
+            {'result': {'frameId': 'PAGE-TARGET'}, 'event': {'timestamp': 1.0}},
+            timed_out,
+        ]
 
     async def test_protocol_errors_are_retries(self, chrome: FakeChrome):
         chrome.errors = {'DOM.querySelector': 'Could not find node with given id'}
@@ -446,6 +507,23 @@ class TestCDPBrowserLaunch:
         monkeypatch.setattr(client_module, 'SHUTDOWN_GRACE_SECONDS', 0.01)
         await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
         assert chrome.killed_groups == [chrome.process.pid]
+
+    async def test_windows_kills_the_process_instead_of_its_group(
+        self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch
+    ):
+        chrome.ignore_close = True
+        monkeypatch.setattr(client_module, 'SHUTDOWN_GRACE_SECONDS', 0.01)
+        monkeypatch.setattr(sys, 'platform', 'win32')
+        await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
+        assert chrome.process.returncode == -9
+        assert chrome.killed_groups == []
+
+    async def test_a_connection_lost_before_the_first_tab_fails_at_once(self, chrome: FakeChrome):
+        """The wait for the first tab ends with the connection, instead of running out its setup timeout."""
+        chrome.close_after_auto_attach = True
+        with pytest.raises(ConnectionError, match='Chrome DevTools connection closed'):
+            await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
+        assert not profile_of(chrome).exists()
 
     async def test_profile_removal_is_retried(self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch):
         """A child process still writing to the profile makes the first removal leave files behind."""
