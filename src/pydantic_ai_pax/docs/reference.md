@@ -1216,9 +1216,10 @@ lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
-accent colour, with the prompt text in bold. This keeps your prompts apart from
-answers. Steering messages, commands entered during a turn, and prompts restored by
-`/resume` look the same.
+accent colour, with the prompt text in bold and every row after its first (wrapped or
+its own line) indented under the text. This keeps your prompts apart from answers.
+Steering messages, commands entered during a turn, and prompts restored by `/resume`
+look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
@@ -1239,8 +1240,9 @@ a Termflow live transcript panel on the alternate screen, for the rest of the se
 there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
-changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+changing the draft. While scrolled back, `↓ more below · PgDn` shows in the rule
+below the draft, covering no transcript text. New output leaves a scrolled view in
+place; returning to the bottom or submitting follows new output again. Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select

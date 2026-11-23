@@ -78,6 +78,18 @@ async def test_file_changes_show_diffs(operation: str) -> None:
     assert output.getvalue() == f'● {operation}_file file.py\n\nvisible diff\n{notice}\n'
 
 
+async def test_a_write_without_a_diff_keeps_one_blank_row() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('write_file', {'path': 'file.py'}, tool_call_id='file'))
+    )
+    await renderer.on_stream_event(
+        FileWrittenEvent(path='file.py', root_dir='/tmp', content_hash='hash', tool_call_id='file')
+    )
+    assert output.getvalue() == '● write_file file.py\n\n'
+
+
 async def test_grep_summary_does_not_wrap_or_print_results() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=30), stop_loading=lambda: None)
