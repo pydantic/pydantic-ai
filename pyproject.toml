@@ -277,6 +277,8 @@ dev = [
     "grpclib>=0.4.7",
     # Validates walked schemas and `TestModel` arguments against their schemas in the conformance tests.
     "jsonschema>=4.25.1",
+    # Shuffles test order when enabled with `-p randomly`; `addopts` turns it off by default.
+    "pytest-randomly>=5.1.0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -588,6 +590,9 @@ strict = true
 anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+# `pytest-randomly` reorders tests and reseeds `random` only where `-p randomly` turns it back on: the stress
+# and nightly shuffled CI runs.
+addopts = "-p no:randomly"
 # Print every thread's stack once a test has run this long, so a shard that hangs until its job times out shows
 # where it hung. The test keeps running.
 faulthandler_timeout = 120
