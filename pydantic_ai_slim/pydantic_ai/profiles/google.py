@@ -174,7 +174,7 @@ class GoogleModelProfile(ModelProfile, total=False):
     """The `thinking_budget` that unified `thinking='minimal'` sends on a model that takes `thinking_budget`.
     Default: `128`, the smallest budget Gemini 2.5 Pro accepts.
 
-    `gemini-2.5-flash-lite` rejects budgets below 512, so it gets 512.
+    `GoogleModel` sets 512 for `gemini-2.5-flash-lite` on the Gemini API, which rejects budgets below 512 there.
     See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
     """
 
@@ -348,18 +348,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
-    _set_minimal_thinking_budget(profile, model_name)
     _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
     return profile
-
-
-def _set_minimal_thinking_budget(profile: GoogleModelProfile, model_name: str) -> None:
-    # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
-    # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex is not probed;
-    # its thinking table lists the same minimum for Gemini 2.5 Flash-Lite:
-    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
-    if model_name.startswith('gemini-2.5-flash-lite'):
-        profile['google_minimal_thinking_budget'] = 512
 
 
 def _with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:
