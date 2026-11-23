@@ -663,7 +663,9 @@ Options are `service_name` (default `pydantic-clai2`), `include_content` and
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+over `LOGFIRE_SEND_TO_LOGFIRE`. Traces carry CLAI's own version as
+`service.version`, which `LOGFIRE_SERVICE_VERSION` and `OTEL_SERVICE_VERSION` do
+not change. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
@@ -3686,7 +3688,9 @@ class Where(Plugin):
 The row is repainted about ten times a second while CLAI works and once a second
 while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
 and free of blocking IO. Return `''` to contribute nothing for a frame.
-Fragments are truncated from the right on a narrow terminal and are readable
+When the row is too narrow, the `plugins` group is hidden after the output count,
+cost, working directory, and other optional fields, and before the model; see the
+[status-line reference](docs/reference.md#status-line). Fragments are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.

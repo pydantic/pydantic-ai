@@ -158,7 +158,7 @@ class Terminal(Generic[DepsT, OutputT]):
             history=self.history,
             images=self.images,
             interrupts=self._shown().interrupts,
-            toolbar=lambda: self._shown().status.toolbar(),
+            toolbar=lambda: self._shown().status.toolbar(width=self.console.width),
             steer=lambda text: self._shown().steer(text),
             run_now=lambda text: self._shown().run_now(text),
             transcript=self.transcript,
@@ -196,7 +196,9 @@ class Terminal(Generic[DepsT, OutputT]):
                 [
                     (theme.color(style), text)
                     for style, text in (
-                        [(theme.MUTED, self.images.notice)] if self.images.notice else self._shown().status.toolbar()
+                        [(theme.MUTED, self.images.notice)]
+                        if self.images.notice
+                        else self._shown().status.toolbar(width=self.console.width)
                     )
                 ]
             ),

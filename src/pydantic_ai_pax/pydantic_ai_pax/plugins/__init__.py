@@ -1308,8 +1308,8 @@ class Plugin(Generic[SettingsT, DepsT]):
 
         The shell repaints the row about ten times a second while it works and once a second while
         the editor sits idle, so keep each fragment cheap and synchronous: it is called for every
-        frame, not once per turn. Fragments are appended in load order, painted `MUTED`, and
-        truncated from the right on a narrow terminal.
+        frame, not once per turn. Fragments are appended in load order and painted `MUTED`; a row too
+        narrow for them hides the whole group; see the status-line section of `docs/reference.md`.
         """
         return ()
 
