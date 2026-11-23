@@ -226,6 +226,4 @@ Extensibility entry points:
 
 Reach for these only when the built-in primitives are genuinely insufficient.
 
-A toolset whose tool calls other tools itself, such as a code sandbox or a dispatcher that looks tools up by name, runs those calls through `ctx.tool_manager.for_nested_calls(ctx, toolset=..., tools=...)`, so they get the same validation, capability hooks and retry accounting as a call the model makes. Never build a `ToolManager` or copy its `failed_tools` / `succeeded_tools` by hand.
-
 For bulk model requests without an agent, use `pydantic_ai.direct.model_request_batch()`. To submit in one process and collect in another, use `model.batch_encode()`, `batch_create()`, `batch_status()`, `batch_results()`, `batch_cancel()` and `batch_decode()`, and store the returned `Batch` handle with the requests' settings and parameters.

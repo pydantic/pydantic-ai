@@ -82,6 +82,8 @@ Examples:
 - MCP servers, which are themselves toolsets
 - wrapper toolsets for approval, deferred loading, or other cross-cutting behavior
 
+A toolset whose tool calls other tools itself, such as a code sandbox or a dispatcher that looks tools up by name, runs those calls through `ctx.tool_manager.for_nested_calls(ctx, toolset=..., tools=...)`, so they get the same validation and capability hooks as a call the model makes. A retry one of them charges counts toward the called tool's `max_retries`, unless the caller passes `wrap_validation_errors=False` to `handle_call` to get the raw error and report it through its own tool. Never build a `ToolManager` or copy its `failed_tools` / `succeeded_tools` by hand.
+
 ## Access Usage Stats, Message History, or Retry Count in Tools
 
 Route this to `@agent.tool` with `RunContext`.
