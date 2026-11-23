@@ -53,6 +53,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from tests.manifests import Exempt
 from tests.pax.key_contract import CLOSE, PICK, Keys, Surface, reader_case, widget_case
 from tests.pax.menu_script import make_context
+from tests.pax.test_accounts import signed
 from tests.pax.test_ask_user_menu import ScreenLog
 from tests.pax.test_plugin_menu import make_loader, run_now
 from tests.pax.test_spinners import catalogue
@@ -161,10 +162,6 @@ def _browse(browser: SessionBrowser, keys: Keys) -> object:
     return browser.loop()
 
 
-async def _signed_in() -> str:
-    return 'Signed in.'
-
-
 async def _never(show: Callable[[str], None]) -> None:
     await anyio.sleep_forever()
 
@@ -180,7 +177,7 @@ KEY_SURFACES: dict[Site, Surface | Exempt] = {
         cases=(
             widget_case(
                 'pick',
-                lambda path: _pick_login({'demo': PluginLogin(name='demo', handler=_signed_in)}, Runners()),
+                lambda path: _pick_login({'demo': PluginLogin(name='demo', handler=signed)}, Runners()),
                 PICK,
             ),
         ),

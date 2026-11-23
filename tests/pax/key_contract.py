@@ -97,10 +97,13 @@ def _pressing(key: str) -> Generator[None]:
 
 
 async def _run_site(show: Callable[[Path], object], tmp_path: Path) -> None:
-    """Run `show` off the event loop, as menus run, then await what it returns when it is a coroutine."""
+    """Run `show` off the event loop, as menus run, and await the coroutine it returns for an async site.
+
+    A synchronous site raises `_Shown` from its widget, so returning at all means the site is async.
+    """
     result = await to_thread.run_sync(show, tmp_path)
-    if inspect.isawaitable(result):
-        await result
+    assert inspect.isawaitable(result), f'{show} returned without running a widget'
+    await result
 
 
 async def _shown(kind: type[WidgetT], show: Callable[[Path], object], tmp_path: Path) -> WidgetT:
@@ -110,7 +113,8 @@ async def _shown(kind: type[WidgetT], show: Callable[[Path], object], tmp_path: 
         def capture(self: object, *args: object, **kwargs: object) -> object:
             raise _Shown(self)
 
-        def unscripted(self: object, *args: object, **kwargs: object) -> object:
+        def unscripted(self: object, *args: object, **kwargs: object) -> object:  # pragma: no cover
+            # Only a case that forgot to script an earlier widget gets here.
             raise AssertionError(f'{show} ran a {type(self).__name__} before its {kind.__name__}: script it')
 
         for widget in (Menu, TextInput, Pager):
@@ -123,7 +127,7 @@ async def _shown(kind: type[WidgetT], show: Callable[[Path], object], tmp_path: 
             widget = event.widget
             assert isinstance(widget, kind)
             return widget
-    raise AssertionError(f'{show} never ran a {kind.__name__}')
+    raise AssertionError(f'{show} never ran a {kind.__name__}')  # pragma: no cover
 
 
 def _termflow_outcome(result: MenuResult | TextInputResult | PagerResult) -> Outcome:

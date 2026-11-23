@@ -87,7 +87,7 @@ def model(name: str, *, base_url: str | None = None) -> OpenRouterModel:
     return OpenRouterModel(ref.name, provider=provider)
 
 
-def choose(names: list[str]) -> str | None:
+def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.
     """Pick one discovered model in Termflow."""
     builder = MenuBuilder('OpenRouter models').items([MenuItem(name, value=name) for name in names])
     result = slash_search(builder, footer='Enter select - Esc cancel', key_source=menu_key).run()
@@ -143,7 +143,7 @@ async def prompt_connection(*, console: Console) -> Connection | None:
     return Connection(token=SecretStr(token.strip()))
 
 
-def connection_action() -> str | None:
+def connection_action() -> str | None:  # pragma: no cover -- real terminal.
     """Reuse saved authentication or replace it from the provider menu."""
     result = (
         MenuBuilder('openrouter connection')
