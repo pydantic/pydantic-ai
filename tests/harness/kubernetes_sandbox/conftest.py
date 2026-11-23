@@ -16,7 +16,16 @@ from typing import TYPE_CHECKING
 import pytest
 
 _HAS_SDK = all(importlib.util.find_spec(name) is not None for name in ('k8s_agent_sandbox', 'grpc'))
-collect_ignore = [] if _HAS_SDK else ['test_conformance.py', 'test_kubernetes_live.py', 'test_kubernetes_sandbox.py']
+collect_ignore = (
+    []
+    if _HAS_SDK
+    else [
+        'test_conformance.py',
+        'test_kubernetes_desktop.py',
+        'test_kubernetes_live.py',
+        'test_kubernetes_sandbox.py',
+    ]
+)
 
 # The SDK-installed and slim jobs take opposite branches.
 if TYPE_CHECKING or _HAS_SDK:  # pragma: no branch

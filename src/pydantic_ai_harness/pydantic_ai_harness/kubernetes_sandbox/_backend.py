@@ -53,6 +53,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
@@ -63,6 +64,8 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
+from pydantic_ai_harness._x11 import desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
     # The `grpc` extra, which the SDK imports only when it first runs a command.
@@ -178,7 +181,7 @@ class _Session:
     commands: AsyncCommandExecutor
 
 
-class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
+class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A sandbox claimed from an agent-sandbox `SandboxWarmPool`, or attached to by its claim.
 
     Construction does no I/O. Without `ref`, the first operation claims a sandbox from `warm_pool`;
@@ -199,6 +202,11 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         working_dir: Absolute directory commands run in, created on a new claim; an attached claim must
             already have it. `None` runs them in sandboxd's root directory.
         env: Environment variables for every command, under each call's own `env`.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`. The image needs Xvfb, `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`
+            (`util-linux`). Without root or passwordless `sudo` nothing is installed, and the first use of the
+            display raises `WorkspaceUnavailableError` naming what is missing. No port is opened for it.
     """
 
     # File operations don't use sandboxd's file API: it serves only paths under its root and moves
@@ -214,6 +222,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         sandbox_timeout: int | None = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             parse_ref(ref)
@@ -253,6 +262,17 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         # An `aclose()` that came while operations were in flight; the last of them closes the connection once.
         self._close_requested = False
         self._operations = 0
+        self._display, self._env = desktop_display(
+            self._run_argv,
+            desktop_size(desktop),
+            self._env,
+            lambda: f'Kubernetes sandbox {self._ref.id if self._ref else "(not created)"}',
+        )
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -292,13 +312,20 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_env_types(env)
         argv = command_argv(command, shell)
         require_asyncio(_ASYNCIO_ONLY)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         # `commands.start()` runs one string under sandboxd's `/bin/sh -c`, so the arguments are quoted
         # into it, as Daytona's backend does. Workaround: sandboxd's `Start` leaves stdin open, where the
         # protocol wants it at EOF, so the exec script redirects it. sandboxd also moves a `cwd` outside its
         # root under the root instead of refusing it, so another directory is entered from the shell. Not
         # tracked upstream yet.
         arguments = argv if self._working_dir is None else [self._working_dir, *argv]
-        command_env = {**self._env, **(env or {})}
+        command_env = {**self._env, **env}
         async with self._operation():
             async with self._lock:
                 session = await self._acquire()
