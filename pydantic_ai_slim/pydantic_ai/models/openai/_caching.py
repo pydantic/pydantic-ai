@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, Required, TypeAlias, cast
 
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionContentPartParam
@@ -22,8 +22,10 @@ _OpenAIPromptCacheTTL: TypeAlias = Literal['30m', '12h']
 """The prompt cache TTLs OpenAI accepts on GPT-5.6 and later."""
 
 
-class _OpenAIPromptCacheBreakpoint(TypedDict):
-    mode: Literal['explicit']
+class _OpenAIPromptCacheBreakpoint(TypedDict, total=False):
+    # The SDK's `PromptCacheBreakpoint` shape, so a value of this type can be assigned into its content params.
+    mode: Required[Literal['explicit']]
+    ttl: _OpenAIPromptCacheTTL
 
 
 _LEADING_CACHE_POINT_ERROR = (
