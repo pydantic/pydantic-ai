@@ -1149,7 +1149,7 @@ async def test_ctrl_o_expands_command_output_in_place_and_keeps_it_across_a_resi
 
         assert shown()[:2] == ['● shell make test', '  ⎿ exit 0 · 2 lines · ctrl+o to expand']
         live.feed('ctrl-o')
-        assert live.notice == 'Showing tool output.'
+        assert live.notice == 'Showing command output.'
         expanded = ['● shell make test', '  ⎿ exit 0 · 2 lines', '    passed one', '    passed two']
         assert shown()[:4] == expanded
         assert live.output.full_screen is not inline, 'inline output that still fits stays inline'
@@ -1161,7 +1161,7 @@ async def test_ctrl_o_expands_command_output_in_place_and_keeps_it_across_a_resi
         live.output.resize_notice()
         assert shown()[:4] == expanded
         live.feed('ctrl-o')
-        assert live.notice == 'Hiding tool output.'
+        assert live.notice == 'Hiding command output.'
         # The hint is left out where it does not fit.
         assert shown()[:3] == ['● shell make test', '  ⎿ exit 0 · 2 lines', '● shell ls']
 

@@ -286,8 +286,8 @@ class LivePrompt:
             self.refresh_completions()
 
     def toggle_details(self) -> str:
-        """Expand or collapse the output of every tool result in the transcript, for Ctrl+O."""
-        return 'Showing tool output.' if self.output.toggle_details() else 'Hiding tool output.'
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O."""
+        return 'Showing command output.' if self.output.toggle_details() else 'Hiding command output.'
 
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""

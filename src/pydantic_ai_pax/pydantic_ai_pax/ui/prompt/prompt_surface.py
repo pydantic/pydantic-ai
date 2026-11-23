@@ -205,7 +205,7 @@ class PromptSurface(io.StringIO):
             return self.transcript.markdown(render=render, width=width, changed=self.changed, expanded=expanded)
 
     def toggle_details(self) -> bool:
-        """Expand or collapse every tool result in the transcript, for Ctrl+O; returns whether they are expanded.
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O; returns whether they are expanded.
 
         The terminal's scrollback cannot change, so results already printed there move the panel to
         the alternate screen, which paints them from the transcript.
