@@ -5,10 +5,14 @@ import re
 import select
 import sys
 import time
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from prompt_toolkit.key_binding import KeyPress
+from prompt_toolkit.application.current import get_app_session
+from prompt_toolkit.input.typeahead import store_typeahead
+from prompt_toolkit.input.vt100_parser import Vt100Parser
+from prompt_toolkit.key_binding import KeyPress
+
+if sys.platform != 'win32':  # pragma: no branch  # No `termios` on Windows, where pax never asks.
+    import termios
 
 _QUERY = b'\x1b]11;?\x07\x1b[c'
 """Ask for the background colour (OSC 11), then for the device attributes (DA1).
@@ -56,8 +60,6 @@ def _on_a_terminal() -> bool:
 
 def _read(*, query: bytes, timeout: float) -> bytes:
     """Send `query`, then read stdin until the device attributes reply or `timeout`; typed keys go to the prompt."""
-    import termios
-
     saved = termios.tcgetattr(0)
     modes = termios.tcgetattr(0)
     modes[3] &= ~(termios.ICANON | termios.ECHO)  # The reply is read as it comes, and is not echoed.
@@ -84,10 +86,6 @@ def _read(*, query: bytes, timeout: float) -> bytes:
 
 def _keep_for_the_prompt(typed: bytes) -> None:
     """Hand keys typed while waiting for the reply to the prompt, through prompt-toolkit's type-ahead store."""
-    from prompt_toolkit.application.current import get_app_session
-    from prompt_toolkit.input.typeahead import store_typeahead
-    from prompt_toolkit.input.vt100_parser import Vt100Parser
-
     keys: list[KeyPress] = []
     parser = Vt100Parser(keys.append)
     parser.feed(typed.decode(errors='replace'))
