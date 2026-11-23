@@ -172,9 +172,11 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 
 Some providers flag an action for a person to confirm, and give their reason in the call's
 [`confirmation`](https://pydantic.dev/docs/ai/api/pydantic-ai/computer_use/#pydantic_ai.computer_use.ComputerCallPart.confirmation). `ComputerUse` asks for approval of
-such a call without a hook: it raises `ApprovalRequired` while it validates the call, before your tool hooks run,
-with the reason in the request's `metadata` as `{'reason': ...}`. A flagged call fails the run unless the
-agent has `DeferredToolRequests` in its `output_type` or a `HandleDeferredToolCalls` handler.
+such a call without a hook: the tool raises `ApprovalRequired` before it does anything, so no hook can skip it,
+with the reason in the request's `metadata` as `{'reason': ...}`. A hook like the one above runs first and asks
+without the reason. Once you approve the call, its result has `confirmed` set, so the provider is told a person
+approved it. A flagged call fails the run unless the agent has `DeferredToolRequests` in its `output_type` or a
+`HandleDeferredToolCalls` handler.
 
 ## Screen size
 
