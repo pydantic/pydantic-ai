@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
-from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
+from publish_douwebot_review import (
+    APPROVAL_BODY,
+    DOUWEBOT_MARKER,
+    EARLIER_REVIEW_ATTRIBUTIONS,
+    REVIEW_BODIES,
+    REVIEW_ENGINES,
+)
 from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
@@ -201,8 +207,9 @@ def douwebot_approval(
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
             if (engine := marker[3]) in ('claude', 'opencode', 'opencode-zai', 'opencode-deepinfra'):
-                suffix = '\n\n' + REVIEW_ENGINES[engine]
-                if body.endswith(suffix):
+                attributions = (REVIEW_ENGINES[engine], *EARLIER_REVIEW_ATTRIBUTIONS.get(engine, ()))
+                suffix = next((f'\n\n{text}' for text in attributions if body.endswith(f'\n\n{text}')), None)
+                if suffix:
                     body = body[: -len(suffix)]
                 else:
                     verdict.failures.append('Douwebot review engine attribution is missing.')

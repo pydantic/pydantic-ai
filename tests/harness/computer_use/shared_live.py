@@ -24,5 +24,5 @@ TASK = 'Take a screenshot, then click at x=100 y=200, type "hello", and reply "d
 DONE = [Click(x=100, y=200), TypeText(text='hello')]
 
 
-def _is_object_list(value: object) -> TypeGuard[list[object]]:
+def is_object_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
