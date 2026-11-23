@@ -258,32 +258,15 @@ With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.
 
 ## Give the agent a desktop
 
-Pass `desktop=True` to give the sandbox a screen. Add [`ComputerUse`](computer-use.md) so the agent can see that screen and use its mouse and keyboard:
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[E2BSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size applies when the screen first starts.
 
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
-from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Google Chrome. Your own `template` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `startxfce4`.
 
-agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(desktop=True), ComputerUse()])
-
-
-async def main():
-    result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.')
-    print(result.output)
-```
-
-A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Google Chrome. The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. To also give the agent the sandbox's shell and files, add `Coder`.
-
-The desktop keeps `printscreen` and the media and volume keys for itself, so the window in front never gets them.
-
-Your own `template` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `startxfce4`.
-
-The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
-
-When `sandbox_timeout` runs out, a run that is still going fails. Set `sandbox_timeout` longer than your longest task.
-
-E2B has no live view of the desktop. To watch a run, save each screenshot as it arrives, as shown in [Watching a run](computer-use.md#watching-a-run).
+- When `sandbox_timeout` runs out, a run that is still going fails. Set it longer than your longest task.
+- The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+- The desktop keeps `printscreen` and the media and volume keys for itself, so the window in front never gets them.
 
 ## Clean up
 
