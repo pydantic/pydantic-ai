@@ -2,8 +2,8 @@
 
 Each list holds the bound durability other than by an item of `root_capability.capabilities`, so it would go
 through `for_agent` again and register the engine's durable units a second time. The refusal lives in
-`BaseDurabilityCapability`, so every engine applies it; the DBOS and Temporal test modules build the agent with
-their durability capability and parametrize over `REBIND_CASES`.
+`BaseDurabilityCapability`; each engine's test module builds the agent with its durability capability and
+parametrizes over `REBIND_CASES`.
 
 This module must stay importable inside the Temporal workflow sandbox, which re-imports it: no engine imports.
 """
