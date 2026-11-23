@@ -1598,8 +1598,7 @@ ENTRY_POINT_PARAMETERS: dict[tuple[EntryPointGroup, str], Swept | NotExported | 
         "Its provider and id are the run span's `pydantic_ai.workspace.*`, per "
         '`test_workspace_identity_is_recorded_without_content`. The paths and commands its calls carry '
         'are swept in `test_no_content_reaches_telemetry_from_workspace_calls`, and inside a Temporal activity in '
-        '`test_temporal_workspace_activity_keeps_the_workers_content_setting` and '
-        '`test_temporal_workspace_activity_keeps_the_runs_content_setting`.'
+        '`test_temporal_workspace_activity_records_content_only_if_the_run_and_the_worker_do`.'
     ),
     ('run', 'spec'): Swept(
         channels=('spec',),

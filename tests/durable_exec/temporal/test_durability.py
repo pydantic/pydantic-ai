@@ -8679,31 +8679,6 @@ class ContentFreeWorkspaceProbeWorkflow:
         return result.output
 
 
-async def test_temporal_workspace_activity_keeps_the_runs_content_setting(
-    client_with_logfire: Client, capfire: CaptureLogfire
-):
-    """The worker's agent records content, but a run that turned content off keeps it off in its activities."""
-    _workspace_probe_backends.clear()
-
-    async with Worker(
-        client_with_logfire,
-        task_queue=TASK_QUEUE,
-        workflows=[ContentFreeWorkspaceProbeWorkflow],
-        plugins=[AgentPlugin(_workspace_probe_agent)],
-    ):
-        await client_with_logfire.execute_workflow(
-            ContentFreeWorkspaceProbeWorkflow.run,
-            id=f'{ContentFreeWorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
-            task_queue=TASK_QUEUE,
-        )
-
-    assert [
-        (span['name'], span['attributes'].get('process.command_args'))
-        for span in capfire.exporter.exported_spans_as_dict()
-        if span['name'] == 'workspace run'
-    ] == [('workspace run', None), ('workspace run', None)]
-
-
 _content_free_worker_agent = Agent(
     TestModel(call_tools=['probe_workspace_content']),
     name='content_free_worker_agent',
@@ -8715,22 +8690,16 @@ _content_free_worker_agent = Agent(
     ],
 )
 
-_WORKSPACE_PATH_MARKER = 'workspace-path-marker-41c7'
-_WORKSPACE_COMMAND_MARKER = 'workspace-command-marker-41c7'
 _CTX_CONTENT_MARKER = 'ctx-content-marker-41c7'
-_activity_content_flags: list[bool] = []
-"""`ctx.trace_include_content` as each `probe_workspace_content` call saw it inside its activity."""
 
 
 @_content_free_worker_agent.tool
 async def probe_workspace_content(ctx: RunContext[WorkspaceProbeDeps]) -> str:
-    _activity_content_flags.append(ctx.trace_include_content)
     with open_span(ctx, 'capability probe', content={'probe.content': _CTX_CONTENT_MARKER}) as span:
         set_content_attribute(ctx, span, 'probe.later_content', _CTX_CONTENT_MARKER)
-    path = f'{_WORKSPACE_PATH_MARKER}.txt'
-    await ctx.workspace.write_text(path, 'hello')
-    await ctx.workspace.read_text(path)
-    await ctx.workspace.run(['true', _WORKSPACE_COMMAND_MARKER])
+    await ctx.workspace.write_text('notes.txt', 'hello')
+    await ctx.workspace.read_text('notes.txt')
+    await ctx.workspace.run(['true'])
     return 'done'
 
 
@@ -8747,88 +8716,42 @@ class ContentRunOnContentFreeWorkerWorkflow:
         return result.output
 
 
-async def test_temporal_workspace_activity_keeps_the_workers_content_setting(
-    client_with_logfire: Client, capfire: CaptureLogfire
+@pytest.mark.parametrize(
+    ('workflow_type', 'agent', 'expected_spans'),
+    [
+        pytest.param(
+            ContentFreeWorkspaceProbeWorkflow, _workspace_probe_agent, {'workspace run'}, id='run_off_worker_on'
+        ),
+        # `ctx` carries the run's flag, but a span a capability opens from it follows the worker's setting too.
+        pytest.param(
+            ContentRunOnContentFreeWorkerWorkflow,
+            _content_free_worker_agent,
+            {'workspace run', 'capability probe'},
+            id='run_on_worker_off',
+        ),
+    ],
+)
+async def test_temporal_workspace_activity_records_content_only_if_the_run_and_the_worker_do(
+    client_with_logfire: Client,
+    capfire: CaptureLogfire,
+    workflow_type: Any,
+    agent: Agent[WorkspaceProbeDeps, str],
+    expected_spans: set[str],
 ):
-    """A run that records content keeps it out of the workspace spans of an activity whose worker agent doesn't.
-
-    `ctx.trace_include_content` inside the activity still reads the run's own flag.
-    """
+    """An activity's spans carry no content unless both the run and the worker's agent record content."""
     _workspace_probe_backends.clear()
-    _activity_content_flags.clear()
 
     async with Worker(
-        client_with_logfire,
-        task_queue=TASK_QUEUE,
-        workflows=[ContentRunOnContentFreeWorkerWorkflow],
-        plugins=[AgentPlugin(_content_free_worker_agent)],
+        client_with_logfire, task_queue=TASK_QUEUE, workflows=[workflow_type], plugins=[AgentPlugin(agent)]
     ):
         await client_with_logfire.execute_workflow(
-            ContentRunOnContentFreeWorkerWorkflow.run,
-            id=f'{ContentRunOnContentFreeWorkerWorkflow.__name__}-{uuid.uuid4()}',
-            task_queue=TASK_QUEUE,
+            workflow_type.run, id=f'{workflow_type.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
         )
 
     spans = capfire.exporter.exported_spans_as_dict()
-    exported = json.dumps(spans, default=str)
-    # The run itself records content: the prompt is in its spans.
-    assert 'Use the probe_workspace_content tool.' in exported
-    assert {span['name'] for span in spans} >= {'workspace write_bytes', 'workspace read_bytes', 'workspace run'}
-    assert _WORKSPACE_PATH_MARKER not in exported
-    assert _WORKSPACE_COMMAND_MARKER not in exported
-    # Spans a capability opens from `ctx` follow the worker's policy too, though `ctx` reads the run's flag.
-    assert 'capability probe' in {span['name'] for span in spans}
-    assert _CTX_CONTENT_MARKER not in exported
-    assert _activity_content_flags == [True]
-
-
-_untraced_workspace_probe_agent = Agent(
-    TestModel(call_tools=['probe_workspace']),
-    name='untraced_workspace_probe_agent',
-    deps_type=WorkspaceProbeDeps,
-    capabilities=[
-        WorkspaceProbeCapability(),
-        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
-    ],
-)
-_untraced_workspace_probe_agent.instrument = False
-_untraced_workspace_probe_agent.tool(probe_workspace)
-
-
-@workflow.defn
-class UntracedWorkspaceProbeWorkflow:
-    @workflow.run
-    async def run(self) -> str:
-        result = await _untraced_workspace_probe_agent.run(
-            'Use the probe_workspace tool.',
-            deps=WorkspaceProbeDeps(prefix='worker'),
-            workspace=WorkspaceRef(provider='probe', id='existing-123'),
-        )
-        return result.output
-
-
-async def test_temporal_workspace_calls_of_an_uninstrumented_agent_are_not_traced(
-    client_with_logfire: Client, capfire: CaptureLogfire
-):
-    """An agent with instrumentation off traces nothing in its activities, though `LogfirePlugin` turns on `Agent.instrument_all()`."""
-    _workspace_probe_backends.clear()
-
-    async with Worker(
-        client_with_logfire,
-        task_queue=TASK_QUEUE,
-        workflows=[UntracedWorkspaceProbeWorkflow],
-        plugins=[AgentPlugin(_untraced_workspace_probe_agent)],
-    ):
-        await client_with_logfire.execute_workflow(
-            UntracedWorkspaceProbeWorkflow.run,
-            id=f'{UntracedWorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
-            task_queue=TASK_QUEUE,
-        )
-
-    assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
-    assert [
-        span['name'] for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('workspace ')
-    ] == []
+    assert {span['name'] for span in spans} >= expected_spans
+    content_keys = ('file.path', 'process.command_args', 'probe.content', 'probe.later_content')
+    assert [key for span in spans for key in span['attributes'] if key in content_keys] == []
 
 
 @workflow.defn

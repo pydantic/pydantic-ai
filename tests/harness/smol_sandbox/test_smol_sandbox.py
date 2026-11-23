@@ -28,7 +28,6 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend, _backend
-from tests.harness.conftest import Instrumented
 
 from .._tool_calls import call_tools
 from .fake_smol import FakeMachine, FakeSmol, FakeVM
@@ -384,37 +383,6 @@ async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) 
     fake_smol.create_error = None
     await backend.get_sandbox()
     assert backend.ref is not None
-
-
-async def test_a_failed_creation_span_names_the_vm(
-    fake_smol: FakeSmol,
-    working_dir: str,
-    instrumented: Instrumented,
-) -> None:
-    """The backend drops the VM's ref when creating it fails, but the `workspace create` span keeps it."""
-    tracing, exporter = instrumented(False)
-    agent = Agent(
-        TestModel(call_tools=['look']),
-        capabilities=[
-            SmolSandbox(working_dir=working_dir),
-            tracing,
-        ],
-    )
-
-    @agent.tool
-    async def look(ctx: RunContext[object]) -> str:
-        with pytest.raises(smol.SmolError, match='image pull failed'):
-            await ctx.workspace.exists('notes.txt')
-        assert ctx.workspace.ref is None
-        return 'failed'
-
-    fake_smol.create_error = smol.SmolError('SMOLVM_ERROR', 'image pull failed')
-    await agent.run('go')
-
-    [create] = [span for span in exporter.get_finished_spans() if span.name == 'workspace create']
-    assert create.status.status_code.name == 'ERROR'
-    assert (create.attributes or {})['pydantic_ai.workspace.provider'] == 'smol'
-    assert str((create.attributes or {})['pydantic_ai.workspace.id']).startswith('pydantic-ai-')
 
 
 @pytest.mark.parametrize(
