@@ -1571,7 +1571,11 @@ def normalized(value: object) -> object:
         return f'{match[1]}NOW{match[1]}' if abs(timestamp - now) < timedelta(days=1) else match[0]
 
     def generated_local_timestamp(match: re.Match[str]) -> str:
-        return 'NOW' if abs(datetime.fromisoformat(match[0]) - datetime.now()) < timedelta(days=1) else match[0]
+        try:
+            timestamp = datetime.fromisoformat(match[0])
+        except ValueError:
+            return match[0]
+        return 'NOW' if abs(timestamp - datetime.now()) < timedelta(days=1) else match[0]
 
     def generated_epoch_milliseconds(match: re.Match[str]) -> str:
         timestamp = datetime.fromtimestamp(int(match[1]) / 1000, UTC)

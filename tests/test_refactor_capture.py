@@ -2336,8 +2336,9 @@ async def test_capture_holds_no_error_a_tool_hook_raises(tmp_path: Path):
 
     agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('fail')])), deps_type=Deps)
 
+    # A sync tool runs on a worker thread, which can drop the context it copied only once the run has returned.
     @agent.tool_plain
-    def fail() -> str:
+    async def fail() -> str:
         raise RuntimeError('tool failed')
 
     capture = RefactorCapture(tmp_path)
@@ -2761,6 +2762,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'recorded_amz_date': '20240101T000000Z',
             'clai_prompt': f'The current date and time is {datetime.now()} -05.',
             'recorded_clai_prompt': 'The current date and time is 2024-01-01 00:00:00 UTC.',
+            'not_a_local_date': 'due 2024-02-30 00:00:00',
             'ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': int(now.timestamp() * 1000)},
             'recorded_ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 1704067200000},
             # An AG-UI message's `encryptedValue`, and a web API response's event stream, hold JSON as text.
@@ -2832,6 +2834,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'recorded_amz_date': '20240101T000000Z',
             'clai_prompt': 'The current date and time is NOW -05.',
             'recorded_clai_prompt': 'The current date and time is 2024-01-01 00:00:00 UTC.',
+            'not_a_local_date': 'due 2024-02-30 00:00:00',
             'ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 'NOW'},
             'recorded_ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 1704067200000},
             'json_in_text': '{"timestamp": "NOW"}',
