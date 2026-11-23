@@ -20,6 +20,12 @@ async def existing(workspace, root, path):
     return real.startswith(root + '/')
 """
 
+_OTHER_DEBT = """\
+async def other(workspace, root, path):
+    real = await workspace.realpath(path)
+    return real.startswith(root)
+"""
+
 _NEW_CHECK = """\
 from pathlib import Path
 
@@ -158,6 +164,17 @@ def test_a_copy_of_a_check_renamed_in_place_counts(repo: Path, capsys: pytest.Ca
     assert f'{_HARNESS}/moved.py: hand-written confine checks 0 -> 1' in out
 
 
+def test_a_copy_of_a_check_renamed_in_place_beside_a_deleted_one_counts(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, f'{_HARNESS}/store.py', f'{_DEBT}\n\n{_OTHER_DEBT}')
+    _commit(repo)
+    _write(repo, f'{_HARNESS}/store.py', _DEBT.replace('def ', 'def renamed_', 1))
+
+    code, out = _staged(repo, capsys, f'{_HARNESS}/moved.py', _DEBT)
+
+    assert code == 1
+    assert f'{_HARNESS}/moved.py: hand-written confine checks 0 -> 1' in out
+
+
 def test_code_outside_the_library_roots_is_not_checked(repo: Path, capsys: pytest.CaptureFixture[str]):
     assert _staged(repo, capsys, 'tests/test_other.py', _NEW_CHECK) == (0, '')
 
@@ -166,7 +183,7 @@ def test_the_primitive_itself_is_exempt(repo: Path, capsys: pytest.CaptureFixtur
     assert _staged(repo, capsys, GUIDE, _NEW_CHECK) == (0, '')
 
 
-def test_an_escape_with_a_reason_is_reported_and_passes(repo: Path, capsys: pytest.CaptureFixture[str]):
+def test_an_exemption_with_a_reason_is_reported_and_passes(repo: Path, capsys: pytest.CaptureFixture[str]):
     source = _NEW_CHECK.replace('def new', '# not-confinement: compares for display only\ndef new')
 
     code, out = _staged(repo, capsys, f'{_HARNESS}/loader.py', source)
@@ -175,13 +192,13 @@ def test_an_escape_with_a_reason_is_reported_and_passes(repo: Path, capsys: pyte
     assert f'{_HARNESS}/loader.py:5: not confinement: compares for display only, see {GUIDE}' in out
 
 
-def test_an_escape_on_the_def_line_counts(repo: Path, capsys: pytest.CaptureFixture[str]):
+def test_an_exemption_on_the_def_line_counts(repo: Path, capsys: pytest.CaptureFixture[str]):
     source = _NEW_CHECK.replace('-> bool:', '-> bool:  # not-confinement: a sort key')
 
     assert _staged(repo, capsys, f'{_HARNESS}/loader.py', source)[0] == 0
 
 
-def test_an_escape_without_a_reason_fails(repo: Path, capsys: pytest.CaptureFixture[str]):
+def test_an_exemption_without_a_reason_fails(repo: Path, capsys: pytest.CaptureFixture[str]):
     source = _NEW_CHECK.replace('def new', '# not-confinement:\ndef new')
 
     code, out = _staged(repo, capsys, f'{_HARNESS}/loader.py', source)
@@ -199,7 +216,7 @@ def test_github_format_annotates_the_function(repo: Path, capsys: pytest.Capture
     assert f'::error file={_HARNESS}/loader.py,line=4,title=hand-written confine::' in out
 
 
-def test_github_format_annotates_an_escape(repo: Path, capsys: pytest.CaptureFixture[str]):
+def test_github_format_annotates_an_exemption(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, f'{_HARNESS}/loader.py', _NEW_CHECK.replace('def new', '# not-confinement:\ndef new'))
 
     code, out = _check(capsys, '--base', 'HEAD', '--format', 'github')

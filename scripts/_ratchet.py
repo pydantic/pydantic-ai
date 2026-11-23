@@ -208,6 +208,6 @@ def report_exemptions(
 
 
 def escape(value: str, prop: bool = False) -> str:
-    """Exemption a GitHub workflow command's message, or with `prop` one of its properties."""
+    """Escape a GitHub workflow command's message, or with `prop` one of its properties."""
     value = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
     return value.replace(':', '%3A').replace(',', '%2C') if prop else value

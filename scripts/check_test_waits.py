@@ -74,7 +74,7 @@ _ADVICE: dict[Rule, str] = {
         'wait on an `Event`, a stream or the condition itself'
     ),
 }
-_ESCAPABLE: frozenset[Rule] = frozenset({'literal-wait', 'sleep-loop'})
+_EXEMPTABLE: frozenset[Rule] = frozenset({'literal-wait', 'sleep-loop'})
 _EXEMPT: dict[Rule, str] = {'readiness-constant': 'tests/_timeouts.py', 'probe-port': 'tests/_ports.py'}
 
 _READINESS = re.compile(r'_?READINESS_WAIT_TIMEOUT')
@@ -393,9 +393,9 @@ def _scan(source: str | None, path: str) -> _Scan:
     except (SyntaxError, tokenize.TokenError):
         return _Scan()
     findings = _Finder(tree, source.splitlines(), path).run()
-    escaped = {e.line for e in marked}
-    for rule in _ESCAPABLE & findings.keys():
-        findings[rule] = [f for f in findings[rule] if f.line not in escaped]
+    exempt = {e.line for e in marked}
+    for rule in _EXEMPTABLE & findings.keys():
+        findings[rule] = [f for f in findings[rule] if f.line not in exempt]
     return _Scan({rule: found for rule, found in findings.items() if found}, marked)
 
 
@@ -415,9 +415,9 @@ def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Exemp
     """Each rule a change raised the count of in a file, and each `# real-wait` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
     # Only a wait may move, so a probe or constant removed from one file does not excuse one added to another.
-    moves: dict[Rule, Counter[str]] = {rule: Counter() for rule in _ESCAPABLE}
+    moves: dict[Rule, Counter[str]] = {rule: Counter() for rule in _EXEMPTABLE}
     for _, old, new in scans:
-        for rule in _ESCAPABLE & old.findings.keys():
+        for rule in _EXEMPTABLE & old.findings.keys():
             moves[rule].update(_texts(old.findings[rule]) - _texts(new.findings.get(rule, [])))
     growth: list[_Growth] = []
     added: list[tuple[str, Exemption]] = []
@@ -444,7 +444,7 @@ def _print_advice(rules: set[Rule]) -> None:
     print()
     for rule in sorted(rules):
         print(f'{rule}: {_ADVICE[rule]}')
-    if rules & _ESCAPABLE:
+    if rules & _EXEMPTABLE:
         print('A wait that is about real time can say so with `# real-wait: <reason>`.')
     print(f'See {GUIDE}.')
 

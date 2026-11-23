@@ -8,8 +8,8 @@ The rule counts such functions in each file, and a change may not raise a file's
 is allowed, so existing checks pass until a change adds one. A function that matches but confines nothing, such as
 one that compares a resolved path for another reason, is left out of the count by `# not-confinement: <reason>` on
 its `def` line, or alone on the line above. Each such comment the change adds is reported, and one without a
-reason fails. A function moved unchanged from one changed file to another is not counted, when its `def` line
-leaves the first file and that file's count falls.
+reason fails. A function moved unchanged from one changed file to another is not counted, when the first file's
+count falls and the function is not still there, under its own `def` line or renamed.
 
 The rule cannot see a check split across two functions, one resolving and the other comparing.
 
@@ -65,6 +65,11 @@ class _Finding:
     source: str
     """The whole function, dedented, which pairs it with the same function removed from another file."""
 
+    @property
+    def body(self) -> str:
+        """The function less its `def` line, which pairs it with itself renamed in place."""
+        return self.source.partition('\n')[2]
+
 
 @dataclass
 class _Scan:
@@ -104,11 +109,11 @@ def _scan(source: str | None, path: str) -> _Scan:
         marked = exemptions(source, _NOT_CONFINEMENT)
     except (SyntaxError, tokenize.TokenError):
         return _Scan()
-    escaped = {e.line for e in marked}
+    exempt = {e.line for e in marked}
     lines = source.splitlines()
     findings: list[_Finding] = []
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.lineno in escaped:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.lineno in exempt:
             continue
         calls = set(_own_calls(node))
         if calls & _RESOLVES and calls & _COMPARES:
@@ -120,15 +125,19 @@ def _scan(source: str | None, path: str) -> _Scan:
 def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Exemption]]]:
     """Each file a change raised the count of, and each `# not-confinement` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
-    # A function moves out of a file only when its `def` line leaves it and the file's count falls; one edited or
-    # renamed in place has not moved.
+    # A function moves out of a file only when the file's count falls and nothing on its new side keeps the function's
+    # `def` line or its body: one edited or renamed in place has not moved.
     moves: Counter[str] = Counter()
     for _, old, new in scans:
         budget = len(old.findings) - len(new.findings)
-        gone = Counter(f.text for f in old.findings) - Counter(f.text for f in new.findings)
+        lines = Counter(f.text for f in new.findings)
+        bodies = Counter(f.body for f in new.findings)
         for f in old.findings:
-            if budget > 0 and gone[f.text]:
-                gone[f.text] -= 1
+            if lines[f.text]:
+                lines[f.text] -= 1
+            elif bodies[f.body]:
+                bodies[f.body] -= 1
+            elif budget > 0:
                 budget -= 1
                 moves[f.source] += 1
     growth: list[_Growth] = []
