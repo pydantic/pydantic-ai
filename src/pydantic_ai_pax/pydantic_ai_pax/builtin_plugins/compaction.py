@@ -252,7 +252,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
 
         Only the conversation shown and its running delegated tasks, each a conversation of its own
         under the task's ID, can still use theirs; a conversation left with `/new` or `/resume` and a
-        finished task would keep theirs, with a copy of their history, until CLAI exits.
+        finished task would keep theirs, with a copy of their history, until Pax exits.
         """
         keep: set[str | None] = {self.host.conversation.conversation_id}
         if (tasks := self.host.tasks) is not None:

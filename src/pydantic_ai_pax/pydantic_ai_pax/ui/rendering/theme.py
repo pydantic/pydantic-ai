@@ -1,4 +1,4 @@
-"""CLAI's brand colours, with fixed shades for light terminals and opt-in Termflow palettes."""
+"""Pax's brand colours, with fixed shades for light terminals and opt-in Termflow palettes."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def painted_in() -> str | None:
 
 
 def current() -> TerminalPalette | None:
-    """Read the session's palette; `None` keeps the existing CLAI appearance."""
+    """Read the session's palette; `None` keeps the existing Pax appearance."""
     name = _ACTIVE.get()()
     if name == 'default':
         return None
@@ -133,7 +133,7 @@ _DIFF_LIGHTNESS = 12
 
 
 def diff_theme() -> DiffTheme:
-    """Diff line colours: CLAI's own by default, else the palette's green and red over its background."""
+    """Diff line colours: Pax's own by default, else the palette's green and red over its background."""
     from termflow.diff import DiffTheme
     from termflow.themes.palette import blend_hex
 
@@ -186,7 +186,7 @@ def _is_light_colour(colour: str) -> bool:
 def roles(name: str) -> tuple[tuple[str, str], ...]:
     """The Rich colour `name` paints each role with; where roles share a colour, the earlier one claims it.
 
-    Roles are the background and foreground, diff lines and markers, CLAI's brand colours, and the
+    Roles are the background and foreground, diff lines and markers, Pax's brand colours, and the
     16 ANSI slots. The default theme leaves the background, foreground, and slots to the terminal.
     Output painted in one theme repaints in another by translating its colours role by role.
     """

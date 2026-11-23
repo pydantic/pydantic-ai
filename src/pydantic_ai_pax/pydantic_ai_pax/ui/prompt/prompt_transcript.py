@@ -467,7 +467,7 @@ class TranscriptBuffer:
         vars(transcript).setdefault('_pending_theme', theme.name())
         vars(transcript).setdefault('details', False)
         for item in transcript._items:
-            # StringIO is a stable dependency type across CLAI reloads.
+            # StringIO is a stable dependency type across Pax reloads.
             if isinstance(item, io.StringIO):
                 MarkdownBlock.rebind(item)
             else:

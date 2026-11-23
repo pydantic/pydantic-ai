@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds what `/update` installs on the `main` channel into OUT_DIR, from the checked-out commit:
-# an sdist of CLAI and of each workspace package it pins exactly, named `<package>-<commit>.tar.gz`,
+# an sdist of Pax and of each workspace package it pins exactly, named `<package>-<commit>.tar.gz`,
 # and `clai2-bleeding.json`, which names the commit. The `clai2-bleeding` workflow publishes them to
-# the `clai2-bleeding` GitHub release. To try them locally, serve OUT_DIR over HTTP and start CLAI
+# the `clai2-bleeding` GitHub release. To try them locally, serve OUT_DIR over HTTP and start Pax
 # with `CLAI_BLEEDING_URL` pointing at it (see "Updating" in docs/reference.md).
 #
 # The version comes from Git tags and history, so the checkout needs both. Each sdist records it,

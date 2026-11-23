@@ -199,7 +199,7 @@ async def test_cancelling_while_the_tokens_are_saved_waits_for_the_save(monkeypa
 
     def slow_save(*, account: str, value: str) -> None:
         saving.set()
-        release.wait(5)  # As if another CLAI held the credential lock.
+        release.wait(5)  # As if another Pax held the credential lock.
         real_save(account=account, value=value)
         order.append('saved')
 
@@ -347,7 +347,7 @@ async def test_token_is_reused_until_close_to_expiry_then_refreshed_and_saved() 
 
 
 def lock_after(other_session: Callable[[], None], monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let another CLAI act while this one waits for the refresh lock, then hand over the real lock."""
+    """Let another Pax act while this one waits for the refresh lock, then hand over the real lock."""
     real_lock = pkce.credential_lock
 
     @contextmanager
