@@ -42,7 +42,7 @@ export const SECTIONS = [
     id: 'keys',
     label: 'Keys & accounts',
     icon: KeyIcon,
-    hint: 'Saved API keys and signed-in accounts, as /keys and /accounts manage them. Secrets never leave CLAI.',
+    hint: 'Saved API keys and signed-in accounts, as /keys and /accounts manage them. Secrets never leave Pax.',
     commands: ['keys', 'login', 'accounts'],
   },
   {
@@ -56,14 +56,14 @@ export const SECTIONS = [
     id: 'system-prompt',
     label: 'System prompt',
     icon: FileIcon,
-    hint: "Your own instructions, sent after CLAI's, and the full prompt the model last received.",
+    hint: "Your own instructions, sent after Pax's, and the full prompt the model last received.",
     commands: ['system_prompt'],
   },
   {
     id: 'about',
     label: 'About',
     icon: InfoIcon,
-    hint: 'The CLAI running now, and the channel /update installs from.',
+    hint: 'The Pax running now, and the channel /update installs from.',
     commands: ['update'],
   },
 ] as const satisfies readonly Section[]
@@ -107,7 +107,7 @@ export function useEscape(onClose: () => void) {
   }, [onClose])
 }
 
-/** CLAI's settings in one window, as the Codex desktop app shows its own: sections on the left, one shown beside. */
+/** Pax's settings in one window, as the Codex desktop app shows its own: sections on the left, one shown beside. */
 export function SettingsWindow({
   section,
   onSection,
@@ -225,7 +225,7 @@ export function SettingsWindow({
           )}
           {section === 'about' && updated && (
             <p className="settings-updated">
-              Updated CLAI from {updated.from} to {updated.to}.
+              Updated Pax from {updated.from} to {updated.to}.
             </p>
           )}
           {section === 'about' && (

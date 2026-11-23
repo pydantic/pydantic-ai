@@ -1,4 +1,4 @@
-"""Slack browser sign-in: the user's own CLAI Slack app, created from a manifest, signing in with PKCE.
+"""Slack browser sign-in: the user's own Pax Slack app, created from a manifest, signing in with PKCE.
 
 Slack's MCP server has no Dynamic Client Registration and only serves internal or Marketplace apps, so each user
 creates an app in their workspace from `create_app_url()`. The manifest enables PKCE, which makes the app a public
@@ -55,9 +55,9 @@ WRITE_SCOPES = (
 
 
 def create_app_url() -> str:
-    """Slack's create-app page, filled in with CLAI's manifest; the user picks a workspace and clicks Create."""
+    """Slack's create-app page, filled in with Pax's manifest; the user picks a workspace and clicks Create."""
     manifest = {
-        'display_information': {'name': 'CLAI', 'description': "Slack's MCP tools in the CLAI coding agent"},
+        'display_information': {'name': 'Pax', 'description': "Slack's MCP tools in the Pax coding agent"},
         'oauth_config': {
             'redirect_urls': [REDIRECT_URI],
             'scopes': {'user': [*READ_SCOPES, *WRITE_SCOPES]},

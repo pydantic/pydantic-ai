@@ -513,7 +513,7 @@ The `computer` tool shows and controls this computer's screen.
         # The call's work on the screen is its own durable step with its own retry policy, so no engine wraps the
         # whole tool.
         assert tool.durable is False
-        # A native computer tool is sized to the latest screenshot, which positions are scaled from, even after the
+        # A native computer tool is sized to the latest screenshot, which positions are given on, even after the
         # display changed size.
         assert natives == ([ComputerTool(display_size=(1920, 1080), optional=True)] if native else [])
 
@@ -830,8 +830,8 @@ The `computer` tool shows and controls this computer's screen.
         await Agent(FunctionModel(respond), capabilities=capabilities).run('Go.')
         assert natives == []
 
-    async def test_a_screenshot_kept_without_its_result_is_sized_from_the_image(self) -> None:
-        """A history rebuilt without metadata still scales positions by the screenshot the model last saw."""
+    async def test_positions_on_a_screenshot_of_another_size_are_refused(self) -> None:
+        """A history rebuilt without metadata still gives the size of the screenshot the model last saw."""
 
         def result(call_id: str, image: bytes, metadata: dict[str, object] | None) -> ModelRequest:
             screenshot = BinaryImage(data=image, media_type='image/png')
@@ -859,49 +859,42 @@ The `computer` tool shows and controls this computer's screen.
         ]
         provider = ScreenProvider()
         # `_scripted` counts the history's two calls as its first two.
-        model = _scripted([], [], [{'type': 'click', 'x': 320, 'y': 200}])
-        agent = Agent(
-            model,
-            capabilities=[provider.capability(), ComputerUse()],
+        model = _scripted([], [], [{'type': 'click', 'x': 320, 'y': 200}], [{'type': 'screenshot'}])
+        run = await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(
+            'Click the middle.', message_history=history
         )
-        await agent.run('Click the middle.', message_history=history)
 
-        assert provider.actions == [Click(x=640, y=400)]
+        # The display is twice the size of the screenshot the model pointed on, so the click would miss.
+        refused, looked = _returns(run.new_messages())
+        assert refused.content == snapshot(
+            'The screen is now 1280x800, but the latest screenshot is 640x400, so no action ran. Take a screenshot '
+            'before giving positions.'
+        )
+        assert looked.metadata == {'performed': 1}
+        assert provider.actions == []
 
-    async def test_a_drag_and_a_zoom_are_scaled_from_the_screenshot_the_model_saw(self) -> None:
-        history = [
-            ModelRequest.user_text_prompt('Look.'),
-            ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, 'c1')]),
-            ModelRequest(
+    async def test_after_a_call_fails_the_responses_later_calls_do_not_run(
+        self, durability: list[AbstractCapability[object]]
+    ) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(
                 parts=[
-                    ToolReturnPart(
-                        'computer',
-                        ['Ran 1 action.', BinaryImage(data=png(640, 400), media_type='image/png')],
-                        'c1',
-                        tool_kind=COMPUTER_KIND.id,
-                    )
+                    ToolCallPart('computer', {'actions': [{'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1}]}),
+                    ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]}),
                 ]
-            ),
-        ]
-        provider = ScreenProvider()
-        model = _scripted(
-            [],
-            [
-                {'type': 'drag', 'path': [{'x': 10, 'y': 20}, {'x': 320, 'y': 200}]},
-                {'type': 'type_text', 'text': 'hi'},
-                {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 50, 'bottom': 25}},
-            ],
-        )
-        result = await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(
-            'Drag and zoom.', message_history=history
-        )
+            )
 
-        # The display is twice the size of the screenshot the model pointed on.
-        assert provider.actions == [Drag(path=(Point(x=20, y=40), Point(x=640, y=400))), TypeText(text='hi')]
-        (tool_return,) = _returns(result.new_messages())
-        zoomed = tool_return.content_items()[1]
-        assert isinstance(zoomed, BinaryImage)
-        assert struct.unpack('>II', zoomed.data[16:24]) == (100, 50)
+        provider = ScreenProvider()
+        result = await Agent(
+            FunctionModel(respond), name='computer', capabilities=[provider.capability(), ComputerUse(), *durability]
+        ).run('Go.')
+
+        failed, skipped = _returns(result.all_messages())
+        assert failed.metadata == {'performed': 0, 'error': "the fake display cannot perform 'hold_keys'"}
+        assert skipped.content == 'Not executed: an earlier computer action in this turn failed.'
+        assert provider.actions == []
 
     async def test_a_call_a_hook_repaired_reports_that_it_changed(self) -> None:
         """A call whose arguments didn't validate stays a plain tool call, and still reads as the call the model made."""
@@ -925,7 +918,7 @@ The `computer` tool shows and controls this computer's screen.
 
         assert provider.actions == [TypeText(text='hi')]
         (tool_return,) = _returns(result.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'changed': True}
+        assert tool_return.metadata == {'performed': 1, 'actions_changed': True}
 
     @pytest.mark.parametrize(
         'settings,cache',
@@ -977,7 +970,7 @@ The `computer` tool shows and controls this computer's screen.
             'This call was changed before it ran. Ran 1 action. Screenshot attached (1280x800).'
         )
         assert 'hunter2' not in tool_return.model_response_str()
-        assert tool_return.metadata == {'performed': 1, 'changed': True}
+        assert tool_return.metadata == {'performed': 1, 'actions_changed': True}
 
     async def test_a_screenshot_is_sent_at_the_screen_size(self) -> None:
         agent = Agent(_scripted([{'type': 'screenshot'}]), capabilities=[ComputerUse()])

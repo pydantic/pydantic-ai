@@ -256,6 +256,24 @@ CASES = [
         match_body=True,
     ),
     WireCase(
+        id='google-gemini-25-flash-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking='minimal',
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-lite-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash-lite',
+        thinking='minimal',
+        # Gemini 2.5 Flash-Lite 400s on a budget below 512 ("Please choose a value between 512 and 24576"), so
+        # `minimal` sends 512 there rather than the 128 the other Gemini 2.5 models get.
+        present={'generationConfig.thinkingConfig.thinking_budget': 512},
+        match_body=True,
+    ),
+    WireCase(
         id='google-gemini-31-pro-false-lowest-level',
         provider='google',
         model_name='gemini-3.1-pro-preview',
