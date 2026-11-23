@@ -15,6 +15,7 @@ import yaml
 from category_classify_opencode import TOOL_GUIDANCE, Classification
 from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP
 from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
+from review_gates import Review, ReviewComment, prior_finding
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 APPROVAL_LABEL = 'douwebot:review-agent-config'
@@ -50,10 +51,6 @@ if '/collaborators/' in endpoint:
     if os.environ.get('FAKE_PERMISSION_ERROR') == '1':
         sys.exit('stub gh: permission API error')
     payload = json.dumps({'permission': os.environ['FAKE_PERMISSION']})
-elif '/reviews' in endpoint:
-    payload = os.environ['FAKE_REVIEWS']
-elif '/comments' in endpoint:
-    payload = os.environ['FAKE_COMMENTS']
 elif '/pulls/' in endpoint:
     if os.environ.get('FAKE_PULL_ERROR') == '1':
         sys.exit('stub gh: pull request API error')
@@ -440,15 +437,14 @@ def _douwebot_review(
     """A review as the trusted publisher posts it, so the skip filter follows the publisher's wording."""
     return {
         'id': review_id,
-        'user': {'login': 'github-actions[bot]', 'type': 'Bot'},
+        'user': {'id': 1, 'login': 'github-actions[bot]', 'type': 'Bot'},
         'commit_id': REVIEWED_HEAD,
         'state': state,
-        'html_url': f'review-{review_id}',
+        'submitted_at': None,
         'body': json.loads(publication(result, head, 7, inline=inline, engine=engine))['body'],
     }
 
 
-@pytest.mark.skipif(shutil.which('jq') is None, reason='the prior-findings step filters reviews with jq')
 @pytest.mark.parametrize(
     ('review', 'commented', 'expected'),
     [
@@ -572,10 +568,10 @@ def _douwebot_review(
         pytest.param(
             {
                 'id': 9,
-                'user': {'login': 'maintainer', 'type': 'User'},
+                'user': {'id': 3, 'login': 'maintainer', 'type': 'User'},
                 'commit_id': REVIEWED_HEAD,
                 'state': 'CHANGES_REQUESTED',
-                'html_url': 'review-9',
+                'submitted_at': None,
                 'body': 'Please rename this.',
             },
             True,
@@ -585,25 +581,10 @@ def _douwebot_review(
     ],
 )
 def test_prior_findings_skip_only_heads_that_already_have_douwebot_findings(
-    tmp_path: Path, review: dict[str, Any], commented: bool, expected: str
+    review: dict[str, Any], commented: bool, expected: str
 ):
     """A head with douwebot findings cannot pass the gate, so only those heads skip a re-review."""
-    step = _workflow()['jobs']['prior-findings']['steps'][0]
-    comments = [{'pull_request_review_id': review['id']}] if commented else []
-    output = tmp_path / 'github-output'
-
-    result, _ = _run_step(
-        step,
-        tmp_path,
-        {
-            'FAKE_REVIEWS': json.dumps([[review]]),
-            'FAKE_COMMENTS': json.dumps([comments]),
-            'HEAD_SHA': REVIEWED_HEAD,
-            'REPO': REPOSITORY,
-            'RUNNER_TEMP': str(tmp_path),
-            'GITHUB_OUTPUT': str(output),
-        },
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert output.read_text(encoding='utf-8') == f'review_url={expected}\n'
+    comment = {'id': 30, 'pull_request_review_id': review['id'], 'original_commit_id': REVIEWED_HEAD, 'body': 'x'}
+    comments = [ReviewComment.model_validate({**comment, 'user': review['user']})] if commented else []
+    found = prior_finding([Review.model_validate(review)], comments, REVIEWED_HEAD)
+    assert (f'review-{found.id}' if found else '') == expected

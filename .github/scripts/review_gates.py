@@ -251,6 +251,32 @@ def douwebot_approval(
     return verdict
 
 
+def prior_finding(reviews: list[Review], comments: list[ReviewComment], head: str) -> Review | None:
+    """The first douwebot review on `head` that left findings, which no later review of that head can clear.
+
+    It reads findings as `douwebot_approval` does: an inline comment on a marked review, or body text beyond the
+    verdict line. An incomplete review is not returned, so its head is reviewed again to complete the coverage.
+    """
+    commented = {comment.pull_request_review_id for comment in comments}
+    for review in reviews:
+        if review.user.login != 'github-actions[bot]' or review.user.type != 'Bot' or review.commit_id != head:
+            continue
+        marker = DOUWEBOT_MARKER.search(review.body)
+        if not marker or marker[2] != head:
+            continue
+        verdict = review.body[: marker.start()]
+        if (engine := marker[3]) in ('claude', 'opencode', 'opencode-zai', 'opencode-deepinfra'):
+            suffix = '\n\n' + REVIEW_ENGINES[engine]
+            verdict = (
+                verdict.removesuffix(suffix) if verdict.endswith(suffix) else verdict + '\nMissing engine attribution'
+            )
+        if verdict.startswith(REVIEW_BODIES['INCOMPLETE']):
+            continue
+        if review.id in commented or verdict not in (APPROVAL_BODY, REVIEW_BODIES['REQUEST_CHANGES']):
+            return review
+    return None
+
+
 def other_review_receipt(comment: ReviewComment, parent: Review | None) -> bool:
     """gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account."""
     if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
@@ -461,5 +487,16 @@ def main() -> int:
     return reconcile_reviews(ReviewGhCli(env['GITHUB_REPOSITORY'], int(env.get('PR_NUMBER') or '0')), env)
 
 
+def prior_findings() -> int:
+    """Write `review_url`, the link to the `prior_finding` review on the PR head, empty when there is none."""
+    env = os.environ
+    github = ReviewGhCli(env['GITHUB_REPOSITORY'], int(env['PR_NUMBER']))
+    review = prior_finding(github.reviews(), github.review_comments(), env['HEAD_SHA'])
+    pull = f'{env["GITHUB_SERVER_URL"]}/{env["GITHUB_REPOSITORY"]}/pull/{env["PR_NUMBER"]}'
+    with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+        output.write(f'review_url={f"{pull}#pullrequestreview-{review.id}" if review else ""}\n')
+    return 0
+
+
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(prior_findings() if sys.argv[1:] == ['prior-findings'] else main())

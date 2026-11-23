@@ -976,6 +976,35 @@ def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebo
     assert verdicts(ReviewGitHub(current_reviews=[review(body=json.loads(legacy)['body'])]))['douwebot'].failures
 
 
+def _published(verdict: publish_douwebot_review.ReviewVerdict, discussion: str = '') -> str:
+    result = ReviewResult(verdict=verdict, comments=[], discussion=discussion)
+    return json.loads(publication(result, HEAD, 20, engine='claude'))['body']
+
+
+def test_prior_findings_writes_the_first_review_with_findings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    first, second = review(11, body=_published('APPROVE', 'One')), review(12, body=_published('APPROVE', 'Two'))
+
+    class Reviews:
+        def __init__(self, repo: str, number: int) -> None:
+            assert (repo, number) == ('o/r', 8)
+
+        def reviews(self) -> list[review_gates.Review]:
+            return [review(body=_published('APPROVE')), first, second]
+
+        def review_comments(self) -> list[review_gates.ReviewComment]:
+            return []
+
+    output = tmp_path / 'output'
+    env = {'GITHUB_REPOSITORY': 'o/r', 'GITHUB_SERVER_URL': 'https://github.com', 'PR_NUMBER': '8'}
+    for name, value in {**env, 'HEAD_SHA': HEAD, 'GITHUB_OUTPUT': str(output)}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(review_gates, 'ReviewGhCli', Reviews)
+    assert review_gates.prior_findings() == 0
+    monkeypatch.setenv('HEAD_SHA', OLD_HEAD)
+    assert review_gates.prior_findings() == 0
+    assert output.read_text() == 'review_url=https://github.com/o/r/pull/8#pullrequestreview-11\nreview_url=\n'
+
+
 @pytest.mark.parametrize('state', ['open', 'moved', 'closed'])
 def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.MonkeyPatch, state: str):
     for key, value in {
