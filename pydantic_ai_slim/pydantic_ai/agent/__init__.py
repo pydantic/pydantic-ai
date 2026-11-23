@@ -247,7 +247,7 @@ _SHUTDOWN_EXCEPTIONS = (GeneratorExit, KeyboardInterrupt)
 
 
 @asynccontextmanager
-async def _run_lifecycle_hooks(  # noqa: C901
+async def _run_lifecycle_hooks(
     run_capability: AbstractCapability[Any],
     run_ctx: RunContext[Any],
     *,
@@ -1658,7 +1658,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async with prepared.open() as agent_run:
             yield agent_run
 
-    async def _prepare_run(  # noqa: C901
+    async def _prepare_run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -2475,7 +2475,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
     @contextmanager
-    def override(  # noqa: C901
+    def override(
         self,
         *,
         name: str | _utils.Unset = _utils.UNSET,
@@ -4091,7 +4091,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def _resolve_realtime_session(  # noqa: C901
+    async def _resolve_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -4985,7 +4985,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     ]
 
     @asynccontextmanager
-    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:  # noqa: C901
+    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
         graph_deps = self.graph_deps
         state = self.state
 

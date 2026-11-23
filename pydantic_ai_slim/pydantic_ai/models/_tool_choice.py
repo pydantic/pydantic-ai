@@ -9,7 +9,7 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 ResolvedToolChoice = Literal['none', 'auto', 'required'] | tuple[Literal['auto', 'required'], set[str]]
 
 
-def resolve_tool_choice(  # noqa: C901
+def resolve_tool_choice(
     model_settings: ModelSettings | None,
     model_request_parameters: ModelRequestParameters,
 ) -> ResolvedToolChoice:

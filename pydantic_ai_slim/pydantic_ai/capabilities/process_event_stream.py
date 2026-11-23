@@ -97,7 +97,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]
 
-    async def wrap_run_event_stream(  # noqa: C901
+    async def wrap_run_event_stream(
         self,
         ctx: RunContext[AgentDepsT],
         *,

@@ -596,7 +596,7 @@ class SessionCore:
 
     # --- the one transition ------------------------------------------------------------------------
 
-    def apply(self, item: CoreInput) -> None:  # noqa: C901
+    def apply(self, item: CoreInput) -> None:
         """Apply one event or command. Synchronous, so it is one transition."""
         match item:
             case ResponseStarted():

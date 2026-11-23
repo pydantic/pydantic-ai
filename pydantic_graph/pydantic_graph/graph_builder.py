@@ -681,7 +681,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
 
-    async def iter_graph(  # noqa: C901
+    async def iter_graph(
         self, first_task: GraphTask
     ) -> AsyncGenerator[
         EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask], EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask]
@@ -1861,7 +1861,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         )
 
 
-def _validate_graph_structure(  # noqa: C901
+def _validate_graph_structure(
     nodes: dict[NodeID, AnyNode],
     edges_by_source: dict[NodeID, list[Path]],
 ) -> None:
@@ -2278,7 +2278,7 @@ class MermaidEdge:
     label: str | None
 
 
-def build_mermaid_graph(  # noqa: C901
+def build_mermaid_graph(
     graph_nodes: dict[NodeID, AnyNode], graph_edges_by_source: dict[NodeID, list[Path]]
 ) -> MermaidGraph:
     """Build a mermaid graph."""

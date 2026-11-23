@@ -494,6 +494,14 @@ quote-style = "single"
 "scripts/test_check_complexity.py" = ["D"]
 "scripts/test_check_test_waits.py" = ["D"]
 "!src/pydantic_ai_pax/**/*.py" = ["BLE001"]
+# `scripts/check_complexity.py` gates cognitive complexity on the `[tool.complexipy]` roots, so mccabe (`C901`)
+# stays on only where ruff lints and complexipy does not. `scripts/test_check_complexity.py` keeps these keys
+# equal to those roots.
+"pydantic_ai_slim/pydantic_ai/**/*.py" = ["C901"]
+"pydantic_graph/pydantic_graph/**/*.py" = ["C901"]
+"pydantic_evals/pydantic_evals/**/*.py" = ["C901"]
+"src/pydantic_ai_harness/pydantic_ai_harness/**/*.py" = ["C901"]
+"src/pydantic_ai_pax/pydantic_ai_pax/**/*.py" = ["C901"]
 # pax owns its asyncio loop (`asyncio.run` in `cli/cli.py`), and agent runs need asyncio today; revisit with
 # https://github.com/pydantic/pydantic-ai/issues/7112.
 "src/pydantic_ai_pax/**/*.py" = ["TID251"]

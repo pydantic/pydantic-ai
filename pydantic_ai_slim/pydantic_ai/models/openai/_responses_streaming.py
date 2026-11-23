@@ -177,7 +177,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 'last_sequence_number': self._last_sequence_number,
             }
 
-    def _map_event(self, chunk: responses.ResponseStreamEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
+    def _map_event(self, chunk: responses.ResponseStreamEvent) -> Iterator[ModelResponseStreamEvent]:
         self._last_sequence_number = chunk.sequence_number
         if isinstance(
             chunk,

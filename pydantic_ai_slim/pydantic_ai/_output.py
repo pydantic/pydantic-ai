@@ -598,7 +598,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         return schema
 
     @classmethod
-    def _build(  # noqa: C901
+    def _build(
         cls,
         outputs: Sequence[_OutputSpecItem[OutputDataT]],
         *,

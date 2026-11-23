@@ -3129,7 +3129,7 @@ class StreamedResponse(ABC):
         # only after a post-stream pass.
         return ModelResponsePartsManager(model_request_parameters=self.model_request_parameters)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -3766,7 +3766,7 @@ def _decisions_model(
             assert_never(model_kind)
 
 
-def infer_model(  # noqa: C901
+def infer_model(
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
     """Infer the model from the name.

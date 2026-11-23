@@ -1282,7 +1282,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
 
-    async def run(  # noqa: C901
+    async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | CallToolsNode[DepsT, NodeRunEndT]:
         try:
@@ -2139,7 +2139,7 @@ def _check_continuation_usage(
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
 
 
-async def model_request(  # noqa: C901
+async def model_request(
     model: models.Model,
     *,
     request_context: ModelRequestContext,
@@ -2663,7 +2663,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise
 
     @asynccontextmanager
-    async def _stream(  # noqa: C901
+    async def _stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -4317,13 +4317,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             )
         return self._wrapped_events_iterator
 
-    async def _run_stream(  # noqa: C901
+    async def _run_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         # `_wrapped_stream` builds this generator once per node, so there is no caching to do here.
         output_schema = ctx.deps.output_schema
 
-        async def _run_stream() -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
+        async def _run_stream() -> AsyncGenerator[_messages.AgentStreamEvent, None]:
             if self.model_response.state == 'suspended' and output_schema.allows_pending_model_response:
                 # The provider is still working on the response, and the run was asked to end rather than wait.
                 pending = PendingModelResponse(response=self.model_response)

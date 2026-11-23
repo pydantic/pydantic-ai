@@ -549,7 +549,7 @@ class _JsonSchemaTestData:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 
-    def _gen_any(self, schema: dict[str, Any] | bool) -> Any:  # noqa: C901
+    def _gen_any(self, schema: dict[str, Any] | bool) -> Any:
         """Generate data for any JSON Schema."""
         if isinstance(schema, bool):
             # a boolean schema has no structure to generate from

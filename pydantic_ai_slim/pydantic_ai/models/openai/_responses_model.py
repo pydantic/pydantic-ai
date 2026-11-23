@@ -1187,7 +1187,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details=provider_details or None,
         )
 
-    def _map_output_items(  # noqa: C901
+    def _map_output_items(
         self, response: responses.Response, model_settings: OpenAIResponsesModelSettings, timestamp: datetime
     ) -> list[ModelResponsePart]:
         """Map the output items of a non-streamed response, stamped with `timestamp`, to parts."""

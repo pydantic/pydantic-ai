@@ -939,7 +939,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return part
         return within_ceiling(part, capability_id, owner._effective_authority)  # pyright: ignore[reportPrivateUsage]
 
-    async def _call_tools(  # noqa: C901
+    async def _call_tools(
         self,
         tool_calls: list[_messages.ToolCallPart],
         *,
@@ -1412,7 +1412,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     stream as each task completes.
     """
 
-    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
+    async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
 
         # Upfront-validate function calls in emission order, emitting their call events.

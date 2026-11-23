@@ -595,3 +595,12 @@ def test_the_repository_config_names_existing_roots():
 
     assert [path for path in config['paths'] if not (root / path).is_dir()] == []
     assert config['max-complexity-allowed'] == 15
+
+
+def test_ruff_skips_c901_exactly_on_the_roots():
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))['tool']
+    skipped = {glob for glob, codes in config['ruff']['lint']['per-file-ignores'].items() if 'C901' in codes}
+
+    # A root that leaves `[tool.complexipy]` with its key still here would lose its only complexity check.
+    assert skipped == {f'{path}/**/*.py' for path in config['complexipy']['paths']}

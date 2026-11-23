@@ -2447,7 +2447,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return await count_tokens_via_bedrock(client, max_tokens=prepared.max_tokens, **params)
         return await client.beta.messages.count_tokens(**params)
 
-    def _process_response(  # noqa: C901
+    def _process_response(
         self,
         response: BetaMessage,
         model_request_parameters: ModelRequestParameters,

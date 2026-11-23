@@ -539,7 +539,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in handler:
             yield e
 
-    def _dispatch_event(self, event: NativeEvent) -> AsyncIterator[EventT] | None:  # noqa: C901
+    def _dispatch_event(self, event: NativeEvent) -> AsyncIterator[EventT] | None:
         """Call the `handle_*` method for `event`, or return `None` when `handle_event` forwards nothing for it."""
         match event:
             case PartStartEvent():
@@ -605,7 +605,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 pass
         return None
 
-    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
+    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a `PartStartEvent`.
 
         This method dispatches to specific `handle_*` methods based on part type:

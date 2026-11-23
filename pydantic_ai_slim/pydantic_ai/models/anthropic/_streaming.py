@@ -179,7 +179,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             self.provider_details, event.message.usage.inference_geo, report=self._report_inference_geo
         )
 
-    def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
+    def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:
         self._current_block = current_block = event.content_block
         match current_block:
             # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.

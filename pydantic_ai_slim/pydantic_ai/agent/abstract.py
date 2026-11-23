@@ -949,7 +949,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def run_stream(  # noqa: C901
+    async def run_stream(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
