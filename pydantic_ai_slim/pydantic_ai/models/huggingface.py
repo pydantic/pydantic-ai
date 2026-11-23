@@ -362,7 +362,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 if not isinstance(status_error, HfHubHTTPError):
                     raise  # pragma: no cover
                 await status_error.response.aread()
-                raise status_error from None
+                raise status_error
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
