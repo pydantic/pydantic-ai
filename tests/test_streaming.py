@@ -2687,7 +2687,10 @@ class TestStreamingCachedOutput:
         ],
     )
     async def test_none_output_validated_once(self, reads: tuple[Literal['get_output', 'stream_output'], ...]):
-        """A final output of `None` runs the output function and each validator once, however it is read."""
+        """A final output of `None` runs the output function and each validator once, however it is read.
+
+        Not a VCR test: how often they run is local and provider-independent, and a cassette records none of it.
+        """
         final_calls: list[str] = []
 
         def lookup(ctx: RunContext, key: int) -> int | None:
