@@ -80,6 +80,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime._lifecycle import ResponseEnded
 from pydantic_ai.realtime.codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -2497,6 +2498,72 @@ async def test_context_text_over_the_cap_is_refused_before_sending() -> None:
             await session.send(_text_of(500), respond=False)
 
     assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.thinking.append', 'session.close']
+
+
+async def test_voice_instructions_over_the_cap_are_refused_before_sending() -> None:
+    """Live refuses an instructions append over 500 tokens as it does context (checked live: 500 accepted, 501 refused).
+
+    The refusal arrives after the send has returned, so the session checks the length first.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            with pytest.raises(
+                UserError, match=re.escape('at most 500 tokens per `append_voice_instructions()`, and this is 501')
+            ):
+                await session.append_voice_instructions(_text_of(501))
+            await session.append_voice_instructions(_text_of(500))
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.instructions.append', 'session.close']
+
+
+async def test_voice_instructions_are_appended_and_kept_for_a_replacement_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Voice instructions go to Live as `session.instructions.append`, and into the instructions a replacement session
+    starts with, after the voice model's own: the newest that fit in the start cap, dropping the oldest.
+
+    A unit test: the cap is 16,384 tokens, which a recording would take dozens of appends to reach.
+    """
+    monkeypatch.setattr(live_module, '_START_INSTRUCTIONS_TOKEN_LIMIT', 21)
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    session_start: dict[str, Any] = {'model': 'gpt-live-1', 'instructions': _text_of(8)}
+    connection = _Recorder(object(), session_start=session_start)  # pyright: ignore[reportArgumentType]
+    for words in (4, 5, 6):
+        await connection.send(AppendVoiceInstructions(_text_of(words)))
+        if words == 5:
+            # Within the cap: both appends follow the voice model's own instructions.
+            assert session_start['instructions'] == '\n\n'.join([_text_of(8), _text_of(4), _text_of(5)])
+
+    assert sent == [
+        {'type': 'session.instructions.append', 'delegation_id': None, 'content': _text_of(words)}
+        for words in (4, 5, 6)
+    ]
+    # The third append would pass the cap, so the oldest is dropped.
+    assert session_start['instructions'] == '\n\n'.join([_text_of(8), _text_of(5), _text_of(6)])
+
+
+async def test_a_replacement_session_starts_with_the_appended_voice_instructions(model: OpenAILiveModel) -> None:
+    """A dropped session that can't be forked is replaced by one that starts with the voice instructions added so far."""
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            await connection.send(AppendVoiceInstructions('The caller is on a key menu: stay quiet.'))
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+
+    assert json.loads(second.sent[0])['session']['instructions'] == snapshot("""\
+You are a voice assistant. Keep replies short and conversational. When the user asks for something you cannot answer from this conversation alone, delegate the task and tell them you are looking it up.
+
+The caller is on a key menu: stay quiet.\
+""")
 
 
 async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
