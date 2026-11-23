@@ -760,16 +760,29 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             and self.continue_as_new is not None
             and workflow.info().is_continue_as_new_suggested()
         ):
-            # Continuing raises out of the run before this request's stream delivers the events buffered so far, such
-            # as an `EnqueuedMessagesEvent` from the drain that ran first, and snapshots the topic's log for the
-            # successor before raising. So they go out to the topic now. If the handler declines, the topic skips
-            # them at their stream position.
-            if (topic := self._event_stream_topic) is not None:
-                buffered = ctx._event_stream_buffer or ()  # pyright: ignore[reportPrivateUsage]
-                for event in [event for event in buffered if _published_from_workflow(topic, event)]:
-                    publish_agent_event_ahead(topic.name, event)
+            self._publish_buffered_events_ahead(ctx)
             await await_maybe(self.continue_as_new(ctx))
         return await super().before_model_request(ctx, request_context)
+
+    def _publish_buffered_events_ahead(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Publish the events buffered for this request to the topic before `continue_as_new` can end the run.
+
+        Continuing raises out of the run before this request's stream delivers the events buffered so far, such as
+        an `EnqueuedMessagesEvent` from the drain that ran first, and snapshots the topic's log for the successor
+        before raising. So they go out now, when nothing can change them before their stream position: this
+        capability is innermost, so only `on_event` listeners stand between the buffer and the topic. If the handler
+        declines, the topic skips them at their stream position. When a listener listens to any of them, they all
+        wait for their stream position, so a declined run keeps their order.
+        """
+        if (topic := self._event_stream_topic) is None:
+            return
+        buffered = ctx._event_stream_buffer or ()  # pyright: ignore[reportPrivateUsage]
+        selected = [event for event in buffered if _published_from_workflow(topic, event)]
+        root = ctx.root_capability
+        if root is not None and any(root.listens_to(event) for event in selected):
+            return
+        for event in selected:
+            publish_agent_event_ahead(topic.name, event)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse

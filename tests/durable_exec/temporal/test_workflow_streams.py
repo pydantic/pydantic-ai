@@ -771,6 +771,7 @@ async def test_replay_does_not_duplicate_events(client: Client) -> None:
 @dataclass
 class SteeredRun:
     continue_as_new: bool
+    replace_delivery_event: bool = False
     message_history: list[ModelMessage] | None = None
     stream_state: WorkflowStreamState | None = None
 
@@ -803,6 +804,27 @@ _steered_agent = Agent(
     capabilities=[ProcessEventStream(_record_steered_events), _steered_durability],
 )
 
+_replacing_hooks = Hooks[None]()
+
+
+@_replacing_hooks.on.event
+async def _replace_delivery_event(ctx: RunContext[None], event: AgentStreamEvent) -> AgentStreamEvent | None:
+    if isinstance(event, EnqueuedMessagesEvent) and event.enqueue_id != 'replaced':
+        return replace(event, enqueue_id='replaced')
+    return None
+
+
+_replacing_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC, continue_as_new=_continue_steered_run_as_new
+)
+_replacing_agent = Agent(
+    _model,
+    name='replacing_stream_agent',
+    deps_type=NoneType,
+    tools=[get_answer],
+    capabilities=[_replacing_hooks, _replacing_durability],
+)
+
 
 @workflow.defn
 class SteeredWorkflow:
@@ -815,9 +837,10 @@ class SteeredWorkflow:
     async def run(self, run_input: SteeredRun) -> bool:
         history = run_input.message_history
         steered = history is not None
+        agent = _replacing_agent if run_input.replace_delivery_event else _steered_agent
         async with (
             self.events,
-            _steered_agent.iter('Hello' if history is None else None, message_history=history) as run,
+            agent.iter('Hello' if history is None else None, message_history=history) as run,
         ):
             async for node in run:
                 if not steered and Agent.is_call_tools_node(node):
@@ -893,6 +916,36 @@ async def test_enqueued_messages_event_reaches_the_topic_once_around_continue_as
             == consumer_kinds
             == ['FunctionToolCallEvent', 'FunctionToolResultEvent', 'EnqueuedMessagesEvent']
         )
+
+
+@pytest.mark.filterwarnings('ignore:returning a replacement event from `hooks.on.event` is deprecated')
+async def test_a_listened_event_reaches_the_topic_from_its_stream_position_when_continue_as_new_declines(
+    client: Client,
+) -> None:
+    """A buffered event a listener can change waits for its stream position, so a declined run publishes it as changed.
+
+    Here the deprecated `hooks.on.event` replacement swaps the `EnqueuedMessagesEvent` at its stream position.
+    Publishing the buffered original before the handler declined would put both on the topic.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SteeredWorkflow],
+        plugins=[AgentPlugin(_replacing_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            SteeredWorkflow.run,
+            args=[SteeredRun(continue_as_new=False, replace_delivery_event=True)],
+            id=f'{SteeredWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _replacing_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        await handle.result()
+
+    assert [event.enqueue_id for event in received if isinstance(event, EnqueuedMessagesEvent)] == ['replaced']
 
 
 # --- Guards and validation ------------------------------------------------------------------------
