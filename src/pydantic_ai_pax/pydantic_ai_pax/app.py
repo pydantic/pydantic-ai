@@ -321,8 +321,7 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
-            summary = last.session.summary
-            return summary.id if summary.revision else None
+            return last.session.saved_id
 
 
 def _terminal_background(console: Console) -> str | None:

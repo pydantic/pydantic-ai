@@ -246,8 +246,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                 )
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
-            if saved is not None:
-                print(f'Resume this conversation with: pax --resume {saved}')
+            _print_resume_command(saved)
     except Relaunch as relaunch:
         _relaunch(args, relaunch, launched=launched)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
@@ -290,6 +289,12 @@ def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Work
         os.environ[_RELAUNCH_WEB] = f'{relaunch.web.port} {relaunch.web.token}'
     sys.stdout.flush()
     os.execv(relaunch.executable, argv)
+
+
+def _print_resume_command(saved_id: str | None) -> None:
+    """Name the command that reopens the conversation just left, once it has been saved."""
+    if saved_id is not None:
+        print(f'Resume this conversation with: pax --resume {saved_id}')
 
 
 def _report_kept_worktree(worktree: 'Worktree | None') -> None:

@@ -715,6 +715,11 @@ class Session(Generic[DepsT, OutputT]):
         return self.summary.id
 
     @property
+    def saved_id(self) -> str | None:
+        """The ID `--resume` reopens this conversation by; `None` until the first prompt is saved."""
+        return self.summary.id if self.summary.revision else None
+
+    @property
     def title(self) -> str | None:
         """The saved title; `None` until the first prompt is saved."""
         return self.summary.title if self.summary.revision else None
