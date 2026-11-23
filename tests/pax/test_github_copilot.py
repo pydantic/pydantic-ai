@@ -371,6 +371,9 @@ async def test_cancelled_login_adds_no_models(
         (['claude-haiku-4.5', 'grok-4.7', 'mai-code-1.1-flash'], 'grok-4.7'),
         (['gpt-5-mini', 'gpt-5.4-mini'], 'gpt-5.4-mini'),
         (['auto', 'grok-4.7'], 'grok-4.7'),
+        # Past the 4,300 digits `int()` converts.
+        (['gpt-5.' + '0' * 4301 + '1', 'gpt-5.5'], 'gpt-5.5'),
+        (['gpt-5.1' + '0' * 4300, 'gpt-5.5'], 'gpt-5.1' + '0' * 4300),
     ],
 )
 def test_default_model(names: list[str], expected: str) -> None:

@@ -4,6 +4,7 @@ import os
 import re
 import time
 from collections.abc import Callable
+from decimal import Decimal
 from functools import partial
 
 import httpx2
@@ -154,10 +155,11 @@ def default_model(names: list[str]) -> str:
     return max(large, key=_version)
 
 
-def _version(name: str) -> tuple[int, ...]:
+def _version(name: str) -> tuple[Decimal, ...]:
     """The first dotted version in a model id, else its first digit, as Copilot writes Opus 4.1 as `claude-opus-41`."""
     found = re.search(r'\d+(?:\.\d+)+|\d', name)
-    return tuple(map(int, found.group().split('.'))) if found else ()
+    # `Decimal`, not `int`: `int` refuses a string of more than 4,300 digits.
+    return tuple(map(Decimal, found.group().split('.'))) if found else ()
 
 
 async def ensure_login(*, console: Console) -> bool:
