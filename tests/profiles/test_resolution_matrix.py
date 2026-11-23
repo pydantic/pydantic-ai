@@ -4265,6 +4265,8 @@ def test_otari_anthropic():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
             'anthropic_disables_thinking_with_between_tools': True,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -4300,6 +4302,7 @@ def test_otari_gemini():
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
+            'google_supports_penalties': True,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4456,6 +4459,8 @@ def test_stav_anthropic():
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
