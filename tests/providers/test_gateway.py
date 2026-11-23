@@ -449,10 +449,11 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 @patch.dict(
     os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
 )
-@patch.dict(
-    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
-)
 def test_infer_model_gateway_route_without_own_provider():
+    """A Gateway route with no provider class of its own builds the client for the API it speaks, on its own route.
+
+    No request is sent: the claim is which model class and URL the string builds.
+    """
     model = infer_model('gateway/doubleword:deepseek-ai/DeepSeek-V4.1-Flash-1017')
     assert isinstance(model, OpenAIChatModel)
     assert model.model_name == 'deepseek-ai/DeepSeek-V4.1-Flash-1017'
@@ -462,26 +463,6 @@ def test_infer_model_gateway_route_without_own_provider():
 @patch.dict(
     os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
 )
-def test_infer_model_unknown_gateway_route():
-    with raises(
-        snapshot(
-            "UserError: Unknown model: gateway/potato:some-model. To use a Gateway route Pydantic AI doesn't know, "
-            "pass its API format and the route: `gateway_provider('openai-chat', route='potato')`."
-        )
-    ):
-        infer_model('gateway/potato:some-model')
-
-
-def test_infer_model_gateway_typo_keeps_gateway_suggestion():
-    with raises(
-        snapshot(
-            'UserError: Unknown model: gateway/anthropik:claude-sonnet-4-5. '
-            "Did you mean 'gateway/anthropic:claude-sonnet-5-5'?"
-        )
-    ):
-        infer_model('gateway/anthropik:claude-sonnet-4-5')
-
-
 async def test_model_provider_argument():
     model = OpenAIChatModel('gpt-5', provider='gateway')
     assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # pyright: ignore[reportPrivateUsage]

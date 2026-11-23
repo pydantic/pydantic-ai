@@ -71,7 +71,7 @@ Examples of providers and models that can be used are:
 | Google Cloud (formerly Vertex AI) | `google-cloud`, `google` | `gateway/google-cloud:{{ google:medium.name }}` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
-| Doubleword | `doubleword`    | `gateway/doubleword:deepseek-ai/DeepSeek-V4.1-Flash` |
+| Doubleword | `doubleword` (OpenAI Chat Completions) | `gateway/doubleword:deepseek-ai/DeepSeek-V4.1-Flash` |
 
 [Image generation](image-generation.md) routes through the gateway as `gateway/google:<model>`, which serves the Gemini image models over Google Cloud.
 

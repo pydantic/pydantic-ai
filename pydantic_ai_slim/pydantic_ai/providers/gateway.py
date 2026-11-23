@@ -246,9 +246,7 @@ def gateway_provider(
             create_http_client=create_async_http_client,
         )
     else:
-        raise UserError(
-            f'Unknown upstream provider: {upstream_provider}. {unknown_gateway_route_hint(upstream_provider)}'
-        )
+        raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
 def _build_gateway_provider(
@@ -413,15 +411,6 @@ def _default_gateway_route(provider: str) -> str:
     if provider in _GATEWAY_ROUTE_APIS:
         return provider
     return _gateway_route(normalize_gateway_provider(provider))
-
-
-def unknown_gateway_route_hint(provider: str) -> str:
-    """How to reach a Gateway route that `provider` does not name a known API for."""
-    route = provider.removeprefix('gateway/')
-    return (
-        "To use a Gateway route Pydantic AI doesn't know, pass its API format and the route: "
-        f"`gateway_provider('openai-chat', route='{route}')`."
-    )
 
 
 # User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
