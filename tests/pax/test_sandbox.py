@@ -97,6 +97,7 @@ from pydantic_ai_pax.plugins import (
 from pydantic_ai_pax.runtime.imported_history import imported_kind
 from pydantic_ai_pax.runtime.rewind import rewind_points
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs, Type
 
 if TYPE_CHECKING:
@@ -848,7 +849,7 @@ async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
         return await LocalWorkspaceBackend.run(self, ['true'])
 
     monkeypatch.setattr(FakeSandboxBackend, 'run', long_command)
-    with caplog.at_level(logging.DEBUG, logger=sandbox.__name__), anyio.fail_after(5):
+    with caplog.at_level(logging.DEBUG, logger=sandbox.__name__), anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await session.prompt('go')
     # A failed call is only logged: the command goes on, and the next call comes as usual.
     assert 'Could not keep the sandbox alive' in caplog.text
@@ -864,7 +865,7 @@ async def test_the_sandbox_is_kept_alive_only_while_a_command_runs(
     await no_more_calls()
     fails = True
     # The command's own error, not wrapped, and the calls stop with it.
-    with pytest.raises(OSError, match=r'^the command failed$'), anyio.fail_after(5):
+    with pytest.raises(OSError, match=r'^the command failed$'), anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await session.prompt('again')
     await no_more_calls()
 
@@ -908,7 +909,7 @@ async def test_a_session_ending_leaves_another_sessions_sandbox_open(
         return await LocalWorkspaceBackend.run(self, ['true'])
 
     monkeypatch.setattr(FakeSandboxBackend, 'run', long_command)
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as runs:
             runs.start_soon(second_session.prompt, 'go on')
             await running.wait()
