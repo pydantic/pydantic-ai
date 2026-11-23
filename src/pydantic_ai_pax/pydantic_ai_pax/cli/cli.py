@@ -29,6 +29,8 @@ _RELAUNCH_WEB = 'CLAI_RELAUNCH_WEB'
 
 In the environment, which only you can read, rather than on the command line `ps` shows every user.
 """
+SUBCOMMANDS = ('config', 'plugins', 'sessions', 'update')
+"""The `pax` subcommands. The agent can run `pax` from its shell, so none may widen what the agent may do."""
 
 
 def _list_live_sessions() -> None:
@@ -128,7 +130,7 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
-    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'sessions', 'update'))
+    parser.add_argument('command', nargs='?', choices=SUBCOMMANDS)
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = _parse_args(parser)
     _resume_source(args)
