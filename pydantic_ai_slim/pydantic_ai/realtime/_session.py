@@ -1841,8 +1841,9 @@ class RealtimeSession:
         profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
-        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
-        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) and `AppendVoiceInstructions` are driven through
+        the dedicated methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`,
+        `append_voice_instructions()`), and
         [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
