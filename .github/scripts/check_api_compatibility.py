@@ -4,12 +4,12 @@ import argparse
 import ast
 import hashlib
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import Annotated
 
+import _commands
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
 PACKAGES = {
@@ -378,12 +378,10 @@ def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
     # A package new since `against`, such as `pydantic_ai_pax` until its first release, has no released API to stay
     # compatible with. One missing here too still fails.
     module = Path(search_path, package)
-    released = subprocess.run(
-        ['git', 'cat-file', '-e', f'{against}:{module.as_posix()}'], check=False, capture_output=True
-    )
+    released = _commands.run(['git', 'cat-file', '-e', f'{against}:{module.as_posix()}'])
     if module.is_dir() and released.returncode != 0:
         return []
-    result = subprocess.run(
+    result = _commands.run(
         [
             'uvx',
             '--quiet',
@@ -403,10 +401,7 @@ def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
             '--format',
             'oneline',
             '--no-color',
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+        ]
     )
     # `griffecli` prints findings to stderr and exits 1 when there are any, but an uncaught exception also exits 1.
     # Accept only output that parses and agrees with the exit code, so a crash can never read as a clean check.

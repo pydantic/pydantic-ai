@@ -5,8 +5,10 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
+import _commands
 import check_api_compatibility
 import pytest
+from _command_fixtures import Replay
 from check_api_compatibility import (
     Finding,
     collection_entry_changes,
@@ -62,16 +64,28 @@ def test_fingerprint_identifies_the_exact_finding():
     assert first.fingerprint != other_package.fingerprint
 
 
-def test_parse_findings():
-    output = (
-        'pydantic_ai/messages.py:12: RequestPart: Attribute value was changed: Old -> New\n'
-        'pydantic_ai/tools.py:34: Tool.run(ctx): Parameter was added as required\n'
-    )
+def test_run_griffe_reads_the_findings_griffecli_writes_to_stderr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Recorded from `test_run_griffe_reports_real_griffe_findings`. `griffecli` writes its findings to stderr and
+    # nothing to stdout, which a hand-written fake got wrong (https://github.com/pydantic/pydantic-ai/pull/10963).
+    replay = Replay(Path(__file__).parent / 'fixtures' / 'commands' / 'griffecli_findings.json')
+    monkeypatch.setattr(_commands, 'run', replay.run)
+    (tmp_path / 'new_pkg').mkdir()
+    monkeypatch.chdir(tmp_path)
 
-    assert parse_findings('pydantic_ai', output) == [
-        Finding('pydantic_ai', 'pydantic_ai/messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New'),
-        Finding('pydantic_ai', 'pydantic_ai/tools.py', 34, 'Tool.run(ctx): Parameter was added as required'),
+    assert run_griffe('fixture_pkg', '.', 'v1') == []
+    assert run_griffe('fixture_pkg', '.', 'v1') == [
+        Finding(
+            'fixture_pkg',
+            'fixture_pkg/_names.py',
+            3,
+            "ModelNames: Attribute value was changed: Literal['a'] -> Literal['a', 'b']",
+        ),
+        Finding('fixture_pkg', 'fixture_pkg/__init__.py', 4, 'greet(greeting): Parameter was added as required'),
     ]
+    with pytest.raises(SystemExit, match='griffecli check missing_pkg failed with exit code 1'):
+        run_griffe('missing_pkg', '.', 'v1')
+    assert run_griffe('new_pkg', '.', 'v1') == []
+    assert replay.unconsumed == []
 
 
 def test_parse_findings_rejects_unknown_output():

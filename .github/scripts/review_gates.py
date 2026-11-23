@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
+import _commands
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
 from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
 from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
@@ -360,19 +360,14 @@ class ReviewGhCli(GhCli):
         """Use the same Git-attribute-aware calculation as PR Bots."""
         files = self.file_pages(_SIZED_FILE_PAGES, pull.changed_files, exact=True)
         # Fetch base objects as data only; never check out or execute PR code.
-        present = subprocess.run(['git', 'cat-file', '-e', f'{pull.base.sha}^{{commit}}'], capture_output=True)
+        present = _commands.run(['git', 'cat-file', '-e', f'{pull.base.sha}^{{commit}}'])
         if present.returncode:
-            fetched = subprocess.run(
-                ['git', 'fetch', '--no-tags', '--depth=1', 'origin', pull.base.sha], capture_output=True
-            )
+            fetched = _commands.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', pull.base.sha])
             if fetched.returncode:
                 raise GateError('Cannot fetch base attributes for size calculation.')
-        result = subprocess.run(
+        result = _commands.run(
             ['bash', str(Path(__file__).with_name('pr_size.sh')), pull.base.sha],
             input=_SIZED_FILES.dump_json(files).decode(),
-            capture_output=True,
-            text=True,
-            check=False,
         )
         if result.returncode:
             raise GateError(f'Size calculation failed: {result.stderr.strip()}')

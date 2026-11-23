@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ast
 import subprocess
+import sys
 from pathlib import Path
 
 import _commands
 import pytest
-from _commands import Recording, Replay, scrub
+from _command_fixtures import Recording, Replay
+from _commands import scrub
 
 MISSING_OBJECT = '0' * 40
 
@@ -85,14 +88,17 @@ def test_scrub_removes_credentials():
             'Authorization: Bearer abc.def',
             'by dev@example.org and 1+octo@users.noreply.github.com',
             'key zai-secret-value',
+            'File "/home/dev/.cache/uv/griffe/loader.py"',
         ]
     )
-    assert scrub(text, {'ZAI_API_KEY': 'zai-secret-value', 'SHORT_TOKEN': 'abc', 'HOME': '/home'}) == '\n'.join(
+    environ = {'ZAI_API_KEY': 'zai-secret-value', 'SHORT_TOKEN': 'abc', 'HOME': '/home/dev'}
+    assert scrub(text, environ) == '\n'.join(
         [
             'token <github-token> and <github-token>',
             'Authorization: <redacted>',
             'by user@example.com and 1+octo@users.noreply.github.com',
             'key <ZAI_API_KEY>',
+            'File "~/.cache/uv/griffe/loader.py"',
         ]
     )
 
@@ -105,3 +111,27 @@ def test_a_recorded_secret_never_reaches_the_fixture(tmp_path: Path, monkeypatch
 
     assert 'not-a-real-token-value' not in fixture.read_text(encoding='utf-8')
     assert Replay(fixture).recording.calls[0].input == '<GH_TOKEN>'
+
+
+def test_every_command_fixture_says_where_it_was_recorded_and_is_scrubbed():
+    fixtures = sorted((Path(__file__).parent / 'fixtures' / 'commands').glob('*.json'))
+    assert fixtures
+    for fixture in fixtures:
+        recording = Replay(fixture).recording
+        assert recording.recorded_from.command, fixture.name
+        assert recording.calls, fixture.name
+        for call in recording.calls:
+            texts = [*call.args, call.input or '', call.stderr, call.stdout if call.encoding == 'utf-8' else '']
+            assert [scrub(text, {}) for text in texts] == texts, fixture.name
+
+
+def test_the_seam_imports_only_the_standard_library():
+    # Workflows run gate scripts on the runner's bare `python3`, which has no third-party packages.
+    tree = ast.parse(Path(_commands.__file__).read_text(encoding='utf-8'))
+    imported = {
+        alias.name.split('.')[0]
+        for node in tree.body
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in (node.names if isinstance(node, ast.Import) else [ast.alias(node.module or '')])
+    }
+    assert imported <= sys.stdlib_module_names | {'__future__'}

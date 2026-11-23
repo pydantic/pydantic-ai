@@ -1,0 +1,142 @@
+{
+  "recorded_from": {
+    "command": "pytest .github/scripts/test_check_api_compatibility.py::test_run_griffe_reports_real_griffe_findings -q -p no:cacheprovider --tb=short",
+    "recorded_at": "2026-11-23T01:50:32.650241Z",
+    "run": "local"
+  },
+  "calls": [
+    {
+      "args": [
+        "git",
+        "cat-file",
+        "-e",
+        "v1:fixture_pkg"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "uvx",
+        "--quiet",
+        "--from",
+        "griffecli==2.3.0",
+        "--with",
+        "griffe-public-redundant-aliases==0.3.2",
+        "griffecli",
+        "check",
+        "fixture_pkg",
+        "--search",
+        ".",
+        "--against",
+        "v1",
+        "--extensions",
+        "griffe_public_redundant_aliases",
+        "--format",
+        "oneline",
+        "--no-color"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "git",
+        "cat-file",
+        "-e",
+        "v1:fixture_pkg"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "uvx",
+        "--quiet",
+        "--from",
+        "griffecli==2.3.0",
+        "--with",
+        "griffe-public-redundant-aliases==0.3.2",
+        "griffecli",
+        "check",
+        "fixture_pkg",
+        "--search",
+        ".",
+        "--against",
+        "v1",
+        "--extensions",
+        "griffe_public_redundant_aliases",
+        "--format",
+        "oneline",
+        "--no-color"
+      ],
+      "input": null,
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "fixture_pkg/_names.py:3: ModelNames: Attribute value was changed: Literal['a'] -> Literal['a', 'b']\nfixture_pkg/__init__.py:4: greet(greeting): Parameter was added as required\n",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "git",
+        "cat-file",
+        "-e",
+        "v1:missing_pkg"
+      ],
+      "input": null,
+      "returncode": 128,
+      "stdout": "",
+      "stderr": "fatal: path 'missing_pkg' does not exist in 'v1'\n",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "uvx",
+        "--quiet",
+        "--from",
+        "griffecli==2.3.0",
+        "--with",
+        "griffe-public-redundant-aliases==0.3.2",
+        "griffecli",
+        "check",
+        "missing_pkg",
+        "--search",
+        ".",
+        "--against",
+        "v1",
+        "--extensions",
+        "griffe_public_redundant_aliases",
+        "--format",
+        "oneline",
+        "--no-color"
+      ],
+      "input": null,
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/loader.py\", line 182, in load\n    obj_path, package = self.finder.find_spec(\n                        ~~~~~~~~~~~~~~~~~~~~~^\n        objspec,  # ty:ignore[invalid-argument-type]\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        try_relative_path=try_relative_path,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n        find_stubs_package=find_stubs_package,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/finder.py\", line 220, in find_spec\n    return module_name, self.find_package(top_module_name)\n                        ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/finder.py\", line 292, in find_package\n    raise ModuleNotFoundError(module_name)\nModuleNotFoundError: missing_pkg\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/bin/griffecli\", line 12, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffecli/_internal/cli.py\", line 664, in main\n    return commands[subcommand](**opts_dict)\n           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffecli/_internal/cli.py\", line 565, in check\n    old_package = load_git(\n        against_path,\n    ...<9 lines>...\n        resolve_external=None,\n    )\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/loader.py\", line 961, in load_git\n    return load(\n        objspec,\n    ...<14 lines>...\n        prefer_stubs_docs=prefer_stubs_docs,\n    )\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/loader.py\", line 880, in load\n    result = loader.load(\n        objspec,\n    ...<2 lines>...\n        find_stubs_package=find_stubs_package,\n    )\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/loader.py\", line 198, in load\n    top_module_object = dynamic_import(top_module_name, self.finder.search_paths)\n  File \"~/.cache/uv/archive-v0/uLi2QuAHDV4O_uxc/lib/python3.15/site-packages/griffe/_internal/importer.py\", line 123, in dynamic_import\n    raise ImportError(\"; \".join(errors))\nImportError: With sys.path = ['/tmp/griffe-worktree-test_run_griffe_reports_real_g0-v1-ske6bttc/v1'], accessing 'missing_pkg' raises ModuleNotFoundError: No module named 'missing_pkg'\n",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "git",
+        "cat-file",
+        "-e",
+        "v1:new_pkg"
+      ],
+      "input": null,
+      "returncode": 128,
+      "stdout": "",
+      "stderr": "fatal: path 'new_pkg' exists on disk, but not in 'v1'\n",
+      "encoding": "utf-8"
+    }
+  ]
+}

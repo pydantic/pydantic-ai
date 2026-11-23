@@ -36,6 +36,7 @@ jobs:
           sparse-checkout: |
             .github/scripts/pr_gates.py
             .github/scripts/check_api_compatibility.py
+            .github/scripts/_commands.py
           sparse-checkout-cone-mode: false
       - name: Install pinned script dependencies
         run: python3 -m pip install --quiet 'pydantic==2.13.4'

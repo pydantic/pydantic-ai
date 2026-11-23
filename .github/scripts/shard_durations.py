@@ -33,6 +33,8 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+import _commands
+
 Durations = dict[str, float]
 GhApi = Callable[[str], bytes]
 
@@ -51,9 +53,7 @@ def gh_api(path: str, *, show_rate_limit: bool = False) -> bytes:
     `show_rate_limit` also prints the response's `x-ratelimit-*` headers: which budget the call drew
     from, and how much of it is left.
     """
-    response = subprocess.run(
-        ['gh', 'api', *(['--include'] if show_rate_limit else []), path], check=True, capture_output=True
-    ).stdout
+    response = _commands.run_bytes(['gh', 'api', *(['--include'] if show_rate_limit else []), path], check=True).stdout
     if not show_rate_limit:
         return response
     head, body = re.split(rb'\r?\n\r?\n', response, maxsplit=1)
@@ -136,9 +136,7 @@ def fetch(repo: str, prefix: str, shards: int, before: str, api: GhApi = gh_api)
 
 def find_test_modules(root: Path, exclude: Sequence[str]) -> list[str]:
     """Every tracked `tests/**/test_*.py` module outside `exclude`, as a repo-relative POSIX path."""
-    tracked = subprocess.run(
-        ['git', 'ls-files', '-z', 'tests'], cwd=root, check=True, capture_output=True, text=True
-    ).stdout.split('\0')
+    tracked = _commands.run(['git', 'ls-files', '-z', 'tests'], cwd=root, check=True).stdout.split('\0')
     excluded = tuple(path.rstrip('/') + '/' for path in exclude)
     return sorted(
         path

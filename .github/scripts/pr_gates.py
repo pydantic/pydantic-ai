@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Literal, Protocol, TypeVar, assert_never
 
+import _commands
 from check_api_compatibility import WAIVERS, read_waiver
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -158,7 +158,7 @@ class GhCli:
         self._pull = f'repos/{repo}/pulls/{number}'
 
     def _api(self, *args: str, input: str | None = None) -> str:
-        result = subprocess.run(['gh', 'api', *args], input=input, check=False, capture_output=True, text=True)
+        result = _commands.run(['gh', 'api', *args], input=input)
         if result.returncode != 0:
             raise GateError(f'`gh api {args[-1]}` failed: {result.stderr.strip()}')
         return result.stdout

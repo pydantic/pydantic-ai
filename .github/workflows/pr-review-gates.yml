@@ -152,6 +152,7 @@ jobs:
             .github/scripts/publish_pr_review_checks.py
             .github/scripts/pr_size.sh
             .github/scripts/check_api_compatibility.py
+            .github/scripts/_commands.py
           sparse-checkout-cone-mode: false
       - name: Install pinned script dependencies
         if: steps.pending.outputs.active == 'true'

@@ -1,0 +1,37 @@
+{
+  "recorded_from": {
+    "command": "_commands.py record .github/scripts/fixtures/commands/review_gates_wake_up_pulls.json -- gh api repos/pydantic/pydantic-ai/pulls/11727 --jq '{number, head: {ref: .head.ref, repo: {id: .head.repo.id, full_name: .head.repo.full_name}}}'",
+    "recorded_at": "2026-11-23T01:48:39.595526Z",
+    "run": "local"
+  },
+  "calls": [
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/pulls/11727",
+        "--jq",
+        "{number, head: {ref: .head.ref, repo: {id: .head.repo.id, full_name: .head.repo.full_name}}}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"head\":{\"ref\":\"pr-gates-merge-bar\",\"repo\":{\"full_name\":\"pydantic/pydantic-ai\",\"id\":818331198}},\"number\":11727}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/pulls/12259",
+        "--jq",
+        "{number, head: {ref: .head.ref, repo: {id: .head.repo.id, full_name: .head.repo.full_name}}}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"head\":{\"ref\":\"anthropic-message-threads\",\"repo\":{\"full_name\":\"Harshil-Jani/pydantic-ai\",\"id\":1443451776}},\"number\":12259}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    }
+  ]
+}

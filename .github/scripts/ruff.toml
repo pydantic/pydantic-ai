@@ -1,0 +1,46 @@
+# The gate scripts start every command through `_commands.py`, so their tests can replay what the real command
+# printed (R45). The ban lives here, not in the root `banned-api`, because library and test code outside this
+# directory starts processes on purpose.
+extend = "../../pyproject.toml"
+# The root's default `src`, so imports sort as they do under the root configuration.
+src = ["../..", "../../src"]
+
+[lint.extend-per-file-ignores]
+# The seam itself.
+"_commands.py" = ["TID251"]
+# Tests start the real `node`, `git` and `ruff` they check against.
+"test_*.py" = ["TID251"]
+# A workflow runs each of these where `_commands` cannot be imported: `bots.yml` fetches the publisher alone through
+# the contents API, the weekly audit copies its validator alone with `git show`, and `PR Review Checks` runs the
+# selector under `python3 -I`, which keeps this directory off `sys.path`.
+"publish_douwebot_review.py" = ["TID251"]
+"weekly_ce_audit.py" = ["TID251"]
+"pr_review_checks.py" = ["TID251"]
+# The native-capture workflow copies this probe into the sandbox it attacks, without the rest of this directory, and
+# the probe needs `close_fds=False` to hand its child the capture file descriptor.
+"gh_aw_native_capture/acceptance_agent.py" = ["TID251"]
+
+# A `banned-api` table here replaces the root one, so the root's bans are repeated first;
+# `test_lint_exemptions.py` fails when the two drift apart.
+[lint.flake8-tidy-imports.banned-api]
+"typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
+"asyncio.Lock".msg = "Use anyio.Lock instead."
+"asyncio.sleep".msg = "Use anyio.sleep instead."
+"asyncio.Event".msg = "Use anyio.Event instead."
+"asyncio.to_thread".msg = "Use anyio.to_thread.run_sync instead."
+"asyncio.wait_for".msg = "Use anyio.fail_after or anyio.move_on_after instead."
+"asyncio.timeout".msg = "Use anyio.fail_after or anyio.move_on_after instead."
+"asyncio.Queue".msg = "Use anyio.create_memory_object_stream instead."
+"asyncio.Semaphore".msg = "Use anyio.Semaphore instead."
+"asyncio.Condition".msg = "Use anyio.Condition instead."
+"subprocess.run".msg = "Start commands through `_commands`, so tests can replay what they print."
+"subprocess.Popen".msg = "Start commands through `_commands`, so tests can replay what they print."
+"subprocess.call".msg = "Start commands through `_commands`, so tests can replay what they print."
+"subprocess.check_call".msg = "Start commands through `_commands`, so tests can replay what they print."
+"subprocess.check_output".msg = "Start commands through `_commands`, so tests can replay what they print."
+"subprocess.getoutput".msg = "Start commands through `_commands`, so tests can replay what they print."
+"subprocess.getstatusoutput".msg = "Start commands through `_commands`, so tests can replay what they print."
+"os.system".msg = "Start commands through `_commands`, so tests can replay what they print."
+"os.popen".msg = "Start commands through `_commands`, so tests can replay what they print."
+"asyncio.create_subprocess_exec".msg = "Start commands through `_commands`, so tests can replay what they print."
+"asyncio.create_subprocess_shell".msg = "Start commands through `_commands`, so tests can replay what they print."

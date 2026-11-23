@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Annotated, TextIO, TypeVar
 from urllib.parse import quote
 
+import _commands
 from publish_douwebot_review import ReviewEngine, ReviewResult
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
@@ -581,14 +582,12 @@ def run_read_only(
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     _, provider = run_with_fallback(
-        lambda command, env, stream: subprocess.run(
+        lambda command, env, stream: _commands.run_into(
+            stream,
             command,
             input=prompt,
-            text=True,
             cwd=cwd,
             env=env,
-            stdout=stream,
-            check=True,
             timeout=None if deadline is None else deadline - time.monotonic(),
         ),
         agent=agent,

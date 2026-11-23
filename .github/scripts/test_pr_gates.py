@@ -10,11 +10,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import _commands
 import pr_gates
 import publish_douwebot_review
 import pytest
 import review_gates
 import yaml
+from _command_fixtures import Recording
 from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, run
 from publish_douwebot_review import Finding, ReviewResult, publication
 from publish_pr_review_checks import CheckResult, review_payload as pr_review_checks_payload
@@ -22,6 +24,7 @@ from pydantic import BaseModel, Field
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
 REVIEW_WORKFLOW = WORKFLOW.with_name('pr-review-gates.yml')
+FIXTURES = Path(__file__).parent / 'fixtures' / 'commands'
 PATH = f'.github/api-compatibility-waivers/{"a" * 64}.json'
 OTHER_PATH = f'.github/api-compatibility-waivers/{"b" * 64}.json'
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
@@ -175,7 +178,7 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
             return subprocess.CompletedProcess(args, 1, '', 'gh: Not Found (HTTP 404)')
         return subprocess.CompletedProcess(args, 0, output, '')
 
-    monkeypatch.setattr(pr_gates.subprocess, 'run', fake_run)
+    monkeypatch.setattr(_commands, 'run', fake_run)
     github = GhCli('o/r', 7)
 
     assert github.changed_files() == [ChangedFile(filename='a'), ChangedFile(filename='b', previous_filename='c')]
@@ -498,6 +501,65 @@ console.log(JSON.stringify(results));
             ]
         else:
             assert output['writes'] == []
+
+
+# Real workflow runs whose shape a hand-written run object got wrong: the observer run's REST `name` is its custom
+# `run-name` title (https://github.com/pydantic/pydantic-ai/pull/11880), and a fork PR's review runs report the base
+# repository as their head repository (https://github.com/pydantic/pydantic-ai/pull/13793).
+RECORDED_WAKE_UPS = [
+    ('review_gates_observer_run.json', 0),
+    ('review_gates_fork_review_runs.json', 0),
+    ('review_gates_fork_review_runs.json', 1),
+]
+
+
+@pytest.mark.skipif(shutil.which('node') is None, reason='Node.js is required to execute the workflow JavaScript')
+@pytest.mark.parametrize(('fixture', 'index'), RECORDED_WAKE_UPS)
+def test_a_recorded_wake_up_resolves_the_pull_request_it_observed(fixture: str, index: int):
+    run = json.loads(Recording.model_validate_json((FIXTURES / fixture).read_text()).calls[index].stdout)
+    number = int(run['display_title'].split('#')[1].split()[0])
+    pulls = Recording.model_validate_json((FIXTURES / 'review_gates_wake_up_pulls.json').read_text()).calls
+    pull = next(json.loads(call.stdout) for call in pulls if json.loads(call.stdout)['number'] == number)
+    assert pull['head']['ref'] == run['head_branch']
+    workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
+    resolve = workflow.jobs['review-target'].steps[0].settings['script']
+    # GitHub served the run while its PR was open at the run's head; the recorded PR gives that PR's identity.
+    harness = (
+        """
+const [run, pull] = JSON.parse(process.argv[1]);
+const open = {number: pull.number, state: 'open', head: {sha: run.head_sha, repo: {id: pull.head.repo.id}}};
+const outputs = {};
+const core = {setOutput: (name, value) => {outputs[name] = value;}};
+const context = {eventName: 'workflow_run', repo: {owner: 'pydantic', repo: 'pydantic-ai'}, payload: {workflow_run: run}};
+const github = {
+  rest: {actions: {getWorkflowRun: async () => ({data: run})}, pulls: {list: 'pull-list'}},
+  paginate: async () => [open],
+  graphql: async () => ({repository: {pullRequests: {pageInfo: {hasNextPage: false}, nodes: [{
+    number: open.number, state: 'OPEN', headRefOid: run.head_sha, headRepository: {databaseId: pull.head.repo.id}
+  }]}}})
+};
+async function resolve() {
+"""
+        + resolve
+        + """
+}
+try {
+  await resolve();
+  console.log(JSON.stringify(outputs));
+} catch (error) {
+  console.log(JSON.stringify({error: error.message}));
+}
+"""
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', harness, json.dumps([run, pull])], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        'number': number,
+        'head': run['head_sha'],
+        'repository': pull['head']['repo']['id'],
+    }
 
 
 HEAD = 'a' * 40
@@ -1132,7 +1194,7 @@ def test_gate_uses_shared_calculator_with_base_attributes(
         assert json.loads(kwargs['input'])[0]['filename'] == 'x.py'
         return subprocess.CompletedProcess(args, 0, calculation, '')
 
-    monkeypatch.setattr(review_gates.subprocess, 'run', fake_run)
+    monkeypatch.setattr(_commands, 'run', fake_run)
     pull = ReviewGitHub().pull_request().model_copy(update={'changed_files': total})
     if fails:
         with pytest.raises((GateError, review_gates.ValidationError)):

@@ -1,11 +1,15 @@
 """The one module in `.github/scripts` that starts external commands.
 
 `ruff.toml` in this directory bans the functions that start a process everywhere else here, so every `gh`, `git` or
-tool call a gate makes goes through `run` or `run_bytes`, and a test can replay what the real command printed.
+tool call a gate makes goes through `run` or `run_bytes`, and a test can replay what the real command printed. The
+scripts a workflow fetches alone, which cannot import this module, are the exceptions `ruff.toml` names.
 
 Set `RECORD_COMMANDS_FIXTURE` to a JSON path to record: each `run` or `run_bytes` call then appends its arguments,
 input, exit status and output to that file, after `scrub` removes credentials. The file's `recorded_from` says which
-command recorded it, when, and from which Actions run, or `local`. `Replay` serves such a fixture to a test.
+command recorded it, when, and from which Actions run, or `local`. `_command_fixtures.Replay` serves such a fixture
+to a test.
+
+To record one command by hand, run `python .github/scripts/_commands.py record FIXTURE -- COMMAND...`.
 
 `run_into` and `Popen` start commands whose output streams to a file or the caller as they run, such as an OpenCode
 run. They record nothing: their tests replay saved event streams.
@@ -13,19 +17,18 @@ run. They record nothing: their tests replay saved event streams.
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import shlex
 import subprocess
 import sys
-from base64 import b64decode, b64encode
+from base64 import b64encode
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import Popen as Popen
 from typing import Literal, TextIO
-
-from pydantic import BaseModel, Field
 
 RECORD_ENV = 'RECORD_COMMANDS_FIXTURE'
 
@@ -37,39 +40,15 @@ _SECRET_NAME = re.compile(r'(?:TOKEN|KEY|SECRET|PASSWORD)$')
 _MIN_SECRET_LENGTH = 8
 
 
-class RecordedFrom(BaseModel):
-    """Where a fixture's calls came from."""
-
-    command: str
-    recorded_at: datetime
-    run: str
-
-
-class RecordedCall(BaseModel):
-    """One command and what it printed."""
-
-    args: list[str]
-    input: str | None = None
-    returncode: int
-    stdout: str
-    stderr: str
-    # `base64` holds the standard output of a `run_bytes` call that is not UTF-8. The scrubber reads text only.
-    encoding: Literal['utf-8', 'base64'] = 'utf-8'
-
-
-class Recording(BaseModel):
-    """A fixture: the calls one recorded command made, in order."""
-
-    recorded_from: RecordedFrom
-    calls: list[RecordedCall] = Field(default_factory=list[RecordedCall])
-
-
 def scrub(text: str, environ: Mapping[str, str] = os.environ) -> str:
     """Remove GitHub tokens, `Authorization` header values, email addresses and credential variables from `text`.
 
     A credential variable is one whose name ends in `TOKEN`, `KEY`, `SECRET` or `PASSWORD`. GitHub's
-    `users.noreply.github.com` addresses are public, so they stay.
+    `users.noreply.github.com` addresses are public, so they stay. The home directory, which names the local user,
+    becomes `~`.
     """
+    if home := environ.get('HOME'):
+        text = text.replace(home, '~')
     for name, value in environ.items():
         if _SECRET_NAME.search(name) and len(value) >= _MIN_SECRET_LENGTH:
             text = text.replace(value, f'<{name}>')
@@ -88,6 +67,9 @@ def record_call(
     fixture = os.environ.get(RECORD_ENV)
     if not fixture:
         return
+    # Only recording needs `pydantic`, so a workflow's bare `python3` can still import this module.
+    from _command_fixtures import RecordedCall, RecordedFrom, Recording
+
     path = Path(fixture)
     if path.exists():
         recording = Recording.model_validate_json(path.read_text(encoding='utf-8'))
@@ -165,53 +147,20 @@ def run_into(
     subprocess.run(list(args), input=input, text=True, cwd=cwd, env=env, stdout=stream, timeout=timeout, check=True)
 
 
-class Replay:
-    """Serve a recorded fixture to tests in place of `run` and `run_bytes`.
+def main() -> None:
+    """Record one command into a fixture: `_commands.py record FIXTURE -- COMMAND...`."""
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    commands = parser.add_subparsers(dest='action', required=True)
+    record = commands.add_parser('record', help='run COMMAND and append it, scrubbed, to FIXTURE')
+    record.add_argument('fixture', type=Path)
+    record.add_argument('command', nargs=argparse.REMAINDER)
+    arguments = parser.parse_args()
+    fixture: Path = arguments.fixture
+    command: list[str] = arguments.command
+    os.environ[RECORD_ENV] = str(fixture)
+    completed = run(command[1:] if command[:1] == ['--'] else command)
+    sys.exit(completed.returncode)
 
-    Each call must match a recorded call's arguments and input, and consumes it. Calls with the same arguments and
-    input are served in the recorded order. A call the fixture does not hold fails the test.
-    """
 
-    def __init__(self, fixture: Path) -> None:
-        self.recording = Recording.model_validate_json(fixture.read_text(encoding='utf-8'))
-        self._pending = list(self.recording.calls)
-
-    def take(self, args: Sequence[str], input: str | None) -> RecordedCall:
-        """Consume the first unconsumed recorded call with these arguments and input."""
-        for index, call in enumerate(self._pending):
-            if call.args == list(args) and call.input == input:
-                return self._pending.pop(index)
-        raise AssertionError(f'The fixture holds no unconsumed call `{shlex.join(args)}` with this input')
-
-    def run(
-        self,
-        args: Sequence[str],
-        *,
-        input: str | None = None,
-        cwd: Path | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        check: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        """Return the recorded result of `args` as `run` would."""
-        call = self.take(args, input)
-        completed = subprocess.CompletedProcess(list(args), call.returncode, call.stdout, call.stderr)
-        if check:
-            completed.check_returncode()
-        return completed
-
-    def run_bytes(
-        self, args: Sequence[str], *, cwd: Path | None = None, check: bool = False
-    ) -> subprocess.CompletedProcess[bytes]:
-        """Return the recorded result of `args` as `run_bytes` would."""
-        call = self.take(args, None)
-        stdout = b64decode(call.stdout) if call.encoding == 'base64' else call.stdout.encode()
-        completed = subprocess.CompletedProcess(list(args), call.returncode, stdout, None)
-        if check:
-            completed.check_returncode()
-        return completed
-
-    @property
-    def unconsumed(self) -> list[RecordedCall]:
-        """The recorded calls no test call has consumed yet."""
-        return list(self._pending)
+if __name__ == '__main__':
+    main()

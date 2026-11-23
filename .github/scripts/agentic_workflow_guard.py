@@ -65,6 +65,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
+import _commands
 import yaml
 from agent_provider_health import AGENT_START_HEALTH_STEPS
 
@@ -1796,12 +1797,7 @@ def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> l
 def changed_files(base_ref: str) -> list[str]:
     """Return paths changed relative to `base_ref` (empty if git can't resolve it)."""
     try:
-        completed = subprocess.run(
-            ['git', 'diff', '--name-only', f'{base_ref}...HEAD'],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        completed = _commands.run(['git', 'diff', '--name-only', f'{base_ref}...HEAD'], check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
     return [line for line in completed.stdout.splitlines() if line]

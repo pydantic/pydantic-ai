@@ -27,6 +27,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+import _commands
+
 GHAW_VERSION = '1.0.1'
 AWF_VERSION = '0.29.0'
 GHAW_SOURCE = '0627fdbe4beb5f3b71aa569f8d97150b87f2111a'
@@ -73,7 +75,7 @@ def execute(
     """Run a bounded command, retain its output, and terminate its process group on failure."""
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('w', encoding='utf-8') as output:
-        process = subprocess.Popen(
+        process = _commands.Popen(
             command, env=env, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True
         )
         try:
@@ -305,7 +307,7 @@ def main() -> None:
     raw_parser = block(definition, 'log-parser')
     for fixture in assets.glob('*.py'):
         compile(fixture.read_text(encoding='utf-8'), str(fixture), 'exec')
-    subprocess.run(['node', '--check', str(assets / 'postprocess.cjs')], check=True)
+    _commands.run_into(sys.stdout, ['node', '--check', str(assets / 'postprocess.cjs')])
     if sys.platform != 'linux' or os.getuid() == 0:
         raise RuntimeError(
             'Native acceptance requires a non-root Linux runner with Docker; this is a failure, not a skip'

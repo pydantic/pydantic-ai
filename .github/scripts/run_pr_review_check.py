@@ -20,6 +20,7 @@ from types import FrameType
 from typing import Literal, TextIO
 from urllib.parse import quote
 
+import _commands
 from douwebot_opencode_result import final_text, rejection_reason, unfenced
 from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback, step_tokens
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -110,11 +111,10 @@ def write_context(check: str, files: list[str], workspace: Path, *, base: str, h
 
 def _annotated_diff(repository: Path, base: str, head: str, path: str) -> str:
     """Number the changed lines of one file's diff the way the shared context does, for inline comments."""
-    patch = subprocess.run(
+    patch = _commands.run_bytes(
         ['git', '-C', str(repository), 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--text', '-U0']
         + [f'{base}...{head}', '--', path],
         check=True,
-        capture_output=True,
     ).stdout.decode(errors='replace')
     lines: list[str] = []
     old = new = 0
@@ -163,7 +163,7 @@ def run_opencode(
     """Stream the event log to `log`, counting steps and tokens, and stop the run at its time budget."""
     usage = Usage()
     started = time.monotonic()
-    with subprocess.Popen(
+    with _commands.Popen(
         command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=cwd, env=env, encoding='utf-8'
     ) as process:
 
