@@ -902,20 +902,24 @@ async def test_model_selection_paths_use_the_socket(
         )
     )
     sockets.pending.extend([selected_socket, nested_socket])
-    model = websocket_model()
+    provider = OpenAIProvider(api_key='test')
+    model = websocket_model(provider)
 
-    explicit = await Agent(None).run('explicit', model=model)
-    selected = await Agent(None, capabilities=[SelectModel(lambda ctx: model)]).run('selected')
+    # Entered, the provider keeps its own client through every run, the selection run that enters and exits the
+    # model included, and closes it at the end.
+    async with provider:
+        explicit = await Agent(None).run('explicit', model=model)
+        selected = await Agent(None, capabilities=[SelectModel(lambda ctx: model)]).run('selected')
 
-    parent = Agent(model)
-    worker = Agent(None)
+        parent = Agent(model)
+        worker = Agent(None)
 
-    @parent.tool
-    async def step(ctx: RunContext[object]) -> str:
-        assert isinstance(ctx.model, OpenAIResponsesModel)
-        return (await worker.run('nested', model=ctx.model)).output
+        @parent.tool
+        async def step(ctx: RunContext[object]) -> str:
+            assert isinstance(ctx.model, OpenAIResponsesModel)
+            return (await worker.run('nested', model=ctx.model)).output
 
-    nested = await parent.run('parent')
+        nested = await parent.run('parent')
 
     assert (explicit.output, selected.output, nested.output) == ('explicit', 'selected', 'done')
     assert sockets.opened == [explicit_socket, selected_socket, nested_socket]

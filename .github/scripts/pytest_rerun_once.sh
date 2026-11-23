@@ -19,7 +19,7 @@ set -uo pipefail
 if [[ "${GITHUB_EVENT_NAME:-}" != merge_group ]]; then
   exec "$@"
 fi
-session_failures=$(mktemp)
+session_failures=$(mktemp) || exit 1
 trap 'rm -f "$session_failures"' EXIT
 PYTEST_SESSION_FAILURES_FILE=$session_failures "$@"
 status=$?
