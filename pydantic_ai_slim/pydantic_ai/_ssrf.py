@@ -45,6 +45,7 @@ _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     # IPv4 IANA-reserved / special-purpose ranges (not globally routable)
     ipaddress.IPv4Network('192.0.0.0/24'),  # IETF Protocol Assignments (RFC 6890)
     ipaddress.IPv4Network('192.0.2.0/24'),  # TEST-NET-1 (RFC 5737)
+    ipaddress.IPv4Network('192.88.99.2/32'),  # 6a44-relay anycast (RFC 6751)
     ipaddress.IPv4Network('198.18.0.0/15'),  # Network benchmarking (RFC 2544)
     ipaddress.IPv4Network('198.51.100.0/24'),  # TEST-NET-2 (RFC 5737)
     ipaddress.IPv4Network('203.0.113.0/24'),  # TEST-NET-3 (RFC 5737)
@@ -60,12 +61,26 @@ _PRIVATE_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.IPv6Network('::ffff:0:0:0/96'),  # IPv4-translated (RFC 2765, obsoleted), inside IETF-reserved ::/8
     ipaddress.IPv6Network('100::/64'),  # Discard prefix (RFC 6666)
     ipaddress.IPv6Network('100:0:0:1::/64'),  # Dummy prefix (RFC 9780)
+    ipaddress.IPv6Network('2001::/23'),  # IETF Protocol Assignments (RFC 2928), less `_PRIVATE_NETWORK_EXCEPTIONS`
     ipaddress.IPv6Network('2001::/32'),  # Teredo tunneling (RFC 4380)
     ipaddress.IPv6Network('2001:2::/48'),  # Benchmarking (RFC 5180)
     ipaddress.IPv6Network('2001:db8::/32'),  # Documentation (RFC 3849)
     ipaddress.IPv6Network('3fff::/20'),  # Documentation (RFC 9637)
     ipaddress.IPv6Network('5f00::/16'),  # Segment Routing (SRv6) SIDs (RFC 9602)
     ipaddress.IPv6Network('ff00::/8'),  # Multicast (RFC 4291)
+)
+
+# The globally reachable assignments inside `2001::/23`, which IANA marks not globally reachable
+# unless a more specific assignment is. The table does not block these addresses, but an IPv4
+# that one embeds is still checked against it.
+_PRIVATE_NETWORK_EXCEPTIONS: tuple[ipaddress.IPv6Network, ...] = (
+    ipaddress.IPv6Network('2001:1::1/128'),  # Port Control Protocol anycast (RFC 7723)
+    ipaddress.IPv6Network('2001:1::2/128'),  # TURN anycast (RFC 8155)
+    ipaddress.IPv6Network('2001:1::3/128'),  # DNS-SD Service Registration Protocol anycast (RFC 9665)
+    ipaddress.IPv6Network('2001:3::/32'),  # AMT (RFC 7450)
+    ipaddress.IPv6Network('2001:4:112::/48'),  # AS112-v6 (RFC 7535)
+    ipaddress.IPv6Network('2001:20::/28'),  # ORCHIDv2 (RFC 7343)
+    ipaddress.IPv6Network('2001:30::/28'),  # Drone Remote ID entity tags (RFC 9374)
 )
 
 # RFC 6052 §2.2: byte offsets (within the 16-byte address) of the embedded IPv4 for each
@@ -315,7 +330,11 @@ def is_private_ip(ip_str: str) -> bool:
     targets: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
     if isinstance(ip, ipaddress.IPv6Address):
         targets.extend(_embedded_ipv4s(ip, exhaustive=False))
-    return any(target in network for target in targets for network in _PRIVATE_NETWORKS)
+    return any(
+        any(target in network for network in _PRIVATE_NETWORKS)
+        and not any(target in network for network in _PRIVATE_NETWORK_EXCEPTIONS)
+        for target in targets
+    )
 
 
 async def resolve_hostname(hostname: str) -> list[str]:
