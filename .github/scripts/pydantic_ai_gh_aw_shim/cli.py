@@ -57,6 +57,7 @@ from urllib.parse import urlparse
 
 import httpx2
 import logfire
+import provider_errors
 from anthropic import APITimeoutError, AsyncAnthropic
 from fastmcp.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
@@ -490,12 +491,6 @@ RATE_LIMIT_RETRY_SECS = 10 * 60
 # Every request retries for at least this long, inside the run's time reserve too.
 RATE_LIMIT_MIN_RETRY_SECS = 60
 
-# Z.ai 429 codes for account and plan limits, which cannot clear inside the retry
-# window. Other 429s, such as `1302` request-rate limits and `1305` overload, are transient.
-# Keep these codes aligned with https://docs.z.ai/api-reference/api-code.
-_ZAI_PLAN_LIMIT_CODES = frozenset(
-    {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
-)
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
 
@@ -564,7 +559,8 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
             body = _ERROR_BODY_ADAPTER.validate_json(await response.aread())
         except ValidationError:
             return True
-        if zai_error_code(body) in _ZAI_PLAN_LIMIT_CODES:
+        # A plan limit cannot clear inside the retry window.
+        if provider_errors.zai_rate_limit_class(zai_error_code(body)) == 'plan_limit':
             response.headers['x-should-retry'] = 'false'
             return False
         return True
@@ -1183,7 +1179,7 @@ def source_digest() -> str:
     `stage-gh-aw-agent.sh` passes the staged copy's digest to the CLAI 2 engine.
     """
     digest = hashlib.sha256()
-    for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
+    for source in [*sorted(pathlib.Path(__file__).parent.glob('*.py')), pathlib.Path(provider_errors.__file__)]:
         digest.update(source.name.encode() + b'\0' + source.read_bytes())
     return digest.hexdigest()[:12]
 
@@ -1378,7 +1374,7 @@ def failure_details(error: BaseException | None) -> dict[str, object]:
         if error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
-            kind = 'plan_limit' if zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
+            kind = provider_errors.zai_rate_limit_class(zai_error_code(error.body))
     failure: dict[str, object] = {'kind': kind}
     if http_status is not None:
         failure['http_status'] = http_status

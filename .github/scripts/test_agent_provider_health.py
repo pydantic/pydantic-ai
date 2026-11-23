@@ -3943,6 +3943,27 @@ def test_gate_falls_back_to_the_backup_account_when_the_primary_is_unusable(
     assert _BACKUP_KEY not in outputs + summary
 
 
+def test_a_shim_plan_limit_moves_the_next_run_to_the_backup_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gh-aw shim's row of the provider error table: a Z.AI plan-limit 429 moves the next run to the backup.
+
+    It is a `plan_limit` failure, which claims the primary's provider scope once the host confirms it.
+    """
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(429, '1308'))
+    result = _run_result_from(json.loads(session.read_text()))
+    assert result is not None
+    scope, key, kind = _scope_for(replace(result, provider_confirmed=True))
+    assert (scope, key, kind) == ('provider', 'zai', 'plan_limit')
+    _stub_account_quotas(monkeypatch, health.Quota('healthy'), health.Quota('healthy'))
+
+    decision, _, _ = _run_account_gate(
+        FakeGitHub([_issue(5, health.IncidentMarker(scope, key, kind, '5', None))]), tmp_path, monkeypatch
+    )
+
+    assert (decision.ready, decision.account) == (True, 'backup')
+
+
 def test_gate_checks_only_the_primary_while_it_is_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A usable primary runs without a backup check, and a backup incident does not block it."""
     backup_incident = _issue(6, health.IncidentMarker('provider', 'zai:backup', 'authentication', '6', None))

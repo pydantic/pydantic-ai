@@ -88,13 +88,22 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedTools
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 
-@pytest.mark.subprocess(reason='the staged shim must import without repository sibling modules on PYTHONPATH')
+@pytest.mark.subprocess(reason='the staged shim must import with only what `stage-gh-aw-agent.sh` stages on PYTHONPATH')
 def test_shim_cli_imports_from_isolated_staged_package(tmp_path: Path):
     scripts_dir = Path(__file__).parent
-    staged_package = tmp_path / 'pydantic_ai_gh_aw_shim'
-    shutil.copytree(scripts_dir / 'pydantic_ai_gh_aw_shim', staged_package)
+    # Stage what `stage-gh-aw-agent.sh` copies into `/tmp/gh-aw/workflow-python`, and nothing else.
+    staging = (scripts_dir / 'stage-gh-aw-agent.sh').read_text(encoding='utf-8')
+    staged = re.findall(r'^cp (?:-R )?\.github/scripts/(\S+) /tmp/gh-aw/workflow-python/$', staging, re.MULTILINE)
+    assert staged == ['pydantic_ai_gh_aw_shim', 'provider_errors.py']
+    shutil.copytree(scripts_dir / 'pydantic_ai_gh_aw_shim', tmp_path / 'pydantic_ai_gh_aw_shim')
+    shutil.copy(scripts_dir / 'provider_errors.py', tmp_path)
     result = subprocess.run(
-        [sys.executable, '-P', '-c', 'from pydantic_ai_gh_aw_shim import cli'],
+        [
+            sys.executable,
+            '-P',
+            '-c',
+            'from pydantic_ai_gh_aw_shim import cli; import provider_errors; print(provider_errors.__file__)',
+        ],
         capture_output=True,
         check=False,
         env={**os.environ, 'PYTHONPATH': str(tmp_path)},
@@ -102,6 +111,7 @@ def test_shim_cli_imports_from_isolated_staged_package(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stderr
+    assert result.stdout == f'{tmp_path / "provider_errors.py"}\n'
 
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.

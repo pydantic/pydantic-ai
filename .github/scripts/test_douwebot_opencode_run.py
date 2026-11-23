@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import category_classify_opencode
 import douwebot_opencode_run
 from douwebot_opencode_run import OPENCODE_GO, OPENCODE_ZEN_FREE, ZAI, ZAI_BACKUP, Provider, check_symlinks
+from provider_errors import OPENCODE_ERROR_CLASSES, ErrorClass
 
 LIMIT = (
     'OpenCode Go 5 hour usage limit reached. Switch to a free model, '
@@ -889,6 +890,58 @@ def test_zen_free_tier_refusal_hands_the_run_on(review_env: Path, monkeypatch: p
     assert review_on(review_env, json.dumps(chain)) == replace(ZAI, declares_model=True)
     assert_runs_on(invoked[0], ZEN_HY4)
     assert_runs_on(invoked[1], replace(ZAI, declares_model=True))
+
+
+# Each class's OpenCode error, and an error no class claims.
+CLASS_ERRORS: dict[ErrorClass, dict[str, object]] = {
+    **{error_class: {'type': error_type, 'status': 429} for error_type, error_class in OPENCODE_ERROR_CLASSES.items()},
+    'other': {'type': 'provider.auth', 'status': 401},
+}
+# The classes each link hands to the next link before the run's first step, and after the run took steps. This is the
+# contract `run_with_fallback` keeps, so it restates each `Provider` rather than reading it.
+CHAIN_CONTRACT: list[tuple[str, Provider, frozenset[ErrorClass], frozenset[ErrorClass]]] = [
+    ('opencode-go', OPENCODE_GO, frozenset({'go_limit', 'plan_limit'}), frozenset()),
+    ('coding-plan', ZAI, frozenset({'plan_limit', 'rate_limit'}), frozenset({'rate_limit'})),
+    ('zen-free', OPENCODE_ZEN_FREE, frozenset({'free_limit', 'plan_limit', 'rate_limit'}), frozenset()),
+]
+
+
+@pytest.mark.parametrize(
+    ('link', 'error_class', 'after_steps', 'hands_on'),
+    [
+        pytest.param(
+            link,
+            error_class,
+            after_steps,
+            error_class in (after if after_steps else before),
+            id=f'{name}-{error_class}-{"after-steps" if after_steps else "before-the-first-step"}',
+        )
+        for name, link, before, after in CHAIN_CONTRACT
+        for error_class in CLASS_ERRORS
+        for after_steps in (False, True)
+    ],
+)
+def test_each_link_hands_on_only_the_failures_its_contract_names(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    link: Provider,
+    error_class: ErrorClass,
+    after_steps: bool,
+    hands_on: bool,
+) -> None:
+    """Every class of provider failure, before the run's first step and after it took steps, on every kind of link."""
+    error = {'type': 'error', 'error': CLASS_ERRORS[error_class]}
+    failed = [*FINISHED, error] if after_steps else [REFUSED[0], error]
+    invoked = fake_opencode(monkeypatch, (failed, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    chain = json.dumps(
+        [{'model': link.model, 'secret': link.secret_variable}, {'model': GLM, 'secret': 'ZAI_BACKUP_API_KEY'}]
+    )
+    if hands_on:
+        assert review_on(review_env, chain) == replace(ZAI_BACKUP, declares_model=True)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            review_on(review_env, chain)
+    assert len(invoked) == (2 if hands_on else 1)
 
 
 @pytest.mark.parametrize(('run_number', 'first'), [('3188', ZAI), ('3189', ZAI_BACKUP)])

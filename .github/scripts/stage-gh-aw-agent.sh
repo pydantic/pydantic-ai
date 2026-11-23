@@ -8,6 +8,8 @@ python3 -P -m pip install --quiet --user --disable-pip-version-check \
   'opentelemetry-exporter-otlp-json-file>=0.64b0'
 mkdir -p /tmp/gh-aw/workflow-python
 cp -R .github/scripts/pydantic_ai_gh_aw_shim /tmp/gh-aw/workflow-python/
+# The shim classifies provider failures with the table the OpenCode runners share.
+cp .github/scripts/provider_errors.py /tmp/gh-aw/workflow-python/
 # Keep workflow preferences separate from runner and repository preferences.
 export XDG_CONFIG_HOME=/tmp/gh-aw/clai2-config
 # `clai2 config set` refuses run settings, since the agent can run clai2 from its shell (#13039).

@@ -20,6 +20,7 @@ from typing import Annotated, TextIO, TypeVar
 from urllib.parse import quote
 
 import _commands
+from provider_errors import ErrorClass, opencode_error_class
 from publish_douwebot_review import ReviewEngine, ReviewResult
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
@@ -48,19 +49,15 @@ class Provider:
     plan: str
     """The subscription the job log names for this account."""
     review_engine: ReviewEngine
-    handover_errors: frozenset[str]
-    """OpenCode error types that hand a run this provider refused to the next provider in the chain."""
+    handover_errors: frozenset[ErrorClass]
+    """Classes of provider failure that hand a run this provider refused to the next provider in the chain."""
     restart_on_rate_limit: bool = False
-    """Whether a `provider.rate-limit` after the run finished a step hands the run to the next provider anew."""
+    """Whether a rate limit after the run finished a step hands the run to the next provider anew."""
     declares_model: bool = False
     """Whether the run's config declares `model`, so OpenCode 2.2.5 runs a model its bundled catalog lacks."""
 
 
-# OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
-# `provider.quota`. It also types any 402, and a Z.AI 429 whose message names a plan, quota or balance limit, such as
-# codes 1308, 1309 and 1310, `provider.quota`. It retries any other 429, such as 1302 rate limits and 1305 overload,
-# and types one that outlasts its retries `provider.rate-limit`: `classify` in
-# https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts
+# `provider_errors.OPENCODE_ERROR_CLASSES` says which OpenCode error types fall in each class.
 OPENCODE_GO = Provider(
     'opencode-go',
     'opencode-go/deepseek-v4.1-flash',
@@ -68,11 +65,11 @@ OPENCODE_GO = Provider(
     'OPENCODE_API_KEY',
     'OpenCode Go',
     'opencode',
-    frozenset({'provider.go-limit', 'provider.quota'}),
+    frozenset({'go_limit', 'plan_limit'}),
 )
 # Each Coding Plan account hands a run its quota or rate limit refused to the other account. A rate limit after the
 # run took steps restarts the run on the other account too.
-CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'})
+CODING_PLAN_HANDOVER_ERRORS: frozenset[ErrorClass] = frozenset({'plan_limit', 'rate_limit'})
 # The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
     'zai-coding-plan',
@@ -94,9 +91,7 @@ ZAI_BACKUP = Provider(
     CODING_PLAN_HANDOVER_ERRORS,
     restart_on_rate_limit=True,
 )
-# OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`. Zen reports a spent free
-# allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`: `toSessionError` in
-# https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
+# OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`.
 OPENCODE_ZEN_FREE = Provider(
     'opencode',
     'opencode/hy4-flash-free',
@@ -104,7 +99,7 @@ OPENCODE_ZEN_FREE = Provider(
     None,
     'the OpenCode Zen free tier',
     'opencode',
-    frozenset({'provider.free-limit', 'provider.quota', 'provider.rate-limit'}),
+    frozenset({'free_limit', 'plan_limit', 'rate_limit'}),
 )
 # The links a `PR_REVIEW_MODEL_CHAIN` entry can name, by provider and the secret the entry names. An entry changes
 # only the model, so it can hand a key only to the provider that key belongs to, and only Zen runs without a key.
@@ -548,15 +543,16 @@ def run_with_fallback(
             return run_on(provider)
         except subprocess.CalledProcessError:
             attempt = attempts[-1]
+            error_class = opencode_error_class(attempt.error_type)
             # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose
             # type `toSessionError` sets, and no `step_finish`:
             # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
-            if not attempt.finished and attempt.error_type in provider.handover_errors:
+            if not attempt.finished and error_class in provider.handover_errors:
                 print(
                     f'{provider.model} refused the run before its first step; '
                     f'retrying on {successor.model} on {successor.plan}.'
                 )
-            elif attempt.finished and provider.restart_on_rate_limit and attempt.error_type == 'provider.rate-limit':
+            elif attempt.finished and provider.restart_on_rate_limit and error_class == 'rate_limit':
                 print(
                     f'{provider.model} rate-limited the run after it took steps; '
                     f'restarting the run on {successor.model} on {successor.plan}.'
