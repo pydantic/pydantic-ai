@@ -426,6 +426,7 @@ def _git(*args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
-        # Git for Windows emits UTF-8; POSIX Git preserves path/ref bytes for Python's locale decoder.
-        encoding='utf-8' if sys.platform == 'win32' else None,
+        # Git for Windows emits UTF-8; POSIX Git preserves path/ref bytes for Python's default decoder, which is UTF-8
+        # in UTF-8 mode and the locale's encoding otherwise.
+        encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
     ).stdout.removesuffix('\n')

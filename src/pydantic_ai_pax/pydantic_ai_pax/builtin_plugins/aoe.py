@@ -87,7 +87,15 @@ def state_directory() -> Path:
 def run_command(*argv: str) -> subprocess.CompletedProcess[str] | None:
     """Run a short command; `None` when it cannot start or times out."""
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=_COMMAND_TIMEOUT, check=False)
+        return subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            # Python's default decoder: UTF-8 in UTF-8 mode, the locale's encoding otherwise.
+            encoding='utf-8' if sys.flags.utf8_mode else 'locale',
+            timeout=_COMMAND_TIMEOUT,
+            check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         _LOGGER.debug('aoe: %s failed', argv[0], exc_info=True)
         return None

@@ -42,8 +42,8 @@ def project_identity(workspace: str) -> ProjectIdentity:
             ['git', '-C', workspace, 'symbolic-ref', '--quiet', '--short', 'HEAD'],
             capture_output=True,
             text=True,
-            # Git for Windows emits UTF-8; POSIX Git preserves ref bytes for Python's locale decoder.
-            encoding='utf-8' if sys.platform == 'win32' else None,
+            # Git for Windows emits UTF-8; POSIX Git preserves ref bytes for Python's default decoder.
+            encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
             timeout=2,
             check=False,
         ).stdout.strip()
@@ -79,8 +79,8 @@ def worktree_roots(identity: ProjectIdentity) -> list[str]:
             check=True,
             capture_output=True,
             text=True,
-            # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's locale decoder.
-            encoding='utf-8' if sys.platform == 'win32' else None,
+            # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's default decoder.
+            encoding='utf-8' if sys.platform == 'win32' or sys.flags.utf8_mode else 'locale',
             timeout=2,
         ).stdout
     except (OSError, subprocess.SubprocessError):
