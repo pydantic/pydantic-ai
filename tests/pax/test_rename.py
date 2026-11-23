@@ -68,6 +68,7 @@ def test_code_names_say_pax_not_clai2() -> None:
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == 'ContextVar'
+            and node.args
             and isinstance(node.args[0], ast.Constant)
             and 'clai2' in str(node.args[0].value)
         ]
