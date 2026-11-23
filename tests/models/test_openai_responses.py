@@ -19927,63 +19927,52 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
     )
 
 
-async def test_promoted_tool_search_replay_id_matrix() -> None:
-    """A promoted `tool_search_call` item only ever carries a `tsc_*` item ID.
+@pytest.mark.parametrize(
+    ('tool_call_id', 'item_id', 'send_item_ids', 'expected_item_id'),
+    [
+        pytest.param('call_1', 'tsc_abc', True, 'tsc_abc', id='tsc-preserved'),
+        pytest.param('call_1', 'opaque_1', True, 'opaque_1', id='opaque-preserved'),
+        pytest.param('call_1', 'fc_123', True, None, id='fc-omitted'),
+        pytest.param('call_1|fc_123', None, True, None, id='legacy-combined-fc-omitted'),
+        pytest.param('call_1', 'tsc_abc', False, None, id='send-item-ids-off'),
+    ],
+)
+async def test_promoted_tool_search_replay_item_id(
+    tool_call_id: str, item_id: str | None, send_item_ids: bool, expected_item_id: str | None
+) -> None:
+    """A promoted `tool_search_call` item never carries a function-call (`fc_*`) item ID.
 
-    `send_item_ids` resolves each part's item ID, so a persisted part holding a
-    function-call item ID (provider swap or hand-written history) would otherwise send
-    `fc_*` on a `tool_search_call` item, which the Responses API rejects. The ID is
-    omitted instead; real `tsc_*` IDs and the `openai_send_reasoning_ids` gate are
-    unchanged.
+    A local `search_tools` call made on a model without native tool search carries one, and the
+    Responses API rejects it on a `tool_search_call` item. Every other item ID, including the one
+    split from a legacy combined `call_id|id`, follows the `openai_send_reasoning_ids` gate as before.
+    `test_live_local_tool_search_replays_on_native_tool_search_model` in `tests/test_tool_search.py`
+    records the `fc_*` case; the other cases have no live producer to record.
     """
     model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+    history = [
+        ModelResponse(
+            parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id=tool_call_id, id=item_id)],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='call_1')]),
+    ]
+    input_items = await _replay_input(
+        history,
+        group_function_calls=False,
+        model_request_parameters=model_request_parameters,
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+    )
 
-    async def replay_input(tool_call_id: str, item_id: str | None, *, send_item_ids: bool) -> dict[str, object]:
-        call_part = ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id=tool_call_id)
-        call_part.id = item_id
-        history = [
-            ModelResponse(parts=[call_part], provider_name='openai'),
-            ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='call_1')]),
-        ]
-        input_items = await _replay_input(
-            history,
-            group_function_calls=False,
-            model_request_parameters=model_request_parameters,
-            model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
-        )
-        return input_items[0]
-
-    # A real `tsc_*` item ID is preserved on the item.
-    assert await replay_input('call_1', 'tsc_abc', send_item_ids=True) == snapshot(
-        {
-            'type': 'tool_search_call',
-            'execution': 'client',
-            'arguments': {'queries': ['weather']},
-            'call_id': 'call_1',
-            'id': 'tsc_abc',
-            'status': 'completed',
-        }
-    )
-    # A function-call item ID is incompatible with a `tool_search_call` item and omitted.
-    assert await replay_input('call_1', 'fc_123', send_item_ids=True) == snapshot(
-        {
-            'type': 'tool_search_call',
-            'execution': 'client',
-            'arguments': {'queries': ['weather']},
-            'call_id': 'call_1',
-            'status': 'completed',
-        }
-    )
-    # With the item-ID setting off, no item ID is sent - unchanged gate behavior.
-    assert await replay_input('call_1', 'tsc_abc', send_item_ids=False) == snapshot(
-        {
-            'type': 'tool_search_call',
-            'execution': 'client',
-            'arguments': {'queries': ['weather']},
-            'call_id': 'call_1',
-            'status': 'completed',
-        }
-    )
+    expected: dict[str, object] = {
+        'type': 'tool_search_call',
+        'execution': 'client',
+        'arguments': {'queries': ['weather']},
+        'call_id': 'call_1',
+        'status': 'completed',
+    }
+    if expected_item_id is not None:
+        expected['id'] = expected_item_id
+    assert input_items[0] == expected
 
 
 async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
