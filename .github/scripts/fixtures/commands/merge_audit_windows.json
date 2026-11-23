@@ -1,0 +1,769 @@
+{
+  "recorded_from": {
+    "command": "merge_audit.py --since 2026-10-21T20:00:00+00:00 --until 2026-10-21T21:00:00+00:00",
+    "recorded_at": "2026-11-23T03:10:40.986387Z",
+    "run": "local"
+  },
+  "calls": [
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/rulesets?includes_parents=false",
+        "--jq",
+        ".[] | select(.name == \"main\") | .id"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "25652962\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/rulesets/25652962"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"id\":25652962,\"name\":\"main\",\"target\":\"branch\",\"source_type\":\"Repository\",\"source\":\"pydantic/pydantic-ai\",\"enforcement\":\"active\",\"conditions\":{\"ref_name\":{\"exclude\":[],\"include\":[\"~DEFAULT_BRANCH\"]}},\"rules\":[{\"type\":\"deletion\"},{\"type\":\"non_fast_forward\"},{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"SQUASH\",\"max_entries_to_build\":5,\"min_entries_to_merge\":1,\"max_entries_to_merge\":5,\"min_entries_to_merge_wait_minutes\":5,\"grouping_strategy\":\"HEADGREEN\",\"check_response_timeout_minutes\":60}},{\"type\":\"required_status_checks\",\"parameters\":{\"strict_required_status_checks_policy\":false,\"do_not_enforce_on_create\":false,\"required_status_checks\":[{\"context\":\"check\",\"integration_id\":15368}]}}],\"node_id\":\"RRS_lACqUmVwb3NpdG9yec4wxr4-zgGHbuI\",\"created_at\":\"2026-10-22T11:48:38.214-04:00\",\"updated_at\":\"2026-10-22T11:48:38.819-04:00\",\"current_user_can_bypass\":\"never\",\"_links\":{\"self\":{\"href\":\"https://api.github.com/repos/pydantic/pydantic-ai/rulesets/25652962\"},\"html\":{\"href\":\"https://github.com/pydantic/pydantic-ai/rules/25652962\"}}}",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "graphql",
+        "--paginate",
+        "-f",
+        "query=\nquery($q: String!, $endCursor: String) {\n  search(type: ISSUE, query: $q, first: 50, after: $endCursor) {\n    pageInfo { hasNextPage endCursor }\n    nodes { ... on PullRequest { number title mergedAt headRefOid mergeCommit { oid } } }\n  }\n}\n",
+        "-f",
+        "q=repo:pydantic/pydantic-ai is:pr is:merged base:main merged:2026-10-21T20:00:00Z..2026-10-21T21:00:00Z",
+        "--jq",
+        ".data.search.nodes[]"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"headRefOid\":\"821ef7a4c9c72cc317ca1566452ab1889fbdc127\",\"mergeCommit\":{\"oid\":\"24bad49f29f9de71198acf953ad24db966949bb2\"},\"mergedAt\":\"2026-10-21T20:42:13Z\",\"number\":10930,\"title\":\"Fix flaky BoxLite conformance test by signalling the fake box's script before its command\"}\n{\"headRefOid\":\"7dd2e5ff61b8d9f441688b9c215714ef3ea1c453\",\"mergeCommit\":{\"oid\":\"cdfb77109bf0c244de45414d775c7bfa49115f42\"},\"mergedAt\":\"2026-10-21T20:31:33Z\",\"number\":10928,\"title\":\"Match the unknown-tool retry by `outcome='retried'` in the `unless_tool_kind` tests\"}\n{\"headRefOid\":\"d309163128f294230a000d3ca228d425ba0ae513\",\"mergeCommit\":{\"oid\":\"bae1bfe2993214139bae954dd2738306586f4a99\"},\"mergedAt\":\"2026-10-21T20:26:38Z\",\"number\":10925,\"title\":\"Detect output-tool retries by `ToolReturnPart.outcome` in the native-or-local selection test\"}\n{\"headRefOid\":\"6c25a8550603aa50210b6fceb15b9c1d29b726e3\",\"mergeCommit\":{\"oid\":\"d05a324a28432db9ecb8cc7a84d525437280c447\"},\"mergedAt\":\"2026-10-21T20:21:18Z\",\"number\":10907,\"title\":\"Keep `BedrockConverseModel` message caching readable after a Claude message ending in a document\"}\n{\"headRefOid\":\"c2148ccb156b4e99de3113b61fe96b03450ee95a\",\"mergeCommit\":{\"oid\":\"43ca208ebabd22f886f965a5f670b5a837729b27\"},\"mergedAt\":\"2026-10-21T20:27:47Z\",\"number\":10904,\"title\":\"Give `AskUser`, `ConversationSearch`, `Macroscope`, `ManagedPrompt`, `PlaywrightBrowser` and `PydanticAIDocs` a stable default `id`, and append `ManagedPrompt` version changes\"}\n{\"headRefOid\":\"ae130f92b02b1945a291fdee743b0a9567d71d29\",\"mergeCommit\":{\"oid\":\"970f72471ba30e12a1f840e8ac65139291a5b193\"},\"mergedAt\":\"2026-10-21T20:22:16Z\",\"number\":10901,\"title\":\"Use native structured output on Bedrock for Claude Haiku 5.5, Sonnet 5 and later, and Opus 4.7 and later\"}\n{\"headRefOid\":\"1347b0d8170b0d390b18db3959e38babb0411193\",\"mergeCommit\":{\"oid\":\"7226ad892f92f194f06b46f35231e0df40b48666\"},\"mergedAt\":\"2026-10-21T20:15:42Z\",\"number\":10900,\"title\":\"Close the Bedrock event stream when a `BedrockConverseModel.request_stream()` context exits, including on cancellation\"}\n{\"headRefOid\":\"527982cedb7878c9b1c948b700743b01cd0a186e\",\"mergeCommit\":{\"oid\":\"cb794e55f6da71272270e18dccb680b49f9deed0\"},\"mergedAt\":\"2026-10-21T20:08:07Z\",\"number\":10896,\"title\":\"Use only the agent's instructions for realtime sessions, never `instructions` recorded in seeded `message_history`\"}\n{\"headRefOid\":\"90d5323818381aac5bdbdd537d79a396d211c994\",\"mergeCommit\":{\"oid\":\"9ff567f0a869a7927adf8f8ea8eee81cf0ac39fa\"},\"mergedAt\":\"2026-10-21T20:21:52Z\",\"number\":10886,\"title\":\"Use explicit `output_type` overloads for `Agent.from_spec` and `Agent.from_file`\"}\n{\"headRefOid\":\"5e9baa398a950350823eb425fe7904a20f3c46ef\",\"mergeCommit\":{\"oid\":\"27ac5d429c22d5423e79cbc96543ef3a0924f8ee\"},\"mergedAt\":\"2026-10-21T20:07:10Z\",\"number\":10847,\"title\":\"Keep a GPT-Live reply that called tools open until its delegated backend answers, so what Live says meanwhile stays with it\"}\n{\"headRefOid\":\"a76bab6f5339b883affd26a962839c3b6adbd8a0\",\"mergeCommit\":{\"oid\":\"6adcfb8439697b2a39e24b5ddb3a83e006fb9d99\"},\"mergedAt\":\"2026-10-21T20:10:09Z\",\"number\":10836,\"title\":\"Add the run's output retry count and budget to `ModelSelectionContext`\"}\n{\"headRefOid\":\"5da4ecceb2ec04b9c59165f1c4db84d3cbef9223\",\"mergeCommit\":{\"oid\":\"4e5291a4515244fa8b4a345587cb713c57e49bb5\"},\"mergedAt\":\"2026-10-21T20:27:20Z\",\"number\":10833,\"title\":\"Summarize harness-added user-channel content as `\\u003charness_data\\u003e` instead of user messages in `SummarizingCompaction`\"}\n{\"headRefOid\":\"c67c9b5e548010b0da1a21c09038506f169120c2\",\"mergeCommit\":{\"oid\":\"fd3be4ab38355448016c4ae199c058994b1fd1a7\"},\"mergedAt\":\"2026-10-21T20:45:45Z\",\"number\":10807,\"title\":\"Derive the `MCP` capability's default `id` from the server URL's hostname only, and reject two servers on one host without explicit ids\"}\n{\"headRefOid\":\"46433ec19ac75a9612429f4c4bc059844f3d4133\",\"mergeCommit\":{\"oid\":\"24ad574c52f06653672c5c894d837b9fb7c4601d\"},\"mergedAt\":\"2026-10-21T20:06:56Z\",\"number\":10798,\"title\":\"Keep an xAI spoken turn going when its server VAD takes back a stop, and end the reply it drops\"}\n{\"headRefOid\":\"8c19f185968f2398934a00449d135fdb04a03b0e\",\"mergeCommit\":{\"oid\":\"3a7e085c2448f9d1589e72f7010f8c8a6e7869c7\"},\"mergedAt\":\"2026-10-21T20:13:29Z\",\"number\":10673,\"title\":\"Add `ToolDefinition.unless_tool_kind` and `RunContext.tool_name_for_kind`, and give instructions the current step's tools\"}\n{\"headRefOid\":\"68bba875523babf905ebf8965f0dc694cccde932\",\"mergeCommit\":{\"oid\":\"9286e4ab37085530684e88798b2314c204ac4228\"},\"mergedAt\":\"2026-10-21T20:05:57Z\",\"number\":8094,\"title\":\"Deprecate `RetryPromptPart` in favor of `ToolReturnPart(outcome='retried')` and `RetryFeedbackPart`\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/821ef7a4c9c72cc317ca1566452ab1889fbdc127/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T20:40:59Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/24bad49f29f9de71198acf953ad24db966949bb2/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T20:55:28Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/7dd2e5ff61b8d9f441688b9c215714ef3ea1c453/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T20:40:07Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/cdfb77109bf0c244de45414d775c7bfa49115f42/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T20:43:16Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/d309163128f294230a000d3ca228d425ba0ae513/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T20:27:58Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/bae1bfe2993214139bae954dd2738306586f4a99/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T20:36:53Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/6c25a8550603aa50210b6fceb15b9c1d29b726e3/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T19:19:35Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-10-21T18:55:45Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/c2148ccb156b4e99de3113b61fe96b03450ee95a/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T17:49:07Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-10-21T17:30:31Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/ae130f92b02b1945a291fdee743b0a9567d71d29/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T17:06:13Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-10-21T16:55:01Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/1347b0d8170b0d390b18db3959e38babb0411193/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T18:55:49Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/527982cedb7878c9b1c948b700743b01cd0a186e/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T18:02:34Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/90d5323818381aac5bdbdd537d79a396d211c994/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T16:57:16Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/5e9baa398a950350823eb425fe7904a20f3c46ef/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T17:32:55Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/a76bab6f5339b883affd26a962839c3b6adbd8a0/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T17:43:10Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/5da4ecceb2ec04b9c59165f1c4db84d3cbef9223/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T16:14:12Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/c67c9b5e548010b0da1a21c09038506f169120c2/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T17:07:56Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/46433ec19ac75a9612429f4c4bc059844f3d4133/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T17:41:53Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-10-21T17:29:23Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/8c19f185968f2398934a00449d135fdb04a03b0e/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T18:09:33Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/68bba875523babf905ebf8965f0dc694cccde932/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-10-21T16:54:02Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/821ef7a4c9c72cc317ca1566452ab1889fbdc127/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/7dd2e5ff61b8d9f441688b9c215714ef3ea1c453/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/d309163128f294230a000d3ca228d425ba0ae513/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/6c25a8550603aa50210b6fceb15b9c1d29b726e3/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/c2148ccb156b4e99de3113b61fe96b03450ee95a/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/ae130f92b02b1945a291fdee743b0a9567d71d29/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/1347b0d8170b0d390b18db3959e38babb0411193/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/527982cedb7878c9b1c948b700743b01cd0a186e/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/90d5323818381aac5bdbdd537d79a396d211c994/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/5e9baa398a950350823eb425fe7904a20f3c46ef/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/a76bab6f5339b883affd26a962839c3b6adbd8a0/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/5da4ecceb2ec04b9c59165f1c4db84d3cbef9223/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/c67c9b5e548010b0da1a21c09038506f169120c2/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/46433ec19ac75a9612429f4c4bc059844f3d4133/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/8c19f185968f2398934a00449d135fdb04a03b0e/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/68bba875523babf905ebf8965f0dc694cccde932/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/code-scanning/alerts?state=dismissed&tool_name=CodeQL&per_page=100",
+        "--paginate",
+        "--jq",
+        ".[] | {html_url, dismissed_at, dismissed_reason, dismissed_comment}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"dismissed_at\":\"2026-11-05T16:08:34Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nSame step and gates as #24 and #35 on main; this PR only moved the checkout after the stale-PR skip. eligibility still requires write access, a same-repo non-fork PR and CI's head SHA.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/51\"}\n{\"dismissed_at\":\"2026-11-11T19:26:31Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nCodeQL reads the astral \\\\U escapes as surrogate pairs (U+FFFD). Python's re reads them as code points; the compiled class matches exactly Default_Ignorable_Code_Point, not U+FFFD.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/50\"}\n{\"dismissed_at\":\"2026-11-11T19:26:30Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nCodeQL reads the astral \\\\U escapes as surrogate pairs (U+FFFD). Python's re reads them as code points; the compiled class matches exactly Default_Ignorable_Code_Point, not U+FFFD.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/49\"}\n{\"dismissed_at\":\"2026-11-11T19:26:34Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nThe test asserts the LocalStack instructions contain the endpoint URL. Nothing is sanitized.\",\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/45\"}\n{\"dismissed_at\":\"2026-10-22T21:44:03Z\",\"dismissed_comment\":\"triage runs only on workflow_run, parses artifacts as data, and executes the default-branch controller. The query skips privileged jobs, which is why the identical monitor steps are not flagged. Evidence: https://github.com/pydantic/pydantic-ai/pull/11051#discussion_r4352088760\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/44\"}\n{\"dismissed_at\":\"2026-11-11T19:26:33Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nDOMParser output is inert and is only rasterized through an \\u003cimg\\u003e. The live render is a sandboxed iframe with CSP default-src 'none', so no script runs in the page.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/40\"}\n{\"dismissed_at\":\"2026-11-11T19:26:32Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\n0-O is the ECMA-48 two-byte escape final range (0x30-0x4F). The class skips P, X, [, ], ^ and _ on purpose: the other branches of the pattern handle them.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/39\"}\n{\"dismissed_at\":\"2026-07-28T03:35:37Z\",\"dismissed_comment\":\"This workflow only checks out a PR head after verifying that the triggering actor has write access, the workflow run and PR head belong to this repository, the PR is not cross-repository, and the immutable head SHA matches the successful CI run. Fork and external-contributor code\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/24\"}\n{\"dismissed_at\":\"2026-05-22T03:20:20Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"won't fix\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/19\"}\n{\"dismissed_at\":\"2026-05-19T17:32:10Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/14\"}\n{\"dismissed_at\":\"2026-05-19T17:32:01Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/13\"}\n{\"dismissed_at\":\"2026-05-24T16:46:36Z\",\"dismissed_comment\":\"Demo script with hardcoded fake patient IDs (e.g. \\\"P003\\\") defined in the same file. No real PII; CodeQL flags the variable name heuristically.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/10\"}\n{\"dismissed_at\":\"2026-05-24T16:46:35Z\",\"dismissed_comment\":\"Demo script with hardcoded fake patient IDs (e.g. \\\"P003\\\") defined in the same file. No real PII; CodeQL flags the variable name heuristically.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/9\"}\n{\"dismissed_at\":\"2026-04-09T09:18:43Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/6\"}\n{\"dismissed_at\":\"2026-04-15T19:47:26Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/5\"}\n{\"dismissed_at\":\"2026-04-15T20:57:32Z\",\"dismissed_comment\":\"issue_comment inherently lacks an event-payload SHA; the existing layered defenses\\n  (author_association, restricted allowlist, AGENTS.md/CLAUDE.md guard, bubblewrap) are the real mitigation\",\"dismissed_reason\":\"won't fix\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/3\"}\n{\"dismissed_at\":\"2026-04-15T20:32:57Z\",\"dismissed_comment\":\"Sufficiently gated: @claude requires owner/member/collaborator; fork job doesn't have uv run/make; agents.md modification guard\",\"dismissed_reason\":\"won't fix\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/1\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/rulesets?includes_parents=false",
+        "--jq",
+        ".[] | select(.name == \"main\") | .id"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "25652962\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/rulesets/25652962"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"id\":25652962,\"name\":\"main\",\"target\":\"branch\",\"source_type\":\"Repository\",\"source\":\"pydantic/pydantic-ai\",\"enforcement\":\"active\",\"conditions\":{\"ref_name\":{\"exclude\":[],\"include\":[\"~DEFAULT_BRANCH\"]}},\"rules\":[{\"type\":\"deletion\"},{\"type\":\"non_fast_forward\"},{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"SQUASH\",\"max_entries_to_build\":5,\"min_entries_to_merge\":1,\"max_entries_to_merge\":5,\"min_entries_to_merge_wait_minutes\":5,\"grouping_strategy\":\"HEADGREEN\",\"check_response_timeout_minutes\":60}},{\"type\":\"required_status_checks\",\"parameters\":{\"strict_required_status_checks_policy\":false,\"do_not_enforce_on_create\":false,\"required_status_checks\":[{\"context\":\"check\",\"integration_id\":15368}]}}],\"node_id\":\"RRS_lACqUmVwb3NpdG9yec4wxr4-zgGHbuI\",\"created_at\":\"2026-10-22T11:48:38.214-04:00\",\"updated_at\":\"2026-10-22T11:48:38.819-04:00\",\"current_user_can_bypass\":\"never\",\"_links\":{\"self\":{\"href\":\"https://api.github.com/repos/pydantic/pydantic-ai/rulesets/25652962\"},\"html\":{\"href\":\"https://github.com/pydantic/pydantic-ai/rules/25652962\"}}}",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "graphql",
+        "--paginate",
+        "-f",
+        "query=\nquery($q: String!, $endCursor: String) {\n  search(type: ISSUE, query: $q, first: 50, after: $endCursor) {\n    pageInfo { hasNextPage endCursor }\n    nodes { ... on PullRequest { number title mergedAt headRefOid mergeCommit { oid } } }\n  }\n}\n",
+        "-f",
+        "q=repo:pydantic/pydantic-ai is:pr is:merged base:main merged:2026-11-02T17:30:00Z..2026-11-02T18:00:00Z",
+        "--jq",
+        ".data.search.nodes[]"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"headRefOid\":\"61cda2e1b003028def16915d824eb61846e2dfcc\",\"mergeCommit\":{\"oid\":\"2529bf77c4093c9e98f73dff9a68c2afe0add68c\"},\"mergedAt\":\"2026-11-02T17:53:20Z\",\"number\":12236,\"title\":\"Rebuild the `clai2` web UI bundle\"}\n{\"headRefOid\":\"1599ac4136842e051165c63681ec2e2e7b510885\",\"mergeCommit\":{\"oid\":\"008821ebb501c11809423672e3fb0c60660956ce\"},\"mergedAt\":\"2026-11-02T17:35:52Z\",\"number\":12221,\"title\":\"Show a running shell command's live output in its `clai2` web UI card\"}\n{\"headRefOid\":\"174ae3d4298077c160860afd90ad815383f6e33a\",\"mergeCommit\":{\"oid\":\"665f165bb9b93e045c4a71dfae3174bdd79975a5\"},\"mergedAt\":\"2026-11-02T17:35:52Z\",\"number\":12166,\"title\":\"Keep `test_many_concurrent_runs_fill_batches_of_the_default_size` within the per-test time budget\"}\n{\"headRefOid\":\"b38f9eb6c3fbf76b7432dc3ab47899887aa7ec31\",\"mergeCommit\":{\"oid\":\"da06cc4627d885d1ac5ac39220583f383c671f2e\"},\"mergedAt\":\"2026-11-02T17:35:52Z\",\"number\":9317,\"title\":\"Test the `RedisSpendStore` hash tag against a single-node Redis Cluster in the `harness-redis-integration` job\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/61cda2e1b003028def16915d824eb61846e2dfcc/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-11-02T17:43:58Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/2529bf77c4093c9e98f73dff9a68c2afe0add68c/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-11-02T18:10:59Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-11-02T17:52:55Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/1599ac4136842e051165c63681ec2e2e7b510885/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-11-02T14:43:36Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/174ae3d4298077c160860afd90ad815383f6e33a/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-11-02T00:01:39Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-11-01T23:51:12Z\",\"conclusion\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/b38f9eb6c3fbf76b7432dc3ab47899887aa7ec31/check-runs?check_name=check&filter=all&per_page=100",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {conclusion, completed_at}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"completed_at\":\"2026-09-30T18:34:04Z\",\"conclusion\":\"success\"}\n{\"completed_at\":\"2026-09-30T18:16:36Z\",\"conclusion\":\"failure\"}\n{\"completed_at\":\"2026-09-30T18:10:32Z\",\"conclusion\":\"failure\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/61cda2e1b003028def16915d824eb61846e2dfcc/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"context\":\"Gate: clean douwebot approval\",\"state\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/1599ac4136842e051165c63681ec2e2e7b510885/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"context\":\"Gate: clean douwebot approval\",\"state\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/174ae3d4298077c160860afd90ad815383f6e33a/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"context\":\"Gate: clean douwebot approval\",\"state\":\"success\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/commits/b38f9eb6c3fbf76b7432dc3ab47899887aa7ec31/status?per_page=100",
+        "--jq",
+        ".statuses[] | {context, state}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    },
+    {
+      "args": [
+        "gh",
+        "api",
+        "repos/pydantic/pydantic-ai/code-scanning/alerts?state=dismissed&tool_name=CodeQL&per_page=100",
+        "--paginate",
+        "--jq",
+        ".[] | {html_url, dismissed_at, dismissed_reason, dismissed_comment}"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "{\"dismissed_at\":\"2026-11-05T16:08:34Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nSame step and gates as #24 and #35 on main; this PR only moved the checkout after the stale-PR skip. eligibility still requires write access, a same-repo non-fork PR and CI's head SHA.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/51\"}\n{\"dismissed_at\":\"2026-11-11T19:26:31Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nCodeQL reads the astral \\\\U escapes as surrogate pairs (U+FFFD). Python's re reads them as code points; the compiled class matches exactly Default_Ignorable_Code_Point, not U+FFFD.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/50\"}\n{\"dismissed_at\":\"2026-11-11T19:26:30Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nCodeQL reads the astral \\\\U escapes as surrogate pairs (U+FFFD). Python's re reads them as code points; the compiled class matches exactly Default_Ignorable_Code_Point, not U+FFFD.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/49\"}\n{\"dismissed_at\":\"2026-11-11T19:26:34Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nThe test asserts the LocalStack instructions contain the endpoint URL. Nothing is sanitized.\",\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/45\"}\n{\"dismissed_at\":\"2026-10-22T21:44:03Z\",\"dismissed_comment\":\"triage runs only on workflow_run, parses artifacts as data, and executes the default-branch controller. The query skips privileged jobs, which is why the identical monitor steps are not flagged. Evidence: https://github.com/pydantic/pydantic-ai/pull/11051#discussion_r4352088760\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/44\"}\n{\"dismissed_at\":\"2026-11-11T19:26:33Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\nDOMParser output is inert and is only rasterized through an \\u003cimg\\u003e. The live render is a sandboxed iframe with CSP default-src 'none', so no script runs in the page.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/40\"}\n{\"dismissed_at\":\"2026-11-11T19:26:32Z\",\"dismissed_comment\":\"\\u003e This comment was posted by Claude Code using claude-opus-5-5 on behalf of David.\\n\\n0-O is the ECMA-48 two-byte escape final range (0x30-0x4F). The class skips P, X, [, ], ^ and _ on purpose: the other branches of the pattern handle them.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/39\"}\n{\"dismissed_at\":\"2026-07-28T03:35:37Z\",\"dismissed_comment\":\"This workflow only checks out a PR head after verifying that the triggering actor has write access, the workflow run and PR head belong to this repository, the PR is not cross-repository, and the immutable head SHA matches the successful CI run. Fork and external-contributor code\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/24\"}\n{\"dismissed_at\":\"2026-05-22T03:20:20Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"won't fix\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/19\"}\n{\"dismissed_at\":\"2026-05-19T17:32:10Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/14\"}\n{\"dismissed_at\":\"2026-05-19T17:32:01Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/13\"}\n{\"dismissed_at\":\"2026-05-24T16:46:36Z\",\"dismissed_comment\":\"Demo script with hardcoded fake patient IDs (e.g. \\\"P003\\\") defined in the same file. No real PII; CodeQL flags the variable name heuristically.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/10\"}\n{\"dismissed_at\":\"2026-05-24T16:46:35Z\",\"dismissed_comment\":\"Demo script with hardcoded fake patient IDs (e.g. \\\"P003\\\") defined in the same file. No real PII; CodeQL flags the variable name heuristically.\",\"dismissed_reason\":\"false positive\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/9\"}\n{\"dismissed_at\":\"2026-04-09T09:18:43Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/6\"}\n{\"dismissed_at\":\"2026-04-15T19:47:26Z\",\"dismissed_comment\":null,\"dismissed_reason\":\"used in tests\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/5\"}\n{\"dismissed_at\":\"2026-04-15T20:57:32Z\",\"dismissed_comment\":\"issue_comment inherently lacks an event-payload SHA; the existing layered defenses\\n  (author_association, restricted allowlist, AGENTS.md/CLAUDE.md guard, bubblewrap) are the real mitigation\",\"dismissed_reason\":\"won't fix\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/3\"}\n{\"dismissed_at\":\"2026-04-15T20:32:57Z\",\"dismissed_comment\":\"Sufficiently gated: @claude requires owner/member/collaborator; fork job doesn't have uv run/make; agents.md modification guard\",\"dismissed_reason\":\"won't fix\",\"html_url\":\"https://github.com/pydantic/pydantic-ai/security/code-scanning/1\"}\n",
+      "stderr": "",
+      "encoding": "utf-8"
+    }
+  ]
+}

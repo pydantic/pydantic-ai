@@ -1,0 +1,46 @@
+# description: Daily audit of `main`: the live ruleset against `.github/rulesets/main.json`, the day's merges against
+# `check` and the review contexts, and CodeQL dismissals without a linked issue. Findings go to one rolling issue.
+name: Merge Audit
+
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: merge-audit
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  audit:
+    if: github.repository == 'pydantic/pydantic-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: read
+      security-events: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/rulesets/main.json
+            .github/scripts/merge_audit.py
+            .github/scripts/_commands.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Audit the last day's merges
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/merge_audit.py --publish

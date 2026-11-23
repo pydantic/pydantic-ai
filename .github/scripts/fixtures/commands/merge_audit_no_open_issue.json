@@ -1,0 +1,33 @@
+{
+  "recorded_from": {
+    "command": "_commands.py record .github/scripts/fixtures/commands/merge_audit_no_open_issue.json -- gh issue list --repo pydantic/pydantic-ai --state open --author app/github-actions --limit 100 --json number,body --jq '.[]'",
+    "recorded_at": "2026-11-23T03:11:33.568944Z",
+    "run": "local"
+  },
+  "calls": [
+    {
+      "args": [
+        "gh",
+        "issue",
+        "list",
+        "--repo",
+        "pydantic/pydantic-ai",
+        "--state",
+        "open",
+        "--author",
+        "app/github-actions",
+        "--limit",
+        "100",
+        "--json",
+        "number,body",
+        "--jq",
+        ".[]"
+      ],
+      "input": null,
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "encoding": "utf-8"
+    }
+  ]
+}
