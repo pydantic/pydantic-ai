@@ -516,5 +516,11 @@ async def test_a_preview_line_cut_at_the_terminal_edge_keeps_the_log_path() -> N
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'cat wide'}, tool_call_id='w'))
     )
     await renderer.on_stream_event(CommandOutputEvent(tool_call_id='w', text='x' * 60 + '\n'))
-    await renderer.on_stream_event(_finished('w', exit_code=0, line_count=1))
-    assert output.getvalue().endswith('  ⎿ exit 0 · 1 line · log /tmp/out\n\n')
+    log = '/private/tmp/pax-logs/session-1234/commands/w.log'
+    await renderer.on_stream_event(
+        CommandFinishedEvent(
+            tool_call_id='w', pid=1, output_path=log, status_path='/s', exit_code=0, truncated=False, line_count=1
+        )
+    )
+    # The path wraps rather than clips, so it can still be copied whole.
+    assert output.getvalue().replace('\n', '').endswith(f'  ⎿ exit 0 · 1 line · log {log}')

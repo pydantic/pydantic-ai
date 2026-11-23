@@ -237,12 +237,15 @@ class ToolOutput:
             self.separate()
         row = Text('  ⎿ ', style=theme.color(theme.MUTED))
         row.append(terminal_text(text, keep=''), style=style)
-        if log is not None:
-            row.append(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED))
         label = self._labels.get(tool_call_id, name)
         if not under_header and label:
             row.append(f' · {terminal_text(label, keep="")}', style=theme.color(theme.MUTED))
-        self.console.print(row, overflow='ellipsis', no_wrap=True)
+        if log is None:
+            self.console.print(row, overflow='ellipsis', no_wrap=True)
+        else:
+            row.truncate(self.console.width, overflow='ellipsis')
+            # The path wraps rather than clips, so it stays usable.
+            self.console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED)))
         self._blank_owed = False
         self._owed = None
 
