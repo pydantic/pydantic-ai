@@ -20323,24 +20323,33 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
     )
 
 
+_PROMOTED_SEARCH_ITEM: dict[str, object] = {
+    'type': 'tool_search_call',
+    'execution': 'client',
+    'arguments': {'queries': ['weather']},
+    'call_id': 'call_1',
+    'status': 'completed',
+}
+
+
 @pytest.mark.parametrize(
-    ('tool_call_id', 'item_id', 'send_item_ids', 'expected_item_id'),
+    ('tool_call_id', 'item_id', 'send_item_ids', 'expected'),
     [
-        pytest.param('call_1', 'tsc_abc', True, 'tsc_abc', id='tsc-preserved'),
-        pytest.param('call_1', 'opaque_1', True, 'opaque_1', id='opaque-preserved'),
-        pytest.param('call_1', 'fc_123', True, None, id='fc-omitted'),
-        pytest.param('call_1|fc_123', None, True, None, id='legacy-combined-fc-omitted'),
-        pytest.param('call_1', 'tsc_abc', False, None, id='send-item-ids-off'),
+        pytest.param('call_1', 'tsc_abc', True, {**_PROMOTED_SEARCH_ITEM, 'id': 'tsc_abc'}, id='tsc-preserved'),
+        pytest.param('call_1', 'opaque_1', True, {**_PROMOTED_SEARCH_ITEM, 'id': 'opaque_1'}, id='opaque-preserved'),
+        pytest.param('call_1', 'fc_123', True, _PROMOTED_SEARCH_ITEM, id='fc-omitted'),
+        pytest.param('call_1|fc_123', None, True, _PROMOTED_SEARCH_ITEM, id='legacy-combined-fc-omitted'),
+        pytest.param('call_1', 'tsc_abc', False, _PROMOTED_SEARCH_ITEM, id='send-item-ids-off'),
     ],
 )
 async def test_promoted_tool_search_replay_item_id(
-    tool_call_id: str, item_id: str | None, send_item_ids: bool, expected_item_id: str | None
+    tool_call_id: str, item_id: str | None, send_item_ids: bool, expected: dict[str, object]
 ) -> None:
     """A promoted `tool_search_call` item never carries a function-call (`fc_*`) item ID.
 
     A local `search_tools` call made on a model without native tool search carries one, and the
     Responses API rejects it on a `tool_search_call` item. Every other item ID, including the one
-    split from a legacy combined `call_id|id`, follows the `openai_send_reasoning_ids` gate as before.
+    split from a legacy combined `call_id|id`, follows the `openai_send_reasoning_ids` gate.
     `test_live_local_tool_search_replays_on_native_tool_search_model` in `tests/test_tool_search.py`
     records the `fc_*` case; the other cases have no live producer to record.
     """
@@ -20359,15 +20368,6 @@ async def test_promoted_tool_search_replay_item_id(
         model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
     )
 
-    expected: dict[str, object] = {
-        'type': 'tool_search_call',
-        'execution': 'client',
-        'arguments': {'queries': ['weather']},
-        'call_id': 'call_1',
-        'status': 'completed',
-    }
-    if expected_item_id is not None:
-        expected['id'] = expected_item_id
     assert input_items[0] == expected
 
 
