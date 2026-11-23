@@ -1,4 +1,8 @@
-"""Render typed capability events without parsing model-facing tool results."""
+"""Render typed capability events.
+
+The one model-facing tool result read here is the `shell` output that Ctrl+O shows, split from its
+handles by the harness, which writes them.
+"""
 
 import io
 import json
@@ -17,6 +21,7 @@ from rich.text import Text
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_ai_harness.shell._persistent import command_output
 from pydantic_ai_pax.config import ToolCallDisplay
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock
@@ -447,9 +452,8 @@ class ToolOutput:
         content = event.part.content
         if (pending := self._outputs.pop(event.part.tool_call_id, None)) is not None and isinstance(content, str):
             block, pid = pending
-            # The model's copy, with secrets masked, ends with the command's handles, which the row already gives.
-            output, handles, _ = content.rpartition(f'PID: {pid} (')
-            block.extend(output if handles else content)
+            # The model's copy has secrets masked; its handles are left out, since the row already gives them.
+            block.extend(command_output(content, pid=pid))
 
     def _inspection_row(self, event: FunctionToolResultEvent) -> None:
         """In the live prompt, a read or listing gets a row whose output, what the tool returned, Ctrl+O shows."""

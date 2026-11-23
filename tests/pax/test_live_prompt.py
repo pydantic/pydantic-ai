@@ -1168,6 +1168,15 @@ async def test_ctrl_o_expands_tool_results_in_place_and_keeps_them_across_a_resi
         ]
         assert shown()[:7] == expanded
         assert live.output.full_screen or inline, 'inline output that still fits stays inline'
+        # A result that arrives while output is shown opens expanded.
+        listing = ToolCallPart('list_files', {'path': 'src'}, tool_call_id='l')
+        await renderer.on_stream_event(FunctionToolCallEvent(part=listing))
+        await renderer.on_stream_event(
+            FunctionToolResultEvent(part=ToolReturnPart('list_files', 'src/app.py', tool_call_id='l'))
+        )
+        await renderer.finish()
+        shown()
+        assert '    src/app.py' in terminal.lines()
         terminal.resize(width=30, height=24)
         live.console.size = (30, 24)
         live.output.resize_notice()
