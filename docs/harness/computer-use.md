@@ -43,10 +43,7 @@ nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`.
 
 ## What the model is told
 
-`ComputerUse` adds instructions that tell the model how to group actions into calls. They also tell it never to
-follow instructions shown on the screen. If the agent also has a tool that runs shell commands, such as `Shell`'s, the
-model is told two more things: a program it starts from the shell opens on the screen, and it should use the screen
-only for work that needs it.
+`ComputerUse` adds instructions on how to use the tool, including never to follow instructions shown on the screen.
 
 With `ComputerUse(defer_loading=True)`, the model sees only the capability's `description` until it chooses to load
 the tool. The description decides when the model loads it, so pass your own `description=` to change that.
@@ -68,7 +65,7 @@ model gets `computer` as a regular function tool.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `settle_seconds` | `2` | How long, at most, to wait for the screen to stop changing after the actions run. `ComputerUse` takes screenshots until two in a row match. `0` takes the screenshot at once. |
+| `settle_seconds` | `2` | How long, at most, to wait for the screen to stop changing after the actions run. `0` takes the screenshot at once. |
 | `native` | `True` | If the model's provider has its own computer use tool, the model gets that tool instead: `ComputerUse` adds a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] and runs its calls on the screen. `False` gives every model the `computer` function tool with all its actions. On GPT, that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 Every request sends all the earlier screenshots again, so `ComputerUse` turns on
@@ -101,10 +98,8 @@ The same hook can refuse a call instead, such as one that waits longer or types 
 
 ## Screen size
 
-A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
-screen shows more at once, but each screenshot costs more tokens, and every request sends every earlier screenshot
-again: a 1920x1080 screenshot costs about twice as much as a 1280x800 one. Below about 1024x768, models start to miss
-detail.
+A 1280x800 screen suits every model. `ComputerUse` sends each screenshot at the screen's full size, so a larger screen
+costs more tokens per screenshot. Below about 1024x768, models start to miss detail.
 
 The providers' own advice:
 
@@ -123,8 +118,8 @@ The providers' own advice:
 - If any action in a call has a position outside the screen, none of the call's actions run, and the model is asked to
   try again. Each such retry counts against the tool's retry limit.
 - If the workspace is gone, for example because its sandbox was deleted, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
-- Several agents can share one screen, such as sub-agents running in parallel. If they run in the same `asyncio` event loop, they take turns one whole call at a time, so their clicks never mix. Agents in separate event loops or separate processes don't wait for each other.
-- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button may still be pressed.
+- Agents that share one screen in the same `asyncio` event loop, such as parallel sub-agents, take turns one call at a time. Agents in separate event loops or processes don't wait for each other.
+- A mouse button pressed with `mouse_down` stays pressed until a `mouse_up`, and is released when a call fails or the run ends, so a drag must finish within one run. With `defer_loading=True`, buttons are released at the end of every call.
 
 ## Watching a run
 
@@ -141,7 +136,7 @@ Each call that finishes with a screenshot also sends one
 
 On Temporal, event listeners run in workflow code, so they [run again when Temporal replays the workflow](../durable_execution/temporal.md#choosing-what-to-publish).
 The message history holds the same record. Each result is a `ComputerReturnPart`, and its `result` is the call's
-`ComputerResult`. `ComputerUse` adds no tracing spans of its own, because the tool call already has one.
+`ComputerResult`.
 
 ## Limitations
 
