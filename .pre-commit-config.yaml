@@ -108,6 +108,15 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: confine
+        name: Hand-written confine checks
+        # Like `complexity`, `--staged` checks only what is staged, against `HEAD` and during a merge `MERGE_HEAD`.
+        entry: uv
+        args: [run, --no-sync, scripts/check_confine.py, --staged]
+        files: ^(pydantic_ai_slim/pydantic_ai|src/pydantic_ai_harness/pydantic_ai_harness)/
+        types: [python]
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv
