@@ -184,36 +184,19 @@ The `finally` removes the container even when setup or the run fails. To keep it
 
 ## Give the agent a desktop
 
-Pass `desktop=True` for a container with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[DockerContainer(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size applies when the screen first starts.
 
-```python
-from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
-from pydantic_ai_harness.docker_container import DockerContainer
-
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerContainer(desktop=True), ComputerUse()])
-
-
-async def main():
-    result = await agent.run('Open Firefox and find the current Python release on python.org.')
-    print(result.output)
-```
-
-Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE`, with Firefox, and later runs reuse it. The screen is 1280x800 unless you pass a size, such as `desktop=(1440, 900)`. The size applies when the screen first starts. Add `Coder` to give the agent the container's shell and files too.
-
-The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it yourself from `DESKTOP_DOCKERFILE` and pass it as `image`. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build it before the first run, so the build doesn't count against a step's timeout.
+Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE`, with Firefox, and later runs reuse it. That image doesn't get security updates. To update it, build it yourself and pass it as `image`; under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), do this before the first run, so the build doesn't count against a step's timeout:
 
 ```bash
 python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
 ```
 
-Then pass `DockerContainer(image='my-desktop', desktop=True)`.
+Then pass `DockerContainer(image='my-desktop', desktop=True)`. Another custom `image` needs [the display's programs](../computer_use/#what-the-display-needs), which the first use installs if it can.
 
-A custom `image` gets the same desktop. It needs the programs listed in [What the display needs](../computer_use/#what-the-display-needs), which the first use installs if it can. Start from `DESKTOP_DOCKERFILE`.
-
-The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
-
-There's no live viewer. To watch a run, save each screenshot as it arrives; see [Watching a run](../computer_use/#watching-a-run).
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 ## Clean up
 
