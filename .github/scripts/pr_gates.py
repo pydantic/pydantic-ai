@@ -1,6 +1,6 @@
 """Merge gates that a script answers from a pull request's metadata alone.
 
-`pr-gates.yml` runs the compatibility check with a read-only token.
+`pr-gates.yml` runs the compatibility and known-gap checks with a read-only token.
 Everything the gate judges comes from the GitHub API. Unreadable metadata fails closed.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
@@ -20,8 +21,14 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
 COMPATIBILITY_LABEL = 'compatibility impact'
-Gate = Literal['compatibility-waiver']
-TITLES: dict[Gate, str] = {'compatibility-waiver': 'Compatibility waiver labeled'}
+KNOWN_GAPS = 'tests/ui_roundtrip/known_gaps'
+KNOWN_GAP_LABEL = 'known gap'
+_ISSUE_URL = re.compile(r'https://github\.com/[\w.-]+/[\w.-]+/issues/\d+')
+Gate = Literal['compatibility-waiver', 'known-gap']
+TITLES: dict[Gate, str] = {
+    'compatibility-waiver': 'Compatibility waiver labeled',
+    'known-gap': 'Known UI round-trip gap labeled and tracked',
+}
 
 
 class GateError(Exception):
@@ -34,6 +41,7 @@ class ChangedFile(BaseModel):
     filename: str
     # Set on a rename, which changes the old path as surely as an edit in place.
     previous_filename: str | None = None
+    status: Literal['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'] = 'modified'
 
 
 class Label(BaseModel):
@@ -44,6 +52,7 @@ class Label(BaseModel):
 
 class _PullRequest(BaseModel):
     changed_files: int
+    body: str | None = None
 
 
 class Commit(BaseModel):
@@ -62,6 +71,8 @@ class GitHub(Protocol):
     def changed_files(self) -> list[ChangedFile]: ...
 
     def labels(self) -> set[str]: ...
+
+    def body(self) -> str: ...
 
     def merge_base(self, base: str, head: str) -> str: ...
 
@@ -108,6 +119,35 @@ def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Ver
         verdict.failures.append(
             f'Adds {len(added)} API compatibility waiver(s) without the `{COMPATIBILITY_LABEL}` label, '
             'so the break would not appear in the release notes.'
+        )
+    return verdict
+
+
+def known_gap(github: GitHub) -> Verdict:
+    """Require `known gap` and a linked issue on a PR that adds a UI round-trip known gap.
+
+    A gap's diff makes `tests/ui_roundtrip` pass while the round trip still loses something, so each new one is a
+    labeled decision with an issue that tracks its fix.
+    """
+    verdict = Verdict()
+    gaps = PurePosixPath(KNOWN_GAPS)
+    added = sorted(
+        file.filename
+        for file in github.changed_files()
+        if file.status in ('added', 'copied', 'renamed')
+        and PurePosixPath(file.filename).parent == gaps
+        and (file.previous_filename is None or PurePosixPath(file.previous_filename).parent != gaps)
+    )
+    if not added:
+        verdict.summary.append(f'No known gap added to `{KNOWN_GAPS}`.')
+        return verdict
+    verdict.summary.append(f'Adds {len(added)} known gap(s): {", ".join(f"`{path}`" for path in added)}.')
+    if KNOWN_GAP_LABEL not in github.labels():
+        verdict.failures.append(f'Adds a known UI round-trip gap without the `{KNOWN_GAP_LABEL}` label.')
+    if not _ISSUE_URL.search(github.body()):
+        verdict.failures.append(
+            'Adds a known UI round-trip gap, but the PR description links no issue that tracks fixing it: '
+            'add its full `https://github.com/<owner>/<repo>/issues/<number>` URL.'
         )
     return verdict
 
@@ -179,6 +219,9 @@ class GhCli:
             raise GateError('PR file count changed during review evaluation; retry the gate.')
         return files
 
+    def body(self) -> str:
+        return _PullRequest.model_validate_json(self._api(self._pull)).body or ''
+
     def labels(self) -> set[str]:
         pages = _LABEL_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._issue}/labels?per_page=100'))
         return {label.name for page in pages for label in page}
@@ -202,6 +245,8 @@ def run(gate: Gate, github: GitHub, env: Mapping[str, str]) -> int:
         match gate:
             case 'compatibility-waiver':
                 verdict = compatibility_waiver(github, base_sha=env['BASE_SHA'], head_sha=env['HEAD_SHA'])
+            case 'known-gap':
+                verdict = known_gap(github)
             case _:
                 assert_never(gate)
     except (GateError, ValidationError) as error:

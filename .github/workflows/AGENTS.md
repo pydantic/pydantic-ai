@@ -201,7 +201,8 @@ Two consequences of the trigger, both easy to get backwards:
 
 # PR metadata gates enforce the merge bar
 
-`pr-gates.yml` checks that a PR adding an API compatibility waiver has the `compatibility impact` label.
+`pr-gates.yml` checks that a PR adding an API compatibility waiver has the `compatibility impact` label, and that a PR
+adding a `tests/ui_roundtrip/known_gaps/*.diff` has the `known gap` label and links an issue that tracks fixing the gap.
 It runs the PR's copy of `pr_gates.py` with a read-only token. The separate `pr-review-gates.yml`
 workflow runs default-branch `review_gates.py` with permission to publish commit statuses, so it
 never executes contribution code with a write token. The workflows have distinct job names because

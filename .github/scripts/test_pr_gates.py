@@ -15,7 +15,7 @@ import publish_douwebot_review
 import pytest
 import review_gates
 import yaml
-from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, run
+from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, known_gap, run
 from publish_douwebot_review import Finding, ReviewResult, publication
 from publish_pr_review_checks import CheckResult, review_payload as pr_review_checks_payload
 from pydantic import BaseModel, Field
@@ -45,6 +45,7 @@ def _legacy_allowlist(against: str) -> str:
 class FakeGitHub:
     files: list[ChangedFile]
     current_labels: set[str] = field(default_factory=set[str])
+    description: str = ''
     # The text of each file at each ref; a file missing from a ref doesn't exist there.
     texts: dict[tuple[str, str], str] = field(default_factory=dict[tuple[str, str], str])
 
@@ -53,6 +54,9 @@ class FakeGitHub:
 
     def labels(self) -> set[str]:
         return set(self.current_labels)
+
+    def body(self) -> str:
+        return self.description
 
     def merge_base(self, base: str, head: str) -> str:
         return 'merge-base'
@@ -159,10 +163,54 @@ def test_run_fails_closed_when_github_cannot_answer(capsys: pytest.CaptureFixtur
     assert 'Retrieved only 3000 of 3001' in capsys.readouterr().out
 
 
+GAP = 'tests/ui_roundtrip/known_gaps/load-capability_load-dump-agui.diff'
+TRACKED = 'Records the gap; https://github.com/pydantic/pydantic-ai/issues/123 tracks the fix.'
+
+
+@pytest.mark.parametrize(
+    ('file', 'labels', 'description', 'failures'),
+    [
+        pytest.param(ChangedFile(filename=GAP, status='added'), set[str](), '', 2, id='added-unlabeled-untracked'),
+        pytest.param(ChangedFile(filename=GAP, status='added'), {'known gap'}, '', 1, id='added-untracked'),
+        pytest.param(ChangedFile(filename=GAP, status='added'), set[str](), TRACKED, 1, id='added-unlabeled'),
+        pytest.param(ChangedFile(filename=GAP, status='added'), {'known gap'}, TRACKED, 0, id='added-labeled-tracked'),
+        pytest.param(ChangedFile(filename=GAP, status='modified'), set[str](), '', 0, id='modified'),
+        pytest.param(ChangedFile(filename=GAP, status='removed'), set[str](), '', 0, id='removed'),
+        pytest.param(
+            ChangedFile(filename=GAP, previous_filename='tests/ui_roundtrip/known_gaps/old.diff', status='renamed'),
+            set[str](),
+            '',
+            0,
+            id='renamed-within',
+        ),
+        pytest.param(
+            ChangedFile(filename=GAP, previous_filename='tests/ui_roundtrip/old.diff', status='renamed'),
+            set[str](),
+            '',
+            2,
+            id='renamed-in',
+        ),
+        pytest.param(
+            ChangedFile(filename='tests/ui_roundtrip/test_ui_roundtrip.py', status='added'),
+            set[str](),
+            '',
+            0,
+            id='other',
+        ),
+    ],
+)
+def test_known_gap(file: ChangedFile, labels: set[str], description: str, failures: int):
+    verdict = known_gap(FakeGitHub(files=[file], current_labels=labels, description=description))
+
+    assert len(verdict.failures) == failures
+
+
 def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     responses: dict[str, str | None] = {
-        'repos/o/r/pulls/7': '{"changed_files": 2}',
-        'repos/o/r/pulls/7/files?per_page=100': '[[{"filename": "a"}], [{"filename": "b", "previous_filename": "c"}]]',
+        'repos/o/r/pulls/7': '{"changed_files": 2, "body": "Fixes it."}',
+        'repos/o/r/pulls/7/files?per_page=100': (
+            '[[{"filename": "a", "status": "added"}], [{"filename": "b", "previous_filename": "c", "status": "renamed"}]]'
+        ),
         'repos/o/r/compare/x...y': '{"merge_base_commit": {"sha": "m"}}',
         'repos/o/r/issues/7/labels?per_page=100': '[[{"name": "compatibility impact"}]]',
         f'repos/o/r/contents/{PATH}?ref=y': '{}',
@@ -178,7 +226,11 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(pr_gates.subprocess, 'run', fake_run)
     github = GhCli('o/r', 7)
 
-    assert github.changed_files() == [ChangedFile(filename='a'), ChangedFile(filename='b', previous_filename='c')]
+    assert github.changed_files() == [
+        ChangedFile(filename='a', status='added'),
+        ChangedFile(filename='b', previous_filename='c', status='renamed'),
+    ]
+    assert github.body() == 'Fixes it.'
     assert github.merge_base('x', 'y') == 'm'
     assert github.labels() == {'compatibility impact'}
     assert github.file_text(PATH, 'y') == '{}'
@@ -230,7 +282,8 @@ def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_pr
         workflow.on['pull_request'].types
     )
     assert workflow.jobs['compatibility-waiver'].condition == "github.event_name == 'pull_request'"
-    assert set(workflow.jobs) == {'compatibility-waiver'}
+    assert workflow.jobs['known-gap'].condition == "github.event_name == 'pull_request'"
+    assert set(workflow.jobs) == {'compatibility-waiver', 'known-gap'}
     trusted = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     names = [job.name for item in (workflow, trusted) for job in item.jobs.values()]
     assert len(names) == len(set(names))

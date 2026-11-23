@@ -1,11 +1,11 @@
 name: PR Gates
 
-# Read-only compatibility gate, evaluated with the pull request copy of the script.
+# Read-only compatibility and known-gap gates, evaluated with the pull request copy of the script.
 # `.github/workflows/AGENTS.md` documents this gate and its trust boundary.
 # The logic and tests live in `.github/scripts/pr_gates.py`.
 #
 # No `paths:` filter: a required check that never runs stays pending and blocks the merge, so
-# every listed PR event runs the compatibility gate.
+# every listed PR event runs both gates.
 
 on:
   pull_request:
@@ -47,3 +47,28 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/pr_gates.py compatibility-waiver
+
+  known-gap:
+    name: 'Gate: known UI round-trip gap labeled'
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr_gates.py
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Require `known gap` and a linked issue on a PR that adds a UI round-trip known gap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+        run: python3 .github/scripts/pr_gates.py known-gap
