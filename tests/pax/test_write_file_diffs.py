@@ -125,7 +125,7 @@ async def test_a_refused_edit_is_marked(tmp_path: Path) -> None:
 
     @agent.on_event(FileChangeRequestedEvent)
     async def refuse(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
-        event.cancel()
+        event.cancel('Protected file.\nAsk the owner first.')
 
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
@@ -134,7 +134,7 @@ async def test_a_refused_edit_is_marked(tmp_path: Path) -> None:
     await renderer.finish()
 
     assert path.read_text() == 'old\n'
-    assert output.getvalue() == '● edit_file file.txt\n  ⎿ refused: not approved\n\ndone\n\n'
+    assert output.getvalue() == '● edit_file file.txt\n  ⎿ refused: Protected file.\n\ndone\n\n'
     assert 'old' not in output.getvalue() and 'new' not in output.getvalue()
 
 

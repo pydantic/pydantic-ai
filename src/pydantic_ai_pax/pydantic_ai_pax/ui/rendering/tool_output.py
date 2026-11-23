@@ -302,7 +302,8 @@ class ToolOutput:
         else:
             # A refused file change still succeeds, telling the model why nothing changed.
             request = self._changes.get(event.part.tool_call_id)
-            reason = f'refused: {request.cancel_reason or "not approved"}' if request and request.cancelled else ''
+            refusal = (request.cancel_reason or '').strip().split('\n', 1)[0] if request else ''
+            reason = f'refused: {refusal or "not approved"}' if request and request.cancelled else ''
         if reason:
             self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
             self.console.print()
