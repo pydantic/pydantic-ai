@@ -996,7 +996,7 @@ THINKING_ROUTES = [
     ThinkingRoute(
         'CerebrasModel',
         lambda name: http_probe(partial(_cerebras, model_name=name)),
-        ('kimi-k3', 'zai-glm-5.3'),
+        ('kimi-k3', 'zai-glm-5.3', 'gpt-oss-120b', 'zai-glm-4.7', 'qwen-3.8'),
         _OPENAI,
     ),
     ThinkingRoute(
@@ -1056,7 +1056,7 @@ THINKING_ROUTES = [
     ThinkingRoute(
         'GroqModel',
         lambda name: legacy_http_probe(partial(_groq, model_name=name)),
-        ('openai/gpt-oss-120b', 'qwen/qwen3-32b'),
+        ('openai/gpt-oss-120b', 'qwen/qwen3-32b', 'deepseek-r1-distill-llama-70b'),
         _needs(groq_available, 'groq'),
     ),
     ThinkingRoute(
@@ -1088,6 +1088,8 @@ THINKING_ROUTES = [
             'deepseek.v3.2',
             'openai.gpt-oss-120b-1:0',
             'openai.gpt-6.1-sol',
+            'deepseek.r1-v1:0',
+            'minimax.minimax-m2',
         ),
         _needs(bedrock_available, 'bedrock'),
     ),
@@ -1099,15 +1101,43 @@ THINKING_ROUTES = [
     ),
 ]
 
+_CEREBRAS_REASONS_BY_DEFAULT = (
+    'Cerebras reasons by default: `models/cerebras.py:CerebrasModel._translate_thinking` sends a level only to a model'
+    ' whose profile pins `openai_reasoning_efforts`.'
+)
+_BEDROCK_NO_EFFORT = (
+    'It always reasons, and its Bedrock profile sets no `bedrock_thinking_variant`, so'
+    ' `models/bedrock.py:_add_thinking_fields` adds no effort field.'
+)
+
 THINKING_SENDS_NOTHING: dict[tuple[str, str], str] = {
     ('MistralModel', 'magistral-medium-2509'): (
         'A dated magistral id always reasons and takes no `reasoning_effort`, so `MistralModel` sends nothing for it.'
+    ),
+    ('CerebrasModel', 'gpt-oss-120b'): _CEREBRAS_REASONS_BY_DEFAULT,
+    ('CerebrasModel', 'zai-glm-4.7'): _CEREBRAS_REASONS_BY_DEFAULT,
+    ('CerebrasModel', 'qwen-3.8'): _CEREBRAS_REASONS_BY_DEFAULT,
+    ('GroqModel', 'deepseek-r1-distill-llama-70b'): (
+        'It always reasons, and `models/groq.py:GroqModel._reasoning_effort` maps `thinking` to an effort only for a'
+        ' profile with `groq_supports_graded_reasoning_effort`, so every level sends the same `reasoning_format`.'
+    ),
+    ('BedrockConverseModel', 'deepseek.r1-v1:0'): (
+        f'{_BEDROCK_NO_EFFORT} See `providers/bedrock.py:bedrock_deepseek_model_profile`.'
+    ),
+    ('BedrockConverseModel', 'minimax.minimax-m2'): (
+        f'{_BEDROCK_NO_EFFORT} See `providers/bedrock.py:bedrock_minimax_model_profile`.'
     ),
 }
 """The `(route, model id)` pairs whose profile supports `thinking` though no `thinking` value moves their payload, and why.
 
 An entry is checked both ways: the payload has to stay unchanged, so the entry has to go once the model sends `thinking`.
 """
+
+
+def test_thinking_sends_nothing_entries_are_probed():
+    """An entry no route probes would never be checked, so it could outlive the gap it records."""
+    probed = {(route.id, model_name) for route in THINKING_ROUTES for model_name in route.model_names}
+    assert set(THINKING_SENDS_NOTHING) <= probed
 
 
 @pytest.mark.parametrize(
