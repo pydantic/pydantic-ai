@@ -214,6 +214,13 @@ class PartWriter(SmoothWriter):
         self._target.write(''.join(emitted))
         self._target.flush()
 
+    def _flush_all(self) -> None:
+        """Write everything left at once, in order: Termflow's hook for when output must not wait."""
+        while self._queued:
+            whole, typed = self._queued.popleft()
+            self._pending += whole + typed
+        super()._flush_all()
+
     def _discard_all(self) -> None:
         super()._discard_all()
         self._queued.clear()

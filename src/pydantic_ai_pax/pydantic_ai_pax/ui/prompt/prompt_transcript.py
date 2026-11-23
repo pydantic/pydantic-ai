@@ -217,7 +217,7 @@ class _Lines:
     """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one.
 
     What follows `PREVIEW` goes to `preview`, shown after the lines until `DROP` discards it. A preview
-    is bounded by the room the lines leave, so it never evicts them and the two keep to the limits.
+    has the same limits as its stream but prunes only itself, so it never evicts the lines it follows.
     """
 
     def __init__(self, *, max_chars: int = 4_000_000, max_lines: int = 10_000) -> None:
@@ -247,18 +247,14 @@ class _Lines:
         for part in _MARKS.split(text):
             if part == PREVIEW:
                 # The preview goes on from the unfinished line, as a reasoning heading's text does.
-                # Only the room the lines leave, so with its lines the part keeps to its limits.
-                self.preview = _Lines(
-                    max_chars=self.max_chars - self.chars - len(self.pending),
-                    max_lines=self.max_lines - len(self.lines),
-                )
+                self.preview = _Lines(max_chars=self.max_chars, max_lines=self.max_lines)
                 self.preview.pending, self.preview.pending_theme = self.pending, self.pending_theme
                 self.preview._decoder.style = self._decoder.style
             elif part == DROP:
                 self.preview = None
             elif self.preview is None:
                 self._write(part)
-            elif self.preview.max_chars:
+            else:
                 self.preview._write(part)
 
     def _write(self, text: str) -> None:
@@ -281,10 +277,6 @@ class _Lines:
         complete = self.pending
         escape = incomplete_escape_start(complete)
         return decoder.decode_line(complete if escape < 0 else complete[:escape])
-
-    def size(self) -> int:
-        """Characters held, a preview's included."""
-        return self.chars + len(self.pending) + (0 if self.preview is None else self.preview.size())
 
     def all(self) -> list[_Line]:
         if self.preview is not None:
@@ -340,7 +332,8 @@ class MarkdownBlock(io.StringIO):
     @property
     def chars(self) -> int:
         """Retained source plus visible output, for the transcript memory limit."""
-        return len(self.source or '') + self._stream.size()
+        # A preview is left out: it lasts until its newline or fence, and its own limits bound it.
+        return len(self.source or '') + self._stream.chars + len(self._stream.pending)
 
     def write(self, text: str) -> int:
         """Receive the stream's rendered ANSI."""

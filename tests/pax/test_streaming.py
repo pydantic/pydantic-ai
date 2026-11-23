@@ -311,6 +311,10 @@ def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None
             """What one drain tick releases, without waiting on the drainer's timer."""
             self._drain_units(3)
 
+        def stop_waiting(self) -> None:
+            """Termflow's hook for writing what is left at once."""
+            self._flush_all()
+
     writer = Ticks(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
     writer.write('preview')
     writer.commit('the rendered line\n')
@@ -318,3 +322,10 @@ def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None
     for _ in range(4):
         writer.tick()
     assert writes == ['pre', 'vie', 'wthe rendered line\nn', 'ext']
+    writes.clear()
+    writer.write('typed')
+    writer.commit('whole\n')
+    writer.write('after')
+    writer.tick()
+    writer.stop_waiting()
+    assert writes == ['typ', 'edwhole\nafter'], 'what is left goes out in one write, still in order'
