@@ -3788,6 +3788,24 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
     assert resolved is chain_target
 
 
+async def test_override_capabilities_resolver_owns_an_overridden_model_string() -> None:
+    """`override(capabilities=[resolver], model=...)` resolves the model string through the override's resolver.
+
+    The agent's own capabilities have no resolver, so the string survives only because the override's capabilities are
+    in place when `model=` is applied: against the agent's root it would go to `infer_model`, which knows no such model.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='from the override resolver')])
+
+    target = FunctionModel(respond, model_name='override-capabilities')
+    agent = Agent(FunctionModel(_resolve_dummy_model_fn), name='resolve_override_capabilities')
+
+    with agent.override(capabilities=[_StringResolver(target=target)], model='magic-model'):
+        result = await agent.run('Hello')
+    assert result.output == 'from the override resolver'
+
+
 async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     """A capability-owned alias default resolves during runs, and says so clearly outside one.
 
