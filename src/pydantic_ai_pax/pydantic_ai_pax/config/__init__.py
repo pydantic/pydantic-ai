@@ -143,7 +143,8 @@ class Settings(BaseModel):
         default=None, description='Naming model override; null uses the current model.'
     )
     theme: str = Field(
-        default='default', description='Keep CLAI colours, or select a bundled Termflow palette with /theme.'
+        default='default',
+        description='Keep CLAI colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme.',
     )
     spinner: str = Field(
         default='working',
