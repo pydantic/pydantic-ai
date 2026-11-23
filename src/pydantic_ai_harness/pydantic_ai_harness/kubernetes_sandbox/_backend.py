@@ -53,7 +53,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
@@ -64,7 +64,7 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
-from pydantic_ai_harness._x11 import desktop_display
+from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
@@ -204,9 +204,9 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         env: Environment variables for every command, under each call's own `env`.
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
-            `(width, height)`. The image needs Xvfb, `xdotool`, `xwininfo` (`x11-utils`), `scrot` and `setsid`
-            (`util-linux`). Without root or passwordless `sudo` nothing is installed, and the first use of the
-            display raises `WorkspaceUnavailableError` naming what is missing. No port is opened for it.
+            `(width, height)`. Without root or passwordless `sudo` nothing is installed, so the image needs the
+            display's programs; otherwise the first use of the display raises `WorkspaceUnavailableError` naming
+            what is missing. No port is opened for it.
     """
 
     # File operations don't use sandboxd's file API: it serves only paths under its root and moves
@@ -262,12 +262,13 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         # An `aclose()` that came while operations were in flight; the last of them closes the connection once.
         self._close_requested = False
         self._operations = 0
-        self._display, self._env = desktop_display(
+        self._display = x11_display(
             self._run_argv,
-            desktop_size(desktop),
-            self._env,
+            checked_desktop_size(desktop),
             lambda: f'Kubernetes sandbox {self._ref.id if self._ref else "(not created)"}',
         )
+        if self._display:
+            self._env = {'DISPLAY': DISPLAY, **self._env}
 
     @property
     def display(self) -> Display | None:

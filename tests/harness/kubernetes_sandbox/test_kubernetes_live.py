@@ -50,7 +50,7 @@ from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, Kubernetes
 from tests.harness._docs_examples import documented_cleanup, python_blocks, run_block
 from tests.harness._tool_calls import call_tools
 from tests.harness.display_contract_live import check_display_contract
-from tests.harness.display_fakes import screen
+from tests.harness.display_fakes import full_display
 
 CONTEXT = 'kind-pydantic-ai-live'
 NAMESPACE = 'default'
@@ -381,8 +381,7 @@ async def test_a_desktop_pool_serves_the_display() -> None:
     """An image with the X programs gives a non-root pod a working desktop, which a shell command also sees."""
     backend = _new_backend(warm_pool='desktop-pool', desktop=True)
     try:
-        await check_display_contract(screen(backend))
-        assert (await backend.run('xwininfo -root | grep -c Width', shell=True)).stdout == '1\n'
+        await check_display_contract(full_display(backend))
         assert (await backend.run(['xdotool', 'getdisplaygeometry'])).stdout == '1280 800\n'
         # The window manager answers on the display, and the panel's window shows, not only their processes running.
         window_manager = await backend.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'])
@@ -391,7 +390,7 @@ async def test_a_desktop_pool_serves_the_display() -> None:
         assert panel.exit_code == 0 and panel.stdout.strip()
         # Under a pod's high open-file limit, the Terminal button once opened nothing. (60, 780) is its centre,
         # measured live on the Docker desktop image.
-        await screen(backend).act(Click(x=60, y=780))
+        await full_display(backend).act(Click(x=60, y=780))
 
         async def xterm_shows() -> bool:
             return (await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'xterm'])).exit_code == 0
@@ -406,7 +405,7 @@ async def test_an_image_without_the_display_programs_is_refused_by_name() -> Non
     backend = _new_backend(desktop=True)
     try:
         with pytest.raises(WorkspaceUnavailableError, match=r'the display needs .*Xvfb.*no root or passwordless sudo'):
-            await screen(backend).display_size()
+            await full_display(backend).display_size()
     finally:
         await _destroy(backend)
 

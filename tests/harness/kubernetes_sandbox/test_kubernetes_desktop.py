@@ -8,12 +8,11 @@ from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 from pydantic_ai_harness.computer_use import ComputerUse
 
 from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_sandboxd import FakeCluster
 
 
@@ -37,28 +36,11 @@ async def test_a_shell_command_finds_the_desktop_running(cluster: FakeCluster, d
 async def test_a_desktop_size_sets_the_display_it_starts(cluster: FakeCluster, display: FakeDisplay) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool', desktop=(1440, 900))
 
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
     assert 'fluxbox tint2 xterm' in start and 'setsid fluxbox' in start
-    await backend.aclose()
-
-
-async def test_an_image_without_the_display_programs_is_refused_with_what_it_needs(cluster: FakeCluster) -> None:
-    # Pods run as a non-root user, so the start script cannot install the programs and says what is missing.
-    def refuse(command: str, timeout: float | None) -> tuple[str, str, int]:
-        return '', "the display needs Xvfb xdotool, and there's no root or passwordless sudo to install them with", 1
-
-    cluster.display = refuse
-    backend = KubernetesSandboxBackend(warm_pool='pool', desktop=True)
-
-    with pytest.raises(
-        WorkspaceUnavailableError,
-        match=r'^Could not start the display in Kubernetes sandbox default/\S+: the display needs Xvfb xdotool, and '
-        r"there's no root or passwordless sudo to install them with$",
-    ):
-        await screen(backend).display_size()
     await backend.aclose()
 
 
@@ -75,7 +57,7 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(cluster: FakeCluste
     await first.aclose()
 
     reattached = KubernetesSandbox(warm_pool='pool', desktop=(1440, 900)).backend(ref)
-    await screen(reattached).display_size()
+    await full_display(reattached).display_size()
     await reattached.aclose()
 
     (start,) = display.starts

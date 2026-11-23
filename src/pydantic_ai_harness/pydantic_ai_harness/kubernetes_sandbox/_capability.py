@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env_types,
@@ -101,7 +101,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
     desktop: bool | tuple[int, int] = False
     """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
     for 1280x800, or its `(width, height)`. Without root or passwordless `sudo` in the pod, its `SandboxTemplate`
-    image must already have Xvfb, `xdotool`, `x11-utils`, `scrot` and `util-linux`."""
+    image must already have the display's programs."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('KubernetesSandbox', self.defer_loading)
@@ -109,7 +109,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
-        desktop_size(self.desktop)
+        checked_desktop_size(self.desktop)
         try:
             check_env_types(self.env)
         except TypeError:

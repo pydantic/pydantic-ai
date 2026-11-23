@@ -186,7 +186,7 @@ spec:
   sandboxTemplateRef:
     name: never-ready
 ---
-# The `desktop` image, for `desktop=True`. Xvfb and the screenshots need more memory than sandboxd alone.
+# The `desktop` image, for `desktop=True`.
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
@@ -207,8 +207,8 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
           resources:
-            requests: {cpu: 100m, memory: 128Mi}
-            limits: {memory: 1Gi}
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
           ports:
             - containerPort: 8080
             - containerPort: 9090

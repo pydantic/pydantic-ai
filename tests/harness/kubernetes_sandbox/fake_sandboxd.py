@@ -32,13 +32,14 @@ from google.protobuf.message import Message
 from k8s_agent_sandbox.async_connector import AsyncSandboxConnector
 from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
+from .._fake_x_display import FakeDisplay
+
 _GRACE = 0.3
 """How long output pipes may stay open after the command exits (sandboxd waits about 5 seconds)."""
 
 _MAX_ARG_STRLEN = 32 * 4096
 """Linux's limit on one `execve` argument or environment string, with its NUL; macOS has none."""
 
-_DISPLAY_PROGRAMS = ('Xvfb', 'xwininfo', 'scrot', 'xdotool')
 DisplayHandler = Callable[[str, float | None], tuple[str, str, int]]
 """Answers an X display command with its stdout, stderr and exit code."""
 
@@ -164,7 +165,7 @@ class FakeSandboxd:
         if any(len(string.encode()) >= _MAX_ARG_STRLEN for string in strings):
             # As on Linux, whatever the host: `execve` fails with E2BIG, which sandboxd reports as INTERNAL.
             await context.abort(grpc.StatusCode.INTERNAL, 'start process: fork/exec /bin/sh: argument list too long')
-        if self.display is not None and any(program in command[-1] for program in _DISPLAY_PROGRAMS):
+        if self.display is not None and FakeDisplay.answers(command[-1]):
             # The backend sends `/bin/sh -c 'set -- <argv>\n<exec script>'`; the display sees the argv it quoted,
             # which for the display's own commands holds no newline.
             line = shlex.join(shlex.split(command[-1].partition('\n')[0].removeprefix('set -- ')))

@@ -410,10 +410,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
 - `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 desktop for `ComputerUse()`, or pass
-  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have
-  `xdotool`, `x11-utils`, `scrot`, `util-linux`, and `xvfb` unless an X server runs (and `fluxbox`, `tint2` and
-  `xterm` for the desktop, a browser if the agent needs one); otherwise the first use refuses, naming what is
-  missing.
+  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have the
+  display's programs; otherwise the first use refuses, naming what is missing.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so

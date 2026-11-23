@@ -15,13 +15,12 @@ WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/sandboxd"]
 
 # `--target desktop`: the same image with the desktop's programs, installed at build time because pods run as a
-# non-root user. `DESKTOP_EXTRA_PACKAGES` adds programs for the agent, such as `firefox-esr`.
+# non-root user.
 FROM base AS desktop
-ARG DESKTOP_EXTRA_PACKAGES=""
 USER root
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm ${DESKTOP_EXTRA_PACKAGES} \
+    xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm \
  && rm -rf /var/lib/apt/lists/*
 USER 1000
 
