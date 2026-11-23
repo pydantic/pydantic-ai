@@ -30,7 +30,6 @@ from pydantic_ai.computer_use import (
     MouseMove,
     MouseUp,
     Point,
-    Region,
     Screenshot,
     Scroll,
     Wait,
@@ -40,7 +39,6 @@ from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelResponse,
-    ModelResponsePart,
     ToolCallPart,
     ToolReturn,
 )
@@ -79,8 +77,7 @@ window in the background, or the command waits until the program exits. Use the 
 needs the screen: operating a program's window, reading what the screen shows, and work the user asked to be done on \
 the screen.\
 """
-"""Sent only to a run that has a tool that runs shell commands. When GPT was told about a shell it didn't have, it
-looked for one and took more steps."""
+"""Sent only to a run that has a tool that runs shell commands."""
 
 
 def _shell_instructions(ctx: RunContext[Any]) -> str | None:
@@ -94,47 +91,47 @@ def _shell_instructions(ctx: RunContext[Any]) -> str | None:
     return None
 
 
-_LookingAction = Wait | Screenshot | Zoom | CursorPosition
+_ObservingAction = Wait | Screenshot | Zoom | CursorPosition
 """The actions that change nothing on the screen, so a read-only workspace allows them."""
 
 _ACTIONS_DESCRIPTION = 'The actions to run, in order.'
 
 
-async def _look(
+async def _read_only_computer_signature(
     actions: Annotated[
-        list[Annotated[_LookingAction, Field(discriminator='type')]],
+        list[Annotated[_ObservingAction, Field(discriminator='type')]],
         Field(min_length=1, description=_ACTIONS_DESCRIPTION),
     ],
 ) -> None:
     """The `computer` tool's signature on a read-only workspace, whose schema offers only the actions that look."""
 
 
-_LOOKING_PARAMETERS = Tool(_look).tool_def.parameters_json_schema
+_READ_ONLY_PARAMETERS_SCHEMA = Tool(_read_only_computer_signature).tool_def.parameters_json_schema
 
 
-async def _offer_what_the_workspace_allows(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+async def _narrow_schema_when_read_only(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
     """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools there."""
     if not ctx.workspace.read_only:
         return tool_def
-    return replace(tool_def, parameters_json_schema=_LOOKING_PARAMETERS)
+    return replace(tool_def, parameters_json_schema=_READ_ONLY_PARAMETERS_SCHEMA)
 
 
-_DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
+_SCREEN_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
 """One lock per event loop and screen, keyed by the display object and by the workspace ref.
 
 Agents that share a screen, such as parallel sub-agents, take turns one whole call at a time. A lock can't wake a task
 on another event loop, so calls on separate loops don't take turns. A lock is dropped once nothing holds or waits for
 it."""
 
-_RELEASE_TIMEOUT = 5
-"""Seconds to wait, at most, for the screen and for each button release, when a call or a run's end releases buttons."""
+_RELEASE_TIMEOUT_SECONDS = 5
+"""How long to wait, at most, for the screen and for each button release, when a call or a run's end releases buttons."""
 
-_SETTLE_INTERVAL = 0.05
-"""Seconds between the screenshots that check whether the screen stopped changing."""
+_SETTLE_INTERVAL_SECONDS = 0.05
+"""The time between the screenshots that check whether the screen stopped changing."""
 
 
 @dataclass
-class _RunButtons:
+class _RunPressedButtons:
     """The mouse buttons a run has pressed. Its `computer` calls keep this record, and its `wrap_run` releases them.
 
     The run's hooks can't read the pressed buttons from the messages. They see the messages only as the run began, and
@@ -142,17 +139,15 @@ class _RunButtons:
     """
 
     run_id: str | None
-    held: list[MouseButton] = field(default_factory=list[MouseButton])
+    pressed: list[MouseButton] = field(default_factory=list[MouseButton])
     """The buttons that the last successful call said are still pressed. The next call starts with these."""
-    stray: list[MouseButton] = field(default_factory=list[MouseButton])
+    maybe_pressed: list[MouseButton] = field(default_factory=list[MouseButton])
     """Buttons that may be pressed without the model knowing, because a call was interrupted or a release failed."""
-
-    def might_be_held(self) -> list[MouseButton]:
-        """Every button that may still be pressed, which the run's end releases."""
-        return list(dict.fromkeys([*self.held, *self.stray]))
+    failed_response_index: int | None = None
+    """The index in the messages of the response whose last `computer` call failed, so its later calls don't run."""
 
 
-_RUN_BUTTONS: ContextVar[_RunButtons | None] = ContextVar('_RUN_BUTTONS', default=None)
+_RUN_PRESSED_BUTTONS: ContextVar[_RunPressedButtons | None] = ContextVar('_RUN_PRESSED_BUTTONS', default=None)
 """The buttons of the run whose `wrap_run` releases them at its end.
 
 It isn't kept on the run's `for_run` copy of the capability. A durable engine runs the tool from the toolset the agent
@@ -160,11 +155,11 @@ was built with, so the tool belongs to that instance, not to the run's copy.
 """
 
 
-def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
+def _this_runs_pressed_buttons(ctx: RunContext[Any]) -> _RunPressedButtons | None:
     """This run's buttons, or `None` if its `wrap_run` didn't run, as for a capability loaded mid-run."""
-    run = _RUN_BUTTONS.get()
+    run_buttons = _RUN_PRESSED_BUTTONS.get()
     # A record with another run's ID belongs to an outer run, such as the run whose tool started this one.
-    return run if run is not None and run.run_id == ctx.run_id else None
+    return run_buttons if run_buttons is not None and run_buttons.run_id == ctx.run_id else None
 
 
 _NO_DISPLAY = (
@@ -182,34 +177,36 @@ _INTERRUPTED = (
     'acting again.'
 )
 
+_EARLIER_CALL_FAILED = 'Not executed: an earlier computer action in this turn failed.'
+
 
 @dataclass
-class _Plan:
+class _CallInputs:
     """What a call needs from the run's messages and model, which code inside a durable step can't read."""
 
-    seen: tuple[int, int] | None
-    """The size of the screenshot the model pointed on, if it saw one."""
-    changed: bool
+    screenshot_size: tuple[int, int] | None
+    """The size of the latest screenshot before the call, which the model gave its positions on, if it saw one."""
+    actions_changed: bool
     """Whether the actions to run differ from the ones the model asked for."""
-    held: list[MouseButton]
+    pressed_at_start: list[MouseButton]
     """The mouse buttons the last call that succeeded said are still pressed."""
-    keeps_held: bool
+    buttons_outlive_call: bool
     """Whether buttons left pressed stay pressed until the run ends, rather than being released when the call ends."""
 
 
 @dataclass
-class _NotRun:
-    """A call the display refused or couldn't finish. It leaves a durable step as data, so its error keeps its kind."""
+class _FailedCall:
+    """A call the display refused or couldn't finish. It leaves a durable step as data, so its error keeps its type."""
 
     message: str
-    kind: Literal['tool', 'retry', 'unavailable', 'config'] = 'tool'
+    error_type: Literal['tool', 'retry', 'unavailable', 'config'] = 'tool'
     """`tool` tells the model the call failed. `retry` asks the model to fix the call. `unavailable` ends the run with
     `WorkspaceUnavailableError`, and `config` ends it with `UserError`."""
-    held: list[MouseButton] = field(default_factory=list[MouseButton])
+    maybe_pressed: list[MouseButton] = field(default_factory=list[MouseButton])
     """Buttons a failed call couldn't release, so they may still be pressed. Set only for a failure the model sees."""
 
     @classmethod
-    def of(cls, error: ToolFailed | WorkspaceUnavailableError | UserError) -> _NotRun:
+    def carry(cls, error: ToolFailed | WorkspaceUnavailableError | UserError) -> _FailedCall:
         """The result for a call that raised `error`."""
         if isinstance(error, ToolFailed):
             return cls(error.message)
@@ -218,42 +215,26 @@ class _NotRun:
         return cls(error.message, 'config')
 
     def error(self) -> Exception:
-        if self.kind == 'tool':
+        if self.error_type == 'tool':
             return ToolFailed(self.message)
-        if self.kind == 'retry':
+        if self.error_type == 'retry':
             return ModelRetry(self.message)
-        if self.kind == 'unavailable':
+        if self.error_type == 'unavailable':
             return WorkspaceUnavailableError(self.message)
         return UserError(self.message)
 
 
-def _not_run_error(
-    outcome: _NotRun, run: _RunButtons, stray: list[MouseButton], plan: _Plan, actions: list[ComputerToolAction]
-) -> Exception:
-    """The error for a call that didn't run, keeping the buttons a failed call couldn't release for the run's end."""
-    if outcome.kind in ('tool', 'retry'):
-        run.stray = [*stray, *outcome.held]
-    else:
-        # Set here, not when the call pressed them, so a durable run's replay, which skips the call, releases the same
-        # buttons when the run ends. A lost workspace may have gone after the presses. A configuration error is found
-        # before any action runs.
-        run.stray = [*stray, *plan.held]
-        if outcome.kind == 'unavailable':
-            run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
-    return outcome.error()
-
-
-def _leave_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> None:
-    """Add the buttons that `actions` press to the run's stray buttons.
+def _record_presses_for_run_end(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> None:
+    """Add the buttons that `actions` press to the run's buttons that may be pressed.
 
     A call cut off after acting can't say which buttons are pressed. A call that finishes replaces them with the
     buttons it says may be pressed.
     """
-    if (run := _run_buttons(ctx)) is not None:
-        run.stray.extend(action.button for action in actions if isinstance(action, MouseDown))
+    if (run_buttons := _this_runs_pressed_buttons(ctx)) is not None:
+        run_buttons.maybe_pressed.extend(action.button for action in actions if isinstance(action, MouseDown))
 
 
-def _points(action: ComputerToolAction) -> Sequence[Point]:
+def _action_positions(action: ComputerToolAction) -> Sequence[Point]:
     match action:
         case Click(x=x, y=y) | Scroll(x=x, y=y) | MouseMove(x=x, y=y) if x is not None and y is not None:
             return (Point(x=x, y=y),)
@@ -266,183 +247,128 @@ def _points(action: ComputerToolAction) -> Sequence[Point]:
             return ()
 
 
-def _off_screen(actions: list[ComputerToolAction], width: int, height: int) -> str | None:
+def _off_screen_refusal(actions: list[ComputerToolAction], width: int, height: int) -> str | None:
     """Why the first position outside `width` by `height` is refused, if there is one."""
     for index, action in enumerate(actions, 1):
-        for point in _points(action):
+        for point in _action_positions(action):
             if point.x >= width or point.y >= height:
                 return f'Action {index} ({action.type}) at ({point.x}, {point.y}) is outside the {width}x{height} screen, so no action ran.'
     return None
 
 
-def _scale(value: int, to: int, scale_from: int) -> int:
-    """Scale a position on a side `scale_from` units long to a side `to` units long, rounded and kept inside it."""
-    return min(to - 1, (2 * value * to + scale_from) // (2 * scale_from))
+def _mouse_buttons(buttons: list[MouseButton]) -> str:
+    return f'{" and ".join(buttons)} mouse {"button" if len(buttons) == 1 else "buttons"}'
 
 
 @dataclass
-class _CoordinateMapping:
-    """One `computer` call's coordinate space and how it maps to the display."""
-
-    space: tuple[int, int]
-    """The model's coordinate space: the size of the screenshot it pointed on."""
-    display: tuple[int, int]
-    """The display's size in pixels."""
-
-    def to_display(self, action: ComputerToolAction) -> ComputerToolAction:
-        """`action` with its positions scaled from the model's space to the display's pixels."""
-        (width, height), (space_width, space_height) = self.display, self.space
-
-        def x(value: int) -> int:
-            return _scale(value, width, space_width)
-
-        def y(value: int) -> int:
-            return _scale(value, height, space_height)
-
-        match action:
-            case Click(x=px, y=py) | Scroll(x=px, y=py) | MouseMove(x=px, y=py) if px is not None and py is not None:
-                return replace(action, x=x(px), y=y(py))
-            case Drag(path=path):
-                return replace(action, path=tuple(Point(x=x(p.x), y=y(p.y)) for p in path))
-            case Zoom(region=r):
-                # The far edges round up, so even a region one unit across covers a pixel.
-                right = max(min(width, -(-r.right * width // space_width)), x(r.left) + 1)
-                bottom = max(min(height, -(-r.bottom * height // space_height)), y(r.top) + 1)
-                return replace(action, region=Region(left=x(r.left), top=y(r.top), right=right, bottom=bottom))
-            case _:
-                return action
-
-    def to_model(self, point: Point) -> Point:
-        """`point` on the display, in the model's space."""
-        return Point(
-            x=_scale(point.x, self.space[0], self.display[0]), y=_scale(point.y, self.space[1], self.display[1])
-        )
-
-
-@dataclass
-class _Steps:
-    """Runs one call's actions on `display`, keeping what they return and whether the screen still has to settle."""
+class _ActionRunner:
+    """One call's work on `display`: the buttons that may be pressed, what the actions return, whether to settle."""
 
     display: Display
-    mapping: _CoordinateMapping
+    pressed: list[MouseButton]
+    """Starts as the buttons pressed before the call, and ends as the ones that may still be pressed."""
     settle_seconds: float
     outputs: list[str | BinaryImage] = field(default_factory=list[str | BinaryImage])
-    unsettled: bool = False
+    screen_may_be_changing: bool = False
 
-    async def settle(self) -> bytes | None:
+    async def settled_screenshot(self) -> bytes | None:
         """After an action, take screenshots until two in a row match, for up to `settle_seconds`. Return the last one.
 
         Return `None` when no action ran since the last settle, or when `settle_seconds` is zero.
         """
-        unsettled, self.unsettled = self.unsettled, False
-        if not (unsettled and self.settle_seconds):
+        changing, self.screen_may_be_changing = self.screen_may_be_changing, False
+        if not (changing and self.settle_seconds):
             return None
         deadline = anyio.current_time() + self.settle_seconds
         latest = await self.display.screenshot()
         while anyio.current_time() < deadline:
-            await anyio.sleep(_SETTLE_INTERVAL)
+            await anyio.sleep(_SETTLE_INTERVAL_SECONDS)
             previous, latest = latest, await self.display.screenshot()
             if latest == previous:
                 break
         return latest
 
-    async def run(self, action: ComputerToolAction, *, last: bool) -> None:
+    async def perform(self, actions: list[ComputerToolAction]) -> tuple[int, str | None]:
+        """Run the actions in order until one fails. Return how many ran and why the next one failed."""
+        for index, action in enumerate(actions):
+            pressing = action.button if isinstance(action, MouseDown) and action.button not in self.pressed else None
+            if pressing:
+                # Count the press before it runs, because a press can take effect and still raise an error.
+                self.pressed.append(pressing)
+            try:
+                await self._run(action, last=index == len(actions) - 1)
+            except WorkspaceUnavailableError:
+                raise
+            except WorkspaceError as e:
+                if pressing and isinstance(e, UnsupportedActionError):
+                    self.pressed.remove(pressing)  # the display refused the press, so nothing is pressed
+                return index, str(e) or type(e).__name__
+            released = (
+                action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
+            )
+            if released in self.pressed:
+                self.pressed.remove(released)
+        return len(actions), None
+
+    async def _run(self, action: ComputerToolAction, *, last: bool) -> None:
         match action:
             case Wait(seconds=seconds):
                 await anyio.sleep(seconds)
             case Zoom(region=region):
                 if not isinstance(self.display, SupportsZoom):
                     raise UnsupportedActionError('This display cannot zoom.')
-                await self.settle()
+                await self.settled_screenshot()
                 self.outputs.append(BinaryImage(data=await self.display.zoom(region), media_type='image/png'))
             case CursorPosition():
                 if not isinstance(self.display, SupportsCursorPosition):
                     raise UnsupportedActionError('This display cannot report the pointer position.')
-                point = self.mapping.to_model(await self.display.cursor_position())
+                point = await self.display.cursor_position()
                 self.outputs.append(f'The pointer is at ({point.x}, {point.y}).')
             case Screenshot() if not last:
                 # The result always ends with a screenshot after the last action, so only an earlier one is taken here.
-                png = await self.settle() or await self.display.screenshot()
+                png = await self.settled_screenshot() or await self.display.screenshot()
                 self.outputs.append(BinaryImage(data=png, media_type='image/png'))
             case Screenshot():
                 pass
             case _:
-                self.unsettled = True
+                self.screen_may_be_changing = True
                 await self.display.act(action)
 
 
-async def _perform(
-    display: Display,
-    actions: list[ComputerToolAction],
-    mapping: _CoordinateMapping,
-    settle_seconds: float,
-    held: list[MouseButton],
-) -> tuple[int, str | None, _Steps]:
-    """Run the actions in order until one fails. Return how many ran, why the next one failed, and the steps they took.
-
-    `held` starts as the buttons pressed before the call, and ends as the ones that may still be pressed.
-    """
-    steps = _Steps(display, mapping, settle_seconds)
-    for index, action in enumerate(actions):
-        if (error := await _run_one(steps, action, held, last=index == len(actions) - 1)) is not None:
-            return index, error, steps
-    return len(actions), None, steps
-
-
-async def _run_one(steps: _Steps, action: ComputerToolAction, held: list[MouseButton], *, last: bool) -> str | None:
-    """Run one action and keep `held` up to date. Return why it failed, if it did."""
-    pressing = action.button if isinstance(action, MouseDown) and action.button not in held else None
-    if pressing:
-        # Count the press before it runs, because a press can take effect and still raise an error.
-        held.append(pressing)
-    try:
-        await steps.run(action, last=last)
-    except WorkspaceUnavailableError:
-        raise
-    except WorkspaceError as e:
-        if pressing and isinstance(e, UnsupportedActionError):
-            held.remove(pressing)  # the display refused the press, so nothing is pressed
-        return str(e) or type(e).__name__
-    released = action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
-    if released in held:
-        held.remove(released)
-    return None
-
-
-async def _release(display: Display, held: list[MouseButton]) -> None:
-    """Release each button in `held`, and remove it from `held` once released. A button whose release fails stays.
+async def _release_buttons(display: Display, buttons: list[MouseButton]) -> list[MouseButton]:
+    """Release `buttons`, last pressed first. Return those whose release failed or timed out, in press order.
 
     A lost workspace ends the run, so `WorkspaceUnavailableError` is raised instead.
     """
-    # The last button pressed is released first.
-    for button in reversed(list(held)):
-        with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
+    stuck: list[MouseButton] = []
+    for button in reversed(buttons):
+        with anyio.move_on_after(_RELEASE_TIMEOUT_SECONDS, shield=True):
             try:
                 await display.act(MouseUp(button=button))
+                continue
             except WorkspaceUnavailableError:
                 raise
             except Exception:
-                continue
-            held.remove(button)
+                pass
+        stuck.insert(0, button)
+    return stuck
 
 
-async def _release_for_failure(display: Display, held: list[MouseButton]) -> tuple[str, list[MouseButton]]:
-    """Release every button in `held` after a call failed. Return what to tell the model and the ones still pressed."""
-    pressed = list(held)
-    stuck = list(held)
-    await _release(display, stuck)
-    held.clear()
-    said: list[str] = []
-    if released := [button for button in pressed if button not in stuck]:
-        buttons = 'button was' if len(released) == 1 else 'buttons were'
-        said.append(f'The {" and ".join(released)} mouse {buttons} released.')
+async def _release_buttons_after_failure(runner: _ActionRunner) -> tuple[str, list[MouseButton]]:
+    """Release every pressed button after a call failed. Return what to tell the model and the ones still pressed."""
+    stuck = await _release_buttons(runner.display, runner.pressed)
+    released: list[MouseButton] = [button for button in runner.pressed if button not in stuck]
+    runner.pressed = []
+    sentences: list[str] = []
+    if released:
+        sentences.append(f'The {_mouse_buttons(released)} {"was" if len(released) == 1 else "were"} released.')
     if stuck:
-        buttons = 'button failed, so it' if len(stuck) == 1 else 'buttons failed, so they'
-        said.append(f'Releasing the {" and ".join(stuck)} mouse {buttons} may still be held.')
-    return ' '.join(said), stuck
+        it = 'it' if len(stuck) == 1 else 'they'
+        sentences.append(f'Releasing the {_mouse_buttons(stuck)} failed, so {it} may still be held.')
+    return ' '.join(sentences), stuck
 
 
-def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
+def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ToolCallPart] | None:
     """The index of the response that made this call, and the call as the model made it."""
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
@@ -450,29 +376,10 @@ def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
         if not isinstance(message, ModelResponse):  # pragma: no cover
             continue
         for part in message.parts:  # pragma: no branch
-            if (call := _as_computer_call(part, ctx.tool_call_id)) is not None:
-                return index, call
+            if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
+                return index, part
     # A tool runs only for a call in the run's messages, unless a custom runner calls the toolset directly.
     return None  # pragma: no cover
-
-
-def _as_computer_call(part: ModelResponsePart, tool_call_id: str | None) -> ComputerCallPart | None:
-    """`part` as a `ComputerCallPart`, if it's the tool call with this ID.
-
-    A call whose arguments didn't validate is a plain `ToolCallPart` that keeps the agent's labels, so it's read as a
-    `ComputerCallPart` whose `actions` are `None`.
-    """
-    if not isinstance(part, ToolCallPart) or part.tool_call_id != tool_call_id:
-        return None
-    if isinstance(part, ComputerCallPart):
-        return part
-    return ComputerCallPart(
-        part.tool_name,
-        part.args_as_json_str(),
-        tool_call_id=part.tool_call_id,
-        provider_name=part.provider_name,
-        provider_details=part.provider_details,
-    )
 
 
 def _required_display(ctx: RunContext[Any]) -> Display:
@@ -483,7 +390,7 @@ def _required_display(ctx: RunContext[Any]) -> Display:
     return display
 
 
-async def _display_size(display: Display) -> tuple[int, int]:
+async def _read_display_size(display: Display) -> tuple[int, int]:
     try:
         return await display.display_size()
     except WorkspaceUnavailableError:
@@ -492,38 +399,28 @@ async def _display_size(display: Display) -> tuple[int, int]:
         raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
 
 
-def _screen_keys(ctx: RunContext[Any], display: Display) -> list[object]:
-    """The keys of a screen's locks: its display object's, then its environment's."""
+@asynccontextmanager
+async def _holding_screen(ctx: RunContext[Any], display: Display) -> AsyncGenerator[None]:
+    """Hold the screen for one call: the lock for its display object, then the one for its workspace ref."""
     # All backends of one workspace share its ref, but two workspaces may reach the same display object. Neither key
     # alone finds every call on a screen, so calls lock both.
     token = anyio.lowlevel.current_token()
     keys: list[object] = [(token, 'display', id(display))]
     if (ref := ctx.workspace.ref) is not None:
         keys.append((token, 'ref', ref))
-    return keys
-
-
-@asynccontextmanager
-async def _taking_turns(keys: list[object]) -> AsyncGenerator[None]:
-    """Hold the screen for one call: the lock of each of its keys, always in that order."""
-    locks: list[anyio.Lock] = []
-    for key in keys:
-        if (lock := _DISPLAY_LOCKS.get(key)) is None:
-            lock = _DISPLAY_LOCKS[key] = anyio.Lock()
-        locks.append(lock)
     async with AsyncExitStack() as stack:
-        for lock in locks:
-            await stack.enter_async_context(lock)
+        for key in keys:
+            await stack.enter_async_context(_SCREEN_LOCKS.setdefault(key, anyio.Lock()))
         yield
 
 
-async def _screenshot(steps: _Steps, summary: list[str]) -> tuple[bytes, tuple[int, int]]:
+async def _final_screenshot(runner: _ActionRunner, summary: list[str]) -> tuple[bytes, tuple[int, int]]:
     """The settled screenshot ending a call and its size, or a `ToolFailed` that starts with the call's `summary`.
 
     A screenshot that isn't a PNG raises `UserError`, since every call on that display would fail the same way.
     """
     try:
-        png = await steps.settle() or await steps.display.screenshot()
+        png = await runner.settled_screenshot() or await runner.display.screenshot()
     except WorkspaceUnavailableError:
         raise
     except WorkspaceError as e:
@@ -535,7 +432,7 @@ async def _screenshot(steps: _Steps, summary: list[str]) -> tuple[bytes, tuple[i
     return png, size
 
 
-def _failure(actions: list[ComputerToolAction], performed: int, error: str) -> list[str]:
+def _failure_summary(actions: list[ComputerToolAction], performed: int, error: str) -> list[str]:
     """What a call whose action after the `performed` ones failed tells the model."""
     summary = [f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error.rstrip(".")}.']
     if skipped := len(actions) - performed - 1:
@@ -594,8 +491,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             name='computer',
             description='Run actions on the screen in order, then return a screenshot of the result.',
             sequential=True,
-            max_retries=3,
-            prepare=_offer_what_the_workspace_allows,
+            prepare=_narrow_schema_when_read_only,
             tool_kind=COMPUTER_KIND,
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
@@ -613,138 +509,156 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             Field(min_length=1, description=_ACTIONS_DESCRIPTION),
         ],
     ) -> ToolReturn:
-        made = _the_call(ctx)
-        call = made[1] if made else None
-        acts = not all(isinstance(action, _LookingAction) for action in actions)
-        if acts and ctx.workspace.read_only:
+        found_call = _find_computer_call(ctx)
+        changes_screen = not all(isinstance(action, _ObservingAction) for action in actions)
+        if changes_screen and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
-        run = _run_buttons(ctx)
-        keeps_held = run is not None
+        run_buttons = _this_runs_pressed_buttons(ctx)
+        buttons_outlive_call = run_buttons is not None
         # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons, and
         # this record is never read.
-        run = run or _RunButtons(run_id=ctx.run_id)
-        plan = _Plan(
-            # The model pointed on the latest screenshot before its call.
-            seen=latest_screenshot_size(ctx.messages[: made[0]]) if made else None,
-            changed=call is not None and call.actions != actions,
-            held=list(run.held),
-            keeps_held=keeps_held,
+        run_buttons = run_buttons or _RunPressedButtons(run_id=ctx.run_id)
+        if found_call is not None:
+            # The model chose a response's calls together, so once one fails the rest would act on a screen it
+            # didn't expect.
+            if run_buttons.failed_response_index == found_call[0]:
+                raise ToolFailed(_EARLIER_CALL_FAILED)
+            run_buttons.failed_response_index = found_call[0]  # cleared below if the call succeeds
+        call_inputs = _CallInputs(
+            # The model gave its positions on the latest screenshot before its call.
+            screenshot_size=latest_screenshot_size(ctx.messages[: found_call[0]]) if found_call else None,
+            # A call left a plain `ToolCallPart` had arguments that didn't validate, so a hook replaced them.
+            actions_changed=found_call is not None
+            and (not isinstance(part := found_call[1], ComputerCallPart) or part.actions != actions),
+            pressed_at_start=list(run_buttons.pressed),
+            buttons_outlive_call=buttons_outlive_call,
         )
-        stray = list(run.stray)
+        maybe_pressed_before = list(run_buttons.maybe_pressed)
         # A call that never reports back, such as an interrupted one, may leave these pressed until the run ends. The
         # call's own presses are added once its actions start running.
-        run.held, run.stray = [], [*stray, *plan.held]
-        outcome = await self._call(ctx, actions, plan)
-        if isinstance(outcome, _NotRun):
-            raise _not_run_error(outcome, run, stray, plan, actions)
-        tool_return, held = outcome
+        run_buttons.pressed = []
+        run_buttons.maybe_pressed = [*maybe_pressed_before, *call_inputs.pressed_at_start]
+        outcome = await self._perform_call(ctx, actions, call_inputs)
+        if isinstance(outcome, _FailedCall):
+            if outcome.error_type in ('tool', 'retry'):
+                run_buttons.maybe_pressed = [*maybe_pressed_before, *outcome.maybe_pressed]
+            else:
+                # Set here, not when the call pressed them, so a durable run's replay, which skips the call, releases
+                # the same buttons when the run ends. A configuration error either comes before any action or after
+                # the call released its buttons.
+                run_buttons.maybe_pressed = [*maybe_pressed_before, *call_inputs.pressed_at_start]
+                if outcome.error_type == 'unavailable':  # a lost workspace may have gone after the presses
+                    run_buttons.maybe_pressed.extend(
+                        action.button for action in actions if isinstance(action, MouseDown)
+                    )
+            raise outcome.error()
+        tool_return, pressed = outcome
         result: ComputerResult = tool_return.metadata
-        run.held, run.stray = held, stray
+        run_buttons.pressed, run_buttons.maybe_pressed = pressed, maybe_pressed_before
+        if 'error' not in result:
+            run_buttons.failed_response_index = None
         # Sent here, not inside the durable step, which can't send events. So a retried step doesn't send it twice.
         await ctx.emit(ActionsPerformedEvent(result=result))
         return tool_return
 
-    async def _call(
-        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+    async def _perform_call(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], call_inputs: _CallInputs
+    ) -> tuple[ToolReturn, list[MouseButton]] | _FailedCall:
         """Run the call on the display: here, or as a durable unit in a durable run."""
         if not ctx.in_durable_context:
             # Run here, so an error keeps its traceback.
-            return await self._run_on_display(ctx, actions, plan)
+            return await self._perform_call_on_display(ctx, actions, call_inputs)
         try:
-            outcome = await self._on_display(ctx, actions, plan)
+            outcome = await self._perform_call_durably(ctx, actions, call_inputs)
         except UserError:
             # A configuration error, such as a model the engine doesn't know, isn't a failure of the call.
             raise
         except BaseException as e:
             # The durable step failed, timed out, lost its worker or was cancelled, after any number of actions ran.
-            _leave_presses_for_run_end(ctx, actions)
+            _record_presses_for_run_end(ctx, actions)
             if isinstance(e, Exception):
                 raise ToolFailed(_INTERRUPTED) from e
             raise
         return outcome
 
     @durable_operation('call')
-    async def _on_display(
-        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+    async def _perform_call_durably(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], call_inputs: _CallInputs
+    ) -> tuple[ToolReturn, list[MouseButton]] | _FailedCall:
         """Everything a call does on the screen, as one durable step: the result and the buttons still pressed."""
         try:
-            return await self._run_on_display(ctx, actions, plan)
+            return await self._perform_call_on_display(ctx, actions, call_inputs)
         except (ToolFailed, WorkspaceUnavailableError, UserError) as e:
-            return _NotRun.of(e)
+            return _FailedCall.carry(e)
 
-    async def _run_on_display(
-        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
-    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+    async def _perform_call_on_display(
+        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], call_inputs: _CallInputs
+    ) -> tuple[ToolReturn, list[MouseButton]] | _FailedCall:
         display = _required_display(ctx)
         if ctx.workspace.ref is None:
             # Reading the size creates a new environment, so this call also takes the lock for that environment's ref.
-            await _display_size(display)
+            await _read_display_size(display)
         # Read the size while this call holds the screen, so a call that waited sees the size the previous call left.
-        async with _taking_turns(_screen_keys(ctx, display)):
-            held = list(plan.held)
+        async with _holding_screen(ctx, display):
+            runner = _ActionRunner(display, list(call_inputs.pressed_at_start), self.settle_seconds)
             try:
                 # Also starts a display that stopped, before anything acts.
-                size = await _display_size(display)
-                # The model pointed on the screenshot it saw, even if the display has changed size.
-                space = plan.seen or size
-                mapping = _CoordinateMapping(space=space, display=size)
+                width, height = await _read_display_size(display)
+                seen = call_inputs.screenshot_size
+                if seen is not None and seen != (width, height) and any(map(_action_positions, actions)):
+                    # The model's positions are on a screenshot of another size, so they'd land in the wrong place.
+                    raise ToolFailed(
+                        f'The screen is now {width}x{height}, but the latest screenshot is {seen[0]}x{seen[1]}, so '
+                        'no action ran. Take a screenshot before giving positions.'
+                    )
                 # A backend would move a position outside the screen to the screen's edge and act there.
-                if refused := _off_screen(actions, *mapping.space):
+                if refused := _off_screen_refusal(actions, width, height):
                     raise ModelRetry(refused)
-                pixels = actions if mapping.space == size else [mapping.to_display(a) for a in actions]
-                _leave_presses_for_run_end(ctx, actions)
-                return await self._act_and_look(display, pixels, mapping, plan, held)
+                _record_presses_for_run_end(ctx, actions)
+                return await self._act_and_look(runner, actions, call_inputs)
             except (ToolFailed, ModelRetry) as e:
                 # A failed call releases every button that may be pressed, so only a successful call reports any.
-                released, stuck = await _release_for_failure(display, held)
+                released, stuck = await _release_buttons_after_failure(runner)
                 message = f'{e.message.rstrip(".")}. {released}' if released else e.message
-                return _NotRun(message, 'retry' if isinstance(e, ModelRetry) else 'tool', held=stuck)
+                return _FailedCall(message, 'retry' if isinstance(e, ModelRetry) else 'tool', maybe_pressed=stuck)
             except BaseException:
                 # Cancelled, such as by the tool's timeout, or the workspace was lost.
-                await _release(display, held)
+                await _release_buttons(display, runner.pressed)
                 raise
 
     async def _act_and_look(
-        self,
-        display: Display,
-        actions: list[ComputerToolAction],
-        mapping: _CoordinateMapping,
-        plan: _Plan,
-        held: list[MouseButton],
-    ) -> tuple[ToolReturn, list[MouseButton]] | _NotRun:
+        self, runner: _ActionRunner, actions: list[ComputerToolAction], call_inputs: _CallInputs
+    ) -> tuple[ToolReturn, list[MouseButton]] | _FailedCall:
         """Run the actions and take the screenshot. Return the result and the buttons still pressed, or why it failed.
 
-        If it raises `ToolFailed`, `held` is left as the buttons that may be pressed, for the caller to release.
+        If it raises `ToolFailed`, `runner.pressed` is left as the buttons that may be pressed, for the caller to release.
         """
-        performed, error, steps = await _perform(display, actions, mapping, self.settle_seconds, held)
+        performed, error = await runner.perform(actions)
         result = ComputerResult(performed=performed)
         summary: list[str] = []
-        if plan.changed:
-            result['changed'] = True
+        if call_inputs.actions_changed:
+            result['actions_changed'] = True
             summary.append('This call was changed before it ran.')
         if error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
-            if not plan.keeps_held:
+            if not call_inputs.buttons_outlive_call:
                 # Loaded mid-run through `defer_loading=True`, after the run's `wrap_run` hooks were chosen. No run end
                 # will release the buttons, so release them now.
-                await _release(display, held)
+                runner.pressed = await _release_buttons(runner.display, runner.pressed)
         else:
             result['error'] = error
-            summary.extend(_failure(actions, performed, error))
-            released, stuck = await _release_for_failure(display, held)
+            summary.extend(_failure_summary(actions, performed, error))
+            released, stuck = await _release_buttons_after_failure(runner)
             if stuck:
-                return _NotRun(' '.join([*summary, released]), held=stuck)
+                return _FailedCall(' '.join([*summary, released]), maybe_pressed=stuck)
             if released:
                 summary.append(released)
-        png, size = await _screenshot(steps, summary)
-        if held:
-            buttons = 'button is' if len(held) == 1 else 'buttons are'
-            summary.append(f'The {" and ".join(held)} mouse {buttons} still pressed.')
+        png, size = await _final_screenshot(runner, summary)
+        if pressed := runner.pressed:
+            summary.append(f'The {_mouse_buttons(pressed)} {"is" if len(pressed) == 1 else "are"} still pressed.')
         summary.append(f'Screenshot attached ({size[0]}x{size[1]}).')
-        content = [' '.join(summary), *steps.outputs, BinaryImage(data=png, media_type='image/png')]
-        return ToolReturn(content, metadata=result), held
+        content = [' '.join(summary), *runner.outputs, BinaryImage(data=png, media_type='image/png')]
+        return ToolReturn(content, metadata=result), pressed
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT]:
         """Turn on prompt caching, unless the run's settings already say whether to cache."""
@@ -762,9 +676,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """The provider's own computer tool, whose calls this capability runs, unless `native` is `False`."""
-        return [self._native_computer] if self.native else []
+        return [self._native_computer_tool] if self.native else []
 
-    async def _native_computer(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
+    async def _native_computer_tool(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
         """The provider's own computer tool, sized to the screenshot the model gives positions on.
 
         That's the latest screenshot, or the display's size before the first screenshot. It's worked out again for
@@ -772,51 +686,51 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """
         if ctx.workspace.read_only:
             return None
-        if (seen := latest_screenshot_size(ctx.messages)) is not None:
+        if (latest_size := latest_screenshot_size(ctx.messages)) is not None:
             # Once there's a screenshot, the display isn't read, so a reply that doesn't use the screen doesn't start
             # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
-            return ComputerTool(display_size=seen, optional=True)
-        size = await self._screen_size(ctx)
-        if isinstance(size, _NotRun):
-            if size.kind == 'tool':
+            return ComputerTool(display_size=latest_size, optional=True)
+        size = await self._read_display_size_durably(ctx)
+        if isinstance(size, _FailedCall):
+            if size.error_type == 'tool':
                 return None  # the call itself will report the display's error
             raise size.error()
         return ComputerTool(display_size=size, optional=True)
 
     @durable_operation('display_size')
-    async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
+    async def _read_display_size_durably(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _FailedCall:
         """The display's size, as its own durable step, because the request's tools are prepared in workflow code."""
         try:
-            width, height = await _display_size(_required_display(ctx))
+            width, height = await _read_display_size(_required_display(ctx))
         except (ToolFailed, WorkspaceUnavailableError, UserError) as e:
-            return _NotRun.of(e)
+            return _FailedCall.carry(e)
         return width, height
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Release any mouse buttons still pressed when the run ends, however it ends, even if the caller stops it."""
-        run = _RunButtons(ctx.run_id)
-        token = _RUN_BUTTONS.set(run)
+        run_buttons = _RunPressedButtons(ctx.run_id)
+        token = _RUN_PRESSED_BUTTONS.set(run_buttons)
         try:
             return await handler()
         finally:
-            _RUN_BUTTONS.reset(token)
-            await self._release_held(ctx, run.might_be_held())
-
-    async def _release_held(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
-        if held:
-            with anyio.CancelScope(shield=True):
-                try:
-                    await self._release_on_display(ctx, held)
-                except Exception:
-                    # The run's result matters more than a button left pressed on the screen.
-                    _logger.warning('Could not release the mouse buttons %s when the run ended', held, exc_info=True)
+            _RUN_PRESSED_BUTTONS.reset(token)
+            pressed: list[MouseButton] = list(dict.fromkeys([*run_buttons.pressed, *run_buttons.maybe_pressed]))
+            if pressed:
+                with anyio.CancelScope(shield=True):
+                    try:
+                        await self._release_buttons_at_run_end(ctx, pressed)
+                    except Exception:
+                        # The run's result matters more than a button left pressed on the screen.
+                        _logger.warning(
+                            'Could not release the mouse buttons %s when the run ended', pressed, exc_info=True
+                        )
 
     @durable_operation('release')
-    async def _release_on_display(self, ctx: RunContext[AgentDepsT], held: list[MouseButton]) -> None:
+    async def _release_buttons_at_run_end(self, ctx: RunContext[AgentDepsT], pressed: list[MouseButton]) -> None:
         display = _required_display(ctx)
         try:
-            with anyio.move_on_after(_RELEASE_TIMEOUT):
-                async with _taking_turns(_screen_keys(ctx, display)):
-                    await _release(display, held)
+            with anyio.move_on_after(_RELEASE_TIMEOUT_SECONDS):
+                async with _holding_screen(ctx, display):
+                    await _release_buttons(display, pressed)
         except WorkspaceUnavailableError:
             pass  # the workspace is gone, and its pressed buttons with it

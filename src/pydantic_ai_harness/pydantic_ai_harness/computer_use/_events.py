@@ -14,7 +14,7 @@ COMPUTER_USE_EVENTS = 'computer_use'
 
 
 @dataclass(kw_only=True)
-class ActionsPerformedEvent(CapabilityEvent, namespace=COMPUTER_USE_EVENTS):
+class ActionsPerformedEvent(CapabilityEvent, namespace=COMPUTER_USE_EVENTS, name='actions_performed'):
     """A `computer` call finished and returned a screenshot. `tool_call_id` says which call."""
 
     result: ComputerResult
