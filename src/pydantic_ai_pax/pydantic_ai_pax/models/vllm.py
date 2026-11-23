@@ -138,7 +138,7 @@ def model(name: str, *, base_url: str | None = None) -> OpenAIChatModel:
     return OpenAIChatModel(ref.name, provider=provider)
 
 
-def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.
+def choose(names: list[str]) -> str | None:
     """Pick one discovered model in Termflow."""
     builder = MenuBuilder('vLLM models').items([MenuItem(name, value=name) for name in names])
     result = slash_search(builder, footer='Enter select - Esc cancel', key_source=menu_key).run()
@@ -185,7 +185,7 @@ async def prompt_connection() -> Connection | None:
     return Connection(url=url, token=token if isinstance(token, KeyReference) else SecretStr(token))
 
 
-def connection_action() -> str | None:  # pragma: no cover -- real terminal.
+def connection_action() -> str | None:
     """Reuse saved authentication or replace it from the provider menu."""
     result = (
         MenuBuilder('vllm connection')
