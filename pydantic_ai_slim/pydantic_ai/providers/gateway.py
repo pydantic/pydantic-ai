@@ -161,8 +161,9 @@ def gateway_provider(
 
     canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
-        # Use the implied providerId as the default route.
-        route = _default_gateway_route(upstream_provider)
+        # Use the implied providerId as the default route. A route with no provider of its own keeps its name.
+        name = upstream_provider.removeprefix('gateway/')
+        route = name if name in _GATEWAY_ROUTE_APIS else _gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -403,14 +404,6 @@ def _gateway_route(provider: str) -> str:
 _GATEWAY_ROUTE_APIS: dict[str, str] = {
     'doubleword': 'openai-chat',
 }
-
-
-def _default_gateway_route(provider: str) -> str:
-    """The Gateway URL route segment for a `gateway/` provider name when no `route` is given."""
-    provider = provider.removeprefix('gateway/')
-    if provider in _GATEWAY_ROUTE_APIS:
-        return provider
-    return _gateway_route(normalize_gateway_provider(provider))
 
 
 # User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
