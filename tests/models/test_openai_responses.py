@@ -20323,6 +20323,54 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
     )
 
 
+_PROMOTED_SEARCH_ITEM: dict[str, object] = {
+    'type': 'tool_search_call',
+    'execution': 'client',
+    'arguments': {'queries': ['weather']},
+    'call_id': 'call_1',
+    'status': 'completed',
+}
+
+
+@pytest.mark.parametrize(
+    ('tool_call_id', 'item_id', 'send_item_ids', 'expected'),
+    [
+        pytest.param('call_1', 'tsc_abc', True, {**_PROMOTED_SEARCH_ITEM, 'id': 'tsc_abc'}, id='tsc-preserved'),
+        pytest.param('call_1', 'opaque_1', True, {**_PROMOTED_SEARCH_ITEM, 'id': 'opaque_1'}, id='opaque-preserved'),
+        pytest.param('call_1', 'fc_123', True, _PROMOTED_SEARCH_ITEM, id='fc-omitted'),
+        pytest.param('call_1|fc_123', None, True, _PROMOTED_SEARCH_ITEM, id='legacy-combined-fc-omitted'),
+        pytest.param('call_1', 'tsc_abc', False, _PROMOTED_SEARCH_ITEM, id='send-item-ids-off'),
+    ],
+)
+async def test_promoted_tool_search_replay_item_id(
+    tool_call_id: str, item_id: str | None, send_item_ids: bool, expected: dict[str, object]
+) -> None:
+    """A promoted `tool_search_call` item never carries a function-call (`fc_*`) item ID.
+
+    A local `search_tools` call made on a model without native tool search carries one, and the
+    Responses API rejects it on a `tool_search_call` item. Every other item ID, including the one
+    split from a legacy combined `call_id|id`, follows the `openai_send_reasoning_ids` gate.
+    `test_live_local_tool_search_replays_on_native_tool_search_model` in `tests/test_tool_search.py`
+    records the `fc_*` case; the other cases have no live producer to record.
+    """
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+    history = [
+        ModelResponse(
+            parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id=tool_call_id, id=item_id)],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='call_1')]),
+    ]
+    input_items = await _replay_input(
+        history,
+        group_function_calls=False,
+        model_request_parameters=model_request_parameters,
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+    )
+
+    assert input_items[0] == expected
+
+
 async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
     """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
     history = [
