@@ -126,7 +126,7 @@ class WorkspaceOverflowStore:
         """
         workspace = self._target(workspace)
         path = posixpath.join(await metadata_dir(workspace, SPILL_DIR), *_segments(key))
-        await workspace.write_bytes(await _confine(workspace, path, key), data)
+        await workspace.write_bytes(await _confine_to_store(workspace, path, key), data)
         return path
 
     async def read(self, workspace: Workspace, handle: str) -> bytes:
@@ -136,7 +136,7 @@ class WorkspaceOverflowStore:
         path = posixpath.normpath(posixpath.join(directory, handle))
         if not path.startswith(directory.rstrip('/') + '/'):
             raise PermissionError(f'Handle {handle!r} is outside the store directory.')
-        return await workspace.read_bytes(await _confine(workspace, path, handle))
+        return await workspace.read_bytes(await _confine_to_store(workspace, path, handle))
 
 
 @dataclass
@@ -151,7 +151,7 @@ class _BoundWorkspaceStore:
         return await self.store.read(self.workspace, handle)
 
 
-async def _confine(workspace: Workspace, path: str, name: str) -> str:
+async def _confine_to_store(workspace: Workspace, path: str, name: str) -> str:
     """Return `path` with symlinks resolved, refusing one that leaves the store directory.
 
     The store directory is resolved from the working directory, so a symlink in place of the
