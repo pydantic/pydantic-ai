@@ -1,9 +1,9 @@
-"""Fallback subagent resolution of dynamic `native=` factories.
+"""The `XSearch` and `ImageGeneration` fallback subagents: dynamic `native=` factory resolution, and usage accounting.
 
 These are unit tests rather than VCR tests because what they assert —
-`info.model_request_parameters.native_tools`, the native-tool objects the subagent hands its model —
-is internal to the request build and never reaches the wire, so a cassette could not pin it. The
-end-to-end wire proof for this feature is
+`info.model_request_parameters.native_tools`, the native-tool objects the subagent hands its model,
+and the run's `RunUsage` and `UsageLimits` bookkeeping — is internal to the run and never reaches
+the wire, so a cassette could not pin it. The end-to-end wire proof for the native-tool resolution is
 `tests/test_capability_image_generation.py::TestImageGenerationCapability::test_image_generation_local_fallback`,
 which records a real OpenAI image-generation call and snapshots the outgoing `tools` payload.
 """
@@ -32,12 +32,14 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import AbstractNativeTool, ImageGenerationTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .capability_models import build_run_context
 
@@ -111,6 +113,8 @@ class Case:
     """The native tool this capability configures, for building an outer model that supports it."""
     subagent: Callable[[RunContext[str], str], Awaitable[object]]
     """The capability's subagent tool, built directly with a `None`-returning factory."""
+    expected_usage: RunUsage
+    """The outer run's usage: its own two requests plus the subagent's one."""
     subagent_input: str = 'a query'
 
 
@@ -152,6 +156,7 @@ XSEARCH_CASE = Case(
         model='xai:grok-4-1-fast-non-reasoning',
         native_tool=_none_native_factory,  # pyright: ignore[reportArgumentType]
     ),
+    expected_usage=snapshot(RunUsage(output_tokens=17, input_tokens=166, requests=3, tool_calls=1)),
 )
 
 IMAGE_GENERATION_CASE = Case(
@@ -201,6 +206,7 @@ IMAGE_GENERATION_CASE = Case(
         model='openai-responses:gpt-5.4',
         native_tool=_none_native_factory,  # pyright: ignore[reportArgumentType]
     ),
+    expected_usage=snapshot(RunUsage(output_tokens=14, input_tokens=157, requests=3, tool_calls=1)),
 )
 
 CASES = [XSEARCH_CASE, IMAGE_GENERATION_CASE]
@@ -242,45 +248,56 @@ def _recording_subagent_model(case: Case, seen_native_tools: list[AbstractNative
     return FunctionModel(subagent_model_fn, profile=case.fallback_profile)
 
 
-def _agent_with_fallback_subagent(case: Case) -> Agent[str, str]:
+class _TokenCountingModel(WrapperModel):
+    """Counts one input token ahead of each request, so `count_tokens_before_request=True` works on it."""
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=1)
+
+
+@case_param
+async def test_fallback_usage_counts_in_parent_run(case: Case, allow_model_requests: None):
+    """The subagent's requests and tokens are added to the outer run's usage."""
     capability = case.with_deps_factory(_recording_subagent_model(case, []))
-    return Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+    result = await agent.run(case.prompt, deps=case.deps)
+
+    assert result.usage == case.expected_usage
 
 
-async def test_x_search_fallback_usage_counts_in_parent_run_usage(allow_model_requests: None):
-    agent = _agent_with_fallback_subagent(XSEARCH_CASE)
-    result = await agent.run(XSEARCH_CASE.prompt, deps=XSEARCH_CASE.deps)
+@case_param
+async def test_fallback_request_is_covered_by_parent_usage_limits(case: Case, allow_model_requests: None):
+    """The outer run's `request_limit` stops the subagent before its request, once the outer model spent it."""
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_deps_factory(_recording_subagent_model(case, seen_native_tools))
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
 
-    assert result.usage.requests == 3
+    with pytest.raises(UsageLimitExceeded, match='The next request would exceed the request_limit of 1'):
+        await agent.run(case.prompt, deps=case.deps, usage_limits=UsageLimits(request_limit=1))
 
-
-async def test_x_search_fallback_covered_by_parent_usage_limits(allow_model_requests: None):
-    agent = _agent_with_fallback_subagent(XSEARCH_CASE)
-
-    with pytest.raises(UsageLimitExceeded):
-        await agent.run(
-            XSEARCH_CASE.prompt,
-            deps=XSEARCH_CASE.deps,
-            usage_limits=UsageLimits(request_limit=2),
-        )
+    assert seen_native_tools == []
 
 
-async def test_image_generation_fallback_usage_counts_in_parent_run_usage(allow_model_requests: None):
-    agent = _agent_with_fallback_subagent(IMAGE_GENERATION_CASE)
-    result = await agent.run(IMAGE_GENERATION_CASE.prompt, deps=IMAGE_GENERATION_CASE.deps)
+@case_param
+async def test_fallback_subagent_without_count_tokens_under_count_tokens_before_request(
+    case: Case, allow_model_requests: None
+):
+    """An outer run that counts tokens ahead of each request still runs a subagent whose model cannot."""
+    seen_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_deps_factory(_recording_subagent_model(case, seen_native_tools))
+    agent = Agent[str, str](_TokenCountingModel(_outer_model(case)), deps_type=str, capabilities=[capability])
 
-    assert result.usage.requests == 3
+    result = await agent.run(case.prompt, deps=case.deps, usage_limits=UsageLimits(count_tokens_before_request=True))
 
-
-async def test_image_generation_fallback_covered_by_parent_usage_limits(allow_model_requests: None):
-    agent = _agent_with_fallback_subagent(IMAGE_GENERATION_CASE)
-
-    with pytest.raises(UsageLimitExceeded):
-        await agent.run(
-            IMAGE_GENERATION_CASE.prompt,
-            deps=IMAGE_GENERATION_CASE.deps,
-            usage_limits=UsageLimits(request_limit=2),
-        )
+    assert result.output == 'done'
+    assert seen_native_tools == case.expected_fallback_native_tools
+    assert result.usage == case.expected_usage
 
 
 @case_param
