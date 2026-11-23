@@ -286,7 +286,8 @@ class ToolOutput:
                 details = f' from line {args.offset + 1}'
             argument = args.path + details
         else:
-            parts = (args.path or '.', args.glob, None if args.recursive else 'not recursive')
+            first = None if args.limit is None else f'first {args.limit}'
+            parts = (args.path or '.', args.glob, None if args.recursive else 'not recursive', first)
             argument = ' '.join(part for part in parts if part)
         self.header(tool_call_id, name=name, argument=argument)
         return True
