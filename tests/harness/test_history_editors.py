@@ -15,11 +15,10 @@ A configuration that never edits any of the histories checks nothing, so it fail
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 from _pytest.mark import ParameterSet
@@ -41,7 +40,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.toolsets import FunctionToolset
 
 from .. import capability_cases as core
-from ..append_only import build_capabilities, discover_capabilities, look_up, skip_unless_installed
+from ..append_only import ToolCall, build_capabilities, discover_capabilities, look_up, skip_unless_installed
 from ..capability_cases import CORE_CAPABILITY_PACKAGES, CapabilityCase, EditorConfig, Unbuildable
 from ..conftest import legacy_retry_prompt_part
 from ..function_model_prefix import COMPACTION_REWRITES_HISTORY, REQUEST_SCOPED_PROMPT_DROPPED
@@ -122,17 +121,17 @@ HISTORIES: dict[str, Callable[[], list[ModelMessage]]] = {
 """The histories each configuration continues, each with a marker `[m<n>]` in every message."""
 
 
-def _overrides(cls: type[AbstractCapability[Any]], hooks: Sequence[str]) -> bool:
+def _overrides(cls: type[AbstractCapability[object]], hooks: Sequence[str]) -> bool:
     return any(getattr(cls, hook) is not getattr(AbstractCapability, hook) for hook in hooks)
 
 
-def _is_composite(cls: type[AbstractCapability[Any]]) -> bool:
+def _is_composite(cls: type[AbstractCapability[object]]) -> bool:
     """A capability made of others, which are cases of their own."""
     return issubclass(cls, CombinedCapability | WrapperCapability)
 
 
 EDITORS: dict[str, dict[str, EditorConfig]] = {
-    name: dict(case.edits_history) for name, case in CASES.items() if isinstance(case.edits_history, dict)
+    name: dict(case.edits_history) for name, case in CASES.items() if isinstance(case.edits_history, Mapping)
 }
 CONFIGS: list[ParameterSet] = [
     pytest.param(
@@ -171,9 +170,7 @@ class _Run:
     received: list[list[ModelMessage]] = field(default_factory=list[list[ModelMessage]])
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
 
-    def respond(
-        self, calls: Sequence[tuple[str, dict[str, Any]]]
-    ) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+    def respond(self, calls: Sequence[ToolCall]) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
         script = iter(calls)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -375,7 +372,7 @@ def _searchable_forecast() -> list[AbstractCapability[None]]:
     ]
 
 
-DISCOVERIES: dict[str, tuple[Callable[[], list[AbstractCapability[None]]], tuple[str, dict[str, Any]]]] = {
+DISCOVERIES: dict[str, tuple[Callable[[], list[AbstractCapability[None]]], ToolCall]] = {
     'load_capability': (_forecasting, ('load_capability', {'id': 'forecasting'})),
     'search_tools': (_searchable_forecast, ('search_tools', {'queries': ['forecast']})),
 }
@@ -387,7 +384,7 @@ DISCOVERIES: dict[str, tuple[Callable[[], list[AbstractCapability[None]]], tuple
 async def test_a_revealed_tool_stays_callable_after_an_edit(
     name: str, config: EditorConfig, discovery: str, allow_model_requests: None
 ) -> None:
-    """Invariant 3: a tool revealed in the first run runs in both, whatever the editor did in between (#11446, #11773)."""
+    """Invariant 3: a tool revealed in the first run runs in both, whatever the editor did in between (#11446)."""
     skip_unless_installed(name, CASES[name].requires)
     extra, reveal = DISCOVERIES[discovery]
     replies: list[str] = []
@@ -401,16 +398,17 @@ async def test_a_revealed_tool_stays_callable_after_an_edit(
         )
         return next(script)
 
-    def call(name: str, args: dict[str, Any], index: int) -> ModelResponse:
+    def call(tool_call: ToolCall, index: int) -> ModelResponse:
+        name, args = tool_call
         return ModelResponse(parts=[ToolCallPart(name, args, f'call_{index}')])
 
     script = iter(
         [
-            call(*reveal, 0),
-            call('forecast', {'city': 'Paris'}, 1),
+            call(reveal, 0),
+            call(('forecast', {'city': 'Paris'}), 1),
             ModelResponse(parts=[TextPart('Sunny in Paris.')]),
-            call('look_up', {'topic': 'sports'}, 2),
-            call('forecast', {'city': 'Brest'}, 3),
+            call(('look_up', {'topic': 'sports'}), 2),
+            call(('forecast', {'city': 'Brest'}), 3),
             ModelResponse(parts=[TextPart('Sunny in Brest.')]),
         ]
     )

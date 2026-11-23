@@ -1148,8 +1148,8 @@ def _echo_summary(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
     return ModelResponse(parts=[TextPart('Summary: ' + ' '.join(sorted(set(MARKER.findall(str(messages))))))])
 
 
-def _summarizing(**settings: int | bool) -> SummarizingCompaction[None]:
-    return SummarizingCompaction(FunctionModel(_echo_summary), **settings)  # pyright: ignore[reportArgumentType]
+def _summarizer() -> FunctionModel:
+    return FunctionModel(_echo_summary)
 
 
 def _judge_unneeded(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1174,7 +1174,9 @@ _HISTORY_EDITS: dict[str, EditsHistory] = {
             )
         ),
         'summarizing': EditorConfig(
-            lambda: FallbackCompaction(fallback_chain=[_summarizing(max_messages=3, keep_messages=2)], max_tokens=100),
+            lambda: FallbackCompaction(
+                fallback_chain=[SummarizingCompaction(_summarizer(), max_messages=3, keep_messages=2)], max_tokens=100
+            ),
             summarizes=True,
         ),
     },
@@ -1194,7 +1196,7 @@ _HISTORY_EDITS: dict[str, EditsHistory] = {
         'summarizing': EditorConfig(
             lambda: RelevanceCompaction(
                 FunctionModel(_judge_unneeded),
-                summarizer=_summarizing(max_messages=1),
+                summarizer=SummarizingCompaction(_summarizer(), max_messages=1),
                 max_tokens=1,
                 keep_tokens=1,
             ),
@@ -1213,10 +1215,14 @@ _HISTORY_EDITS: dict[str, EditsHistory] = {
     'SummarizingCompaction': {
         # Copies of earlier user turns fill the kept slots (#9715) and displace the tail they replace (#12652).
         'user turns kept': EditorConfig(
-            lambda: _summarizing(max_messages=3, keep_messages=2, keep_user_messages=True), summarizes=True
+            lambda: SummarizingCompaction(_summarizer(), max_messages=3, keep_messages=2, keep_user_messages=True),
+            summarizes=True,
         ),
         'nothing kept': EditorConfig(
-            lambda: _summarizing(max_messages=1, keep_messages=0, preserve_first_user_message=False), summarizes=True
+            lambda: SummarizingCompaction(
+                _summarizer(), max_messages=1, keep_messages=0, preserve_first_user_message=False
+            ),
+            summarizes=True,
         ),
     },
     'TieredCompaction': {
@@ -1224,7 +1230,9 @@ _HISTORY_EDITS: dict[str, EditsHistory] = {
             lambda: TieredCompaction(tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10)
         ),
         'summarizing tier': EditorConfig(
-            lambda: TieredCompaction(tiers=[_summarizing(max_messages=3, keep_messages=2)], target_tokens=10),
+            lambda: TieredCompaction(
+                tiers=[SummarizingCompaction(_summarizer(), max_messages=3, keep_messages=2)], target_tokens=10
+            ),
             summarizes=True,
         ),
     },
@@ -1306,10 +1314,17 @@ def _child_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
     raise ValueError('the sub-agent crashed')
 
 
-def _failing_delegate(**settings: object) -> Callable[[Path, pytest.MonkeyPatch], Sequence[AbstractCapability[None]]]:
-    """A delegate whose sub-agent raises, under `SubAgents` with `settings`."""
+def _failing_delegate(
+    *, task_control: TaskControl | None = None, contain_errors: bool = False
+) -> Callable[[Path, pytest.MonkeyPatch], Sequence[AbstractCapability[None]]]:
+    """A delegate whose sub-agent raises, under `SubAgents` with these settings."""
     return lambda tmp_path, monkeypatch: [
-        SubAgents(agents=[SubAgent(Agent(FunctionModel(_child_fails), name='worker'))], agent_folders=None, **settings)  # pyright: ignore[reportArgumentType]
+        SubAgents(
+            agents=[SubAgent(Agent(FunctionModel(_child_fails), name='worker'))],
+            agent_folders=None,
+            task_control=task_control,
+            contain_errors=contain_errors,
+        )
     ]
 
 
