@@ -2874,13 +2874,20 @@ class TestLoadMCPToolsets:
 
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
-        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise."""
+        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise. A reference that's
+        never closed stays as written, and doesn't stop a closed one after it from expanding."""
         monkeypatch.setenv('MCP_TEST_TOKEN', 'secret-value')
         config = {
             'mcpServers': {
                 'alpha': {
                     'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
-                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
+                    'headers': {
+                        'Authorization': 'Bearer ${MCP_TEST_TOKEN}',
+                        'X-Unclosed': '${MCP_TEST_TOKEN',
+                        'X-Unclosed-Then-Closed': '${a:b ${MCP_TEST_TOKEN}',
+                        'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
+                        'X-Empty-Default': '${MCP_TEST_HOST:-}',
+                    },
                 },
                 # `args` is the list-valued field, so it covers expansion inside a list.
                 'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
@@ -2894,7 +2901,13 @@ class TestLoadMCPToolsets:
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
         assert isinstance(wrapped, MCPToolset)
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
+        assert wrapped.client.transport.headers == {
+            'Authorization': 'Bearer secret-value',
+            'X-Unclosed': '${MCP_TEST_TOKEN',
+            'X-Unclosed-Then-Closed': '${a:b secret-value',
+            'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
+            'X-Empty-Default': '',
+        }
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
 
         stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
@@ -3023,7 +3036,10 @@ class TestLoadMCPToolsets:
 
     def test_env_var_expansion_expands_exactly_the_closed_references(self, monkeypatch: pytest.MonkeyPatch):
         """On every short string, expansion gives what substituting each closed `${...}` reference gives, so `$`, `{` and
-        `:` in a name or default, an undefined variable and `${VAR:-}` behave as before, and an unclosed one stays as is."""
+        `:` in a name or default, an undefined variable and `${VAR:-}` behave as before, and an unclosed one stays as is.
+
+        It calls `_expand_env_vars` directly: loading tens of thousands of configs through `load_mcp_toolsets` would make
+        it expensive, and `test_load_mcp_toolsets_expands_env_vars` pins the cases users write through that API."""
         monkeypatch.setenv('a', 'A')
         closed_reference = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
@@ -3049,7 +3065,10 @@ class TestLoadMCPToolsets:
                 )
 
     def test_env_var_expansion_takes_linear_time(self):
-        """A `${` that's never closed doesn't make each `${` after it rescan the rest of the string."""
+        """A `${` that's never closed doesn't make each `${` after it rescan the rest of the string.
+
+        The step counter bounds the pattern's scan itself; through `load_mcp_toolsets` only a huge input on the wall
+        clock would show it, which "Test cost" in `tests/AGENTS.md` rules out."""
         assert linearity_failure(_ENV_VAR_PATTERN.pattern, _ENV_VAR_PATTERN.flags) is None
 
 
