@@ -1,0 +1,277 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "287"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.2-sol
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            What is the smallest prime number strictly greater than 7741? Reason it
+            through, then reply with it.
+        reasoning:
+          effort: medium
+          context: all_turns
+        store: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "7943"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_02da3f3c92a92a37016aff866af76887d288553745fe1bb10c
+        object: response
+        created_at: 1795130987
+        status: completed
+        access_programs:
+          cyber: standard
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795130994
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.2-sol
+        moderation: null
+        output:
+        - id: rs_02da3f3c92a92a37016aff866d3e5887d2ae4cdada1c86aea3
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq_4Zy4HnYZRBKpbOLdvCHxK6E_-4NnWzCg8M-PGpsbK63oZ91_bg3O2AVAtF_p5aY1X6bvdmDLE-t_kY79I8bPD7sf8uLspJUdEWX497TruvJll-NOchDLkt-MvFK2mIzWN1v9DKT3-spkaDu-Fhzru0YeHmEizXzs18jghz4i88SPIoej0puTbpNvefZ5cv9VGaPdd_eggJVgzl9dKSy87vqGbKaZjFkEQ9CoP7Xfe9FgtLN8kCFHaSbGEHLE1D0Z_BU1MTitr8hJa8g0eiEoXjG1_OriprAgKn1qDuzdNF__WLmUGVXT-9tWg8u5q2e_RHLQxkFLI_TZmi-rZJEpND2S9phEb9AvWDrhnZ_EY8FBUtnY9NusEzq4TtsL_bvmachcL3dDDTkCJ8vw-dfbHf9o0qzjxQEaNOkJLqPETHXCtCXrUprKeEFQGCrQ65pe0DDAxmCmTs49DvH1U7pZzb68_9fqajuBxeAvuOeZZj_5XMC2P3_gVknX0TbBPIeZr9I2-r04trH8xWa29K-ObAs3MnYwS4THj0y2DxKph4DpxqUvdrUR0Mcn6juOtDfl3kC28mByZTsmtIATis8Z0DO3wU_CFLlCoVKkVB5frfoSVcc_6WXMEQbsoyoEAuAiWck4w1PAamoZKBusxbbqiOuKBNtPmhm8x96h9Mig4oCi2W1qKjsvYY7fq1OFTAlF3OqrcdpxSQwXvIfGZ2hzgS8t0ghTP6Z7Kq6hsG3sGPo5Iiv0InVqpJSnkuHslgOWQlVINUfIxqUDLrlvgR7YTNZMB1b1mIrN5RcBNCQxdvBCTEbHj5y6NNcxAF4xPTF3M6Y0ulEF_HJZiU04yXrxuWDNDJcN2vH60V2d9tlphMUrSjWd7Kku15Sq4lJOcqhzINBhI2igYZVCui8mQWLadJUJaycsUZ9iCZXmnHvlLKECVg7g04M2XNJTwl8xVVybDRYu7J1nDagUNNH7oPo00FXHlqgCd6CeSP6QVyppwkcxi24njXjlGLV2VfKrudyrgHC8QyzU-ligwZ8T-AY3iVga0p23uq_rhI47rMVwBImjkRZJxtB0UOw_BXQG7MBFqX1NmKww_uHnccj7CCRDzBmOLv68jCihFBoHwcCYigw43slQmm3ckmzr48fmN67a6GiLuV5vdg0eQGnXSiToK08VMVBeaDxlKk8tzah4xh_P0fFzZQiscOE_WEGE-DtnF2eLRk97t8VxWnmZZhPP98GjqEaFgxUmT27mgXmQS4BXKTDOLtRxWWFYHskXtCGJc8sFczt7IV74z5NSeRIVUruO3gKBBvuBaynscgcRGPGctUfFn9arqkH89gAC7KbdbeDMvbzgUk7siHcVjEwq6lncM-xonTKYNwOggvtuKSUSx15XAi5QC0DhOqg9-IWS9LkOP7R9IAqlHUOde9pH8TB9SO7iOIoxdhtTVrobbb4idBf3wwpJmrRtp6gtzeFTjuaEW_1Gi9cQzTr6XbkEEZRB4hlZxlIi8mjkUMkIX6WIUSE4kUa5upxQ50W1boXy07ZnZC7CFW-o2cOX8DcBEXdacsUdob8TtphvkACKAJAvXpi6sYx34j4-nHOizwoQxEVmz2YAj7MMJkV3OoKinEWIwPixjX3lbnzDbVcsSJOBYmN4HovypKSE-8f1D4vbsph3uPXI6KT0UfHwuWbQAL1pM0mlrqin-gETXEZGPFwlsyzd3NlN_DfrWLRrMn3H-XBG1F3yHM-bjnoK8t9estJCFr_53Z8DRNui7fvDTI4CkUtjPwwo4cfqNUMzsHKXv_C8lI9PgKN8dUEK1e8WsiTgJExhiz6Mtf8Hq_XWIWohrAW7Y_35uhDZUFqFwzlL87tzXN0Ju9LtUe21Nbly378G3yz8CEJEBywuR3a2oEv0vLcfj3bmpD_6wfzOMvxm4p2zWtCbgDpK8PE7moUJT820fQpKQmiizPthr6X95e3p0RVvCqZyb-3C2zhSkEgA7oFqvRkfFiNXU10SrYy49yPRGZJZ7sDxdwN2owP-T3vT2DViRQ9DqqNMy97apZY18xuVdVxiWIzdeJr-E7spkOBNjh2MS0potwz4lVMZenl141oCcp4oEnp3LL2J_0D9LHSQ5NZvKAilKgkBJ_zxM8EAAktEbLeuETFDmf9pAr4mExoVq2k9nBWgyu9ZSpYS0II_eRoLcdH7dwqw832tQwbk8tL8eDrL5u0s1sJ0EnfvlTqorEjf9XP2LVWl8bSPm0J4svd4nBzx9FxuTNfH_ycuTCGzuALnc_dEQAMrAZNbx7FcZNalgt9sad11KB1wBjRb-MpiOEiZ8yUEp-JzsmWJadc8p-UkimguCx4q4wrdIk6i8vF2O0Y4ki64EOZ2Qmy7VmjQUU7JFvJUrvZTZT37ra5h78vzJCvEF_ud2Y9nqDJx-5wpfMQfdogMCfKZ04W1BUG52XgsZJBNpsXetQVSgyBHycTNewiV-8Rk83mfUXb1-ugjojX1Wfmd6wHT4lRcU_ddnjBmdD5ZfY4cy1auteAYxss6qUnlABso8uiYvPaVCt3XNVED4xYaDYQOP-8GnnHdzupoVLMpEMcDFIrP0YDtwujYe_8yoCcgZ0OSqH0_K8gjGZxoqJ_-XSI9341eUPA2bNSjqKI_hEPmkABnxcq_uUqdC_UHeUQt1jC32xY_z6RLmpKOOb0f93EHurKRUsbqLjjgOLZzL2FVonB_WYgaE8mklfeaF7GlwdXVj4kuTBrcaO1v_U1Gcoxv_xWrrZBZQYXLetxrhh5gcmm4fwPfQYCWAw5OXLC84inGz17bw5XZ_Fj2lCqjlT7u8_p7vHGcS-lgfKE-4WQ8uo_uIUPA7Na69H46EZiB6iNp-EwhotT-GiFRLTezNwe1uemcuUBjK-RE98w4KhRU0R0rNX_VrZa0YaoDjiP8xMAtAgkC8bXxLgmrXvKG2a9H9yP8Q0jha27F5hdZPNDVwVEGodcUbuHvXZPiLMKiFOC8dihX7G8U25po12FWCZq9otGhFfQNFw1N53yXbxKYMo-mDKC0mEoqoOg6CLFp-soL4xE2rOZq9Xh3Eytqsb33pROWYrBOPzNW8TtMD_btdJ-zYiqlXQgueGK5VYI5FCqHdqRU6DmAiFIwSeDeTY1aJHhTL01aS3okFACs5bRGUTVSsn-8EPuJUgclAA2lyarybUOJkTazc7Hic4PqLUj0ZSNSmMFDZkFhuoITWioXH_eBz8SRFs-m3d_JYZ2lGwXRL3d1U9TFhYbvHKQiQ_LP5Kdt1s9JtBuhB-zvtwZzRovcG0ON5uG7ezm1C-f3Jd1pT_lW7qz-A4irIz_q-Ym66PjbsUbB_O4Ajvj7m1-HNzVC83Nh6FG-TcRSEhE8CPWc9YmCwaD3uO8UkA3xy_bHSw64qoXCuWv_vu_dBEY56WudrBak8hlFuIXVrGZTxemHzK9b44e5ZMO5P_XseC_6nuAvGjkLLocir42j8j7DtrPoCgrvOniCTetbFA6K6dAZ_N3EdXdunt0vkDuJiI4rmXely1tWhwpDdvRs-nPC4BsdJnI9XiQU9uqplyO353y3CNkLTPWHbY6lxyNb2G1k2lcABeyKXBEUZp3KSXXcfMpRoTTSXWB1HRoGahpOTiLbUXbTPgPbkyBVWcZtvuuFkO4NT4vApPqQvCPg3V63YHskoaWYG1lxHtbCJKzuft7P03ok0ngD6O9at8Z8ID6wt-BX-g-zxZAVlfBQ-64zgaRu3I1w-sdl_xfcC3XXPYuKQ2QCFBL6lpzmTByi15-A2YK94lT4JihdaCWUcp8uZbKoITb4cVHM96Z5yjruI_gTCqExW_-Ixfn-A-8cYCHxlNTa8w3jU54urSbz_61VCxuBYxOXQtiVIR5t8PI4cI-UaB4suWcekobWCghbv989skbbXNXPeipPoI-INucxJpHvrrJeYcmyl2Vb2CICKOoS3heT5J-PLCdZHEEoPvdlJagr4JJLxVyxpOweNXbEtiT6leJoUnsxSOIzqmF995UNnfk3aT9TYCauroqjyURWWNRBJCCiuqRANmKhA9ir2IgOjNwGYce8iuBpT9GHuLvxTY71TYvpdLQcfyds4uk1RrW3bS8LOxSbC59veKs0dePUdLRJ-xhpW_m3TwlszmJaaUuqKz1mJ0ay5cy90CFwpT5SGQtU_25I_7owvw2rjsR7OvAj2gO8pfRKg1i1s9WerNXQIrdg2T4o95FT27_GhIvPXCl1Rk19-rJQDX4lE9Lq678rDBVmTfwJnetzd6XqztODQJ0VC7rxXJbWgVpPAWbJMaY-xqLVT97-mbWWeYqnvwAt6hhnyU79CjVwkBubMXZqDC9JZA4HQN52MCBXRNk5x8-gDUMNdaVMJCyA4cM9Ynge7SHQpuPjMsfIyeMYlFie-5_5e8fjhuA-FlA5KTY3V1ZVr0Z2WBt4Fzd6SHQac_ctWE2BQSYXoRVp7T8ghOEa1zAe7eIFtHLhCr23meZ1ZbzZb0FKYWLpAXQ9TLQvDUHQhAxI5Vgdl88zUnFyAzoH6bFXO6-RbQkZKOPL7eN_nezmA4nJQ9sRMi1JVgzfMKMN6omazW3AZ2Ae-WfLuXXVZHMfdjnluw_KH4IEftOUc3oUroODfhoIVEwNAKelWFnPgY9Y3CJPReFN_V7C46hKLmZtnChBvoxtmOIKBSeFgFWrtnKM_EnpSyjJlVYXSlftZYTiRibq1LIBN_hn3-x1DHMuvrmZ4YdrKB8fXVgVPgVFwp8ifbGlVaa5Lnizh9JwSF_ifVi-ghTdeDvvI6M-KWapQTFn10KZYrNQ9lPTQOZDLRk86OFE5ekCeWnPg7UOFfBxncap77Gp-mfB8T5W6OoVEEKASWpy86LCrgo6ptbEQZLbXf-FMVSqspY9wL1hr_TS_XZJl80fahTs9nMKvemoJ8_kWJr7CPc549qfoRYYg9c5f01Tpn6RU09KEvhoAm-75doiMbVv2TYnNSwyl7Ule0W8C5ROTw21MyXRiZgg62DVfZq5GWqPZtaR73q47AfxZOsEWephL62faCBqhsRGHpHVUEistH_IzeUIregD1Jdo1thPEGdMihGF-K-P5URcILerkc5QJEjOfWJX82IUA6juPReTxomLvNN
+          summary: []
+        - id: msg_02da3f3c92a92a37016aff8672315887d2a4a25a6f8ac9fd5e
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "7753"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 28
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 348
+          output_tokens_details:
+            reasoning_tokens: 340
+          total_tokens: 376
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-19T23:29:54.671982+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6096"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.2-sol
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            What is the smallest prime number strictly greater than 7741? Reason it
+            through, then reply with it.
+        - id: rs_02da3f3c92a92a37016aff866d3e5887d2ae4cdada1c86aea3
+          summary: []
+          encrypted_content: >-
+            gAAAAABq_4Zy4HnYZRBKpbOLdvCHxK6E_-4NnWzCg8M-PGpsbK63oZ91_bg3O2AVAtF_p5aY1X6bvdmDLE-t_kY79I8bPD7sf8uLspJUdEWX497TruvJll-NOchDLkt-MvFK2mIzWN1v9DKT3-spkaDu-Fhzru0YeHmEizXzs18jghz4i88SPIoej0puTbpNvefZ5cv9VGaPdd_eggJVgzl9dKSy87vqGbKaZjFkEQ9CoP7Xfe9FgtLN8kCFHaSbGEHLE1D0Z_BU1MTitr8hJa8g0eiEoXjG1_OriprAgKn1qDuzdNF__WLmUGVXT-9tWg8u5q2e_RHLQxkFLI_TZmi-rZJEpND2S9phEb9AvWDrhnZ_EY8FBUtnY9NusEzq4TtsL_bvmachcL3dDDTkCJ8vw-dfbHf9o0qzjxQEaNOkJLqPETHXCtCXrUprKeEFQGCrQ65pe0DDAxmCmTs49DvH1U7pZzb68_9fqajuBxeAvuOeZZj_5XMC2P3_gVknX0TbBPIeZr9I2-r04trH8xWa29K-ObAs3MnYwS4THj0y2DxKph4DpxqUvdrUR0Mcn6juOtDfl3kC28mByZTsmtIATis8Z0DO3wU_CFLlCoVKkVB5frfoSVcc_6WXMEQbsoyoEAuAiWck4w1PAamoZKBusxbbqiOuKBNtPmhm8x96h9Mig4oCi2W1qKjsvYY7fq1OFTAlF3OqrcdpxSQwXvIfGZ2hzgS8t0ghTP6Z7Kq6hsG3sGPo5Iiv0InVqpJSnkuHslgOWQlVINUfIxqUDLrlvgR7YTNZMB1b1mIrN5RcBNCQxdvBCTEbHj5y6NNcxAF4xPTF3M6Y0ulEF_HJZiU04yXrxuWDNDJcN2vH60V2d9tlphMUrSjWd7Kku15Sq4lJOcqhzINBhI2igYZVCui8mQWLadJUJaycsUZ9iCZXmnHvlLKECVg7g04M2XNJTwl8xVVybDRYu7J1nDagUNNH7oPo00FXHlqgCd6CeSP6QVyppwkcxi24njXjlGLV2VfKrudyrgHC8QyzU-ligwZ8T-AY3iVga0p23uq_rhI47rMVwBImjkRZJxtB0UOw_BXQG7MBFqX1NmKww_uHnccj7CCRDzBmOLv68jCihFBoHwcCYigw43slQmm3ckmzr48fmN67a6GiLuV5vdg0eQGnXSiToK08VMVBeaDxlKk8tzah4xh_P0fFzZQiscOE_WEGE-DtnF2eLRk97t8VxWnmZZhPP98GjqEaFgxUmT27mgXmQS4BXKTDOLtRxWWFYHskXtCGJc8sFczt7IV74z5NSeRIVUruO3gKBBvuBaynscgcRGPGctUfFn9arqkH89gAC7KbdbeDMvbzgUk7siHcVjEwq6lncM-xonTKYNwOggvtuKSUSx15XAi5QC0DhOqg9-IWS9LkOP7R9IAqlHUOde9pH8TB9SO7iOIoxdhtTVrobbb4idBf3wwpJmrRtp6gtzeFTjuaEW_1Gi9cQzTr6XbkEEZRB4hlZxlIi8mjkUMkIX6WIUSE4kUa5upxQ50W1boXy07ZnZC7CFW-o2cOX8DcBEXdacsUdob8TtphvkACKAJAvXpi6sYx34j4-nHOizwoQxEVmz2YAj7MMJkV3OoKinEWIwPixjX3lbnzDbVcsSJOBYmN4HovypKSE-8f1D4vbsph3uPXI6KT0UfHwuWbQAL1pM0mlrqin-gETXEZGPFwlsyzd3NlN_DfrWLRrMn3H-XBG1F3yHM-bjnoK8t9estJCFr_53Z8DRNui7fvDTI4CkUtjPwwo4cfqNUMzsHKXv_C8lI9PgKN8dUEK1e8WsiTgJExhiz6Mtf8Hq_XWIWohrAW7Y_35uhDZUFqFwzlL87tzXN0Ju9LtUe21Nbly378G3yz8CEJEBywuR3a2oEv0vLcfj3bmpD_6wfzOMvxm4p2zWtCbgDpK8PE7moUJT820fQpKQmiizPthr6X95e3p0RVvCqZyb-3C2zhSkEgA7oFqvRkfFiNXU10SrYy49yPRGZJZ7sDxdwN2owP-T3vT2DViRQ9DqqNMy97apZY18xuVdVxiWIzdeJr-E7spkOBNjh2MS0potwz4lVMZenl141oCcp4oEnp3LL2J_0D9LHSQ5NZvKAilKgkBJ_zxM8EAAktEbLeuETFDmf9pAr4mExoVq2k9nBWgyu9ZSpYS0II_eRoLcdH7dwqw832tQwbk8tL8eDrL5u0s1sJ0EnfvlTqorEjf9XP2LVWl8bSPm0J4svd4nBzx9FxuTNfH_ycuTCGzuALnc_dEQAMrAZNbx7FcZNalgt9sad11KB1wBjRb-MpiOEiZ8yUEp-JzsmWJadc8p-UkimguCx4q4wrdIk6i8vF2O0Y4ki64EOZ2Qmy7VmjQUU7JFvJUrvZTZT37ra5h78vzJCvEF_ud2Y9nqDJx-5wpfMQfdogMCfKZ04W1BUG52XgsZJBNpsXetQVSgyBHycTNewiV-8Rk83mfUXb1-ugjojX1Wfmd6wHT4lRcU_ddnjBmdD5ZfY4cy1auteAYxss6qUnlABso8uiYvPaVCt3XNVED4xYaDYQOP-8GnnHdzupoVLMpEMcDFIrP0YDtwujYe_8yoCcgZ0OSqH0_K8gjGZxoqJ_-XSI9341eUPA2bNSjqKI_hEPmkABnxcq_uUqdC_UHeUQt1jC32xY_z6RLmpKOOb0f93EHurKRUsbqLjjgOLZzL2FVonB_WYgaE8mklfeaF7GlwdXVj4kuTBrcaO1v_U1Gcoxv_xWrrZBZQYXLetxrhh5gcmm4fwPfQYCWAw5OXLC84inGz17bw5XZ_Fj2lCqjlT7u8_p7vHGcS-lgfKE-4WQ8uo_uIUPA7Na69H46EZiB6iNp-EwhotT-GiFRLTezNwe1uemcuUBjK-RE98w4KhRU0R0rNX_VrZa0YaoDjiP8xMAtAgkC8bXxLgmrXvKG2a9H9yP8Q0jha27F5hdZPNDVwVEGodcUbuHvXZPiLMKiFOC8dihX7G8U25po12FWCZq9otGhFfQNFw1N53yXbxKYMo-mDKC0mEoqoOg6CLFp-soL4xE2rOZq9Xh3Eytqsb33pROWYrBOPzNW8TtMD_btdJ-zYiqlXQgueGK5VYI5FCqHdqRU6DmAiFIwSeDeTY1aJHhTL01aS3okFACs5bRGUTVSsn-8EPuJUgclAA2lyarybUOJkTazc7Hic4PqLUj0ZSNSmMFDZkFhuoITWioXH_eBz8SRFs-m3d_JYZ2lGwXRL3d1U9TFhYbvHKQiQ_LP5Kdt1s9JtBuhB-zvtwZzRovcG0ON5uG7ezm1C-f3Jd1pT_lW7qz-A4irIz_q-Ym66PjbsUbB_O4Ajvj7m1-HNzVC83Nh6FG-TcRSEhE8CPWc9YmCwaD3uO8UkA3xy_bHSw64qoXCuWv_vu_dBEY56WudrBak8hlFuIXVrGZTxemHzK9b44e5ZMO5P_XseC_6nuAvGjkLLocir42j8j7DtrPoCgrvOniCTetbFA6K6dAZ_N3EdXdunt0vkDuJiI4rmXely1tWhwpDdvRs-nPC4BsdJnI9XiQU9uqplyO353y3CNkLTPWHbY6lxyNb2G1k2lcABeyKXBEUZp3KSXXcfMpRoTTSXWB1HRoGahpOTiLbUXbTPgPbkyBVWcZtvuuFkO4NT4vApPqQvCPg3V63YHskoaWYG1lxHtbCJKzuft7P03ok0ngD6O9at8Z8ID6wt-BX-g-zxZAVlfBQ-64zgaRu3I1w-sdl_xfcC3XXPYuKQ2QCFBL6lpzmTByi15-A2YK94lT4JihdaCWUcp8uZbKoITb4cVHM96Z5yjruI_gTCqExW_-Ixfn-A-8cYCHxlNTa8w3jU54urSbz_61VCxuBYxOXQtiVIR5t8PI4cI-UaB4suWcekobWCghbv989skbbXNXPeipPoI-INucxJpHvrrJeYcmyl2Vb2CICKOoS3heT5J-PLCdZHEEoPvdlJagr4JJLxVyxpOweNXbEtiT6leJoUnsxSOIzqmF995UNnfk3aT9TYCauroqjyURWWNRBJCCiuqRANmKhA9ir2IgOjNwGYce8iuBpT9GHuLvxTY71TYvpdLQcfyds4uk1RrW3bS8LOxSbC59veKs0dePUdLRJ-xhpW_m3TwlszmJaaUuqKz1mJ0ay5cy90CFwpT5SGQtU_25I_7owvw2rjsR7OvAj2gO8pfRKg1i1s9WerNXQIrdg2T4o95FT27_GhIvPXCl1Rk19-rJQDX4lE9Lq678rDBVmTfwJnetzd6XqztODQJ0VC7rxXJbWgVpPAWbJMaY-xqLVT97-mbWWeYqnvwAt6hhnyU79CjVwkBubMXZqDC9JZA4HQN52MCBXRNk5x8-gDUMNdaVMJCyA4cM9Ynge7SHQpuPjMsfIyeMYlFie-5_5e8fjhuA-FlA5KTY3V1ZVr0Z2WBt4Fzd6SHQac_ctWE2BQSYXoRVp7T8ghOEa1zAe7eIFtHLhCr23meZ1ZbzZb0FKYWLpAXQ9TLQvDUHQhAxI5Vgdl88zUnFyAzoH6bFXO6-RbQkZKOPL7eN_nezmA4nJQ9sRMi1JVgzfMKMN6omazW3AZ2Ae-WfLuXXVZHMfdjnluw_KH4IEftOUc3oUroODfhoIVEwNAKelWFnPgY9Y3CJPReFN_V7C46hKLmZtnChBvoxtmOIKBSeFgFWrtnKM_EnpSyjJlVYXSlftZYTiRibq1LIBN_hn3-x1DHMuvrmZ4YdrKB8fXVgVPgVFwp8ifbGlVaa5Lnizh9JwSF_ifVi-ghTdeDvvI6M-KWapQTFn10KZYrNQ9lPTQOZDLRk86OFE5ekCeWnPg7UOFfBxncap77Gp-mfB8T5W6OoVEEKASWpy86LCrgo6ptbEQZLbXf-FMVSqspY9wL1hr_TS_XZJl80fahTs9nMKvemoJ8_kWJr7CPc549qfoRYYg9c5f01Tpn6RU09KEvhoAm-75doiMbVv2TYnNSwyl7Ule0W8C5ROTw21MyXRiZgg62DVfZq5GWqPZtaR73q47AfxZOsEWephL62faCBqhsRGHpHVUEistH_IzeUIregD1Jdo1thPEGdMihGF-K-P5URcILerkc5QJEjOfWJX82IUA6juPReTxomLvNN
+          type: reasoning
+        - role: assistant
+          id: msg_02da3f3c92a92a37016aff8672315887d2a4a25a6f8ac9fd5e
+          content:
+          - text: "7753"
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        - role: user
+          content: Add 1000 to that prime.
+        prompt_cache_options:
+          comparison_response_id: resp_02da3f3c92a92a37016aff866af76887d288553745fe1bb10c
+        reasoning:
+          effort: medium
+          context: all_turns
+        store: false
+        text:
+          format:
+            type: json_schema
+            name: Answer
+            schema:
+              properties:
+                total:
+                  type: integer
+              required:
+              - total
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "1036"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_02da3f3c92a92a37016aff8672bf6c87d28b8e222321527eb4","object":"response","created_at":1795130994,"status":"in_progress","access_programs":{"cyber":"standard"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6.2-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_02da3f3c92a92a37016aff866af76887d288553745fe1bb10c","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":null,"name":"Answer","schema":{"properties":{"total":{"type":"integer"}},"required":["total"],"type":"object","additionalProperties":false},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_02da3f3c92a92a37016aff8672bf6c87d28b8e222321527eb4","object":"response","created_at":1795130994,"status":"in_progress","access_programs":{"cyber":"standard"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[],"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6.2-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_diagnostics":{"type":"unavailable"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_02da3f3c92a92a37016aff866af76887d288553745fe1bb10c","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":null,"name":"Answer","schema":{"properties":{"total":{"type":"integer"}},"required":["total"],"type":"object","additionalProperties":false},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"{\"","item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"obfuscation":"snOnszvQq3HbXs","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"total","item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"obfuscation":"PEcmUK90tBq","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"\":","item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"obfuscation":"jG1Da6GT1FjveE","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"875","item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"obfuscation":"Ru5obGfaR8Lrf","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"3","item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"obfuscation":"trJwOPcfr4gQNSp","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"}","item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"obfuscation":"qtXkSTyPATB1WvM","output_index":0,"sequence_number":9}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","logprobs":[],"output_index":0,"sequence_number":10,"text":"{\"total\":8753}"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"{\"total\":8753}"},"sequence_number":11}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"{\"total\":8753}"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":12}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_02da3f3c92a92a37016aff8672bf6c87d28b8e222321527eb4","object":"response","created_at":1795130994,"status":"completed","access_programs":{"cyber":"standard"},"background":false,"completed_at":1795130996,"error":null,"frequency_penalty":0.0,"image":{"context_compression":"disabled"},"incomplete_details":null,"input_transformations":[{"id":"rs_02da3f3c92a92a37016aff866d3e5887d2ae4cdada1c86aea3","type":"reasoning","action":"removed","reason":"prefix_mismatch"}],"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6.2-sol","moderation":null,"output":[{"id":"msg_02da3f3c92a92a37016aff8674ace887d28ba5f7586df3b2cb","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"{\"total\":8753}"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_diagnostics":{"type":"cache_hit"},"prompt_cache_key":null,"prompt_cache_options":{"comparison_response_id":"resp_02da3f3c92a92a37016aff866af76887d288553745fe1bb10c","mode":"implicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"json_schema","description":null,"name":"Answer","schema":{"properties":{"total":{"type":"integer"}},"required":["total"],"type":"object","additionalProperties":false},"strict":true},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":79,"input_tokens_details":{"cache_write_tokens":0,"cache_write_tokens_details":{"ttl_12h_tokens":0,"ttl_30m_tokens":0},"cached_tokens":0},"output_tokens":13,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":92},"user":null,"metadata":{}},"sequence_number":13}
+
+  recorded_at: 2026-11-19T23:29:56.882084+00:00
