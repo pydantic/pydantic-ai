@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from html.parser import HTMLParser
@@ -51,6 +52,8 @@ _WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
 _LINE_WITH_CONTENT_RE = re.compile(r'^(.*)', flags=re.MULTILINE)
 # `markdownify`'s stub doesn't declare its per-tag `convert_<tag>` methods, which it looks up by name.
 _upstream_convert_li: Callable[[MarkdownConverter, Tag, str, set[str]], str] = getattr(MarkdownConverter, 'convert_li')
+_upstream_convert_td: Callable[[MarkdownConverter, Tag, str, set[str]], str] = getattr(MarkdownConverter, 'convert_td')
+_upstream_convert_th: Callable[[MarkdownConverter, Tag, str, set[str]], str] = getattr(MarkdownConverter, 'convert_th')
 _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] | None], str] = getattr(
     MarkdownConverter, 'process_text'
 )
@@ -520,7 +523,7 @@ class _HTMLConversionEstimate:
                 continue
             self.cost += 8
             self._check_limit(self.cost, _MAX_HTML_CONVERSION_COST)
-            if isinstance(child, Tag) and _upstream_get_conv_fn(self.converter, child.name) is not None:
+            if isinstance(child, Tag) and _lookup_conv_fn(self.converter, child.name) is not None:
                 return False
             link_nodes.append(child)
         rendered: dict[int, str] = {}
@@ -626,7 +629,7 @@ class _MarkdownConverter(MarkdownConverter):
         self._text_scan_cost = 0
 
     def get_conv_fn(self, tag_name: str) -> Callable[[Tag, str, set[str]], str]:
-        convert_fn = _upstream_get_conv_fn(self, tag_name)
+        convert_fn = _lookup_conv_fn(self, tag_name)
 
         def budgeted_convert(el: Tag, text: str, parent_tags: set[str]) -> str:
             result = convert_fn(el, text, parent_tags) if convert_fn is not None else text
@@ -680,9 +683,9 @@ class _MarkdownConverter(MarkdownConverter):
                     self._ol_indexes[id(child)] = index
                     index += 1
         start_attr = parent.get('start')
-        # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²`; treat
-        # those as no start rather than letting the page abort the run.
-        start = int(start_attr) if isinstance(start_attr, str) and start_attr.isdecimal() else 1
+        # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²` and on too
+        # many digits; treat those as no start rather than letting the page abort the run.
+        start = int(start_attr) if isinstance(start_attr, str) and _is_parsable_decimal(start_attr) else 1
         bullet = f'{start + self._ol_indexes[id(el)]}. '
         bullet_indent = ' ' * len(bullet)
         if len(bullet_indent) * text.count('\n') > _MAX_HTML_CONVERSION_COST:
@@ -694,6 +697,40 @@ class _MarkdownConverter(MarkdownConverter):
 
         text = _LINE_WITH_CONTENT_RE.sub(indent_line, text)
         return f'{bullet}{text[len(bullet) :]}\n'
+
+    def convert_td(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        self._drop_unparsable_colspan(el)
+        return _upstream_convert_td(self, el, text, parent_tags)
+
+    def convert_th(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        self._drop_unparsable_colspan(el)
+        return _upstream_convert_th(self, el, text, parent_tags)
+
+    @staticmethod
+    def _drop_unparsable_colspan(cell: Tag) -> None:
+        # Upstream checks `isdigit()` before `int()`, which raises on digits like `²` and on too many
+        # digits. Without the attribute the cell spans one column, as for any other non-number.
+        # `convert_tr` reads its cells' `colspan` again, but only after converting them.
+        colspan = cell.get('colspan')
+        if isinstance(colspan, str) and not _is_parsable_decimal(colspan):
+            del cell['colspan']
+
+
+def _lookup_conv_fn(converter: MarkdownConverter, tag_name: str) -> Callable[[Tag, str, set[str]], str] | None:
+    """Look up `markdownify`'s conversion function for a tag, treating an `<hN>` whose level `int()` rejects as unknown.
+
+    Upstream parses any `<hN>` level with `int()`, which raises on too many digits.
+    """
+    heading = _HTML_HEADING_RE.match(tag_name)
+    if heading is not None and not _is_parsable_decimal(heading.group()[1:]):
+        return None
+    return _upstream_get_conv_fn(converter, tag_name)
+
+
+def _is_parsable_decimal(value: str) -> bool:
+    """Whether `value` is decimal digits `int()` parses: none like `²`, and no more than `sys.get_int_max_str_digits()`."""
+    # The limit is 0 when the interpreter sets none.
+    return value.isdecimal() and not 0 < sys.get_int_max_str_digits() < len(value)
 
 
 def _collapse_whitespace_run(match: re.Match[str]) -> str:
