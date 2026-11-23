@@ -1847,6 +1847,89 @@ def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
     assert offered[-1] == offered_last
 
 
+_SAFE_OUTPUT = 'mcp__safeoutputs__'
+_MODEL_ACTIONS: dict[str, ModelResponse] = {
+    'noop': ModelResponse(parts=[ToolCallPart(f'{_SAFE_OUTPUT}noop', {'message': 'nothing to report'})]),
+    'probe': ModelResponse(parts=[ToolCallPart(f'{_SAFE_OUTPUT}probe', {})]),
+    'submit': ModelResponse(parts=[ToolCallPart(f'{_SAFE_OUTPUT}submit_pull_request_review', {'body': 'review'})]),
+    'text': ModelResponse(parts=[TextPart('done')]),
+}
+# What a request offers: each safe output by its bare name, plus `tools` when it offers any other tool.
+_EVERY_TOOL = frozenset({'tools', 'noop', 'probe', 'submit_pull_request_review'})
+_SAFE_OUTPUTS = _EVERY_TOOL - {'tools'}
+_NO_TOOL = frozenset[str]()
+
+
+def _offer(info: AgentInfo) -> frozenset[str]:
+    names = {tool_def.name for tool_def in info.function_tools}
+    safe = {name for name in names if name.startswith(_SAFE_OUTPUT)}
+    return frozenset({name.removeprefix(_SAFE_OUTPUT) for name in safe} | ({'tools'} if names - safe else set()))
+
+
+@pytest.mark.parametrize(
+    ('in_reserve', 'request_limit', 'noop_max', 'script', 'exit_code', 'offers'),
+    [
+        pytest.param(False, None, None, ['noop', 'text'], 0, [_EVERY_TOOL] * 2, id='noop-before-the-reserve'),
+        pytest.param(
+            True, None, None, ['probe', 'submit', 'text'], 0, [_SAFE_OUTPUTS] * 3, id='safe-outputs-only-in-the-reserve'
+        ),
+        pytest.param(
+            True,
+            None,
+            None,
+            ['noop', 'probe', 'text'],
+            0,
+            [_SAFE_OUTPUTS, _NO_TOOL, _NO_TOOL],
+            id='noop-in-the-reserve-ends-tool-use',
+        ),
+        pytest.param(
+            False,
+            None,
+            1,
+            ['noop', 'noop', 'submit', 'text'],
+            0,
+            [_EVERY_TOOL, _EVERY_TOOL, _EVERY_TOOL - {'noop'}, _EVERY_TOOL - {'noop'}],
+            id='safe-output-past-its-limit',
+        ),
+        pytest.param(False, 2, None, ['noop', 'probe'], 0, [_EVERY_TOOL] * 2, id='request-limit-after-the-safe-output'),
+        pytest.param(False, 2, None, ['probe'], 1, [_EVERY_TOOL] * 2, id='request-limit-before-any-safe-output'),
+        pytest.param(
+            False, None, None, ['text'], 1, [_EVERY_TOOL] * (1 + shim.NO_SAFE_OUTPUT_RETRIES), id='no-safe-output'
+        ),
+    ],
+)
+def test_every_terminal_path_of_a_shim_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    in_reserve: bool,
+    request_limit: int | None,
+    noop_max: int | None,
+    script: list[str],
+    exit_code: int,
+    offers: list[frozenset[str]],
+):
+    """How each way a shim run can end narrows the tools each request offers, and the run's exit code.
+
+    The model takes the script's actions in order and repeats the last one. `CI Review` and Attention runs end by
+    their own rules, which their own tests cover.
+    """
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Stale Issues Finder')
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    if in_reserve:
+        monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    if request_limit is not None:
+        monkeypatch.setattr(shim, 'run_request_limit', lambda: request_limit)
+    offered: list[frozenset[str]] = []
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(_offer(info))
+        return _MODEL_ACTIONS[script[min(len(offered), len(script)) - 1]]
+
+    assert (_run_shim(_respond, sink, mcp_tool_names=True, noop_max=noop_max), offered) == (exit_code, offers)
+
+
 @pytest.mark.parametrize('parallel_tasks', [1, 2])
 def test_run_caps_subagents_so_the_budget_notice_still_fires(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parallel_tasks: int
