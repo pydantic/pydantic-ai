@@ -169,7 +169,7 @@ NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
     PydanticUserError,
     UnexpectedModelBehavior,
     FallbackExceptionGroup,
-    # Each attempt checks the limit against the same usage the unit was started with.
+    # Every attempt of an activity or tool child workflow checks the limit against the usage it was started with.
     UsageLimitExceeded,
     # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
     # restarting a command could repeat its already-completed side effects.
