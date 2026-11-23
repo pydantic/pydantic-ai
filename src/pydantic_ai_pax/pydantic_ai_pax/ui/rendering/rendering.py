@@ -61,7 +61,6 @@ from pydantic_ai_pax.ui.rendering.tool_output import (
     tool_arguments_text,
 )
 
-
 PROMPT_MARKER = '> '
 """What starts an echoed prompt; its wrapped rows are indented by its width."""
 
