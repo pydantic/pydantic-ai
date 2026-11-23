@@ -767,6 +767,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
+        # The agent's instructions are the backend's; the voice model's own prompt can be added to mid-session.
+        'supports_appending_voice_instructions': True,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
         'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going
