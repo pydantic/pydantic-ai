@@ -66,6 +66,7 @@ class TestConfiguration:
             'allow_internet_access',
             'authority',
             'description',
+            'desktop',
             'env',
             'id',
             'image',
@@ -87,6 +88,7 @@ class TestConfiguration:
             'sandbox_timeout': 60,
             'working_dir': '/project',
             'env': {'CONFIGURED': 'value'},
+            'desktop': (1280, 800),
         }
         assert OpenSandbox[None].from_spec(**fields) == OpenSandbox(**fields)
 
@@ -101,6 +103,7 @@ class TestConfiguration:
             ({'working_dir': 'relative'}, UserError, 'working_dir must be an absolute POSIX path'),
             ({'sandbox_timeout': 0}, UserError, 'sandbox_timeout must be an integer of at least 1'),
             ({'env': {'A=B': 'x'}}, ValueError, 'env keys must be non-empty without `=`'),
+            ({'desktop': (0, 800)}, UserError, r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'),
             (
                 {'network_policy': NetworkPolicy(), 'allow_internet_access': False},
                 UserError,
