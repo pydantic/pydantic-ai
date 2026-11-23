@@ -318,6 +318,28 @@ def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() 
     assert plain(buffer, width=40) == ['answer', '']
 
 
+def test_large_tool_output_folds_before_the_conversation_is_evicted() -> None:
+    """Output kept for Ctrl+O is dropped oldest first, so it never pushes earlier answers out."""
+    buffer = TranscriptBuffer(max_chars=1_000)
+    buffer.write('first answer\n')
+
+    def row(*, source: str, width: int) -> str:
+        return 'result row\n'
+
+    def expanded(*, source: str, width: int) -> str:
+        return f'result row\n{source}'
+
+    for index in range(5):
+        block = buffer.markdown(render=row, width=40, changed=lambda: None, expanded=expanded)
+        block.extend(f'output {index}\n' + 'x\n' * 200)
+        block.write(row(source='', width=40))
+    buffer.toggle_details()
+    rows = plain(buffer, height=10_000)
+    assert rows[0] == 'first answer'
+    assert [line for line in rows if line.startswith('output')] == ['output 3', 'output 4']
+    assert rows.count('result row') == 5
+
+
 class _PreLiveTranscript:
     """The pre-1.0 runtime state: styled Text lines and an unfinished ANSI stream.
 

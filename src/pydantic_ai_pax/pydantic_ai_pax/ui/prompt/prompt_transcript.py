@@ -294,8 +294,12 @@ class MarkdownBlock(io.StringIO):
 
     @property
     def chars(self) -> int:
-        """Retained source plus visible output, for the transcript memory limit."""
-        return len(self.source or '') + self._stream.chars + len(self._stream.pending)
+        """Retained source plus visible output, for the transcript memory limit.
+
+        An expanded rendering's source is left out: `TranscriptBuffer` counts it apart, so it can be dropped first.
+        """
+        source = len(self.source or '') if self.expanded is None else 0
+        return source + self._stream.chars + len(self._stream.pending)
 
     def write(self, text: str) -> int:
         """Receive the stream's rendered ANSI."""
@@ -313,10 +317,16 @@ class MarkdownBlock(io.StringIO):
         self.source = None
         self._changed()
 
+    def fold(self) -> None:
+        """Drop the expanded rendering and its source, keeping the usual rendering as last written."""
+        self.expanded = None
+        self.source = None
+
     def _lines(self, *, width: int) -> list[_Line]:
         key = (width, theme.name())
         render = self.expanded if self.details and self.expanded is not None else self._render
-        if self.source is None or (key == self._key and render is self._render):
+        # A block that can expand renders from its source each time, as its source arrives after its row.
+        if self.source is None or (key == self._key and render is self._render and self.expanded is None):
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(render(source=self.source, width=width))
@@ -365,6 +375,9 @@ class TranscriptBuffer:
         self.details = False
         """Whether blocks with an expanded rendering show it; see `toggle_details`."""
         self._chars = 0
+        self._details: deque[tuple[int, MarkdownBlock]] = deque()
+        """Blocks with an expanded rendering, oldest first, by id; their sources count in `_details_chars`."""
+        self._details_chars = 0
         self._pending = ''
         self._pending_theme = theme.painted_in()
         """The theme the unfinished line started in, which its completion keeps."""
@@ -394,6 +407,8 @@ class TranscriptBuffer:
         transcript._decoder.__class__ = TranscriptDecoder
         vars(transcript).setdefault('_pending_theme', theme.name())
         vars(transcript).setdefault('details', False)
+        vars(transcript).setdefault('_details', deque())
+        vars(transcript).setdefault('_details_chars', 0)
         for item in transcript._items:
             # StringIO is a stable dependency type across CLAI reloads.
             if isinstance(item, io.StringIO):
@@ -413,6 +428,13 @@ class TranscriptBuffer:
         self._prune()
 
     def _prune(self) -> None:
+        # Expanded renderings go first, oldest first, so output nobody asked to see never evicts the conversation.
+        while self._details and (
+            self._details[0][0] < self._first or self._chars + self._details_chars > self.max_chars
+        ):
+            _, block = self._details.popleft()
+            self._details_chars -= len(block.source or '')
+            block.fold()
         while len(self._items) > self.max_lines or self._chars > self.max_chars:
             dropped = self._items.popleft()
             self._first += 1
@@ -467,13 +489,16 @@ class TranscriptBuffer:
         if self._pending:
             self.write('\n')
         item = self.end
-        size = 0
+        size = details = 0
 
         def updated() -> None:
-            nonlocal size
+            nonlocal size, details
             if item >= self._first:
                 self._chars += block.chars - size
                 size = block.chars
+                if block.expanded is not None:
+                    self._details_chars += len(block.source or '') - details
+                    details = len(block.source or '')
                 self._prune()
             changed()
 
@@ -486,6 +511,8 @@ class TranscriptBuffer:
             expanded=expanded,
         )
         block.details = self.details
+        if expanded is not None:
+            self._details.append((item, block))
         self._append(block)
         return block
 
@@ -516,6 +543,8 @@ class TranscriptBuffer:
         self._first = self.end - (kept is not None)
         self._items.clear()
         self._chars = 0
+        self._details.clear()
+        self._details_chars = 0
         if kept is not None:
             self._append(kept)
         if not keep_current:

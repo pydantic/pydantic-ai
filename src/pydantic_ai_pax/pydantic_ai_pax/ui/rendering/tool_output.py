@@ -230,13 +230,13 @@ def _draw_row(
 def _row_ansi(
     *, source: str, width: int, draw: Callable[..., None], colors: ColorSystemName | None, expanded: bool
 ) -> str:
-    """A live result row at `width`: with its hint and tail, or `expanded` with the output in `source` under it.
+    """A live result row at `width`: with its tail, and a hint when `source` has output, or `expanded` with it under.
 
     `colors` must be the stream console's colour system; see `render_markdown`.
     """
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system=colors, width=width)
-    draw(console, hint=not expanded)
+    draw(console, hint=not expanded and bool(source))
     if expanded and source:
         decoder = AnsiDecoder()
         # Only line feeds end a line, so a read keeps its numbered lines; other controls show escaped.
@@ -379,7 +379,8 @@ class ToolOutput:
         expanded = partial(_row_ansi, draw=partial(draw, tail=()), colors=colors, expanded=True)
         block = surface.markdown(render=collapsed, width=self.console.width, expanded=expanded)
         block.extend(output)
-        block.write(collapsed(source=output, width=self.console.width))
+        # Written without its source, so a dropped expansion leaves the row without a hint.
+        block.write(collapsed(source='', width=self.console.width))
         return block
 
     @property
