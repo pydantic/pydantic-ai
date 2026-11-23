@@ -45,15 +45,22 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.profiles._family import ModelProfileFunc
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.minimax import minimax_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     openai_model_profile,
 )
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 from pydantic_ai.providers import Provider, infer_provider_class
 
 from .._inline_snapshot import snapshot
@@ -3479,6 +3486,38 @@ def test_together_qwen():
                 }
             ),
         ),
+        # Models of the open-weight families that don't reason keep the OpenAI-compatible default:
+        # https://github.com/pydantic/pydantic-ai/issues/12096
+        (
+            'nvidia/nemotron-mini-4b-instruct',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'tencent/hy-mt2-7b',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
     ],
 )
 def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, Any]):
@@ -3586,6 +3625,93 @@ def test_openai_compatible_groq_route_keeps_json_mode_unset():
                     'json_schema_transformer': InlineDefsJsonSchemaTransformer,
                     'supports_thinking': True,
                     'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        # The open-weight families only add thinking flags to Together's defaults:
+        # https://github.com/pydantic/pydantic-ai/issues/12096
+        (
+            'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'thinkingmachines/Inkling-Small',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'XiaomiMiMo/MiMo-V2.5',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'stepfun/step-5-preview',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'tencent/Hy3',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'inclusionAI/Ling-3.1-flash',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        # An NVIDIA model that doesn't reason keeps Together's defaults.
+        (
+            'nvidia/nemotron-mini-4b-instruct',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'may_tokenize_special_tokens_in_content': True,
                 }
             ),
@@ -4663,6 +4789,70 @@ def test_minimax_m1_no_thinking(model_name: str):
 )
 def test_minimax_unmatched(model_name: str):
     assert minimax_model_profile(model_name) is None
+
+
+@pytest.mark.parametrize(
+    ('family_profile', 'model_name', 'expected'),
+    [
+        # Hybrid: thinks by default and can be turned off.
+        (
+            nvidia_model_profile,
+            'nemotron-3-super-120b-a12b',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        (
+            nvidia_model_profile,
+            'NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        (thinkingmachines_model_profile, 'inkling', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (
+            thinkingmachines_model_profile,
+            'Inkling-Small',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        (tencent_model_profile, 'hy3', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (inclusionai_model_profile, 'ling-3.1-flash', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (
+            inclusionai_model_profile,
+            'Ling-3.0-flash-VL',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        # Thinks when asked to.
+        (nvidia_model_profile, 'nemotron-3.5-lightning', {'supports_thinking': True}),
+        (nvidia_model_profile, 'NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', {'supports_thinking': True}),
+        (xiaomi_model_profile, 'mimo-v2.6-pro', {'supports_thinking': True}),
+        (xiaomi_model_profile, 'MiMo-V2.5', {'supports_thinking': True}),
+        # Always thinks.
+        (stepfun_model_profile, 'step-5-preview', {'supports_thinking': True, 'thinking_always_enabled': True}),
+    ],
+)
+def test_open_weight_family_thinking(family_profile: ModelProfileFunc, model_name: str, expected: dict[str, Any]):
+    """Thinking flags for the open-weight families, per OpenRouter's model catalog
+    (https://openrouter.ai/api/v1/models), for ids as gateways and Hugging Face repos spell them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/12096.
+    """
+    profile = family_profile(model_name)
+    assert profile is not None
+    assert _normalize(profile) == expected
+
+
+@pytest.mark.parametrize(
+    ('family_profile', 'model_name'),
+    [
+        # Published models that don't reason.
+        (nvidia_model_profile, 'nemotron-mini-4b-instruct'),
+        (tencent_model_profile, 'hy-mt2-7b'),
+        # Ids the families don't describe.
+        (thinkingmachines_model_profile, 'inkling-medium'),
+        (xiaomi_model_profile, 'mimo-v2.7'),
+        (stepfun_model_profile, 'step-4'),
+        (inclusionai_model_profile, 'ling-2.5'),
+    ],
+)
+def test_open_weight_family_unmatched(family_profile: ModelProfileFunc, model_name: str):
+    assert family_profile(model_name) is None
 
 
 def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
