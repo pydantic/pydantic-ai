@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import textwrap
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from . import cost_guards
 from .cost_guards import (
     BUDGET_ENV_VAR,
     COLLECT_BUDGET_ENV_VAR,
+    SESSION_FAILURES_ENV_VAR,
     _popen_argv,  # pyright: ignore[reportPrivateUsage]
     launches_python,
 )
@@ -276,6 +278,43 @@ def test_a_marker_is_not_judged_on_a_partial_run(run: RunPytest, source: str, ar
     assert 'stale subprocess markers' not in result.stdout.str()
 
 
+@pytest.mark.parametrize(
+    ('stale', 'recorded'),
+    [
+        pytest.param(True, 'stale subprocess marker: test_guarded.py::test_stale\n', id='stale-marker'),
+        pytest.param(False, '', id='failed-test-only'),
+    ],
+)
+def test_a_session_failure_is_recorded_for_the_merge_queue_rerun(
+    run: RunPytest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stale: bool, recorded: str
+):
+    """`.github/scripts/pytest_rerun_once.sh` doesn't rerun the failed tests when the session recorded a failure.
+
+    A rerun of only `test_flaky` would pass and judge no marker, so it would hide the stale one.
+    """
+    assert SESSION_FAILURES_ENV_VAR in (Path(__file__).parents[1] / '.github/scripts/pytest_rerun_once.sh').read_text(
+        encoding='utf-8'
+    )
+    failures = tmp_path / 'session-failures'
+    failures.touch()
+    monkeypatch.setenv(SESSION_FAILURES_ENV_VAR, str(failures))
+    marker = "@pytest.mark.subprocess(reason='used to launch Python')" if stale else ''
+    result = run(
+        f"""
+        {marker}
+        def test_stale():
+            pass
+
+        def test_flaky():
+            assert False
+        """
+    )
+    result.assert_outcomes(passed=1, failed=1)
+    assert failures.read_text(encoding='utf-8') == recorded
+    # The session took the variable, so a session that `pytester` runs inside one of its tests records nothing.
+    assert SESSION_FAILURES_ENV_VAR not in os.environ
+
+
 def test_a_failing_marked_test_is_not_judged(run: RunPytest):
     result = run(
         """
@@ -289,8 +328,12 @@ def test_a_failing_marked_test_is_not_judged(run: RunPytest):
 
 
 @pytest.mark.subprocess(reason='checks the guard and the stale-marker verdict across pytest-xdist workers')
-def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
+def test_guards_work_under_xdist(
+    run: RunPytest, pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '0.05')
+    failures = tmp_path / 'session-failures'
+    monkeypatch.setenv(SESSION_FAILURES_ENV_VAR, str(failures))
     # Workers import `tests.cost_guards` from a fresh interpreter, and xdist replaces their `sys.path` with the one
     # this process started with (ignoring `PYTHONPATH`), which only has the repo root when an editable install adds it.
     monkeypatch.setattr(
@@ -316,6 +359,11 @@ def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monk
         def test_preloaded_on_the_worker():
             assert PRELOADED
 
+        def test_the_worker_has_no_session_failures_file():
+            import os
+
+            assert {SESSION_FAILURES_ENV_VAR!r} not in os.environ
+
         @pytest.mark.subprocess(reason='used to launch Python')
         def test_stale():
             pass
@@ -328,14 +376,17 @@ def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monk
         '-n',
         '2',
     )
-    result.assert_outcomes(passed=2, failed=1)
+    result.assert_outcomes(passed=3, failed=1)
+    assert failures.read_text(encoding='utf-8') == (
+        'stale subprocess marker: test_guarded.py::test_stale\nslow test module collection: test_guarded.py\n'
+    )
     result.stdout.fnmatch_lines(
         [
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
             '*slow test module collection*',
             'test_guarded.py took *s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
-            '*worker startup and collection of 3 tests took *s (slowest worker collected in *s)',
+            '*worker startup and collection of 4 tests took *s (slowest worker collected in *s)',
         ]
     )
 

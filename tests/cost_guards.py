@@ -10,6 +10,9 @@ towards. The plugin:
 - reports how long collection took, in the terminal summary and in `$GITHUB_STEP_SUMMARY` when that is set;
 - when `PYTEST_COLLECT_BUDGET_SECONDS` is set, imports the dependencies many test modules share before collection,
   and fails the session when a test module takes longer than that to collect.
+
+Each check that fails the session without failing a test goes through `fail_session`, which `tests/span_schema.py`
+also calls.
 """
 
 from __future__ import annotations as _annotations
@@ -35,6 +38,7 @@ from typing_extensions import TypedDict
 PLUGIN_NAME = 'pydantic_ai_cost_guards'
 BUDGET_ENV_VAR = 'PYTEST_TEST_BUDGET_SECONDS'
 COLLECT_BUDGET_ENV_VAR = 'PYTEST_COLLECT_BUDGET_SECONDS'
+SESSION_FAILURES_ENV_VAR = 'PYTEST_SESSION_FAILURES_FILE'
 
 _THIS_FILE = __file__
 _TESTS_DIR = os.path.dirname(__file__) + os.sep
@@ -144,6 +148,7 @@ _DESELECTED_KEY = pytest.StashKey[set[str]]()
 _MARKER_SCOPES_KEY = pytest.StashKey[dict[str, tuple[int, bool]]]()
 _AGGREGATE_KEY = pytest.StashKey['_SessionAggregate']()
 _MODULE_COLLECTION_KEY = pytest.StashKey[dict[str, float]]()
+_SESSION_FAILURES_KEY = pytest.StashKey[str]()
 # The sessions whose terminal this process owns, innermost last; `pytest-xdist` workers own none.
 _aggregates: list[_SessionAggregate] = []
 # Innermost last: `pytester` runs a session inside a test, and its tests must not report to the outer one.
@@ -218,6 +223,9 @@ def pytest_configure(config: pytest.Config) -> None:
     if not hasattr(config, 'workerinput'):
         config.stash[_AGGREGATE_KEY] = aggregate = _SessionAggregate()
         _aggregates.append(aggregate)
+        # Popped before `pytest-xdist` starts its workers, so neither they nor a session `pytester` runs inside a test
+        # see it: only the session `.github/scripts/pytest_rerun_once.sh` started records its failures.
+        config.stash[_SESSION_FAILURES_KEY] = os.environ.pop(SESSION_FAILURES_ENV_VAR, '')
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -471,7 +479,26 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         return
     aggregate.stale = aggregate.stale_markers()
     if aggregate.stale or aggregate.over_collection_budget:
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+        fail_session(
+            session,
+            [
+                *(f'stale subprocess marker: {location}' for location in aggregate.stale),
+                *(f'slow test module collection: {module}' for module in sorted(aggregate.over_collection_budget)),
+            ],
+        )
+
+
+def fail_session(session: pytest.Session, problems: Sequence[str]) -> None:
+    """Fail the session for problems no test failed on, and append them to the file `SESSION_FAILURES_ENV_VAR` names.
+
+    A rerun of only the failed tests selects too little to find these problems again, so
+    `.github/scripts/pytest_rerun_once.sh`, which sets the variable, does not rerun a session that left the file
+    non-empty.
+    """
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    if path := session.config.stash.get(_SESSION_FAILURES_KEY, ''):
+        with open(path, 'a', encoding='utf-8') as file:
+            file.writelines(f'{problem}\n' for problem in problems)
 
 
 # --- Collection time --------------------------------------------------------------------------------------------------

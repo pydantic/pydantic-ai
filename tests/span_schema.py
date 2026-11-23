@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Concatenate, ParamSpec, TypeVar
 
 import pytest
 
+from . import cost_guards
 from .manifests import Exempt, assert_classified
 
 if TYPE_CHECKING:
@@ -234,7 +235,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         )
     except AssertionError as error:
         _session_problems.append(str(error))
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+        cost_guards.fail_session(session, [str(error)])
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:

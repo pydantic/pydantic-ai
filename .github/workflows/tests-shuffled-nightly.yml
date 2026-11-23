@@ -1,10 +1,10 @@
-# description: Runs the all-extras test selection nightly in one shuffled order and files each test that fails and then passes on its rerun as a flake issue.
+# description: Runs the all-extras test selection nightly in one shuffled order and files each test that fails and then passes or fails again on its rerun as a flake issue.
 name: Tests Shuffled Nightly
 
 # One unsharded run of the `test-all-extras` selection on that job's newest Python, in the order `pytest-randomly`
 # shuffles from a logged seed. When tests fail, they are rerun once in the default order. A test that then passes
 # depends on the order, and `report` files it as a flake with `.github/scripts/flake_report.py`. A test that fails
-# both times fails the run and files nothing.
+# both times fails the run, and `report` files it too, as one that fails on rerun too.
 
 on:
   schedule:
@@ -35,7 +35,7 @@ jobs:
     # unsharded run fits in 40 minutes. The other 20 cover setup and the rerun of the failed tests.
     timeout-minutes: 60
     outputs:
-      seed: ${{ steps.tests.outputs.seed }}
+      seed: ${{ steps.seed.outputs.seed }}
     env:
       CI: true
       # As on the 3.15 `test-all-extras` legs.
@@ -61,18 +61,22 @@ jobs:
 
       - run: uv sync --all-packages --all-extras
 
+      # A step of its own, which always succeeds, so `report` gets the seed when the tests fail.
+      - name: pick the seed
+        id: seed
+        run: echo "seed=$(((RANDOM << 15) | RANDOM))" >> "$GITHUB_OUTPUT"
+
       # `-p randomly` turns on `pytest-randomly`, which `addopts` in `pyproject.toml` turns off. Exit status 1 means
       # tests failed and the session finished, so only then are the failed tests rerun.
       - name: run the tests shuffled, and rerun the failed ones once in the default order
-        id: tests
+        env:
+          SEED: ${{ steps.seed.outputs.seed }}
         run: |
-          seed=$(((RANDOM << 15) | RANDOM))
-          echo "seed=$seed" >> "$GITHUB_OUTPUT"
           args=(--durations=100 -n logical --dist=loadgroup --ignore=tests/durable_exec -m 'not temporal')
           printf -v shown '%q ' "${args[@]}"
-          echo "::notice::Shuffled with seed $seed. Reproduce the order with: uv run --all-packages --all-extras pytest -p randomly --randomly-seed=$seed $shown"
+          echo "::notice::Shuffled with seed $SEED. Reproduce the order with: uv run --all-packages --all-extras pytest -p randomly --randomly-seed=$SEED $shown"
           status=0
-          uv run --no-sync pytest -p randomly --randomly-seed="$seed" "${args[@]}" || status=$?
+          uv run --no-sync pytest -p randomly --randomly-seed="$SEED" "${args[@]}" || status=$?
           if (( status == 1 )); then
             echo '::warning::Tests failed in the shuffled order. Rerunning them once in the default order.'
             status=0
@@ -128,4 +132,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SEED: ${{ needs.shuffled.outputs.seed }}
-        run: python3 .github/scripts/flake_report.py --reports "$RUNNER_TEMP/junit-reports" --seed "$SEED"
+        run: >-
+          python3 .github/scripts/flake_report.py --reports "$RUNNER_TEMP/junit-reports" --seed "$SEED"
+          --fails-on-rerun

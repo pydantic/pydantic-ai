@@ -93,10 +93,47 @@ def test_a_test_that_failed_and_then_passed_in_one_leg_is_flaky(tmp_path: Path, 
     )
 
     assert report.collect(reports, root) == {
-        'tests/models/test_b.py::TestB::test_flaky[openai-True]': {'test leg 0': 'AssertionError: assert 1 == 2'},
-        'tests/test_a.py::test_flaky': {'test leg 0': 'AssertionError: assert 1 == 2'},
-        'tests/test_a.py::test_teardown': {'test leg 0': 'failed on teardown with "RuntimeError: boom"'},
+        'tests/models/test_b.py::TestB::test_flaky[openai-True]': report.Flake(
+            {'test leg 0': 'AssertionError: assert 1 == 2'}
+        ),
+        'tests/test_a.py::test_flaky': report.Flake({'test leg 0': 'AssertionError: assert 1 == 2'}),
+        'tests/test_a.py::test_teardown': report.Flake({'test leg 0': 'failed on teardown with "RuntimeError: boom"'}),
     }
+
+
+def test_with_fails_on_rerun_a_test_that_failed_its_rerun_too_is_filed(tmp_path: Path, root: Path):
+    reports = tmp_path / 'reports'
+    write_report(
+        reports / 'junit-shuffled-0',
+        'first.xml',
+        ('tests/test_a.py::test_broken', FAILED),
+        ('tests/test_a.py::test_flaky', FAILED),
+        ('tests/test_a.py::test_not_rerun', FAILED),
+        # Failed in call and in teardown: pytest lists the test twice in one report.
+        ('tests/test_a.py::test_twice_in_one_report', FAILED),
+        ('tests/test_a.py::test_twice_in_one_report', ERRORED),
+        ('tests/test_a.py::test_mixed', FAILED),
+    )
+    write_report(
+        reports / 'junit-shuffled-0',
+        'rerun.xml',
+        ('tests/test_a.py::test_broken', ERRORED),
+        ('tests/test_a.py::test_flaky', PASSED),
+        ('tests/test_a.py::test_mixed', FAILED),
+    )
+    # Flaky in one leg, so filed as flaky, with only the legs it flaked in.
+    write_report(reports / 'junit-shuffled-1', 'first.xml', ('tests/test_a.py::test_mixed', FAILED))
+    write_report(reports / 'junit-shuffled-1', 'rerun.xml', ('tests/test_a.py::test_mixed', PASSED))
+
+    assert report.collect(reports, root, fails_on_rerun=True) == {
+        'tests/test_a.py::test_broken': report.Flake(
+            {'shuffled leg 0': 'AssertionError: assert 1 == 2'}, fails_on_rerun=True
+        ),
+        'tests/test_a.py::test_flaky': report.Flake({'shuffled leg 0': 'AssertionError: assert 1 == 2'}),
+        'tests/test_a.py::test_mixed': report.Flake({'shuffled leg 1': 'AssertionError: assert 1 == 2'}),
+    }
+    # The merge queue files only the tests that passed their rerun.
+    assert list(report.collect(reports, root)) == ['tests/test_a.py::test_flaky', 'tests/test_a.py::test_mixed']
 
 
 def test_a_report_cut_short_still_counts_and_is_named(tmp_path: Path, root: Path, capsys: pytest.CaptureFixture[str]):
@@ -107,7 +144,7 @@ def test_a_report_cut_short_still_counts_and_is_named(tmp_path: Path, root: Path
     )
 
     assert report.collect(reports, root) == {
-        'tests/test_a.py::test_flaky': {'test leg 0': 'AssertionError: assert 1 == 2'}
+        'tests/test_a.py::test_flaky': report.Flake({'test leg 0': 'AssertionError: assert 1 == 2'})
     }
     assert capsys.readouterr().out.startswith('::warning::junit-test-0/b.xml read only in part: ')
 
@@ -150,7 +187,7 @@ def test_a_node_id_whose_path_is_not_the_files_own_makes_none(root: Path):
 
 def test_a_flaky_test_without_an_issue_gets_one_labeled_flake_with_fenced_evidence():
     client = FakeClient()
-    flakes = {'tests/test_a.py::test_x': {'test leg 0': 'AssertionError: ``` `@someone` #123'}}
+    flakes = {'tests/test_a.py::test_x': report.Flake({'test leg 0': 'AssertionError: ``` `@someone` #123'})}
 
     assert report.reconcile(client, run(), flakes) == ['#200: filed `tests/test_a.py::test_x`']
     assert client.created == [
@@ -176,8 +213,8 @@ def test_a_flaky_test_with_an_open_issue_of_its_exact_title_gets_a_comment():
         {'number': 103, 'title': 'Flaky tests/test_a.py::test_y', 'pull_request': {}},
     )
     flakes = {
-        'tests/test_a.py::test_x': {'test leg 0': 'boom', 'test-all-extras leg 3': 'bang'},
-        'tests/test_a.py::test_y': {'test leg 1': 'boom'},
+        'tests/test_a.py::test_x': report.Flake({'test leg 0': 'boom', 'test-all-extras leg 3': 'bang'}),
+        'tests/test_a.py::test_y': report.Flake({'test leg 1': 'boom'}),
     }
 
     assert report.reconcile(client, run(seed=42), flakes) == [
@@ -196,9 +233,44 @@ def test_a_flaky_test_with_an_open_issue_of_its_exact_title_gets_a_comment():
     assert [issue['title'] for issue in client.created] == ['Flaky tests/test_a.py::test_y']
 
 
+def test_a_test_that_fails_on_rerun_too_gets_an_issue_or_a_comment_that_says_so():
+    client = FakeClient({'number': 101, 'title': 'Flaky tests/test_a.py::test_x'})
+    flakes = {
+        'tests/test_a.py::test_x': report.Flake({'shuffled leg 0': 'boom'}, fails_on_rerun=True),
+        'tests/test_a.py::test_y': report.Flake({'shuffled leg 0': 'bang'}, fails_on_rerun=True),
+    }
+
+    assert report.reconcile(client, run(seed=42), flakes) == [
+        '#101: noted that `tests/test_a.py::test_x` flaked again',
+        '#200: filed `tests/test_a.py::test_y`',
+    ]
+    order = (
+        'The first run shuffled the tests with `-p randomly --randomly-seed=42` and the rerun kept their default order.'
+    )
+    assert client.comments == [
+        (
+            f'/repos/{REPO}/issues/101/comments',
+            f'Failed in {LINK}, and fails on rerun too.\n\n```text\nshuffled leg 0: boom\n```\n\n{order}\n',
+        )
+    ]
+    assert client.created == [
+        {
+            'title': 'Flaky tests/test_a.py::test_y',
+            'body': (
+                f'`tests/test_a.py::test_y` failed in {LINK}, and fails on rerun too.\n\n'
+                f'```text\nshuffled leg 0: bang\n```\n\n{order}\n\n'
+                'Claim this issue before you fix the flake, as "Flake claims" in '
+                '`.agents/skills/pushing-commits-to-the-repo/SKILL.md` says.\n'
+            ),
+            'labels': ['flake'],
+            'number': 200,
+        }
+    ]
+
+
 def test_new_issues_are_capped_per_run_and_the_rest_are_logged():
     client = FakeClient()
-    flakes = {f'tests/test_a.py::test_{index}': {'test leg 0': 'boom'} for index in range(5)}
+    flakes = {f'tests/test_a.py::test_{index}': report.Flake({'test leg 0': 'boom'}) for index in range(5)}
 
     log = report.reconcile(client, run(), flakes)
 
@@ -214,7 +286,7 @@ def test_too_many_open_flake_issues_files_nothing():
     client = FakeClient(listed_all=False)
 
     with pytest.raises(RuntimeError, match='Too many open flake issues'):
-        report.reconcile(client, run(), {'tests/test_a.py::test_x': {'test leg 0': 'boom'}})
+        report.reconcile(client, run(), {'tests/test_a.py::test_x': report.Flake({'test leg 0': 'boom'})})
     assert client.created == []
 
 
@@ -224,6 +296,8 @@ def test_main_files_with_a_token_and_lists_without_one(
     reports = tmp_path / 'reports'
     write_report(reports / 'junit-test-0', 'a.xml', ('tests/test_a.py::test_x', FAILED))
     write_report(reports / 'junit-test-0', 'b.xml', ('tests/test_a.py::test_x', PASSED))
+    write_report(reports / 'junit-shuffled-0', 'a.xml', ('tests/test_a.py::test_y', FAILED))
+    write_report(reports / 'junit-shuffled-0', 'b.xml', ('tests/test_a.py::test_y', FAILED))
     client = FakeClient()
     summary = tmp_path / 'summary.md'
 
@@ -238,6 +312,10 @@ def test_main_files_with_a_token_and_lists_without_one(
 
     assert report.main(['--reports', str(reports), '--dry-run']) == 0
     assert capsys.readouterr().out == '`tests/test_a.py::test_x` flaked in test leg 0\n'
+    assert report.main(['--reports', str(reports), '--dry-run', '--fails-on-rerun']) == 0
+    assert capsys.readouterr().out == (
+        '`tests/test_a.py::test_x` flaked in test leg 0\n`tests/test_a.py::test_y` failed its rerun too in shuffled leg 0\n'
+    )
     assert report.main(['--reports', str(reports)]) == 1
     assert client.created == []
 

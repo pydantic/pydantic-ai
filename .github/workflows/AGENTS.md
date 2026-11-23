@@ -538,7 +538,9 @@ without blocking a merge.
   When pytest exits 1, the script reruns the failed tests once with `--last-failed`, and the step takes the rerun's
   exit status. The rerun stays inside the job's `timeout-minutes`, and so within the queue's 60-minute check
   timeout. A rerun that passes lets the merge group merge, even when the failure was a real nondeterministic bug.
-  `harness-bubblewrap-integration` runs pytest through `make` and is not rerun.
+  A first run that also failed a check of the whole session, such as a stale `subprocess` marker, fails without a
+  rerun: a rerun of the failed tests cannot repeat that check. `fail_session` in `tests/cost_guards.py` records each
+  such failure for the script. `harness-bubblewrap-integration` runs pytest through `make` and is not rerun.
 - `tests-shuffled-nightly.yml` runs the `test-all-extras` selection every night, unsharded, on that job's newest
   Python. The run takes one `pytest-randomly` order from a seed it logs. When tests fail, the run reruns them once in
   the default order. A test that fails both times fails the run.
@@ -546,11 +548,13 @@ without blocking a merge.
 `.github/scripts/flake_report.py` reads a run's JUnit reports, one `junit-<job>-<index>` artifact per job leg. It runs
 in `file-flakes` in the merge queue and in the nightly's `report` job. Keep `file-flakes` out of `check`'s needs, so
 filing never holds or fails the queue. A test that one report of a leg lists as failed and another as passed is a
-flake. Each flake gets one open issue titled `Flaky <node id>` and labeled `flake`, the convention of "Flake claims"
-in `.agents/skills/pushing-commits-to-the-repo/SKILL.md`. A later flake of the test comments on that issue. A run
-files at most three new issues and logs the rest. The reports are untrusted text. An issue title holds only a test
-file path under `tests/` in the checkout and identifier-shaped names. Failure text reaches an issue only fenced and
-truncated.
+flake. The nightly's `report` job passes `--fails-on-rerun`, so a test that two of a leg's reports list as failed is
+filed too, as failing on rerun too. `file-flakes` passes no flag: in the merge queue, a test that fails its rerun
+fails its job and is no flake. Each flake gets one open issue titled `Flaky <node id>` and labeled `flake`, the
+convention of "Flake claims" in `.agents/skills/pushing-commits-to-the-repo/SKILL.md`. A later flake of the test
+comments on that issue. A run files at most three new issues and logs the rest. The reports are untrusted text. An
+issue title holds only a test file path under `tests/` in the checkout and identifier-shaped names. Failure text
+reaches an issue only fenced and truncated.
 
 # Code owners review dependency, CI config and durable runtime changes
 

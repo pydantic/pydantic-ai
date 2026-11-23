@@ -1,4 +1,7 @@
-"""Run `pytest_rerun_once.sh` over a fake pytest that records its arguments and exits with the statuses it is given."""
+"""Run `pytest_rerun_once.sh` over a fake pytest that records its arguments and exits with the statuses it is given.
+
+On its first call, the fake also records `SESSION_FAILURE`, when set, as `fail_session` in `tests/cost_guards.py` does.
+"""
 
 from __future__ import annotations
 
@@ -11,19 +14,29 @@ import pytest
 SCRIPT = Path(__file__).parent / 'pytest_rerun_once.sh'
 FAKE_PYTEST = r"""#!/usr/bin/env bash
 echo "$*" >> "$CALLS"
+call=$(wc -l < "$CALLS")
+if (( call == 1 )) && [[ -n "$SESSION_FAILURE" ]]; then
+  echo "$SESSION_FAILURE" >> "$PYTEST_SESSION_FAILURES_FILE"
+fi
 read -ra statuses <<< "$STATUSES"
-exit "${statuses[$(($(wc -l < "$CALLS") - 1))]}"
+exit "${statuses[$((call - 1))]}"
 """
 ARGS = 'tests/test_a.py -n logical'
 RERUN = f'{ARGS} --last-failed --last-failed-no-failures none'
 
 
-def run(tmp_path: Path, event: str, *statuses: int) -> tuple[int, list[str]]:
+def run(tmp_path: Path, event: str, *statuses: int, session_failure: str = '') -> tuple[int, list[str]]:
     fake = tmp_path / 'pytest'
     fake.write_text(FAKE_PYTEST, encoding='utf-8')
     fake.chmod(0o755)
     calls = tmp_path / 'calls'
-    env = {**os.environ, 'GITHUB_EVENT_NAME': event, 'STATUSES': ' '.join(map(str, statuses)), 'CALLS': str(calls)}
+    env = {
+        **os.environ,
+        'GITHUB_EVENT_NAME': event,
+        'STATUSES': ' '.join(map(str, statuses)),
+        'CALLS': str(calls),
+        'SESSION_FAILURE': session_failure,
+    }
     result = subprocess.run(['bash', str(SCRIPT), str(fake), *ARGS.split()], env=env, check=False, capture_output=True)
     return result.returncode, calls.read_text(encoding='utf-8').splitlines()
 
@@ -33,6 +46,17 @@ def test_the_merge_queue_reruns_failed_tests_once_and_takes_the_reruns_status(
     tmp_path: Path, statuses: tuple[int, int], expected: int
 ):
     assert run(tmp_path, 'merge_group', *statuses) == (expected, [ARGS, RERUN])
+
+
+@pytest.mark.parametrize(
+    ('session_failure', 'expected'),
+    [('', (0, [ARGS, RERUN])), ('stale subprocess marker: tests/test_a.py::test_x', (1, [ARGS]))],
+)
+def test_a_first_run_that_also_failed_a_check_of_the_whole_session_fails_without_a_rerun(
+    tmp_path: Path, session_failure: str, expected: tuple[int, list[str]]
+):
+    """A rerun of the failed tests would pass, but cannot repeat the check that failed the session."""
+    assert run(tmp_path, 'merge_group', 1, 0, session_failure=session_failure) == expected
 
 
 @pytest.mark.parametrize(

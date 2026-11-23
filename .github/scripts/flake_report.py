@@ -6,6 +6,10 @@ shuffled run does (`tests-shuffled-nightly.yml`), writes one JUnit report per py
 as passed gave two outcomes on the same commit: it is flaky. A test that failed in one leg and passed in another is
 not, because legs differ in Python and install.
 
+With `--fails-on-rerun`, which the nightly passes, a test that two reports of a leg list as failed and none as passed
+is filed the same way, as one that fails on rerun too. The merge queue passes no flag: there a test that fails its
+rerun fails its job, and is no flake to file.
+
 Each flaky test gets one open issue titled `Flaky <node id>` and labeled `flake`, the convention of "Flake claims"
 in `.agents/skills/pushing-commits-to-the-repo/SKILL.md`:
 
@@ -24,6 +28,7 @@ import argparse
 import os
 import re
 import sys
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +68,15 @@ _ISSUES = TypeAdapter(list[Issue])
 
 
 @dataclass
+class Flake:
+    """How a test flaked: each leg it flaked in, mapped to the first line of its failure there."""
+
+    legs: dict[str, str]
+    # It failed its rerun too, in every one of `legs`.
+    fails_on_rerun: bool = False
+
+
+@dataclass
 class Run:
     """The workflow run whose reports are being filed."""
 
@@ -77,16 +91,23 @@ class Run:
         return f'[run {self.run_id}]({self.server_url}/{self.repo}/actions/runs/{self.run_id})'
 
 
-def collect(reports: Path, root: Path) -> dict[str, dict[str, str]]:
-    """Each flaky test's node id, mapped to each leg it flaked in and the first line of its failure there."""
-    flakes: dict[str, dict[str, str]] = {}
+def collect(reports: Path, root: Path, *, fails_on_rerun: bool = False) -> dict[str, Flake]:
+    """Each flaky test's node id, mapped to how it flaked; with `fails_on_rerun`, also each test that failed its rerun.
+
+    A test that flaked in one leg and failed its rerun in another is filed as flaky, with the legs it flaked in.
+    """
+    flakes: dict[str, Flake] = {}
+    failed_on_rerun: dict[str, dict[str, str]] = {}
     artifacts = sorted(path for path in reports.iterdir() if path.is_dir()) if reports.is_dir() else []
     for artifact in artifacts:
         if (match := _ARTIFACT.fullmatch(artifact.name)) is None:
             continue
         failed: dict[str, str] = {}
+        # How many reports list each test as failed: a test that fails in call and in teardown is listed twice in one.
+        failures: Counter[str] = Counter()
         passed: set[str] = set()
         for report in sorted(artifact.rglob('*.xml')):
+            failed_here: set[str] = set()
             try:
                 for case in junit.testcases(report):
                     if (node_id := issue_node_id(case.get('classname', ''), case.get('name', ''), root)) is None:
@@ -97,11 +118,20 @@ def collect(reports: Path, root: Path) -> dict[str, dict[str, str]]:
                         passed.add(node_id)
                     elif failure is not None:
                         failed.setdefault(node_id, junit.first_line(failure.get('message') or failure.text or ''))
+                        failed_here.add(node_id)
             except (OSError, ElementTree.ParseError) as error:
                 # A report cut short still names the outcomes before the cut.
                 print(f'::warning::{junit.first_line(f"{report.relative_to(reports)} read only in part: {error}")}')
+            failures.update(failed_here)
+        leg = f'{match.group(1)} leg {match.group(2)}'
         for node_id in sorted(failed.keys() & passed):
-            flakes.setdefault(node_id, {})[f'{match.group(1)} leg {match.group(2)}'] = failed[node_id]
+            flakes.setdefault(node_id, Flake({})).legs[leg] = failed[node_id]
+        if fails_on_rerun:
+            for node_id in sorted(failed.keys() - passed):
+                if failures[node_id] > 1:
+                    failed_on_rerun.setdefault(node_id, {})[leg] = failed[node_id]
+    for node_id, legs in failed_on_rerun.items():
+        flakes.setdefault(node_id, Flake(legs, fails_on_rerun=True))
     return flakes
 
 
@@ -124,17 +154,18 @@ def issue_node_id(classname: str, name: str, root: Path) -> str | None:
     return base if len(base) <= _NODE_ID_LIMIT else None
 
 
-def _evidence(run: Run, legs: Mapping[str, str]) -> str:
-    text = junit.fenced([f'{leg}: {message}' for leg, message in legs.items()])
+def _evidence(run: Run, flake: Flake) -> str:
+    text = junit.fenced([f'{leg}: {message}' for leg, message in flake.legs.items()])
     if run.seed is not None:
         text += (
             f'\n\nThe first run shuffled the tests with `-p randomly --randomly-seed={run.seed}` and the rerun kept '
-            'their default order, so the failure can depend on the order.'
+            'their default order'
         )
+        text += '.' if flake.fails_on_rerun else ', so the failure can depend on the order.'
     return text
 
 
-def reconcile(client: attention.GitHubClient, run: Run, flakes: Mapping[str, Mapping[str, str]]) -> list[str]:
+def reconcile(client: attention.GitHubClient, run: Run, flakes: Mapping[str, Flake]) -> list[str]:
     """Comment on each flaky test's open issue, and file one for each test that has none; return a log."""
     pages, listed_all = client.first_pages(
         f'/repos/{run.repo}/issues?state=open&labels={_LABEL}', count=_OPEN_PAGE_LIMIT
@@ -145,17 +176,28 @@ def reconcile(client: attention.GitHubClient, run: Run, flakes: Mapping[str, Map
     open_issues: dict[str, int] = {issue.title: issue.number for issue in issues if issue.pull_request is None}
     log: list[str] = []
     new: list[str] = []
-    for node_id, legs in sorted(flakes.items()):
+    for node_id, flake in sorted(flakes.items()):
         if (number := open_issues.get(f'{_TITLE_PREFIX}{node_id}')) is None:
             new.append(node_id)
             continue
-        body = f'Failed and then passed again in {run.link}.\n\n{_evidence(run, legs)}\n'
+        outcome = (
+            f'Failed in {run.link}, and fails on rerun too'
+            if flake.fails_on_rerun
+            else f'Failed and then passed again in {run.link}'
+        )
+        body = f'{outcome}.\n\n{_evidence(run, flake)}\n'
         client.post(f'/repos/{run.repo}/issues/{number}/comments', {'body': body})
         log.append(f'#{number}: noted that `{node_id}` flaked again')
     for node_id in new[:_NEW_ISSUE_LIMIT]:
+        flake = flakes[node_id]
+        outcome = (
+            f'failed in {run.link}, and fails on rerun too'
+            if flake.fails_on_rerun
+            else f'failed and then passed when its job reran it, in {run.link}'
+        )
         body = (
-            f'`{node_id}` failed and then passed when its job reran it, in {run.link}.\n\n'
-            f'{_evidence(run, flakes[node_id])}\n\n'
+            f'`{node_id}` {outcome}.\n\n'
+            f'{_evidence(run, flake)}\n\n'
             'Claim this issue before you fix the flake, as "Flake claims" in '
             '`.agents/skills/pushing-commits-to-the-repo/SKILL.md` says.\n'
         )
@@ -174,14 +216,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='File each test that failed and then passed in one CI job.')
     parser.add_argument('--reports', type=Path, required=True, help='directory of downloaded `junit-*` artifacts')
     parser.add_argument('--seed', type=int, help='the `pytest-randomly` seed the first pytest session shuffled with')
+    parser.add_argument(
+        '--fails-on-rerun', action='store_true', help='also file each test that failed its rerun too, as a flake'
+    )
     parser.add_argument('--dry-run', action='store_true', help='list the flaky tests without reading or writing GitHub')
     args = parser.parse_args(argv)
     reports: Path = args.reports
     seed: int | None = args.seed
     dry_run: bool = args.dry_run
-    flakes = collect(reports, Path(os.environ.get('GITHUB_WORKSPACE', '.')))
+    fails_on_rerun: bool = args.fails_on_rerun
+    flakes = collect(reports, Path(os.environ.get('GITHUB_WORKSPACE', '.')), fails_on_rerun=fails_on_rerun)
     if dry_run:
-        log = [f'`{node_id}` flaked in {", ".join(legs)}' for node_id, legs in flakes.items()]
+        log = [
+            f'`{node_id}` {"failed its rerun too" if flake.fails_on_rerun else "flaked"} in {", ".join(flake.legs)}'
+            for node_id, flake in flakes.items()
+        ]
     else:
         token = os.environ.get('GITHUB_TOKEN')
         if not token:
