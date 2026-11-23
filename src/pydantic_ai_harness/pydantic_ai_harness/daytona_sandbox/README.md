@@ -108,26 +108,15 @@ See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more
 
 ## Give the agent a desktop
 
-Pass `desktop=True` for a sandbox with a screen, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[DaytonaSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size is set when the sandbox is created.
 
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
-from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+Daytona's default snapshot has a desktop with a terminal and Chromium. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/).
 
-agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DaytonaSandbox(desktop=True), ComputerUse()])
-
-
-async def main():
-    result = await agent.run('Open a terminal and find out which Python version is installed.')
-    print(result.output)
-```
-
-Daytona's default snapshot has a desktop with a terminal and Chromium. The screen is 1280x800. For another size, pass it, such as `desktop=(1440, 900)`. The size is set when the sandbox is created. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). Add `Coder` to give the agent the sandbox's shell and files too.
-
-Daytona's desktop can't press F13 to F24, the keypad's Enter, `+`, `-`, `*`, `/` and `.` keys, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one. On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`. Its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
-
-There's no live viewer. To watch a run, save each screenshot as it arrives, as shown in [Watching a run](../computer_use/#watching-a-run). Anyone with the sandbox's preview link can see and control its desktop. A public sandbox's preview link needs no token, so a public sandbox gets no desktop: the run fails with `UserError`.
+- A public sandbox gets no desktop, since its preview link needs no token and anyone with it can control the desktop: the run fails with `UserError`.
+- On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+- The desktop can't press F13 to F24, the keypad's Enter, `+`, `-`, `*`, `/` and `.` keys, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
 
 ## Reattach later
 
