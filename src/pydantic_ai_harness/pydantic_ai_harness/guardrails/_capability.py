@@ -21,11 +21,10 @@ A guard that raises propagates the exception so the caller sees a hard
 failure. Guards may be sync or async and may optionally take a
 [`RunContext`][pydantic_ai.tools.RunContext] as their first argument.
 
-`replace`, `block`, `approve` and an output `retry` are recorded as spans on
-the run's tracer, naming the guard that decided, so a redaction or refusal is
-visible in Logfire traces. Content attributes (the replacement value and the
-guard's message) are attached only when `RunContext.trace_include_content` is
-set. The original value is never recorded.
+`replace` and `block` are recorded as spans on the active OpenTelemetry
+tracer, so a redaction or refusal is visible in Logfire traces. Content
+attributes (the replacement value and the refusal message) are attached only
+when `RunContext.trace_include_content` is set. The original value is never recorded.
 """
 
 from __future__ import annotations
@@ -53,18 +52,15 @@ from pydantic_ai_harness._peer_message import is_peer_message
 from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
-    GuardCallable,
     GuardOutcome,
     GuardrailResult,
     RecordedVerdict,
     as_guards,
     evaluate_all,
-    guard_at,
     record_verdict,
     replay_verdict,
     trace_block,
     trace_redaction,
-    trace_retry,
 )
 
 if TYPE_CHECKING:
@@ -349,14 +345,13 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
         `allow` returns; `block` raises `SkipModelRequest`; `replace` rewrites
         the prompt `parts` sent to the model and their `original` in the run's
-        history when there is a separate one (see `_history_redaction`);
+        history when there is a separate one (see `_history_replacement`);
         `retry`, `replace` under `parallel=True`, and `replace` on a prompt of
         more than one part (`prompt_parts`) raise `UserError`. Every
         evaluation happens before anything is rewritten, and the redaction spans
         are recorded once every rewrite has succeeded.
         """
-        guards = as_guards(self.guard, capability='InputGuardrail')
-        verdict, position = await self._screen(ctx, prompt, guards)
+        verdict, position = await self._screen(ctx, prompt)
         if verdict.action == 'allow':
             return
         if self.parallel:
@@ -376,29 +371,18 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
         # A copy with the original's text gets the same replacement, under the same span.
         same_text = original is not None and original.content == parts[0].content
-        own_redaction = None
+        own_replacement = None
         if original is not None and not same_text:
-            own_redaction = await self._history_redaction(ctx, original, guards)
+            own_replacement = await self._history_replacement(ctx, original)
         for part in parts:
             _replace_prompt(part, replacement)
-        if original is not None and (same_text or own_redaction is not None):
-            _replace_prompt(original, replacement if own_redaction is None else own_redaction[0])
-        trace_redaction(
-            ctx, direction='input', guard=guard_at(guards, position), position=position, replacement=replacement
-        )
-        if own_redaction is not None:
-            own_replacement, own_position = own_redaction
-            trace_redaction(
-                ctx,
-                direction='input',
-                guard=guard_at(guards, own_position),
-                position=own_position,
-                replacement=own_replacement,
-            )
+        if original is not None and (same_text or own_replacement is not None):
+            _replace_prompt(original, replacement if own_replacement is None else own_replacement)
+        trace_redaction(ctx, direction='input', replacement=replacement)
+        if own_replacement is not None:
+            trace_redaction(ctx, direction='input', replacement=own_replacement)
 
-    async def _screen(
-        self, ctx: RunContext[AgentDepsT], prompt: str, guards: tuple[GuardCallable, ...]
-    ) -> tuple[GuardrailResult, int]:
+    async def _screen(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[GuardrailResult, int]:
         """Run the guard chain on `prompt`, returning an `allow` or `replace` verdict and raising for the others.
 
         `block` raises `SkipModelRequest`; `retry` and `approve` raise `UserError`.
@@ -419,9 +403,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 )
             case 'block':
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
-                trace_block(
-                    ctx, direction='input', guard=guard_at(guards, position), position=position, message=message
-                )
+                trace_block(ctx, direction='input', message=message)
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
@@ -432,9 +414,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         guards = as_guards(self.guard, capability='InputGuardrail')
         return await record_verdict(evaluate_all(guards, ctx, prompt, check_replacement=_require_prompt_text))
 
-    async def _history_redaction(
-        self, ctx: RunContext[AgentDepsT], original: UserPromptPart, guards: tuple[GuardCallable, ...]
-    ) -> tuple[str, int] | None:
+    async def _history_replacement(self, ctx: RunContext[AgentDepsT], original: UserPromptPart) -> str | None:
         """The redaction of the history's `original` of a prompt the model was sent a changed copy of.
 
         The history is what later requests in the run, and any stored conversation, replay, so a
@@ -444,13 +424,12 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         written there, so the copy's request-only text never reaches the history, `allow` leaves
         the original as it is, and `block` blocks the run before anything is rewritten.
 
-        Returns the replacement and the position of the guard that made it, or `None` when the
-        original is left as it is.
+        Returns `None` when the original is left as it is.
         """
-        verdict, position = await self._screen(ctx, _prompt_text(original.content), guards)
+        verdict, position = await self._screen(ctx, _prompt_text(original.content))
         if verdict.action == 'allow':
             return None
-        return _require_prompt_text(verdict.replacement, position), position
+        return _require_prompt_text(verdict.replacement, position)
 
     async def wrap_model_request(
         self,
@@ -619,28 +598,23 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
         """Evaluate the guard against the processed output and act on its verdict."""
         if ctx.partial_output:
             return output
-        verdict, position = replay_verdict(await self._evaluate(ctx, output), output)
-        guard = guard_at(as_guards(self.guard, capability='OutputGuardrail'), position)
+        verdict, _ = replay_verdict(await self._evaluate(ctx, output), output)
         match verdict.action:
             case 'allow':
                 return output
             case 'block':
                 message = verdict.message or _DEFAULT_OUTPUT_BLOCK_MESSAGE
-                trace_block(ctx, direction='output', guard=guard, position=position, message=message)
+                trace_block(ctx, direction='output', message=message)
                 raise OutputBlocked(message)
             case 'retry':
-                message = verdict.message or _DEFAULT_OUTPUT_RETRY_MESSAGE
-                trace_retry(ctx, direction='output', guard=guard, position=position, message=message)
-                raise ModelRetry(message)
+                raise ModelRetry(verdict.message or _DEFAULT_OUTPUT_RETRY_MESSAGE)
             case 'approve':
                 raise UserError(
                     'An OutputGuardrail guard cannot return GuardrailResult.approve() -- approval applies to tool '
                     'calls only.'
                 )
             case 'replace':
-                trace_redaction(
-                    ctx, direction='output', guard=guard, position=position, replacement=verdict.replacement
-                )
+                trace_redaction(ctx, direction='output', replacement=verdict.replacement)
                 return verdict.replacement
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
