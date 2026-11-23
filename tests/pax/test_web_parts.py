@@ -346,8 +346,9 @@ def test_a_reloaded_edit_without_a_diff() -> None:
 def test_a_reloaded_shell_card_reads_its_exit_from_the_status_line() -> None:
     """A reloaded `shell` card takes its exit code from the `status.json` line its result ends with.
 
-    Not driven through a live session: a job still running or started in the background, a non-integer code, and a
-    refused command each end their result in a way a live turn would only produce by racing a real process.
+    Not driven through a live session: a job still running or started in the background, a non-integer code, a
+    refused command, a status line a masked secret broke, and another tool named `shell` each end their result in a
+    way a live turn would only produce by racing a real process or loading a tool of its own.
     """
     handles = 'PID: 7 (supervisor)\nOutput: /jobs/1/output.log\nStatus: /jobs/1/status.json'
     results = {
@@ -356,6 +357,8 @@ def test_a_reloaded_shell_card_reads_its_exit_from_the_status_line() -> None:
         'unpublished': handles,
         'not an integer': f'{handles}\n{{"pid": 7, "exit_code": true}}',
         'refused': 'The command `rm -rf /` is not allowed.',
+        'masked': f'{handles}\n{{"pid": 7, "exit_code": ***}}',
+        "a user's own tool named shell": '{"stdout":"x","exit_code":2}',
     }
     messages = [
         ModelResponse(
@@ -371,7 +374,7 @@ def test_a_reloaded_shell_card_reads_its_exit_from_the_status_line() -> None:
             ]
         ),
     ]
-    assert [item.exit_code for item in history_items(messages)] == [3, None, None, None, None, None]
+    assert [item.exit_code for item in history_items(messages)] == [3, None, None, None, None, None, None, None]
 
 
 def test_history_entries_follow_each_turn_with_its_usage_as_usage_reports_it() -> None:

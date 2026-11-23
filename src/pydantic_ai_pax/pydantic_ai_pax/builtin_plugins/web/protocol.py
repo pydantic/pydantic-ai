@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import json
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal, assert_never
@@ -1264,11 +1265,13 @@ def _join_tool_result(history: _HistoryEntriesContext, part: ToolReturnPart) -> 
         tool.state = tool_result_state(part)
         tool.diffs = _edit_diffs(history.edits.get(part.tool_call_id), part)
         if tool.name == SHELL_TOOL:
-            # The result ends with the job's `status.json`, the file the live card's `CommandFinishedEvent` read.
-            try:
-                status = _JSON_OBJECT.validate_json(part.model_response_str().rpartition('\n')[2])
-            except ValidationError:  # no status yet, or a refused command's message
-                status = {}
+            # The harness `Shell` result ends with its `Status:` handle, then that `status.json`, which the live card's
+            # `CommandFinishedEvent` read. A result that ends otherwise, as another tool named `shell` may, has none.
+            rest, _, last = part.model_response_str().rpartition('\n')
+            status: dict[str, JsonValue] = {}
+            if rest.rpartition('\n')[2].startswith('Status: '):
+                with suppress(ValidationError):  # a line a masked secret broke, say
+                    status = _JSON_OBJECT.validate_json(last)
             exit_code = status.get('exit_code')
             tool.exit_code = exit_code if isinstance(exit_code, int) and not isinstance(exit_code, bool) else None
 
