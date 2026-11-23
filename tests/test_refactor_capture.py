@@ -826,6 +826,7 @@ def test_warnings():
         warnings.simplefilter('always')
         Agent(FunctionModel(warn_from_the_model)).run_sync('hi')
         warnings.warn_explicit('reported where told', RuntimeWarning, 'elsewhere.py', 7)
+        warnings.warn('raised by a finalizer', ResourceWarning)
         warnings.simplefilter('ignore')
         warnings.warn('filtered out')
 """
@@ -1830,7 +1831,8 @@ def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Pa
 
 def test_capture_records_tool_hooks_sampling_exceptions_and_warnings(run: RunCapture, tmp_path: Path):
     """Each tool hook the tool manager calls, each `MCPSamplingModel` request and the calls its mocked session gets,
-    each exception `pytest.raises` or `pytest.RaisesGroup` catches, and each warning the filters let through.
+    each exception `pytest.raises` or `pytest.RaisesGroup` catches, and each warning the filters let through but a
+    `ResourceWarning`.
 
     The agent combines `Rewrites`, a capability defined once the capture started, with `Untouched`; the calls the
     combined capability makes on them aren't recorded again, and the one the test makes on `Rewrites` directly is. The

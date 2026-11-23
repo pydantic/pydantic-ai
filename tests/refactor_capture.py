@@ -119,8 +119,9 @@ and its `__context__`. Each warning the filters let through while a test runs is
 it's shown or recorded, by `pytest.warns` or `warnings.catch_warnings`, with its category, its message and the frame it
 reports: that frame's module and function, and its line unless a workspace package holds it, since a refactor moves the
 lines of the code it edits. One the filters raise as an error is recorded only as an exception a block catches, and one
-they ignore isn't. A recorded hook or `MCPSamplingModel.request` call is one more frame on the stack, so a warning
-raised inside one with a `stacklevel` that reaches past it would report the capture's frame.
+they ignore isn't. Neither is a `ResourceWarning`, which a finalizer raises whenever garbage collection reaches it, so
+in whichever test the allocations made put it. A recorded hook or `MCPSamplingModel.request` call is one more frame on
+the stack, so a warning raised inside one with a `stacklevel` that reaches past it would report the capture's frame.
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
@@ -1389,8 +1390,9 @@ class RefactorCapture:
 
         @functools.wraps(original)
         def recording_showwarnmsg(message: warnings.WarningMessage) -> None:
-            # One raised while no test runs, like an import during collection, belongs to no test node.
-            if self.node is not None:
+            # One raised while no test runs, like an import during collection, belongs to no test node. A finalizer
+            # raises a `ResourceWarning` whenever garbage collection reaches it, which the allocations made decide.
+            if self.node is not None and not issubclass(message.category, ResourceWarning):
                 self.records.append(
                     {
                         'kind': 'warning',
