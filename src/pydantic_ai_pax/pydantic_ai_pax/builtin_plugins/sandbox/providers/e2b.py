@@ -42,7 +42,7 @@ class E2BProvider:
 
     def missing(self) -> str | None:
         if find_spec('e2b') is None:
-            return "E2B support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[e2b]'."
+            return "E2B support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[e2b]'."
         if saved_key(KEY_NAME) is None:
             return f'Add your E2B API key in /keys as {KEY_NAME}. Get one at https://e2b.dev/dashboard?tab=keys.'
         return None

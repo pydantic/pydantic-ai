@@ -70,19 +70,19 @@ __all__ = (
     'Zoom',
 )
 
-MouseButton: TypeAlias = Literal['left', 'middle', 'right', 'back', 'forward']
-"""A mouse button; `back` and `forward` are the side buttons."""
+MouseButton: TypeAlias = Literal['left', 'middle', 'right']
+"""A mouse button."""
 
 _Coordinate: TypeAlias = Annotated[int, Field(ge=0)]
 
 
-def _require_type(schema: dict[str, Any]) -> None:
+def _mark_type_required(schema: dict[str, Any]) -> None:
     # `type` has a default so Python callers can omit it, but a model must always send it: it picks the action.
     if 'type' in schema.get('properties', {}):
         schema['required'] = ['type', *schema.get('required', [])]
 
 
-_ACTION_CONFIG = ConfigDict(extra='forbid', use_attribute_docstrings=True, json_schema_extra=_require_type)
+_ACTION_CONFIG = ConfigDict(extra='forbid', use_attribute_docstrings=True, json_schema_extra=_mark_type_required)
 
 Modifier: TypeAlias = Literal['ctrl', 'shift', 'alt', 'super']
 """A modifier key, held during a click, move, drag or scroll."""
@@ -99,17 +99,17 @@ Key: TypeAlias = NamedKey | Annotated[str, Field(min_length=1, max_length=1)]
 """A named key, or a single character such as `a` or `+`."""
 
 
-def _lower(key: object) -> object:
+def _lowercase_key(key: object) -> object:
     # Models write names in any case, such as `Home` or `F5`. An upper-case letter presses the same key as its
     # lower-case one.
     return key.lower() if isinstance(key, str) else key
 
 
-_Keys: TypeAlias = Annotated[tuple[Annotated[Key, BeforeValidator(_lower)], ...], Field(min_length=1)]
-_Modifiers: TypeAlias = tuple[Annotated[Modifier, BeforeValidator(_lower)], ...]
+_Keys: TypeAlias = Annotated[tuple[Annotated[Key, BeforeValidator(_lowercase_key)], ...], Field(min_length=1)]
+_Modifiers: TypeAlias = tuple[Annotated[Modifier, BeforeValidator(_lowercase_key)], ...]
 
 
-def _check_position(x: int | None, y: int | None) -> None:
+def _check_x_and_y_given_together(x: int | None, y: int | None) -> None:
     if (x is None) != (y is None):
         raise ValueError('give both `x` and `y`, or neither to act at the pointer')
 
@@ -155,7 +155,7 @@ class Click:
     """Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."""
 
     def __post_init__(self) -> None:
-        _check_position(self.x, self.y)
+        _check_x_and_y_given_together(self.x, self.y)
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
@@ -167,8 +167,6 @@ class MouseMove:
     """From the left edge of the screenshot."""
     y: _Coordinate
     """From the top edge of the screenshot."""
-    modifiers: _Modifiers = ()
-    """Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."""
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
@@ -205,7 +203,7 @@ class Scroll:
     type: Literal['scroll'] = 'scroll'
     direction: Literal['up', 'down', 'left', 'right']
     """Which way the content moves into view: `down` shows what is below."""
-    amount: Annotated[int, Field(ge=1)] = 3
+    amount: Annotated[int, Field(ge=1)]
     """Mouse-wheel clicks; one click scrolls about three lines."""
     x: _Coordinate | None = None
     """From the left edge of the screenshot. Omit both `x` and `y` to scroll where the pointer is."""
@@ -218,7 +216,7 @@ class Scroll:
     """
 
     def __post_init__(self) -> None:
-        _check_position(self.x, self.y)
+        _check_x_and_y_given_together(self.x, self.y)
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
@@ -322,7 +320,7 @@ class ComputerResult(TypedDict):
     error: NotRequired[str]
     """Why an action failed. It is the action right after the `performed` ones. The actions after it did not run."""
 
-    changed: NotRequired[bool]
+    actions_changed: NotRequired[bool]
     """`True` when the actions that ran differ from those the model asked for, for example because an approval
     changed them. A model adapter then sends the summary instead of reporting the model's actions as the ones that
     ran."""

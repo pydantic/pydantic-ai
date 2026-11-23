@@ -1,4 +1,4 @@
-"""The `hooks` table: commands CLAI runs before and after tool calls, and as a turn starts and ends.
+"""The `hooks` table: commands Pax runs before and after tool calls, and as a turn starts and ends.
 
 Validated here, apart from the plugin that runs them, so `.clai/settings.json` is checked at startup
 without importing it.
