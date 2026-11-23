@@ -276,11 +276,11 @@ async def main():
     print(result.output)
 ```
 
-A new sandbox uses E2B's `desktop` template: Ubuntu with the XFCE desktop, a terminal and Google Chrome. The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. To also give the agent the sandbox's shell and files, add `Coder`.
+A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Google Chrome. The screen is 1280x800. For another size, pass it as `desktop=(1440, 900)`. To also give the agent the sandbox's shell and files, add `Coder`.
 
-XFCE keeps `printscreen` (it opens XFCE's screenshot tool) and the media and volume keys, so the window in front never gets them.
+The desktop keeps `printscreen` and the media and volume keys for itself, so the window in front never gets them.
 
-Your own `template` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop.
+Your own `template` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `startxfce4`.
 
 The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
 
@@ -345,7 +345,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `authority` | The [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority) of the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, `'user'` for the user's own. The workspace reports it through `authority_of`, and a capability that checks it sends a file's text to the model with no more authority than that. Default: `'operator'`. |
 | `path_authority` | Levels for some directories and files, overriding `authority` for the paths under them; the longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute; `~` isn't expanded. Default: `None`. |
 | `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). A spec cannot set it. |
-| `desktop` | Give the sandbox a screen for [`ComputerUse`](../computer_use/): `True` for 1280x800, or a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template. A sandbox that a later run reconnects to keeps its screen size. A sandbox you created with E2B's Desktop SDK shows its windows on another display, so the agent can't see them. Default: `False`. |
+| `desktop` | Give the sandbox a screen for [`ComputerUse`](../computer_use/): `True` for 1280x800, or a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template. A sandbox you created with E2B's Desktop SDK shows its windows on another display, so the agent can't see them. Default: `False`. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
