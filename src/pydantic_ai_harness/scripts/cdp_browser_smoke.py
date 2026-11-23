@@ -22,8 +22,6 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
 - a screenshot comes back as image content,
 - a command that never answers times out, and the tab answers the next one,
 - a WebSocket to a host the policy refuses never reaches it, and one to an allowed host connects and echoes.
-
-WebSocket connections are a documented limit of the guard and are not checked.
 """
 
 from __future__ import annotations
