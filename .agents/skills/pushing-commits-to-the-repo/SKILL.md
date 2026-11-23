@@ -208,8 +208,7 @@ Fetch the tags of `pydantic/pydantic-ai`, then run `git tag --contains <sha> --l
 Ignore pre-release tags such as `v2.0.0b7`.
 When every output is then empty, no release shipped the defect.
 When you cannot identify the introducing commit, use `bug`.
-A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug` or `bug:unreleased`.
-`.github/workflows/package-label.yml` fails such a PR when it lacks `chore` or carries `bug`.
+A `test-suite` or `github-actions` PR never takes `bug:unreleased`. [review]
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Choose the `area:` and `provider:` topic labels this way:
 
