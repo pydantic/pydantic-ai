@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 import idna
 
+from pydantic_ai._ssrf import is_cloud_metadata_ip
 from pydantic_ai.exceptions import UserError
 
 PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
@@ -71,8 +72,9 @@ def url_host(url: str) -> str | None:
 def is_blocked_address(host: str) -> bool:
     """Return whether `host` names an address that is not globally routable.
 
-    Covers private (RFC 1918), loopback, link-local (including the cloud
-    metadata endpoint), carrier-grade NAT, reserved, and multicast ranges. This
+    Covers private (RFC 1918 and IPv6 site-local), loopback, link-local, carrier-grade
+    NAT, reserved, and multicast ranges, and the cloud metadata addresses that URL
+    downloads refuse. This
     classifies a host string, so it sees IP literals and the loopback hostnames
     `localhost` / `*.localhost`; a name pointing at a private address is caught by
     the capability's guard resolving it first and passing the answers to
@@ -91,8 +93,13 @@ def is_blocked_address(host: str) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if is_cloud_metadata_ip(host):
+        return True
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.is_site_local:
+            return True
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
     return not ip.is_global or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
 
 

@@ -1415,9 +1415,21 @@ _BLOCKED_ADDRESS_HOSTS = [
     'app.localhost',
     'localhost.',
     '169.254.169.254.',
+    'fec0::1',
+    '2606:4700:a9fe:a9fe::',
+    '2606:4700:4700:1111:a9:fea9:fe00:0',
+    '2606:4700:4700:1111::a9fe:a9fe',
+    '2606:4700::5efe:169.254.169.254',
 ]
 
-_PUBLIC_ADDRESS_HOSTS = ['example.com', '8.8.8.8', '2606:4700:4700::1111', 'localhost.example.com', 'my-localhost.dev']
+_PUBLIC_ADDRESS_HOSTS = [
+    'example.com',
+    '8.8.8.8',
+    '2606:4700:4700::1111',
+    'localhost.example.com',
+    'my-localhost.dev',
+    '2606:4700:4700:1111::808:808',
+]
 
 
 class TestPrivateAddressBlocking:
