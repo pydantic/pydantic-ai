@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`RenderSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox`/`OpenSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`RenderSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox`/`KubernetesSandbox`/`OpenSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every
@@ -170,10 +170,11 @@ print(asked[0].questions[0].header)
 
 ## Memory with an In-Memory Store
 
-`Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
+`Memory()` defaults to `InMemoryMemoryStore`. Seed it with `InMemoryMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
-afterwards. The snapshot is a user-role `TextContent` starting with `<memory>`, kept in
-message history and added on a run's first request only when memory changed since the last one.
+afterwards. The snapshot is a `MemorySnapshotPart` kept in message history, which the model gets
+as data in a `<memory>` tag on the user channel. It's added on a run's first request only when
+memory changed since the last one.
 
 ```python
 from pydantic_ai import Agent
@@ -181,15 +182,16 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-store = InMemoryStore({'main/MEMORY.md': '- prefers tabs'})
+store = InMemoryMemoryStore({'main/MEMORY.md': '- prefers tabs'})
 injected: list[str] = []
 
 
 def script(messages, info):
     if len(messages) == 1:
-        injected.append(messages[0].parts[-1].content[0].content)
+        # The model gets the snapshot framed: its last user part's text is the `<memory>` element.
+        injected.append(''.join(item.content for item in messages[0].parts[-1].content))
         return ModelResponse(parts=[ToolCallPart('write_memory', {'content': '- uses uv'})])
     return ModelResponse(parts=[TextPart('ok')])
 
@@ -204,8 +206,8 @@ print(store.files['main/MEMORY.md'])
 """
 ```
 
-`FileStore` needs a workspace: without one the run fails at start with a `UserError`; attach a
-`LocalWorkspace` or pass `FileStore(..., workspace=LocalWorkspaceBackend(tmp))`.
+`FileMemoryStore` needs a workspace: without one the run fails at start with a `UserError`; attach a
+`LocalWorkspace` or pass `FileMemoryStore(..., workspace=LocalWorkspaceBackend(tmp))`.
 
 ## CodeMode: Drive `run_code` Directly
 
@@ -299,7 +301,7 @@ spans: call `Agent.instrument_all(True)` in a fixture, then read `capfire.export
 
 ## Debug Common Failures
 
-**Missing workspace.** `FileSystem`, `Shell`, `Coder`, and `Memory(store=FileStore(...))` fail the run
+**Missing workspace.** `FileSystem`, `Shell`, `Coder`, and `Memory(store=FileMemoryStore(...))` fail the run
 at start, before any model request:
 
 ```python
@@ -331,14 +333,14 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 [Code Mode](./CODE-MODE.md#sandbox-restrictions) for the rules and how to grant host access.
 
 **Asserting a `SystemReminders` reminder.** A plain firing is a `ModelRequest` holding one
-`SystemPromptPart(scope='request')` in `result.all_messages()`, whose content is the reminder text
-(wrapped in `<tag>` only when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model
-sees only the current one, as `<system>`-tagged user text at the end of the last request. A
-`Reminder(scope='conversation')` firing is a `SystemPromptPart` with the default `scope='conversation'`
-instead, which every later request sends again. An
-`LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
-the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
-every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
+`ReminderPart(scope='request')` (an `InstructionCapabilityPart` from `pydantic_ai_harness.system_reminders`; find
+it with `isinstance`) in `result.all_messages()`, whose `content` is the reminder text (wrapped in `<tag>` only
+when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model sees only the current one, as
+`<system>`-tagged user text at the end of the last request. A `Reminder(scope='conversation')` firing is a
+`ReminderPart` with `scope='conversation'` instead, which every later request sends again. An
+`LLMReminder` firing is instead a lasting `GeneratedReminderPart` (a `DataCapabilityPart`): the generated
+text, rendered in `<generated_reminder model="...">` on the user channel with a note in the application's
+voice, re-sent on every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
 `interval` requests (10 by default), so a short scripted run needs `LLMReminder(..., interval=1)`.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot
@@ -351,7 +353,7 @@ latest response's `input_tokens`. A payload with no separators, such as `'x' * 4
 token once a response follows it, so `max_tokens`/`max_fraction` may never fire. Use real words, or set
 the count from the script with `ModelResponse(..., usage=RequestUsage(input_tokens=...))`
 (`from pydantic_ai.usage import RequestUsage`); `tokenizer=` measures only the messages after that
-anchor. `ToolOutputLimits` measures characters (or ~4 chars/token, or `tokenizer=`, with
+anchor. `ToolOutputLimits` measures characters (or the compaction text estimate, or `tokenizer=`, with
 `over_tokens=True`) and does not read model usage.
 
 **Summary requests reach the script.** `SummarizingCompaction` without `model=` sends its summary

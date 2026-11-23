@@ -5,7 +5,6 @@ from __future__ import annotations as _annotations
 from collections.abc import Sequence
 from typing import Any, Literal, assert_never
 
-import pydantic_core
 from anthropic.types.beta import (
     BetaInputTransformation,
     BetaIterationsUsage,
@@ -17,10 +16,10 @@ from anthropic.types.beta import (
     BetaStopReason,
     BetaUsage,
 )
-from opentelemetry.trace import get_current_span
 
 from ... import usage
 from ..._context_size import mark_context_input_tokens, marked_context_input_tokens
+from ..._instrumentation import add_input_transformations_event
 from ...messages import FinishReason, ModelMessage, ModelResponse
 from .. import StreamedResponse
 
@@ -46,13 +45,7 @@ def report_input_transformations(
     run; the span event surfaces it in the trace, on the model request that lost the reasoning.
     """
     reported = [transformation.model_dump() for transformation in transformations]
-    span = get_current_span()
-    attributes = getattr(span, 'attributes', {})
-    if span.is_recording() and attributes.get('gen_ai.operation.name') == 'chat':
-        span.add_event(
-            'anthropic.input_transformations',
-            attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
-        )
+    add_input_transformations_event('anthropic', reported)
     return reported
 
 
@@ -83,6 +76,11 @@ def response_provider_details(response: BetaMessage) -> dict[str, Any] | None:
     if response.diagnostics is not None:
         provider_details = provider_details or {}
         provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
+    # Only fast mode is recorded: a standard request reports `usage.speed` as `'standard'` or not at all, and
+    # neither selects a price variant. `speed` is the price context key for genai-prices' fast mode rates.
+    if response.usage.speed == 'fast':
+        provider_details = provider_details or {}
+        provider_details['speed'] = 'fast'
     return provider_details
 
 
@@ -302,3 +300,16 @@ def compaction_provider_details(encrypted_content: str | None, signature: str | 
         if value is not None
     }
     return details or None
+
+
+def report_inference_geo(
+    provider_details: dict[str, Any] | None, inference_geo: str | None, *, report: bool
+) -> dict[str, Any] | None:
+    """Add where the request ran to `provider_details`.
+
+    Anthropic echoes `usage.inference_geo` on every response, so it's only reported when `report` is set, which is
+    when the request carried `anthropic_inference_geo`: other responses keep their `provider_details` unchanged.
+    """
+    if not report or inference_geo is None:
+        return provider_details
+    return {**(provider_details or {}), 'inference_geo': inference_geo}

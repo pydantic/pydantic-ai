@@ -52,6 +52,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
 from .._workspace import RejectWorkspaceInContainer
+from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
 from ._utils import StepConfig, using_durable_sleep
 
@@ -194,7 +195,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     )
             return toolset
 
-        dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]
+        dbos_toolsets = [
+            toolset.visit_and_replace(dbosify_toolset).visit_and_replace(gate_tool_instance_defaults)
+            for toolset in wrapped.toolsets
+        ]
         self._toolsets = dbos_toolsets
         DBOSConfiguredInstance.__init__(self, self._name)
 
@@ -1405,6 +1409,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
@@ -1424,6 +1429,13 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            capabilities: The capabilities to use instead of the agent's configured capabilities. When set,
+                these replace (not merge with) the agent's existing capabilities. To add to the existing
+                set, include them explicitly:
+                `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
+                On an agent with a durability capability, build the list this way: a list without the bound
+                durability capability raises a `UserError`, and inside a durable workflow or flow, the
+                capabilities the list adds follow the rules for capabilities passed to a run.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
@@ -1447,6 +1459,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             tools=tools,
             native_tools=native_tools,
             instructions=instructions,
+            capabilities=capabilities,
             metadata=metadata,
             model_settings=model_settings,
             retries=retries,

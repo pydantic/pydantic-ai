@@ -1715,6 +1715,49 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
+def test_eleven_realtime_reply_to_an_interjection_abandons_the_calls_before_it() -> None:
+    """Eleven Realtime gives up on a finished response's calls once it replies to what the user typed after them (#13180).
+
+    Their results never reach the model, so the reply to the interjection ends the exchange, though the calls still run.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.send_text()
+        sim.finish()
+        assert sim.turn_completes == []
+        sim.finish()
+        assert sim.tools.pending()
+        assert len(sim.turn_completes) == 1
+        # Its result still goes out, asking for no reply; the next turn's reply gives up on nothing more.
+        sim.finish_tool()
+        sim.send_text()
+        sim.finish()
+        assert len(sim.turn_completes) == 2
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
+
+
+def test_eleven_realtime_response_with_nothing_new_from_the_user_abandons_no_call() -> None:
+    """Eleven Realtime gives up on a finished response's calls only once the user says something after them.
+
+    A response it starts with nothing new from the user gives up on none: their results are still owed a reply.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        call_id = sim.call_tool()
+        sim.finish()
+        sim.create_response()
+        assert sim.truth.tool_calls[call_id].abandoned_by is None
+        sim.finish()
+        sim.finish_tool()
+        sim.finish()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
+
+
 def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> None:
     """A tool call whose backend gave up still runs, but its result gets no reply: the exchange ends with the reply.
 

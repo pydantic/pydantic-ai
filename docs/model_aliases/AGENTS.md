@@ -18,6 +18,8 @@ covers choosing those models. How pages write aliases is in the "Model names" se
   one tier name across providers at very different prices.
 - Read prices from the `genai-prices` package (`genai_prices.data`), which Pydantic AI already
   depends on.
+- Leave a model out of the tiers while the installed `genai-prices` has no price for it. Keep each
+  tier on its current model until a `genai-prices` release prices the new one.
 - Give a tier the provider's newest model at that price.
 - A newer model that matches an older one's capability at the same or lower price replaces it. Drop
   the older model from the lineup, then fill any tier it leaves with the gap rule below. Never keep
@@ -46,10 +48,9 @@ Update this table whenever a change to `aliases.json` fills, opens, or moves a g
 | Alias | Model | Reason |
 |---|---|---|
 | `openai:large`, `openai:xlarge` | `gpt-6-astra` | Astra is Fable-priced. `gpt-6.1-sol` replaced the Opus-priced GPT-5.4 to 5.6 models at a lower price, so `large` takes Astra, the nearest model above. |
-| `google:large`, `google:xlarge` | `gemini-4-argon` | Google's most capable model. `genai-prices` has no Argon price yet; re-place it when it does. |
+| `google:large`, `google:xlarge` | `gemini-4-argon` | Opus-priced: `genai-prices` has it at $20 output from December 2026, after an introductory $10. `gemini-4-carbon` costs the same but has no `genai-prices` price yet; repoint both aliases to it when it does. Google has no Fable-priced model, so `xlarge` takes the nearest model below. |
 | `google:small` | `gemini-3.1-flash-lite` | Haiku-priced, and Google's newest model at that price. `gemini-3.5-flash-lite` is Sonnet-priced by output, so it can't replace it. |
 | `xai:small` | `grok-4.3` | xAI's cheapest general chat model. Its output price is nearer Sonnet's than Haiku's, so `small` takes it as the nearest model above. |
 | `xai:medium`, `xai:large`, `xai:xlarge` | `grok-4.7` | Sonnet-priced and newer than `grok-4.3`. It replaced `grok-4.6` at the same price. Nothing sits above it. |
-| `bedrock:xlarge` | `global.anthropic.claude-fable-5-1` | Pydantic AI doesn't list Claude Fable 5.2 on Bedrock yet ([#13005](https://github.com/pydantic/pydantic-ai/issues/13005)), so `bedrock:xlarge` keeps Fable 5.1 until it does. AWS's model card lists `global.anthropic.claude-fable-5-2`, but our test account gets `AccessDeniedException`. |
 | `openai:image` | `gpt-image-2.5-flare` | Same price as `gpt-image-2`, newer. Sunburst is OpenAI's slower premium editing model. |
 | `openai:embedding` | `text-embedding-3-small` | OpenAI's general-purpose embedding model. `text-embedding-3-large` costs 6.5 times as much. |

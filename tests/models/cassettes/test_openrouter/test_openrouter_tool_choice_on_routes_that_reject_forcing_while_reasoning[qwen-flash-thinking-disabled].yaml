@@ -1,0 +1,115 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "446"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: qwen/qwen3.8-flash
+        stream: false
+        messages:
+        - role: user
+          content: What's the weather in Zurich?
+        tool_choice: required
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties: {}
+            strict: true
+        - type: function
+          function:
+            name: final_result
+            description: ""
+            parameters:
+              type: object
+              properties: {}
+            strict: true
+        reasoning:
+          effort: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1794890404-47qe2fDr5pBvedej5D3U
+        object: chat.completion
+        created: 1794890404
+        model: qwen/qwen3.8-flash
+        provider: Alibaba
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: tool_calls
+          native_finish_reason: tool_calls
+          message:
+            role: assistant
+            content: null
+            refusal: null
+            reasoning: null
+            tool_calls:
+            - type: function
+              index: 0
+              id: call_75dbd39469b7473985c238a3
+              function:
+                name: get_weather
+                arguments: "{\"location\": \"Zurich\"}"
+        usage:
+          prompt_tokens: 304
+          completion_tokens: 24
+          total_tokens: 328
+          cost: 0.00005688
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00005688
+            upstream_inference_prompt_cost: 0.0000456
+            upstream_inference_completions_cost: 0.00001128
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-17T04:40:05.671626+00:00

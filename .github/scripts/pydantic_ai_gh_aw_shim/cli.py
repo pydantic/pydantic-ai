@@ -2,7 +2,7 @@ r"""Claude Code CLI compatibility and shared policy for gh-aw workflows.
 
 Production workflows load `agent.py` through the public `pydantic-ai` engine.
 This module provides the local/development runner and shared policy helpers
-(`run_request_limit`, `failure_details`, `compact_history`) used by that agent.
+(`run_request_limit`, `failure_details`, `zai_error_code`, `compact_history`) used by that agent.
 
 The legacy runner accepts Claude Code CLI arguments:
 
@@ -53,11 +53,12 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, TypeAlias, cast
+from urllib.parse import urlparse
 
 import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, wait_random_exponential
@@ -88,6 +89,7 @@ from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
@@ -147,7 +149,7 @@ def _anthropic_native_capabilities() -> list[NativeTool]:
     empty/unset means the Anthropic SDK default (real Anthropic).
     """
     base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
-    if not base_url or 'api.anthropic.com' in base_url:
+    if not base_url or urlparse(base_url).hostname == 'api.anthropic.com':
         return [NativeTool(WebFetchTool())]
     return []
 
@@ -507,6 +509,11 @@ def _error_field(body: object, name: str) -> str | None:
     return str(value) if isinstance(value, (str, int)) and not isinstance(value, bool) else None
 
 
+def zai_error_code(body: object) -> str | None:
+    """Return the `error.code` of a decoded Z.ai error body, or `None` when it has none."""
+    return _error_field(body, 'code')
+
+
 def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
     """Hand the last 429 to the SDK, marked so the SDK does not retry it again.
 
@@ -562,7 +569,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
             body = _ERROR_BODY_ADAPTER.validate_json(await response.aread())
         except ValidationError:
             return True
-        if _error_field(body, 'code') in _ZAI_PLAN_LIMIT_CODES:
+        if zai_error_code(body) in _ZAI_PLAN_LIMIT_CODES:
             response.headers['x-should-retry'] = 'false'
             return False
         return True
@@ -624,6 +631,8 @@ TIME_BUDGET_NOTICE = (
     'the limit stops it with nothing posted. Stop investigating. Emit the safe output your '
     'task ends with now, from what you have already found.'
 )
+# What a tool call the time reserve refuses returns to the model.
+TIME_BUDGET_REFUSAL = 'error: the time budget is nearly spent; finish the task from what you already have'
 
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
 run_deadline: float | None = None
@@ -821,6 +830,8 @@ def _part_text(part: MessagePart) -> str:
         return ''
     if isinstance(part, ModelSettingsDeltaPart):
         return f'model settings changed: {part.settings!r}'
+    if isinstance(part, CapabilityPart):
+        return f'{part.kind}: {part.model_content()!r}'
     if isinstance(part, CapabilityLoadDeltaPart):
         return f'loaded capabilities changed: loaded={part.loaded!r}'
     return str(part.content)
@@ -1376,7 +1387,7 @@ def failure_details(error: BaseException | None) -> dict[str, object]:
         elif error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
-            kind = 'plan_limit' if _error_field(error.body, 'code') in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
+            kind = 'plan_limit' if zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
     failure: dict[str, object] = {'kind': kind}
     if http_status is not None:
         failure['http_status'] = http_status
@@ -1538,10 +1549,64 @@ class CIReviewToolPolicy(AbstractCapability[object]):
             return await handler(args)
         before_reserve = math.floor(seconds_left - RUN_TIME_RESERVE_SECS)
         if before_reserve <= 0:
-            return 'error: the time budget is nearly spent; finish the task from what you already have'
+            return TIME_BUDGET_REFUSAL
         requested = args.get('timeout')
         timeout = requested if isinstance(requested, int | float) and requested > 0 else MAX_FOREGROUND_WAIT
         return await handler({**args, 'timeout': min(timeout, before_reserve)})
+
+
+def _recorded_noops() -> int:
+    """How many `noop` entries the safe-outputs sink holds."""
+    path = os.environ.get('GH_AW_SAFE_OUTPUTS')
+    sink = pathlib.Path(path) if path else None
+    if sink is None or not sink.is_file():
+        return 0
+    return sum(entry.get('type') == 'noop' for entry in _safe_output_entries(sink.read_text(encoding='utf-8')))
+
+
+@dataclass
+class EndRunAfterReserveNoop(AbstractCapability[object]):
+    """Offer the model no tools once a `noop` it posts inside the time reserve leaves no safe output pending.
+
+    Still offered tools after that `noop`, a model can call safe outputs with no per-run limit, such as
+    `missing_data`, until the run's deadline. With no tools offered, its next text answer ends the run. A call it
+    still makes is answered without running, as `CIReviewToolPolicy` answers its withheld tools. A `noop` before
+    the reserve changes nothing: some runs post one early as a progress note, and some workflows record several
+    outputs.
+    """
+
+    _finished: bool = False
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        return EndRunAfterReserveNoop()
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if not self._finished:
+            return request_context
+        parameters = dataclasses.replace(request_context.model_request_parameters, function_tools=[])
+        return dataclasses.replace(request_context, model_request_parameters=parameters)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> object:
+        if self._finished:
+            return TIME_BUDGET_REFUSAL
+        if _safe_output_type(tool_def.name) != 'noop' or time_budget_notice() is None:
+            return await handler(args)
+        recorded = _recorded_noops()
+        result = await handler(args)
+        # Set, never cleared: a parallel `noop` that gh-aw rejects must not undo one that it recorded.
+        if _recorded_noops() > recorded and not safe_output_pending():
+            self._finished = True
+        return result
 
 
 async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
@@ -1554,7 +1619,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     timeout = _subagent_time_limit()
     if timeout <= 0:
         logger.info('Task refused, time budget nearly spent: %s', description[:120])
-        return 'error: the time budget is nearly spent; finish the task from what you already have'
+        return TIME_BUDGET_REFUSAL
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
@@ -1714,6 +1779,7 @@ async def run(
             MarkTimedOutSpans(),
             RecordRunTotals(),
             CIReviewToolPolicy(),
+            EndRunAfterReserveNoop(),
             PrepareTools(hold_time_reserve_for_safe_output),
         ],
     )

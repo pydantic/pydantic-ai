@@ -17,7 +17,8 @@ changing acquisition, command, file, or error handling:
   the writes it had not flushed.
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
   raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine for a
-  moment.
+  moment. Conversely, when `create` returns a machine as `starting`, `get` can raise `NotFoundError` for it for over
+  30 seconds before it finds it (seen in live test runs, not reproduced on demand).
 - An isolated machine's metadata endpoint refuses token requests (403), and boxd's env vars and integrations
   are not installed in it. A machine created from a snapshot keeps the named `networks` of the machine the
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
@@ -32,6 +33,10 @@ changing acquisition, command, file, or error handling:
   A failure is the matching builtin `OSError` (`FileNotFoundError`, `IsADirectoryError`, ...), a symlink loop
   is `ELOOP`, and `remove` deletes a symlink itself. A machine whose boxd agent predates the file API, such as
   one restored from an older snapshot, raises `MachineAgentOutdatedError` until it reboots.
+- Verified 2026-11-16: `machines.create` refuses `isolated` or `vcpu` beside a `spec` (`MachineSpecError`), so
+  a machine with `secrets` gets both from the spec, its size as `'{vcpu}x{4 * vcpu}'` (vCPUs x GiB of memory).
+  A spec combines with `from_snapshot`. In the machine, a secret's variable holds a `bxds_` stand-in, never
+  the value. A secret can be deleted while a machine still names it; the machine keeps running.
 """
 
 from __future__ import annotations
@@ -103,6 +108,9 @@ _SILENT_COMMAND_MESSAGE = (
 _NAME_PREFIX = 'pydantic-ai-'
 # Bound machine creation, attachment, and deletion so a wedged control plane cannot hang a run.
 _LIFECYCLE_TIMEOUT = 120.0
+# How long after creating a machine the backend keeps looking it up while boxd does not list it yet; boxd
+# has taken longer than 37 s to list one. The rest of `_LIFECYCLE_TIMEOUT` is left for booting it.
+_UNLISTED_TIMEOUT = 90.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.25
@@ -288,6 +296,22 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
         return None
 
 
+async def _look_up_machine(client: AsyncBoxd, machine_id: str, *, listed_by: float | None) -> Machine | None:
+    """The machine's record; `None` if boxd does not list it yet and the clock has not reached `listed_by`.
+
+    Otherwise a machine boxd does not find raises `WorkspaceUnavailableError`.
+    """
+    try:
+        return await client.machines.get(machine_id)
+    except boxd.NotFoundError as error:
+        if listed_by is not None and anyio.current_time() < listed_by:
+            return None
+        raise WorkspaceUnavailableError(
+            f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
+            "for these credentials). Pass `workspace='new'` to start a fresh machine."
+        ) from error
+
+
 async def _launch(
     client: AsyncBoxd,
     name: str,
@@ -404,6 +428,11 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
+        secrets: Names of existing boxd secrets a newly created machine gets, applied as
+            `boxd.spec.secrets(*secrets)` in its machine spec. A secret tied to domains reaches the
+            machine only as a placeholder, and boxd swaps in the real value as requests leave for those
+            domains. A secret without domains is set as its real value. An attached machine keeps the
+            ones it was created with.
     """
 
     def __init__(
@@ -417,11 +446,14 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Sequence[str] | None = None,
     ) -> None:
         if ref is not None:
             _check_ref(ref)
         if snapshot is not None and vcpu is not None:
             raise ValueError('pass either `snapshot` or `vcpu`, not both: a snapshot keeps the size it was saved at')
+        if isinstance(secrets, str):
+            raise ValueError(f'`secrets` takes a list of secret names, such as [{secrets!r}], not a string')
         check_env(env)
         self._ref = ref
         self._client = client
@@ -431,6 +463,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
+        self._secrets = tuple(secrets or ())
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
         self._missing_cwd_marker = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
@@ -440,6 +473,9 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._resolved_working_dir: str | None = None
         # A machine this backend created still needs its `working_dir` made.
         self._working_dir_pending = False
+        # Until this time, a machine this backend created that boxd does not list yet is looked up again.
+        # Cleared once a lookup finds it, so a later not-found means it is gone.
+        self._listed_by: float | None = None
         # Set once the machine's boxd agent turns out to predate the file API; files then go through the shell.
         self._agent_outdated = False
         self._lock = anyio.Lock()
@@ -530,6 +566,12 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         if self._create_name is None:
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
+        spec = None
+        if self._secrets:
+            # boxd refuses `isolated` and `vcpu` next to a spec, so the spec carries them.
+            spec = boxd.spec.spec().isolated().with_(boxd.spec.secrets(*self._secrets))
+            if self._vcpu is not None:
+                spec = spec.size(f'{self._vcpu}x{4 * self._vcpu}')
         machine = await _launch(
             client,
             name,
@@ -537,9 +579,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 name,
                 org=self._org,
                 from_snapshot=self._snapshot,
-                isolated=True,
-                vcpu=self._vcpu,
+                isolated=spec is None,
+                vcpu=self._vcpu if spec is None else None,
                 auto_suspend_timeout=self._auto_suspend_timeout,
+                spec=spec,
             ),
             org=self._org,
             verb='create',
@@ -549,6 +592,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
     def _record_created(self, machine: Machine) -> WorkspaceRef:
         self._ref = ref = WorkspaceRef(provider='boxd', id=machine.id)
         self._working_dir_pending = self._working_dir is not None
+        self._listed_by = anyio.current_time() + _UNLISTED_TIMEOUT
         # Logged at creation, so the id can be found whatever ends the run before it is stored.
         logger.info('Created boxd machine %s (%s)', machine.id, machine.name)
         return ref
@@ -558,18 +602,17 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
 
         A suspended or hibernated machine is woken by the probe command itself. A machine that is not
         isolated, or that is on a named network, is refused: other machines could reach it, and a ref
-        from tampered message history must not point the agent at one of them.
+        from tampered message history must not point the agent at one of them. A machine this backend
+        created that boxd does not list yet is looked up again until `_UNLISTED_TIMEOUT` after its creation;
+        once a lookup has found it, and for any other machine, not found means it is unavailable at once.
         """
         with anyio.move_on_after(_LIFECYCLE_TIMEOUT):
             async with _mapped_errors(f'Could not attach to boxd machine {machine_id!r}'):
                 while True:
-                    try:
-                        machine = await client.machines.get(machine_id)
-                    except boxd.NotFoundError as error:
-                        raise WorkspaceUnavailableError(
-                            f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
-                            "for these credentials). Pass `workspace='new'` to start a fresh machine."
-                        ) from error
+                    if (machine := await _look_up_machine(client, machine_id, listed_by=self._listed_by)) is None:
+                        await anyio.sleep(_POLL_INTERVAL)
+                        continue
+                    self._listed_by = None
                     _check_attachable(machine_id, machine)
                     try:
                         if machine.status == 'stopped':

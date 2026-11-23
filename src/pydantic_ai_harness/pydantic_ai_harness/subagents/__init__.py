@@ -1,79 +1,81 @@
-"""Sub-agent capability: delegate self-contained tasks to named child agents.
+"""Deprecated import location for `pydantic_ai_harness.sub_agents`.
 
-Task control (`SubAgents(task_control=TaskControl())`), remote agents, and agents the model creates are a port of
-Vstorm's [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai), MIT licensed,
-copyright (c) 2026 Vstorm.
+Renamed to the snake_case of its capability, `SubAgents`. Importing from here still works but emits a
+`HarnessDeprecationWarning`. Import from `pydantic_ai_harness.sub_agents` instead.
 """
-
-from __future__ import annotations
 
 import warnings
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness._task_report import is_task_report
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
-from pydantic_ai_harness.subagents._control import (
-    DynamicAgentFactory,
-    DynamicAgents,
-    DynamicAgentSpec,
-    RemoteSubAgent,
-    TaskControl,
-)
-from pydantic_ai_harness.subagents._disk import AgentOverride
-from pydantic_ai_harness.subagents._events import (
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_class_renamed, warn_module_renamed
+from pydantic_ai_harness.sub_agents import (
     MAX_EVENT_TEXT_CHARS,
+    SELF_AGENT_NAME,
     SUB_AGENTS_EVENTS,
     AgentCreatedEvent,
+    AgentOverride,
     BackgroundReason,
-    ChildMessage,
-    DelegationEndEvent,
+    ChildMessageEvent,
+    DeferredStateStore,
+    DelegationFinishedEvent,
     DelegationOutcome,
-    DelegationStartEvent,
-    ParentMessage,
-    Recipient,
-    SubAgentMessage,
-    TaskAnswerEvent,
-    TaskAssignedEvent,
-    TaskBackgroundedEvent,
-    TaskCancelledEvent,
-    TaskCancelRequestEvent,
-    TaskCompletedEvent,
-    TaskFailedEvent,
-    TaskFollowUpEvent,
-    TaskForceCancelEvent,
-    TaskMessageEvent,
-    TaskProgressEvent,
-    TaskQuestionEvent,
-    TaskRequestEvent,
-    TaskRetryEvent,
-    TaskSettledEvent,
-    TaskStartedEvent,
-)
-from pydantic_ai_harness.subagents._models import ModelOption
-from pydantic_ai_harness.subagents._tasks import (
     DelegationReports,
+    DelegationSnapshot,
+    DelegationStartedEvent,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
-)
-from pydantic_ai_harness.subagents._toolset import (
-    SELF_AGENT_NAME,
+    DelegationToolCall,
     DelegationWorkspaceRequest,
-    SubAgent,
-    SubAgentToolset,
-    WorkspaceResolver,
-)
-from pydantic_ai_harness.subagents._transport import (
+    DynamicAgentFactory,
+    DynamicAgents,
+    DynamicAgentSpec,
+    InMemoryDeferredStateStore,
     InMemoryTransport,
+    ModelOption,
+    ParentMessageEvent,
+    Recipient,
+    RemoteSubAgent,
+    SavedTaskProblem,
+    SavedTasks,
+    SubAgent,
+    SubAgentMessageEvent,
+    SubAgents,
+    SubAgentToolset,
     SubAgentTransport,
+    SubAgentWorker,
+    TaskAnsweredEvent,
+    TaskAssignedEvent,
+    TaskBackgroundedEvent,
+    TaskCancelledEvent,
+    TaskCancelRequestedEvent,
+    TaskCompletedEvent,
+    TaskControl,
+    TaskFailedEvent,
+    TaskForceCancelRequestedEvent,
+    TaskOutputPart,
+    TaskProgressEvent,
+    TaskQuestionAskedEvent,
+    TaskQuestionPart,
+    TaskRequestEvent,
+    TaskResumedEvent,
+    TaskRetriedEvent,
+    TaskSettledEvent,
+    TaskStartedEvent,
+    TaskSteeredEvent,
+    ToolResolver,
+    WorkspaceResolver,
+    delegated_requests,
+    delegated_results,
     deserialize_message,
+    is_task_report,
     serialize_message,
 )
-from pydantic_ai_harness.subagents._worker import SubAgentWorker
 
 if TYPE_CHECKING:
-    from pydantic_ai_harness.subagents._effort import MINIMUM_EFFORT_FLOOR, clamp_effort
+    from pydantic_ai_harness.sub_agents._effort import MINIMUM_EFFORT_FLOOR, clamp_effort
+
+warn_module_renamed('subagents', 'sub_agents')
 
 __all__ = [
     'MAX_EVENT_TEXT_CHARS',
@@ -83,58 +85,88 @@ __all__ = [
     'AgentCreatedEvent',
     'AgentOverride',
     'BackgroundReason',
-    'ChildMessage',
-    'DelegationEndEvent',
+    'ChildMessageEvent',
+    'DelegationFinishedEvent',
     'DelegationOutcome',
-    'DelegationStartEvent',
+    'DelegationStartedEvent',
     'DelegationReports',
+    'DelegationSnapshot',
     'DelegationTask',
     'DelegationTaskEvent',
+    'DeferredStateStore',
     'DelegationWorkspaceRequest',
     'DelegationTasks',
+    'DelegationToolCall',
     'DynamicAgentFactory',
     'DynamicAgentSpec',
     'DynamicAgents',
+    'InMemoryDeferredStateStore',
     'InMemoryTransport',
     'ModelOption',
-    'ParentMessage',
+    'ParentMessageEvent',
     'Recipient',
     'RemoteSubAgent',
+    'SavedTaskProblem',
+    'SavedTasks',
     'SubAgent',
-    'SubAgentMessage',
+    'SubAgentMessageEvent',
     'SubAgentToolset',
     'SubAgentTransport',
     'SubAgentWorker',
     'SubAgents',
-    'TaskAnswerEvent',
+    'TaskAnsweredEvent',
     'TaskAssignedEvent',
     'TaskBackgroundedEvent',
-    'TaskCancelRequestEvent',
+    'TaskCancelRequestedEvent',
     'TaskCancelledEvent',
     'TaskCompletedEvent',
     'TaskControl',
     'TaskFailedEvent',
-    'TaskFollowUpEvent',
-    'TaskForceCancelEvent',
-    'TaskMessageEvent',
+    'TaskForceCancelRequestedEvent',
+    'TaskOutputPart',
     'TaskProgressEvent',
-    'TaskQuestionEvent',
+    'TaskQuestionAskedEvent',
+    'TaskQuestionPart',
     'TaskRequestEvent',
-    'TaskRetryEvent',
+    'TaskResumedEvent',
+    'TaskRetriedEvent',
     'TaskSettledEvent',
     'TaskStartedEvent',
+    'TaskSteeredEvent',
     'ToolResolver',
     'WorkspaceResolver',
     'clamp_effort',
+    'delegated_requests',
+    'delegated_results',
     'deserialize_message',
     'is_task_report',
     'serialize_message',
 ]
 
 
+_RENAMED = {
+    'DelegationEndEvent': DelegationFinishedEvent,
+    'DelegationStartEvent': DelegationStartedEvent,
+    'SubAgentMessage': SubAgentMessageEvent,
+    'ParentMessage': ParentMessageEvent,
+    'ChildMessage': ChildMessageEvent,
+    'TaskFollowUpEvent': TaskResumedEvent,
+    'TaskMessageEvent': TaskSteeredEvent,
+    'TaskAnswerEvent': TaskAnsweredEvent,
+    'TaskCancelRequestEvent': TaskCancelRequestedEvent,
+    'TaskForceCancelEvent': TaskForceCancelRequestedEvent,
+    'TaskQuestionEvent': TaskQuestionAskedEvent,
+    'TaskRetryEvent': TaskRetriedEvent,
+}
+
+
 def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, __name__, new_module='pydantic_ai_harness.sub_agents')
+        return renamed
     if name in {'MINIMUM_EFFORT_FLOOR', 'clamp_effort'}:
-        from pydantic_ai_harness.subagents import _effort
+        from pydantic_ai_harness.sub_agents import _effort
 
         warnings.warn(
             f'`pydantic_ai_harness.subagents.{name}` is deprecated because `SubAgents` no longer imposes a '

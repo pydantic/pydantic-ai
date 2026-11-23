@@ -18,6 +18,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.minimax import minimax_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
@@ -188,6 +189,20 @@ class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithou
         return schema
 
 
+class _BedrockGlm53JsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    # GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas are inlined,
+    # as `zai_model_profile` does. See https://github.com/pydantic/pydantic-ai/issues/10243.
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+
+class _BedrockMiniMaxJsonSchemaTransformer(BedrockJsonSchemaTransformer):
+    # MiniMax stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas are inlined,
+    # as `minimax_model_profile` does. See https://github.com/pydantic/pydantic-ai/issues/12077.
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+
 class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
@@ -262,16 +277,24 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'openai_responses', 'qwen', 'xai'] | None
+    bedrock_thinking_variant: (
+        Literal['anthropic', 'deepseek', 'openai', 'openai_responses', 'qwen', 'xai', 'zai', 'zai_effort'] | None
+    )
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
+    - `'deepseek'`: Uses `{'reasoning_effort': 'high'|'none'}`: `'high'` is the only level that turns reasoning on
+      (e.g. DeepSeek V3.2)
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
       shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
     - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
+    - `'zai'`: Uses `{'reasoning_effort': 'high'|'none'}`: `'high'` is the only level that turns reasoning on
+      (e.g. GLM-4.7, GLM-5)
+    - `'zai_effort'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'|'xhigh'|'max'}`, for GLM models that always
+      reason and take an effort level (e.g. GLM-5.3)
     - `None`: No unified thinking support.
 
     Default: `None`.
@@ -345,6 +368,13 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
 
     When set, `BedrockConverseModel` drops these settings with a warning instead of sending them.
+    """
+
+    bedrock_supports_stop_sequences: bool
+    """Whether Converse accepts `stopSequences` for this model. Default: `True`.
+
+    When `False`, `BedrockConverseModel` drops `stop_sequences` with an `UnsupportedSettingWarning` instead of sending
+    it, as Converse rejects it with a 400.
     """
 
     bedrock_supported_on_converse: bool
@@ -437,6 +467,14 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         # Bedrock-specific override applies on top of the upstream DeepSeek profile.
         return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
+    if model_name == 'v3.2':
+        # Bedrock's id doesn't match the native DeepSeek names, and V3.2 only reasons with `reasoning_effort='high'`.
+        return merge_profile(
+            profile,
+            BedrockModelProfile(
+                supports_thinking=True, bedrock_thinking_variant='deepseek', bedrock_supports_stop_sequences=False
+            ),
+        )
     return profile  # pragma: no cover
 
 
@@ -463,10 +501,12 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
+    models_that_reject_stop_sequences = ('devstral', 'magistral', 'ministral-3', 'mistral-large-3', 'voxtral')
     return merge_profile(
         _strip_builtin_tools(mistral_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_tool_result_format='json',
+            bedrock_supports_stop_sequences=not model_name.startswith(models_that_reject_stop_sequences),
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
@@ -496,6 +536,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile(
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
+            bedrock_supports_stop_sequences=False,
             supports_thinking=supports_reasoning,
             json_schema_transformer=(
                 _BedrockJsonSchemaTransformerWithoutContains
@@ -532,20 +573,29 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_object_output=False,
             # Bedrock Converse API doesn't support tool return schemas natively
             supports_tool_return_schema=False,
+            bedrock_supports_stop_sequences=False,
         ),
     )
 
 
 def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
+    # GLM-5.3 always reasons and takes every effort level from `low` to `max` on Converse; earlier GLM models only
+    # reason with `'high'`.
+    is_glm_5_3 = model_name.startswith('glm-5.3')
+    thinking_variant: Literal['zai', 'zai_effort'] = 'zai_effort' if is_glm_5_3 else 'zai'
     return merge_profile(
         _strip_builtin_tools(zai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
+            bedrock_supports_stop_sequences=False,
             bedrock_supports_leading_assistant_message=True,
-            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
+            json_schema_transformer=(
+                _BedrockGlm53JsonSchemaTransformer if is_glm_5_3 else _BedrockJsonSchemaTransformerWithoutContains
+            ),
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
+            bedrock_thinking_variant=thinking_variant,
         ),
     )
 
@@ -559,6 +609,7 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(moonshotai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
+            bedrock_supports_stop_sequences=False,
             bedrock_supports_leading_assistant_message=True,
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=True,
@@ -588,6 +639,7 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_tool_choice=True,
             bedrock_thinking_variant='xai',
             bedrock_disallows_sampling_settings=True,
+            bedrock_supports_stop_sequences=False,
             supports_thinking=True,
             thinking_always_enabled=True,
             supports_json_schema_output=False,
@@ -596,9 +648,9 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-# MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
-# profile. OpenAI is handled separately because Converse support differs between its model families.
+# NVIDIA and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so these profile
+# fns build a `BedrockModelProfile` from scratch instead of composing with an upstream profile. OpenAI is
+# handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -612,6 +664,7 @@ def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_tool_result_colocatable_content=frozenset(),
         # Writer Palmyra also rejects the `status` field on a `toolResult` block, unlike every other family.
         bedrock_supports_tool_result_status=False,
+        bedrock_supports_stop_sequences=not model_name.startswith('palmyra-vision'),
     )
 
 
@@ -619,11 +672,18 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
     models_that_support_structured_output = ('minimax-m2',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return BedrockModelProfile(
-        supported_native_tools=frozenset(),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+    family_profile = minimax_model_profile(model_name)
+    return merge_profile(
+        family_profile,
+        BedrockModelProfile(
+            supported_native_tools=frozenset(),
+            bedrock_supports_stop_sequences=False,
+            json_schema_transformer=(
+                _BedrockMiniMaxJsonSchemaTransformer if family_profile is not None else BedrockJsonSchemaTransformer
+            ),
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+        ),
     )
 
 
@@ -633,13 +693,25 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return BedrockModelProfile(
         supported_native_tools=frozenset(),
+        bedrock_supports_stop_sequences=False,
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
         bedrock_supports_strict_tool_definition=supports_structured_output,
     )
 
 
-_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'})
+_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset(
+    {
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+    }
+)
 
 
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
@@ -648,7 +720,9 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
-    # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html
     if model_name in {
         'gpt-5.6-sol',
         'gpt-5.6-luna',
@@ -657,6 +731,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-luna',
         'gpt-6-astra',
         'gpt-6.1-sol',
+        'gpt-6.1-terra',
     }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
         # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
@@ -664,6 +739,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         # Sol reject `effort='none'` here too, verified with live requests).
         return BedrockModelProfile(
             bedrock_disallows_sampling_settings=True,
+            bedrock_supports_stop_sequences=False,
             bedrock_thinking_variant='openai_responses',
             supports_thinking=True,
             thinking_always_enabled=openai_model_profile(model_name).get('thinking_always_enabled', False),
@@ -676,8 +752,14 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         # gpt-oss doesn't see a tool schema's `$defs`, as on every other host (see `openai_model_profile`).
         json_schema_transformer=_GptOssInlineDefsJsonSchemaTransformer,
         bedrock_thinking_variant='openai',
+        bedrock_supports_stop_sequences=False,
         supports_thinking=True,
         thinking_always_enabled=True,
+        # The family's default, which this profile doesn't otherwise build on: Converse has no mid-conversation
+        # system role, so gpt-oss gets `<system>` blocks here.
+        default_framing_announcement=openai_model_profile(model_name).get(
+            'default_framing_announcement', 'when_needed'
+        ),
     )
 
 
@@ -734,9 +816,11 @@ class BedrockProvider(Provider[BaseClient]):
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             'openai': lambda model_name: merge_profile(
                 bedrock_openai_model_profile(model_name),
-                # Bedrock documents a 30-minute minimum TTL for exactly these; other OpenAI models get
-                # automatic caching with no documented retention.
+                # Bedrock documents a 30-minute minimum TTL for these: GPT-6.1 Terra's is stated on its model card,
+                # which the prompt-caching page defers to for TTL, and the others' in the page's table. Other OpenAI
+                # models get automatic caching with no documented retention.
                 # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
                 ModelProfile(default_cache_retention=timedelta(minutes=30))
                 if model_name in _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS
                 else None,

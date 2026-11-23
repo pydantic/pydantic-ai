@@ -1,0 +1,5 @@
+{
+  "against": "v2.67.0",
+  "reason": "`CommandFinishedEvent.total_lines` is now a deprecated property over `line_count`, which keeps the default of `0` (#11323).",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13068"
+}
