@@ -69,17 +69,13 @@ from pydantic_ai_harness.computer_use import (
     DisplayAction,
     UnsupportedActionError,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
 from ..display_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
-
-READY_TIMEOUT = 30
-"""How long a test waits for another run to reach a step, so a run that never gets there fails the test.
-
-Only a hang reaches it, so it allows for a slow, loaded CI runner."""
 
 
 @pytest.fixture(autouse=True)
@@ -1025,7 +1021,7 @@ The `computer` tool shows and controls this computer's screen.
         # On a thread of its own, as this thread already runs the test's event loop.
         creating = threading.Thread(target=anyio.run, args=(screen.display_size,))
         creating.start()
-        creating.join(READY_TIMEOUT)
+        creating.join(READINESS_WAIT_TIMEOUT)
         assert not creating.is_alive()
 
         async def run(x: int) -> None:
@@ -1037,7 +1033,7 @@ The `computer` tool shows and controls this computer's screen.
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(2 * READY_TIMEOUT)
+            thread.join(2 * READINESS_WAIT_TIMEOUT)
             assert not thread.is_alive()
 
         assert outputs == ['done', 'done']
@@ -1077,7 +1073,7 @@ The `computer` tool shows and controls this computer's screen.
 
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(create)
-            with anyio.fail_after(READY_TIMEOUT):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 await first_acting.wait()
             tasks.start_soon(attach)
             # Every other task is now blocked: the second run waits for the screen, or it acted already.
@@ -1095,7 +1091,7 @@ The `computer` tool shows and controls this computer's screen.
                 await super().act(action)
                 if action == Click(x=1, y=1):
                     first_acting.set()
-                    with anyio.move_on_after(READY_TIMEOUT) as scope:
+                    with anyio.move_on_after(READINESS_WAIT_TIMEOUT) as scope:
                         await second_acted.wait()
                     # True only if the second run acted while this one held its own screen.
                     waited.append(not scope.cancelled_caught)
@@ -1117,7 +1113,7 @@ The `computer` tool shows and controls this computer's screen.
 
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run, 1)
-            with anyio.fail_after(READY_TIMEOUT):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 await first_acting.wait()
             tasks.start_soon(run, 2)
 
@@ -1196,7 +1192,7 @@ The `computer` tool shows and controls this computer's screen.
         agent = Agent(FunctionModel(hold_then_hang), capabilities=[provider.capability(), ComputerUse()])
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(agent.run, 'Go.')
-            with anyio.fail_after(READY_TIMEOUT):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 await holding.wait()
             tasks.cancel_scope.cancel()
         assert provider.actions == [MouseDown(), MouseUp()]
@@ -1662,7 +1658,7 @@ class _Turns:
         second: Callable[[], Coroutine[object, object, object]],
     ) -> None:
         # Bounded, so a run that never reaches the step the other waits for fails the test instead of hanging it.
-        with anyio.fail_after(READY_TIMEOUT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async with anyio.create_task_group() as tg:
                 tg.start_soon(first)
                 await self.holding.wait()
