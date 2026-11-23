@@ -250,6 +250,8 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
+A request to a model its provider has deprecated or retired emits a `DeprecatedModelWarning` naming the retirement date and the provider's recommended replacement. Move to that replacement rather than silencing the warning.
+
 ## Keep Anthropic Inference in the US
 
 For a data residency requirement on Anthropic, pass `AnthropicModelSettings(anthropic_inference_geo='us')`; don't use `extra_body`. It's sent on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and Message Batches, and reported back in `ModelResponse.provider_details['inference_geo']`.

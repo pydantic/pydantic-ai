@@ -197,7 +197,7 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
                 raise task.TaskFailedError(
                     f'{loop.context.instance_id}: Activity {self._name!r} failed: {failure.errorMessage}', failure
                 )
-            await asyncio.sleep(min(recorded.retry_after, _retry_after_cap(policy, attempts)))
+            await asyncio.sleep(min(recorded.retry_after, _retry_after_cap(policy, attempts)))  # noqa: TID251  (not converted to anyio yet)
             call_policy = _continued_policy(policy, attempts, timedelta(seconds=loop.time() - started))
 
 

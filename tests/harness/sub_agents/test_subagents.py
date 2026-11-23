@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -49,7 +49,7 @@ from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, Sub
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .._deferred_tools import asking_agent, deferring_agent, pending_agent
-from ..conftest import CountingModel
+from ..conftest import CountingModel, openai_imports_successful, openai_without_token_counting
 
 
 @dataclass
@@ -456,7 +456,7 @@ class TestDelegation:
 
         @dataclass
         class _ToolCapability(AbstractCapability[object]):
-            def get_toolset(self) -> Any:
+            def get_toolset(self) -> FunctionToolset[object]:
                 def cap_tool() -> str:
                     return 'CT'  # pragma: no cover - never offered to the sub-agent
 
@@ -711,6 +711,29 @@ class TestDelegation:
         )
         result = await parent.run('go', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True))
         assert result.output == 'all done'
+        assert usage.requests == 3
+
+    @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+    @pytest.mark.parametrize('provider', ['openai-codex', 'openai-chatgpt'])
+    async def test_unmanaged_child_drops_inherited_token_counting_on_openai_codex_and_chatgpt(
+        self, allow_model_requests: None, provider: Literal['openai-codex', 'openai-chatgpt']
+    ) -> None:
+        """These providers serve no token counting, so the child starts again without the up-front count."""
+        worker = Agent(openai_without_token_counting(provider, 'W'), name='worker')
+        usage = RunUsage()
+        parent: Agent[object, str] = Agent(
+            CountingModel(_delegate_then_finish('worker')),
+            capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)],
+        )
+        result = await parent.run('go', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True))
+        assert result.output == 'all done'
+        assert [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ] == snapshot(['W'])
         assert usage.requests == 3
 
 

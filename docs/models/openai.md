@@ -247,6 +247,8 @@ result = agent.run_sync([
 
 A `CachePoint` that opens a user message marks the end of the previous message instead, such as the tool result before it, the same as on Anthropic and Bedrock. On the Responses API, assistant output can't carry a breakpoint, so it goes on the closest earlier input instead. One with no earlier content in the conversation raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
+On GPT-6.2 and later, the Responses API [appends the top-level `instructions` after the input and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching). Pydantic AI sends an agent's instructions in that field unless `openai_cache_instructions` moves them into the input, so on those models they can be cached only with it on: set it directly, or let `cache=True` set it when no other OpenAI cache setting is present, within the limits below.
+
 To cache the instructions without the unified setting, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
 
 ```python {test="skip"}
@@ -352,6 +354,16 @@ agent = Agent(model, model_settings=settings)
 ```
 
 `auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 families); on other models it is ignored.
+
+### Reasoning after history edits {#reasoning-after-history-edits}
+
+On newer OpenAI models, the Responses API [drops replayed reasoning items](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged) that follow a change to the earlier conversation, so the model may have to redo that reasoning. In testing, `gpt-6.2-sol` did this, and reasoning was also dropped after some model switches. When the API reports a drop, Pydantic AI puts the report in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'input_transformations'`, as OpenAI returns it, such as `[{'id': 'rs_…', 'action': 'removed', 'reason': 'prefix_mismatch', 'type': 'reasoning'}]`. With [instrumentation](../logfire.md) on, it also adds the report to the model request's span as an `openai.input_transformations` event.
+
+What happened to earlier reasoning in testing:
+
+- **History edits:** [history processors](../message-history.md#processing-message-history) and [Pydantic AI Harness compaction](../harness/compaction.md) strategies that edit or drop earlier messages, such as clearing old tool results or dropping the oldest messages, dropped the reasoning after the edit. [OpenAI's own compaction](#message-compaction) [keeps it](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged). To shorten a large tool result, shorten it before it's first sent.
+- **Tool changes:** removing a tool between requests, or changing [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] between requests, including narrowing it to a subset of the tools, dropped the reasoning after the change. Tools added partway through a run kept it.
+- **Model switches:** switching from `gpt-6.2-astra` to `gpt-6.2-sol`, or from `gpt-6.2-sol` to `gpt-6.1-sol`, dropped every earlier reasoning item, with `'reason': 'model_mismatch'`. Switching from `gpt-6.2-sol` to `gpt-6.2-astra` kept it. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or a run-level `model=` that makes such a switch continues without that reasoning.
 
 ### Native tools
 
@@ -472,6 +484,8 @@ print(result.output)
 ```
 
 When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response. OpenAI keeps the conversation itself, so it can't be rewritten from the client: changes to the messages before that response, by a [history processor](../message-history.md#processing-message-history) or [compaction](../capabilities/compaction.md) for instance, don't reach the model. Unlike [`openai_previous_response_id`](#referencing-earlier-responses), which falls back to sending the full history, there is no conversation to fall back to without duplicating its items.
+
+OpenAI adds a response to its conversation only once the response completes. If a response's stream drops or is cancelled before then, the next request first lists the conversation's items to check whether OpenAI completed that response anyway, provided the response has output items to look for. If it did, only the input after it is sent. If it didn't, or the response has no output items, the response is sent again, with the messages since the last response the conversation holds, so a tool call it made reaches the conversation together with its result.
 
 When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
 
