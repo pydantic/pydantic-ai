@@ -33,13 +33,11 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
     PrepareTools,
-    RawToolArgs,
     ValidatedToolArgs,
 )
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
-    ComputerCallPart,
     ComputerReturnPart,
     Drag,
     MouseDown,
@@ -49,7 +47,6 @@ from pydantic_ai.computer_use import (
     PressKeys,
     TypeText,
 )
-from pydantic_ai.exceptions import SkipToolValidation
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -123,95 +120,6 @@ def _scripted(
 
 def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-
-
-def _flagged(*actions: dict[str, object]) -> FunctionModel:
-    """A model whose `computer` call needs a person's confirmation, as a provider's safety check flags one, then answers `done`."""
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(part, ToolCallPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[TextPart('done')])
-        call = ComputerCallPart(
-            'computer', {'actions': list(actions)}, provider_details={'confirmation': 'It deletes files.'}
-        )
-        return ModelResponse(parts=[call])
-
-    return FunctionModel(respond)
-
-
-class TestConfirmation:
-    """A call the provider flags for a person's confirmation."""
-
-    async def test_it_waits_for_approval_and_its_result_says_it_was_confirmed(self) -> None:
-        provider = ScreenProvider()
-        agent = Agent(
-            _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
-            capabilities=[provider.capability(), ComputerUse()],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-
-        assert isinstance(paused.output, DeferredToolRequests)
-        (call,) = paused.output.approvals
-        assert paused.output.metadata == {call.tool_call_id: {'reason': 'It deletes files.'}}
-        assert provider.actions == []
-
-        resumed = await agent.run(
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
-        )
-        assert provider.actions == [TypeText(text='rm -rf x')]
-        (tool_return,) = _returns(resumed.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'confirmed': True}
-
-    async def test_a_hook_that_skips_validation_still_waits_for_approval(self) -> None:
-        """A hook can skip the tool's argument validation, but not the approval, which the tool itself asks for."""
-        provider = ScreenProvider()
-        hooks = Hooks[object]()
-
-        @hooks.on.before_tool_validate
-        async def skip(
-            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
-        ) -> RawToolArgs:
-            raise SkipToolValidation({'actions': [TypeText(text='rm -rf x')]})
-
-        agent = Agent(
-            _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
-            capabilities=[provider.capability(), ComputerUse(), hooks],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (call,) = paused.output.approvals
-        assert paused.output.metadata == {call.tool_call_id: {'reason': 'It deletes files.'}}
-        assert provider.actions == []
-
-        resumed = await agent.run(
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
-        )
-        assert provider.actions == [TypeText(text='rm -rf x')]
-        (tool_return,) = _returns(resumed.all_messages())
-        assert tool_return.metadata == {'performed': 1, 'confirmed': True}
-
-    async def test_a_denied_call_does_not_run(self) -> None:
-        provider = ScreenProvider()
-        agent = Agent(
-            _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
-            capabilities=[provider.capability(), ComputerUse()],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (call,) = paused.output.approvals
-
-        resumed = await agent.run(
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: False}),
-        )
-        assert provider.actions == []
-        (tool_return,) = _returns(resumed.all_messages())
-        assert tool_return.outcome == 'denied'
 
 
 class TestComputerUse:

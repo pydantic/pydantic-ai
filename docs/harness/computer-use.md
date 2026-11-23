@@ -99,14 +99,6 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 
 The same hook can refuse a call instead, such as one that waits longer or types more than you allow. [Raise `ToolFailed`](../hooks.md#triggering-retries-with-modelretry) with a message for the model. None of the call's actions run.
 
-Some providers flag an action for a person to confirm, and give their reason in the call's
-[`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation]. `ComputerUse` asks for approval of
-such a call without a hook: the tool raises `ApprovalRequired` before it does anything, so no hook can skip it,
-with the reason in the request's `metadata` as `{'reason': ...}`. A hook like the one above runs first and asks
-without the reason. Once you approve the call, its result has `confirmed` set, so the provider is told a person
-approved it. A flagged call fails the run unless the agent has `DeferredToolRequests` in its `output_type` or a
-`HandleDeferredToolCalls` handler.
-
 ## Screen size
 
 A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
