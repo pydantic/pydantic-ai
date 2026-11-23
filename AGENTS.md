@@ -175,3 +175,5 @@ Additionally, always read the directory-specific instructions when working in th
 - [src/pydantic_ai_harness/AGENTS.md](src/pydantic_ai_harness/AGENTS.md)
 - [tests/AGENTS.md](tests/AGENTS.md)
 - [tests/harness/AGENTS.md](tests/harness/AGENTS.md)
+
+When two instructions disagree, a gate's behavior wins over any instruction, and the `AGENTS.md` nearest the file you are changing wins over `agent_docs/`. Fix the instruction that lost. State a rule in one file, and link to it from the others.
