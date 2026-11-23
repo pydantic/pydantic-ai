@@ -3106,10 +3106,9 @@ one; both keep their files, so delete them when you are done. A `modal` or `rend
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
 
-With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token
-anywhere in a request to GitHub, the body included, so a command can save it in a GitHub file or
-issue and read it back ([boxd's docs](https://docs.boxd.sh/guides/env-secrets.md)). `e2b` only
-adds the token as a request header, so this can't happen there.
+With `boxd`, the real token goes only into request headers to GitHub, which `gh` and `git`
+use, not into a URL or body, so a command can't save it in a GitHub file or issue and read it back
+([boxd's docs](https://docs.boxd.sh/guides/env-secrets#host-bound-secrets)).
 
 A server started in a `boxd` machine is also public: boxd gives every machine an HTTPS address
 that forwards to ports such as 8000 and 3000, and has no setting to turn it off or require a
