@@ -56,6 +56,10 @@ tools given cancelled returns) so history never ends on a dangling `ToolCallPart
 - Realtime WebSocket cassettes live in `tests/realtime/cassettes/` (raw frames, secrets scrubbed,
   audio truncated); record with `uv run --env-file .env pytest --record-mode=rewrite <test>`. The
   cross-provider matrix test is the parity net — extend it when adding provider behavior.
+- A fix for a provider frame the connection can't read, or reads without its id, also adds that
+  frame as a fault in the simulator (`corrupt_next_frame` in `tests/realtime/simulation/_simulation.py`).
+  A simulator scenario that pins a lifecycle fix runs on every provider (`on_every_provider`); an
+  exemption says why that provider can't reach it.
 - Docs examples run against the scripted `MockRealtimeConnection` in `tests/test_examples.py`; an
   agent defining a `check_availability` tool triggers the scripted conversation reserved for the
   quickstart, so don't use that tool name elsewhere.
