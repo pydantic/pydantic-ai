@@ -13,6 +13,7 @@ from pydantic_ai.profiles.anthropic import (
     _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     AnthropicModelProfile,
+    anthropic_computer_use_profile,
     anthropic_model_profile,
 )
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -197,6 +198,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
             ),
+            anthropic_computer_use_profile(model_name, profile),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.

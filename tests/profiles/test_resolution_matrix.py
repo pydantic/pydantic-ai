@@ -37,6 +37,7 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -264,8 +265,18 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_max_effort': True,
@@ -305,8 +316,18 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -347,6 +368,7 @@ def test_anthropic_claude_haiku_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
@@ -357,7 +379,16 @@ def test_anthropic_claude_haiku_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,

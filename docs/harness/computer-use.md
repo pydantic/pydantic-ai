@@ -35,7 +35,9 @@ print(result.output)
 
 ## Models
 
-The model must accept images. Every model gets `computer` as a regular function tool.
+The model must accept images. On the models listed under [Anthropic](../models/anthropic.md#computer-use), it gets its provider's own computer use
+tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
+tool.
 
 ## Safety
 
@@ -98,6 +100,8 @@ For the `zoom` and `cursor_position` actions, also implement
   images on its models with a 200k-token context.
 - A 1280x800 screen suits every model. A larger one costs more tokens per screenshot, and below about 1024x768 models
   start to miss detail.
+- On Claude, a screenshot over the model's image size limit fails the request or makes clicks miss; see
+  [Anthropic](../models/anthropic.md#computer-use).
 - A drag must finish within one run, approvals included: when a run ends, held mouse buttons are released.
 
 ## API reference
