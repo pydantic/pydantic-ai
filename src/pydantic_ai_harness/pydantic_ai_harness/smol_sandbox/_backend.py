@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -47,7 +46,9 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._smolvm_cli import NAME as _NAME, NAME_PREFIX as _NAME_PREFIX
 from pydantic_ai_harness._workspace_provider import (
+    EXEC_SCRIPT,
     absolute_path,
     check_env,
     check_provider,
@@ -73,16 +74,6 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
 
-_NAME_PREFIX = 'pydantic-ai-'
-_NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
-"""The names the backend gives its VMs, and so the only refs it attaches to or deletes.
-
-A local VM's id is its name and `connect` opens any VM of this OS user, so without this check a ref
-from message history could reach a VM made by another tool, with host mounts or network. The name is
-a namespace, not proof of origin: any process of this OS user could use it, and smolmachines can't report
-an existing VM's mounts or network, so a ref is still trusted input.
-"""
-
 _SETUP_TIMEOUT = 60.0
 """Seconds the backend's own commands in the VM (`mkdir -p` and `pwd -P`) get."""
 
@@ -100,21 +91,8 @@ _HOST_UNAVAILABLE = frozenset(
 )
 """Codes for a host that can't run a local VM at all, so no retry can succeed."""
 
-# `sh` resolves the program on `PATH` and exits 127 when it is missing, as the protocol asks;
-# `exec` keeps the argv literal and replaces the shell with the program. BusyBox and bash read a
-# program named like `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is
-# resolved to its path first. smolmachines 1.22 leaves a streamed command's stdin open, so it is
-# closed here. The command's `env` is the shell's own environment, and assigning a variable the
-# environment has changes what the program inherits, so the script assigns none on the usual path
-# and only a reserved name for a program named like an option.
-_EXEC_SCRIPT = """case $1 in
--*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
--*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
-*) exec "$@" </dev/null ;;
-esac
-shift
-exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
-_EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
+# smolmachines 1.22 leaves a streamed command's stdin open, which `EXEC_SCRIPT` closes.
+_EXEC = ('/bin/sh', '-c', EXEC_SCRIPT, 'sh')
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
@@ -171,7 +149,7 @@ async def settled(task: asyncio.Task[_T]) -> _T:
 
 async def _open(machine: smol.Machine, argv: list[str], options: smol.ExecOptions) -> smol.ExecStream:
     """Start a command, closing its stream when it arrives after the caller was cancelled."""
-    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))
+    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))  # noqa: TID251  (not converted to anyio yet)
     try:
         await asyncio.wait([opening])
     except asyncio.CancelledError:
@@ -240,7 +218,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the VM (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one
@@ -341,9 +319,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                     config = smol.MachineConfig(
                         name=machine_id, image=self._image, resources=self._resources, persistent=True
                     )
-                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())  # noqa: TID251  (not converted to anyio yet)
                 else:
-                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())  # noqa: TID251  (not converted to anyio yet)
             except smol.SmolError as error:
                 if create:
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
@@ -422,7 +400,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             with anyio.move_on_after(timeout) as scope:
                 stream = await _open(machine, argv, options)
                 try:
-                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:
+                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:  # noqa: TID251  (not converted to anyio yet)
                         output.record(event)
                 finally:
                     # On any way out, this kills the command in the VM and wakes a thread waiting for its next event.
@@ -447,7 +425,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         """
         # Even a `NOT_FOUND` is checked: the error's code comes from its text, which may be the guest's.
         try:
-            state = await asyncio.to_thread(machine.state)
+            state = await asyncio.to_thread(machine.state)  # noqa: TID251  (not converted to anyio yet)
         except smol.SmolError as probe_error:
             if probe_error.code == 'NOT_FOUND':
                 return WorkspaceUnavailableError(_gone_message(machine.id))

@@ -1,12 +1,13 @@
 """Pydantic AI's workspace backend conformance suite, run against `BoxdSandboxBackend`.
 
-`TestFakeBoxdSandboxBackend` runs everywhere, over the fake boxd SDK, where commands act on a
+`TestFakeBoxdSandboxBackend` runs on POSIX hosts, over the fake boxd SDK, where commands act on a
 temporary host directory. `TestLiveBoxdSandboxBackend` runs the same rules against a real machine
 and is gated like `test_boxd_live.py`.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
-from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
+from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 from .fake_boxd import FakeBoxd
 
 
@@ -25,6 +26,7 @@ async def _delete(backend: WorkspaceBackend) -> None:
     await BoxdSandbox().destroy(backend.ref)
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeBoxdSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, fake_boxd: FakeBoxd, tmp_path: Path) -> BoxdSandboxBackend:
@@ -62,7 +64,7 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         finally:
             try:
                 if backend.ref is not None:
-                    await BoxdSandbox().destroy(backend.ref)
+                    await delete_live_machine(backend.ref)
             finally:
                 await backend.aclose()
 
@@ -81,7 +83,7 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         for backend in created:
             try:
                 if backend.ref is not None:
-                    await BoxdSandbox().destroy(backend.ref)
+                    await delete_live_machine(backend.ref)
             finally:
                 await backend.aclose()
 

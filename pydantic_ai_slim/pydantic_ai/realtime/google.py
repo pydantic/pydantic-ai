@@ -53,6 +53,7 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -667,7 +668,7 @@ async def _open_live_session(
             # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
             # where a level-triggered scope would cancel that close too and leak the socket.
             try:
-                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
+                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)  # noqa: TID251  (not converted to anyio yet)
             except TimeoutError as e:
                 raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
 
@@ -715,6 +716,8 @@ async def _seed_request_parts(
                 | ToolAvailabilityDeltaPart()
                 | CapabilityLoadDeltaPart()
                 | ModelSettingsDeltaPart()
+                # Rendered into the parts below by `wrap_seeded_system_prompts` before seeding.
+                | CapabilityPart()
             ):
                 # System prompts are seeded through session instructions, and tool-availability news
                 # from a prior standard run is stale here: the session advertises its own tools.

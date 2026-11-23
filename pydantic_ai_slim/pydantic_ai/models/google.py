@@ -74,6 +74,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -178,6 +179,7 @@ LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
     'gemini-4-hydrogen',
+    'gemini-4-neon',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
@@ -763,19 +765,21 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+        """Set `google_supports_batch_api` and the image media types by the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
         """
-        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        return _with_google_cloud_media_types(profile) if self._is_google_cloud else profile
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the default levels. A
-        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+        `google_thinking_levels` of `MINIMAL` and `HIGH`, and `gemini-4-neon` models to `LOW`, `MEDIUM`, `HIGH` and
+        `XHIGH`; on Vertex AI both keep the default levels. A `google_thinking_levels` set by the provider or the
+        `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
         marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
@@ -800,6 +804,21 @@ class GoogleModel(Model[Client]):
             and not self._is_google_cloud
         ):
             return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Verified live 2026-11-18 against the Gemini API: `gemini-4-neon` accepts `LOW`, `MEDIUM`, `HIGH` and
+        # `XHIGH`, and returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed and
+        # its thinking table doesn't list the model, so Vertex keeps the default levels.
+        # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-4-neon')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {
+                **profile,
+                'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH')),
+                'google_supports_minimal_thinking_level': False,
+            }
         # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
         # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
         # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.

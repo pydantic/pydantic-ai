@@ -111,12 +111,12 @@ Values:
 
 Per-provider mapping:
 
-| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud | Groq |
-|---|---|---|---|---|---|---|
-| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ | `'auto'` |
-| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ | `'on_demand'` |
-| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) | `'flex'` |
-| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) | _(omitted)_ |
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google Cloud | Groq | xAI |
+|---|---|---|---|---|---|---|---|
+| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ | `'auto'` | _(omitted)_ |
+| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ | `'on_demand'` | `'default'` |
+| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) | `'flex'` | _(omitted)_ |
+| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) | _(omitted)_ | `'priority'` |
 
 On Google Cloud the unified field maps only to safe PT-with-spillover variants so customers with
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
@@ -569,7 +569,9 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Mistral
-    * Bedrock
+    * Bedrock (not OpenAI, xAI, Qwen, Google, Z.AI, Moonshot AI, MiniMax or NVIDIA models, DeepSeek V3.2, Writer
+      Palmyra Vision, or Mistral's Devstral, Magistral, Ministral 3, Mistral Large 3 and Voxtral, which Converse
+      rejects it for)
     * MCP Sampling
     * xAI
     * HuggingFace
@@ -740,6 +742,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
     * Z.AI
     * Bedrock Mantle
+    * xAI (`'default'` and `'priority'` only; `'auto'` and `'flex'` are omitted)
 
     The OpenAI-derived model classes send the OpenAI value unchanged, so the OpenAI column of the
     mapping table applies to them.

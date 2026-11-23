@@ -64,6 +64,11 @@ logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{
 render = ["render>=1.6.0"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
+# 1.0.11, the newest release, is the one the backend is verified against: its `get_sandbox` fails at once for a
+# missing claim instead of waiting for it. 1.0.9 was the first with the streaming
+# `sandbox.commands.start()` (its `grpc` extra) the backend runs every command through. Capped below 2, the SDK's
+# next major.
+kubernetes = ["k8s-agent-sandbox[async,grpc]>=1.0.11,<2"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
 # boxd's SDK is on 0.x, where a minor release can change the API, so cap per minor. 0.2.20 added
 # `machines.fs` and an `AuthenticationError` that means only refused or missing credentials.
@@ -100,7 +105,7 @@ playwright = ["idna>=3.4", "playwright>=1.61.0"]
 # FastMCP 3 resolves `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator` (removed in 3.15).
 # The beartype line is removable once beartype 0.23.0 final is released (tracked in #9455):
 # https://github.com/beartype/beartype/issues/618
-stackone = ["fastmcp>=3.4.5,<4", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+stackone = ["fastmcp>=3.4.5,<5", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 ordinal = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 grain = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 day-ai = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

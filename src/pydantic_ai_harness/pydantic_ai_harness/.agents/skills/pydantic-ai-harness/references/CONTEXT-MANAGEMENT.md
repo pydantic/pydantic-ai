@@ -2,11 +2,12 @@
 
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
 the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
-tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), and the media
-stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, which needs
-`pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
-harness extra). All compaction strategies keep tool-call /
-tool-return pairs intact, and their edits persist into the run's message history.
+tool returns when they are produced), `ToolBridge` (a fixed tool list in front of many tools),
+`WarnOnCacheBusts` (observe cache collapses), `LabelCrossModelHistory` (label turns another model
+wrote), and the media stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`,
+which needs `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and
+needs no harness extra). All compaction strategies keep tool-call / tool-return pairs intact, and
+their edits persist into the run's message history.
 
 ## Pick a capability
 
@@ -19,11 +20,14 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
+| A fresh tool result is junk the model should stop re-reading | `PruneToolResults` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
 | A single tool return is huge (file read, logs, JSON) | `ToolOutputLimits` |
 | Cache hit rate drops / costs jump with no error | `WarnOnCacheBusts` |
+| Many or changing tools (several MCP servers) bust the cached tool list | `ToolBridge` |
+| The model switched mid-conversation and treats the old model's answers as its own | `LabelCrossModelHistory` |
 | OpenAI Responses or Anthropic only, server-side compaction is fine | core `OpenAICompaction` / `AnthropicCompaction` |
 | Need exact details compaction dropped | `ConversationSearch` (see KNOWLEDGE-AND-MEMORY.md) |
 
@@ -52,7 +56,8 @@ agent without a reason: both rewrite history.
   only when the window cannot be resolved. `TestModel` never resolves, so `max_fraction=0.9` means
   a 180,000-token trigger in tests: set `context_window=` there.
 - Token counts anchor on the last response's provider usage, then estimate the suffix with
-  `tokenizer=` or ~4 chars per token.
+  `tokenizer=` or a text estimate: ~4 chars per token for prose, more for non-ASCII text, base64
+  and compact JSON.
 - `keep_tokens=` is measured per message with provider usage too (`estimate_message_tokens`):
   responses count their `output_tokens`, including thinking returned without text.
 - A positive `keep_tokens` is a minimum, not a cap: `SlidingWindowCompaction` and
@@ -93,8 +98,8 @@ agent = Agent(
             tiers=[
                 ClampOversizedMessages(max_part_tokens=50_000),
                 DeduplicateFileReads(file_key=file_key),
-                ClearToolResults(max_tokens=1, keep_pairs=3),
-                SummarizingCompaction(max_messages=1, keep_messages=20),
+                ClearToolResults(keep_pairs=3),
+                SummarizingCompaction(keep_messages=20),
             ],
             target_fraction=0.8,
         )
@@ -102,9 +107,11 @@ agent = Agent(
 )
 ```
 
-Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction` but must still be valid,
-hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly one of
-`target_tokens` / `target_fraction` is required. Any object with
+Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction`, so tiers need none.
+On its own trigger, a tier raising a `skip_on` exception (default: `ModelAPIError`,
+`FallbackExceptionGroup`, `UnexpectedModelBehavior`) is skipped with a warning and a span with
+`compaction.skipped='tier_failed'` and `error.type`; other errors, and any on a direct `compact()`,
+propagate. `tiers` must be non-empty and exactly one of `target_tokens` / `target_fraction` is required. Any object with
 `async def compact(messages, ctx) -> list[ModelMessage]` (`CompactionStrategy`) can be a tier.
 Each tier's kept messages set a floor under `target_tokens`: its `keep_tokens`/`keep_messages` tail
 with the current turn, the first user message under `preserve_first_user_message`, and pins. A target
@@ -163,7 +170,7 @@ model with structured output, or a `FallbackModel` of both. Each older step (a r
 requests answering it) gets one judge request with two questions, `needed_verbatim` and
 `still_matters`. Steps are kept by `needed_verbatim` rank until the target (default half the
 trigger), the rest are reduced by `still_matters` rank (summarized when `summarizer` is a
-`SummarizingCompaction`, whose trigger is ignored, so `max_messages=1` works; otherwise tool
+`SummarizingCompaction`, whose trigger is ignored and can be omitted; otherwise tool
 results are cut to `truncated_result_chars`), and the remainder dropped. Steps holding a user prompt
 are never dropped. All judge requests of one compaction count as one request; judgements are cached
 per instance by task and step. Judge errors propagate: wrap in `FallbackCompaction`. As a
@@ -204,8 +211,8 @@ agent = Agent(
         FallbackCompaction(
             max_fraction=0.85,
             fallback_chain=[
-                SummarizingCompaction(max_messages=1, keep_tokens=20_000),
-                SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
+                SummarizingCompaction(keep_tokens=20_000),
+                SlidingWindowCompaction(keep_tokens=20_000),
             ],
         )
     ],
@@ -220,7 +227,7 @@ request of the run, with `focus` forwarded through `with_focus` when the strateg
 Below `min_tokens`, after `max_per_run` accepted requests, or with one already scheduled, the tool
 return says why nothing happens. It orders itself after the automatic compaction capabilities and
 stands down when one already compacted that request. The span gets `compaction.model_requested`.
-The strategy's own trigger is required but bypassed. Under durable execution the strategy runs as
+The strategy's own trigger is bypassed and can be omitted. Under durable execution the strategy runs as
 the `compact` durable operation; the stable default `id='compact_on_request'` makes recovery work
 without configuration, and `id=None` breaks it. Under Temporal that operation is an activity
 without `tracer` or `capabilities`, so `RelevanceCompaction` or a `receipts=True` strategy fails.
@@ -234,7 +241,7 @@ agent = Agent(
     'test',
     capabilities=[
         CompactOnRequest(
-            SummarizingCompaction(max_messages=1, keep_messages=6),
+            SummarizingCompaction(keep_messages=6),
             min_tokens=30_000,
             max_per_run=2,
         )
@@ -242,11 +249,22 @@ agent = Agent(
 )
 ```
 
+### `PruneToolResults`
+
+`PruneToolResults(placeholder='[tool result pruned]')`: adds a `prune_tool_result(tool_call_id, summary)`
+tool. Once a call is accepted, the named result's content becomes `placeholder` plus the summary,
+persisted in history. Only results the latest response answered can be pruned; an unknown or older
+ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than the result is
+refused in the tool return. Token triggers and `ReportContextUsage` anchor on the latest response's
+usage, which still counts the result until the next response. The span gets
+`compaction.model_requested`.
+
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
-never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped
-`SystemPromptPart(scope='request')` as limits approach: seen for that request only, kept in history. At
+never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped `LimitWarningPart`
+(an `InstructionCapabilityPart`; find it by type, its `kinds` field names the limits) as limits approach: seen for
+that request only, kept in history. At
 least one limit is required; `warn_on` may only name configured kinds (`'iterations'`,
 `'context_window'`, `'total_tokens'`).
 
@@ -288,6 +306,8 @@ capability to see post-compaction usage, before it to see what triggered compact
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
+  Pass `source='tool'` or `source='model'` for content the user didn't write, so it reaches the model
+  as `<pinned source="...">` data rather than as the user's words.
 - `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
   loaded: when they summarize or drop a load's record (a `load_capability` exchange, or the
   `CapabilityLoadDeltaPart` of a load from code), they record it again after the summary as a
@@ -302,26 +322,34 @@ capability to see post-compaction usage, before it to see what triggered compact
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 
-Every rewrite (clear, dedupe, clamp, summarize) busts the provider prompt cache from the edit
+Every rewrite (clear, prune, dedupe, clamp, summarize) busts the provider prompt cache from the edit
 point onward.
 
 ## ToolOutputLimits
 
 Reduces an oversized tool return once, when produced, so it is not re-sent at full size on every
 later request. Actions: `Truncate` (zero-LLM, lossy), `Spill` (lossless: stores the payload and
-returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The spill preview reads
+returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The lossy markers tell
+the model to rerun the tool: `[truncated: ...; rerun the original tool for the full output]`, and a
+summary opens with `[summary of N chars of output; rerun the original tool for the full output]`.
+The spill preview reads
 `[Tool output too large (N chars); stored to handle '<handle>'. Read it with read_tool_result(...)]`,
 then a `shape:` line for JSON and a head/tail excerpt; the model pages it with the registered
-`read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None)` (`pattern` is a literal
-substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`:
+`read_tool_result(handle, offset=0, limit=200, from_end=False, pattern=None, unit='lines')`
+(`pattern` is a literal substring; at most 1,000 lines / 50,000 chars per call; `unit='bytes'`
+slices raw bytes, at most 50,000, for output without line breaks) and searches it with
+`grep_tool_result(handle, pattern, context=2, max_matches=20, offset=0)`, which returns 1-based
+`N:` match and `N-` context lines (at most 200 matches and 10 context lines). Default with no
+`bands`:
 `Band(over=10_000, action=Spill(then=Truncate()))`, measured in characters.
 
-With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its own),
-`read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
-`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
-(`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
-are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
-should pick the reader by kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`), not by name.
+With `FileSystem` on the agent and the default `WorkspaceOverflowStore()` (no `workspace=` of its
+own), `read_tool_result` and `grep_tool_result` are left out (`unless_tool_kind=READ_FILE_KIND`) and
+the marker reads `... Read it with read_file(path='<handle>').]`, naming the tool as it is called in
+the run (`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under
+`.pydantic-ai-harness/tool-output/` are not reduced, so a spill read is never re-spilled; searches of
+a spill are reduced as usual. `read_file` has no `from_end`. Scripted tests should pick the reader by
+kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not by name.
 
 ```python
 from pydantic_ai import Agent
@@ -411,6 +439,57 @@ it only fires when the provider reports cache tokens; route to Logfire with
 `logging.captureWarnings(True)`. On a provider with no published retention window (`unknown`)
 it can't tell a moved prefix from an expired cache.
 
+## ToolBridge
+
+Replaces the agent's tools with three fixed tools, so the tool definitions stay cached however many
+tools sit behind them and however they change mid-run: `tool_search(queries)` returns matching names
+and descriptions, `tool_describe(name)` returns the description and `parameters_json_schema`, and
+`tool_call(name, args_json)` runs the tool with its arguments as a JSON object string. Bridged calls
+go through the normal tool path (validation, hooks, usage; approval only through a
+`HandleDeferredToolCalls` handler), and both `tool_call` and the
+bridged tool count as tool calls. A bridged tool's retries count under its own name (its `ctx.retry` and
+`max_retries`) and also spend a `tool_call` retry; a `sequential` bridged tool makes `tool_call` sequential.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ToolBridge
+
+agent = Agent('test', capabilities=[ToolBridge(['github_search', 'github_get_issue'])])
+```
+
+Options: `tools` (`'all'`, a list of names, a metadata dict such as `{'bridge': True}`, or a
+`(ctx, tool_def) -> bool` callable; the rest stay
+native), `search` (a `ToolSearchFunc`; `None` matches query words against names and descriptions), `max_results=10`, `max_retries=None` (the agent's tool retry budget).
+Gotchas: approval-required and external tools, tools with a `tool_kind` or `unless_tool_kind` (control
+tools, `read_file`, so kind-based capabilities still find them), code-execution tools (`run_code`,
+`run_command`) and `unless_native` fallbacks stay native, as do deferred tools a capability owns; other `defer_loading=True` tools are bridged, so `ToolSearch` has nothing left to reveal; a bridged tool that
+raises `ApprovalRequired`/`CallDeferred` needs a `HandleDeferredToolCalls` handler (it sees the real tool name),
+else the run raises `UserError`; the names `tool_search`, `tool_describe` and `tool_call` are reserved; each call costs an extra step and
+loses provider-side strict schema validation. Two merge into one (default `id='tool_bridge'`). It orders itself just inside `ToolSearch` and
+outside other wrappers (`SetToolMetadata`, `PrefixTools`); `CodeMode` wraps it. Recognize `tool_call` by its kind,
+`TOOL_CALL_KIND` (`tool_bridge.tool_call`, from `pydantic_ai_harness.tool_bridge`), not its name.
+
+## LabelCrossModelHistory
+
+States a fixed instruction (`notice=`, default `DEFAULT_CROSS_MODEL_NOTICE`) while the request's history has a
+`ModelResponse` whose `model_id` differs from the model the request goes to. It's an `on_change='append'`
+block named `notice`, so the notice and its later withdrawal are appended as `InstructionDeltaPart`s instead of
+rewriting the instructions, and it never names the other model.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import LabelCrossModelHistory
+
+agent = Agent('test', capabilities=[LabelCrossModelHistory()])
+```
+
+Gotchas: responses without a `model_id` (old saved history) are not counted; a `FallbackModel`'s candidates
+all count as the current model, but history a `FallbackModel` wrote carries its composite `model_id`, so a
+candidate continuing it on its own is told; under `ModelFallback` the notice is decided again for each candidate
+tried.
+
 ## Media externalization (not a capability)
 
 `pydantic_ai_harness.media` holds content-addressed stores (`FileMediaStore`, `SqliteMediaStore`,
@@ -431,6 +510,8 @@ Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabil
 
 - https://pydantic.dev/docs/ai/harness/compaction/
 - https://pydantic.dev/docs/ai/harness/tool-output-limits/
+- https://pydantic.dev/docs/ai/harness/tool-bridge/
 - https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/
+- https://pydantic.dev/docs/ai/harness/label-cross-model-history/
 - https://pydantic.dev/docs/ai/harness/media/
 - https://pydantic.dev/docs/ai/capabilities/compaction/

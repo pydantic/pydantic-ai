@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import boxd
@@ -26,7 +27,10 @@ from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
 from .fake_boxd import FakeBoxd, wait_until_gone
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
+pytestmark = [
+    pytest.mark.anyio(backends=['asyncio']),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 _MODULE = 'pydantic_ai_harness.boxd_sandbox._backend'
 _NAME = re.compile(r'pydantic-ai-[0-9a-f]{32}')
@@ -62,6 +66,11 @@ class TestConstruction:
         with pytest.raises(ValueError, match=r'^pass either `snapshot` or `vcpu`, not both'):
             BoxdSandboxBackend(snapshot='golden', vcpu=2)
 
+    def test_a_string_of_secrets_is_refused(self) -> None:
+        # A `str` is a sequence of names too: `'GH_TOKEN'` would become eight one-letter secrets.
+        with pytest.raises(ValueError, match=r'^`secrets` takes a list of secret names'):
+            BoxdSandboxBackend(secrets='GH_TOKEN')
+
 
 class TestCreate:
     @pytest.mark.parametrize(
@@ -81,9 +90,31 @@ class TestCreate:
             assert await backend.run(['echo', 'hi']) == CommandResult(exit_code=0, stdout='hi\n', stderr='')
         machine = host.only
         assert _NAME.fullmatch(machine.name)
-        assert machine.create_kwargs == {'org': 'acme', 'isolated': True, 'auto_suspend_timeout': 0, **forwarded}
+        assert machine.create_kwargs == {
+            'org': 'acme',
+            'isolated': True,
+            'auto_suspend_timeout': 0,
+            'spec': None,
+            **forwarded,
+        }
         assert backend.ref == _ref(machine.id)
         assert caplog.messages == [f'Created boxd machine {machine.id} ({machine.name})']
+
+    @pytest.mark.parametrize(
+        ('vcpu', 'size'),
+        [(None, {}), (2, {'size': '2x8'})],
+        ids=['default-size', 'vcpu'],
+    )
+    async def test_secrets_go_in_the_machine_spec(
+        self, host: FakeBoxd, vcpu: Literal[2] | None, size: dict[str, str]
+    ) -> None:
+        await BoxdSandboxBackend(secrets=['GH_TOKEN'], vcpu=vcpu).run(['true'])
+        machine = host.only
+        # The spec carries isolation and size, so they are not passed beside it.
+        assert machine.create_kwargs['isolated'] is False
+        assert machine.create_kwargs['vcpu'] is None
+        assert machine.create_kwargs['spec'] == {'version': 1, 'isolated': True, 'secrets': ['GH_TOKEN'], **size}
+        assert machine.isolated
 
     async def test_a_lost_create_reply_finds_the_machine_instead_of_creating_another(self, host: FakeBoxd) -> None:
         host.lose_create_reply = True
@@ -102,6 +133,43 @@ class TestCreate:
         first, second = host.create_names
         assert first == second == host.only.name
         assert backend.ref == _ref(host.only.id)
+
+    async def test_a_new_machine_boxd_does_not_list_yet_is_waited_for(self, host: FakeBoxd) -> None:
+        host.unlisted_polls = 3
+        backend = BoxdSandboxBackend()
+        assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+        assert backend.ref == _ref(host.only.id)
+        assert len(host.create_names) == 1
+
+    async def test_a_new_machine_boxd_never_lists_is_unavailable(
+        self, host: FakeBoxd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f'{_MODULE}._UNLISTED_TIMEOUT', 0.05)
+        host.unlisted_polls = 10**9
+        with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
+            await BoxdSandboxBackend().run(['true'])
+
+    async def test_a_new_machine_deleted_once_listed_is_unavailable_at_once(self, host: FakeBoxd) -> None:
+        host.boot_polls = 1
+        host.delete_on_lookup = 2
+        with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
+            await BoxdSandboxBackend().run(['true'])
+        assert host.only.lookups == 2
+
+    async def test_after_a_cancelled_create_the_next_operation_waits_for_boxd_to_list_the_machine(
+        self, host: FakeBoxd
+    ) -> None:
+        host.unlisted_polls = 3
+        host.create_gate = asyncio.Event()
+        backend = BoxdSandboxBackend()
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['true'])
+            # The create is held at the gate, so cancelling now leaves the machine created but unlisted.
+            await anyio.wait_all_tasks_blocked()
+            group.cancel_scope.cancel()
+            host.create_gate.set()
+        assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+        assert len(host.create_names) == 1
 
     async def test_a_refused_create_whose_machine_never_appeared_is_unavailable(self, host: FakeBoxd) -> None:
         host.create_errors.append(boxd.ConflictError('a payment method is required', code='failed_precondition'))
@@ -244,6 +312,17 @@ class TestAttach:
         with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-404' was not found"):
             await BoxdSandboxBackend(ref=_ref('machine-404')).run(['true'])
         assert not host.create_names
+
+    async def test_an_attach_does_not_wait_for_boxd_to_list_the_machine(self, host: FakeBoxd) -> None:
+        # Only the backend that created the machine waits for boxd to list it, and only until a lookup has found it.
+        creator = BoxdSandboxBackend()
+        await creator.run(['true'])
+        await creator.aclose()
+        machine = host.only
+        for backend in (BoxdSandboxBackend(ref=creator.ref), creator):
+            machine.unlisted_polls = 1
+            with pytest.raises(WorkspaceUnavailableError, match="The boxd machine 'machine-1' was not found"):
+                await backend.run(['true'])
 
     async def test_a_machine_that_is_not_isolated_is_refused(self, host: FakeBoxd) -> None:
         machine = host.add(name='dev-box', isolated=False)
