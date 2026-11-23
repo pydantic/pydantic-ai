@@ -177,7 +177,8 @@ def live_transcript(messages: Sequence[ServerMessage]) -> list[Item | TurnSummar
 
     Item messages are applied with `ItemLog`, the server's copy of the browser's item fold. The turn messages follow
     `web-ui/src/state.ts`: a turn's prompt arrives with `TurnStarted`, and its usage line with `TurnEnded`, which also
-    shows a tool or sandbox call still running as interrupted.
+    shows a tool still running as interrupted. The browser does the same to a sandbox call, which `compared` leaves
+    out, as `calls` is live-only.
     """
     entries: list[Item | TurnSummary] = []
     log = ItemLog()
@@ -187,11 +188,9 @@ def live_transcript(messages: Sequence[ServerMessage]) -> list[Item | TurnSummar
                 log.apply(ItemAdded(item=message.item))
         elif isinstance(message, TurnEnded):
             assert message.outcome == 'completed' and message.usage is not None
-            for item in log.items.values():
-                calls = [replace(call, state='interrupted') if call.state == 'running' else call for call in item.calls]
-                entries.append(
-                    replace(item, state='interrupted' if item.state == 'running' else item.state, calls=calls)
-                )
+            entries += [
+                replace(item, state='interrupted') if item.state == 'running' else item for item in log.items.values()
+            ]
             entries.append(TurnSummary(id='', usage=message.usage))
             log.clear()
         elif isinstance(message, ItemMessage):
@@ -221,9 +220,13 @@ def compared(entry: Item | TurnSummary) -> Item | TurnSummary:
 @pytest.mark.moves_cache_prefix(reason='`/set run.code_mode true` between the turns replaces the offered tools')
 def test_a_reload_shows_what_the_turns_showed_live(make_web: MakeWeb) -> None:
     pytest.importorskip('pydantic_monty')
-    # A field live-only for some tools is compared on the rest, so it is in both tables; any other field is in one.
     partly_live = {name for name, live in KNOWN_LIVE_ONLY.items() if live.tools is not None}
-    assert COMPARED.keys() & KNOWN_LIVE_ONLY.keys() == partly_live <= COMPARED.keys()
+    assert partly_live <= COMPARED.keys(), (
+        'a field live-only for some tools is compared on the rest: add it to COMPARED'
+    )
+    assert COMPARED.keys() & KNOWN_LIVE_ONLY.keys() == partly_live, (
+        'a field live-only for every tool is not compared: remove it from COMPARED'
+    )
     assert_classified(
         (field.name for field in fields(Item)),
         {**COMPARED, **KNOWN_LIVE_ONLY},
