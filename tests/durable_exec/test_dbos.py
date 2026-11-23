@@ -11,7 +11,7 @@ import time
 import uuid
 import warnings
 from collections import Counter, deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -63,7 +63,6 @@ from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
     Capability,
-    CombinedCapability,
     DynamicCapability,
     Hooks,
     ModelFallback,
@@ -119,6 +118,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
+from .override_rebind_cases import REBIND_CASES, RebindCase
 from .span_utils import drop_fastmcp_client_spans
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
@@ -5784,27 +5784,9 @@ async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(db
     assert added.calls == 1
 
 
-@dataclass(frozen=True)
-class _RebindCase:
-    """An `override(capabilities=...)` list holding the bound durability other than by an item of `root_capability`."""
-
-    id: str
-    capabilities: Callable[[Agent[object, str], AbstractCapability[object]], list[AbstractCapability[object]]]
-    """Builds the list from the agent and its bound durability."""
-    wrap_durability: bool = False
-    """Whether the agent is constructed with its durability behind a `WrapperCapability`."""
-
-
-REBIND_CASES = [
-    _RebindCase('nested', lambda agent, bound: [CombinedCapability([*agent.root_capability.capabilities])]),
-    _RebindCase('rewrapped', lambda agent, bound: [WrapperCapability(wrapped=bound)]),
-    _RebindCase('from_agent', lambda agent, bound: [bound], wrap_durability=True),
-]
-
-
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
 async def test_dbos_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
-    dbos: DBOS, caplog: pytest.LogCaptureFixture, case: _RebindCase
+    dbos: DBOS, caplog: pytest.LogCaptureFixture, case: RebindCase
 ) -> None:
     """The bound `DBOSDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
 

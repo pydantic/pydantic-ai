@@ -157,6 +157,7 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ..override_rebind_cases import REBIND_CASES, RebindCase
 from ..span_utils import drop_fastmcp_client_spans
 
 try:
@@ -2568,26 +2569,8 @@ def test_durability_override_capabilities_keeps_a_wrapped_durability():
             pass
 
 
-@dataclass(frozen=True)
-class _RebindCase:
-    """An `override(capabilities=...)` list holding the bound durability other than by an item of `root_capability`."""
-
-    id: str
-    capabilities: Callable[[Agent[object, str], AbstractCapability[object]], list[AbstractCapability[object]]]
-    """Builds the list from the agent and its bound durability."""
-    wrap_durability: bool = False
-    """Whether the agent is constructed with its durability behind a `WrapperCapability`."""
-
-
-REBIND_CASES = [
-    _RebindCase('nested', lambda agent, bound: [CombinedCapability([*agent.root_capability.capabilities])]),
-    _RebindCase('rewrapped', lambda agent, bound: [WrapperCapability(wrapped=bound)]),
-    _RebindCase('from_agent', lambda agent, bound: [bound], wrap_durability=True),
-]
-
-
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
-def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(case: _RebindCase):
+def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(case: RebindCase):
     """The bound `TemporalDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
 
     Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
