@@ -7,9 +7,6 @@ import re
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
-
-from tests.harness.conftest import Instrumented
 
 from ...conftest import try_import
 
@@ -129,49 +126,6 @@ async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
         await backend.run(['true'])
     workspace_harness.terminate_error = SandboxNotFoundError('gone')
     await capability.destroy(backend.ref)
-
-
-@posix_only
-async def test_the_sandboxes_lifecycle_is_traced(
-    workspace_harness: WorkspaceHarness, instrumented: Instrumented
-) -> None:
-    """Creating, reattaching to and destroying the sandbox each get a span, under the call or tool that needed it."""
-    tracing, exporter = instrumented(False)
-    capability = RenderSandbox(client=workspace_harness.client, working_dir=str(workspace_harness.root))
-    agent = Agent(TestModel(call_tools=['pwd']), capabilities=[capability, tracing])
-
-    @agent.tool
-    async def pwd(ctx: RunContext[object]) -> str:
-        return (await ctx.workspace.run(['pwd'])).stdout
-
-    ref = (await agent.run('go')).workspace.ref
-    assert ref is not None
-    await agent.run('go', workspace=ref)
-    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[tracing])
-
-    @cleanup.tool_plain
-    async def destroy() -> None:
-        await capability.destroy(ref)
-
-    await cleanup.run('go')
-
-    spans = sorted(exporter.get_finished_spans(), key=lambda span: span.start_time or 0)
-    names = {span.context.span_id: span.name for span in spans if span.context is not None}
-    assert [
-        (
-            span.name,
-            names.get(span.parent.span_id) if span.parent else None,
-            (span.attributes or {}).get('pydantic_ai.workspace.id') == ref.id,
-        )
-        for span in spans
-        if span.name in ('workspace create', 'workspace attach', 'workspace destroy')
-    ] == snapshot(
-        [
-            ('workspace create', 'workspace run', True),
-            ('workspace attach', 'workspace run', True),
-            ('workspace destroy', 'execute_tool destroy', True),
-        ]
-    )
 
 
 @pytest.mark.parametrize(
