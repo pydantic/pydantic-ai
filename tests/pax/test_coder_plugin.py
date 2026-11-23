@@ -1,4 +1,4 @@
-"""Named folder selection and compatibility for CLAI's Coder wrapper."""
+"""Named folder selection and compatibility for Pax's Coder wrapper."""
 
 import io
 from pathlib import Path

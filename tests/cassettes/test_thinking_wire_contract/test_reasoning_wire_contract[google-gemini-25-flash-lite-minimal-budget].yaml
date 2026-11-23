@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "221"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2? Reply with just the number.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_budget: 512
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1198
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |
+                Here's my thought process on this:
+
+                **The Nature of the Request**
+
+                Okay, the user's giving me a straightforward arithmetic problem. It seems simple enough: "What is 2+2?" They've explicitly stated that they only want the numerical answer, nothing more. No explanations, no contextualization, just the number. I see what they're doing here, and I'll cater to their specific request.
+
+                The solution is 4, so that's the response.
+              thought: true
+            - text: "4"
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 14
+          candidatesTokenCount: 2
+          totalTokenCount: 66
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 14
+          thoughtsTokenCount: 50
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash-lite
+        responseId: NqsDa7bIObKFkdUP0PD22AU
+  recorded_at: 2026-11-23T02:55:52.082436+00:00

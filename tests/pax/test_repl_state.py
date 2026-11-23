@@ -292,7 +292,7 @@ class TestReplStates:
         assert list(tmp_path.iterdir()) == []
 
     async def test_a_new_conversation_never_inherits_a_stale_state(self, tmp_path: Path) -> None:
-        """A REPL left under an ID, by a session deleted outside CLAI, does not reach a new session reusing it."""
+        """A REPL left under an ID, by a session deleted outside Pax, does not reach a new session reusing it."""
         session = Session(
             Agent(TestModel()),
             deps=None,

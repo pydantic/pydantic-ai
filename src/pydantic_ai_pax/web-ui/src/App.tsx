@@ -129,7 +129,7 @@ export function App() {
     () => localStorage.getItem('clai-monty') === 'open' && !changes && !localStorage.getItem('clai-side-panel'),
   )
   const [preview, setPreview] = useState<Saved | null>(null)
-  // The session the user picked, until it shows: CLAI makes it live, then its snapshot comes.
+  // The session the user picked, until it shows: Pax makes it live, then its snapshot comes.
   const [opening, setOpening] = useState<Opening | null>(null)
   // The delegated task whose transcript the main pane shows instead of the session's.
   const [worker, setWorker] = useState<string | null>(null)
@@ -373,8 +373,8 @@ export function App() {
 
   const shownTitle = opening?.title ?? chat.session?.title
   useEffect(() => {
-    if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
-    else document.title = shownTitle ? `${shownTitle} · CLAI` : 'CLAI'
+    if (pane === 'orchestrator') document.title = 'Orchestrator · Pax'
+    else document.title = shownTitle ? `${shownTitle} · Pax` : 'Pax'
   }, [shownTitle, pane])
 
   // The picked session showing ends the wait for it; `show` already closed any preview and worker.
@@ -401,7 +401,7 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [opening])
 
-  // A CLAI that does not come back from `/update`'s restart, such as one whose port was taken, leaves the page waiting.
+  // A Pax that does not come back from `/update`'s restart, such as one whose port was taken, leaves the page waiting.
   const restarting = state.update !== null && (state.update.restarting || connection !== 'open')
   const [lost, setLost] = useState(false)
   useEffect(() => {
@@ -415,12 +415,12 @@ export function App() {
     <div className="opening-overlay" role="status">
       {!lost && <span className="spinner" />}
       {lost ? (
-        <span>CLAI did not come back at this address. Check the terminal it runs in.</span>
+        <span>Pax did not come back at this address. Check the terminal it runs in.</span>
       ) : restarting ? (
-        <span>Restarting CLAI…</span>
+        <span>Restarting Pax…</span>
       ) : (
         <span>
-          Updating CLAI to <span className="opening-title">{state.update.target}</span>…
+          Updating Pax to <span className="opening-title">{state.update.target}</span>…
           {state.update.line && <span className="update-line mono">{state.update.line}</span>}
         </span>
       )}
@@ -523,7 +523,7 @@ export function App() {
     setOpening(null)
   }, [])
 
-  // A session another CLAI runs only shows here; continuing it, in a fork of it, is the reader's choice.
+  // A session another Pax runs only shows here; continuing it, in a fork of it, is the reader's choice.
   const continueInFork = useCallback(
     (saved: Saved) => {
       const request = ++picked.current
@@ -563,7 +563,7 @@ export function App() {
         return
       }
       setOpening(session)
-      /** Show the saved session read-only when CLAI can only show it, as when its directory is gone; whether it did. */
+      /** Show the saved session read-only when Pax can only show it, as when its directory is gone; whether it did. */
       const readOnly = async () => {
         const saved = await api.transcript(session.id)
         if (request !== picked.current || saved.openable) return false
@@ -828,10 +828,10 @@ export function App() {
               <div className="preview-banner">
                 <span>
                   {preview.owner_pid !== null
-                    ? `Running in another CLAI (pid ${preview.owner_pid}). You can read it here.`
+                    ? `Running in another Pax (pid ${preview.owner_pid}). You can read it here.`
                     : preview.missing
                       ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
-                      : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                      : `Saved in ${preview.workspace}. Start Pax there to continue it.`}
                 </span>
                 {preview.owner_pid !== null && (
                   <button className="ghost small" onClick={() => continueInFork(preview)}>
@@ -911,7 +911,7 @@ export function App() {
         {!settings && updating}
         {connection === 'expired' && (
           <div className="toast expired" role="alert">
-            This page belongs to an earlier CLAI. Open the new address it printed.
+            This page belongs to an earlier Pax. Open the new address it printed.
           </div>
         )}
         {toast && (
