@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
@@ -278,7 +278,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
         check_path_authority(path_authority)
-        desktop_size(desktop)
+        checked_desktop_size(desktop)
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
@@ -382,11 +382,13 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its
         # own still builds but now leaves the model without the sandbox. This is the earliest hook
         # that sees the run's tools; it warns once per instance and never changes the tools.
-        names = _WORKSPACE_TOOL_NAMES | {'computer'} if self.desktop else _WORKSPACE_TOOL_NAMES
+        sandbox_tool_names = _WORKSPACE_TOOL_NAMES | {'computer'} if self.desktop else _WORKSPACE_TOOL_NAMES
         if (
             self.warn_if_no_tools
             and not self._warned_no_tools
-            and not any(tool.name == name or tool.name.endswith(f'_{name}') for tool in tool_defs for name in names)
+            and not any(
+                tool.name == name or tool.name.endswith(f'_{name}') for tool in tool_defs for name in sandbox_tool_names
+            )
         ):
             self._warned_no_tools = True
             agent_name = ctx.agent.name if ctx.agent is not None else None

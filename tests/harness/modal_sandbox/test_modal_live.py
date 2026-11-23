@@ -33,7 +33,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from ..display_contract_live import check_display_contract
-from ..display_fakes import screen
+from ..display_fakes import full_display
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT
 
 pytestmark = pytest.mark.modal_live
@@ -238,7 +238,7 @@ async def test_coder_tools_run_in_the_sandbox_modal_sandbox_supplies() -> None:
 async def test_a_desktop_meets_the_display_contract() -> None:
     """The fakes can't catch an X server that resets when its last client exits, as Xvfb does without `-noreset`."""
     async with owned_backend(desktop=True) as backend:
-        await check_display_contract(screen(backend))
+        await check_display_contract(full_display(backend))
 
 
 async def test_commands_get_a_usable_environment() -> None:

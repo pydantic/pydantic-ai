@@ -45,7 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -57,7 +57,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DESKTOP_PACKAGES, desktop_display
+from pydantic_ai_harness._x11 import DESKTOP_PACKAGES, DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 # Checked without importing: importing Modal reads `~/.modal.toml`, so the import itself is
@@ -290,15 +290,13 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._sandbox_timeout = sandbox_timeout
         self._idle_timeout = idle_timeout
         self._working_dir = absolute_path('working_dir', working_dir)
-        self._env = dict(env) if env is not None else {}
-        self._desktop_size = desktop_size(desktop)
-        self._display, self._env = desktop_display(
+        self._desktop_size = checked_desktop_size(desktop)
+        self._display = x11_display(
             self._run_argv,
             self._desktop_size,
-            self._env,
             lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
-            started=self._recheck_setsid,
         )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
         self._resolved_working_dir: str | None = None
@@ -656,11 +654,6 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # program the command opens shows on the screen.
             await self._display.start()
         return await self._run_argv(argv, env=env or {}, timeout=timeout, shell=shell)
-
-    def _recheck_setsid(self) -> None:
-        """Forget a "no setsid" answer, since the display's start installs `setsid`."""
-        if self._setsid_available is False:
-            self._setsid_available = None
 
     async def _run_argv(
         self, argv: list[str], *, env: Mapping[str, str], timeout: float | None, shell: bool = False

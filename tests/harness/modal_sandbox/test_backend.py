@@ -33,7 +33,6 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
 from tests.realtime.simulation._loop import SimulatedLoop
 
-from ..display_fakes import screen
 from .fake_modal import FakeImage, FakeModal, FileInfo
 
 posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
@@ -536,26 +535,6 @@ class TestRun:
         backend = await started(image='custom:full')
         # A 137 that did not use up the command's deadline is its real exit, not a timeout.
         assert (await backend.run(['kill-self'], timeout=30)).exit_code == 137
-
-    async def test_a_display_call_after_a_start_that_installs_setsid_uses_it(self, fake_modal: FakeModal) -> None:
-        installed = False
-
-        def responder(argv: list[str], timeout: float | None) -> tuple[str, str, int]:
-            nonlocal installed
-            command = ' '.join(argv)
-            if 'command -v setsid' in command:
-                return '', '', 0 if installed else 127
-            if 'Xvfb' in command:
-                installed = True
-            return '  Width: 1280\n  Height: 800\n', '', 0
-
-        fake_modal.responder = responder
-        backend = await started(image='custom:minimal', desktop=True)
-        await screen(backend).display_size()
-        sandbox = fake_modal.sandboxes[0]
-        # Only the last command, the size read, went through `setsid`.
-        assert len(sandbox.start_scripts) == 1
-        assert 'xwininfo' in sandbox.exec_calls[-1].argv
 
     async def test_missing_setsid_uses_direct_exec_and_caches_probe(self, fake_modal: FakeModal) -> None:
         fake_modal.responder = lambda argv, timeout: (

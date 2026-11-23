@@ -14,7 +14,7 @@ from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, ModalSandboxNoToolsWarning
 
 from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_modal import FakeImage, FakeModal
 
 
@@ -80,7 +80,7 @@ async def test_a_shell_command_finds_the_desktop_running(fake_modal: FakeModal, 
 
 
 async def test_a_desktop_size_sets_the_display_it_starts(fake_modal: FakeModal, display: FakeDisplay) -> None:
-    await screen(ModalSandboxBackend(desktop=(1440, 900))).display_size()
+    await full_display(ModalSandboxBackend(desktop=(1440, 900))).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
@@ -91,7 +91,7 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(fake_modal: FakeMod
     await owner.get_sandbox()
     assert owner.ref is not None
 
-    await screen(ModalSandbox(desktop=(1440, 900)).backend(owner.ref)).display_size()
+    await full_display(ModalSandbox(desktop=(1440, 900)).backend(owner.ref)).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
