@@ -54,7 +54,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._display import png_from_base64
+from pydantic_ai_harness._display import RELEASE_TIMEOUT, png_from_base64
 from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness._workspace_provider import run_to_completion
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
@@ -86,9 +86,6 @@ can't make a user namespace there, and refuses to run as root. That script reads
 one file there adds `--no-sandbox`, as root or with the user's passwordless `sudo`. It does nothing where Chromium's
 sandbox works, where there's no Debian Chromium, or without root or `sudo`. Daytona runs it with zsh, so it doesn't rely
 on sh's word splitting."""
-
-_RELEASE_TIMEOUT = 5
-"""Maximum time spent releasing held keys and buttons after a failed or cancelled action, as on the other desktops."""
 
 _TYPE_TIMEOUT = 60
 """Maximum time for one typing request, of at most `_MAX_CHARS_PER_CALL` characters."""
@@ -140,7 +137,7 @@ async def _release_after_failure(
 
     Releases run even after a cancel. If Daytona doesn't confirm a release, that error is raised instead of the cancel.
     """
-    with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
+    with anyio.move_on_after(RELEASE_TIMEOUT, shield=True):
         for name in reversed(list(held)):
             try:
                 await _send_input(partial(release, name))
@@ -191,28 +188,28 @@ class DaytonaDisplayDriver:
     """
 
     def __init__(self, get_computer_use: Callable[[], AsyncComputerUse]):
-        self._computer_use = get_computer_use
+        self._get_computer_use = get_computer_use
 
     async def display_size(self) -> tuple[int, int]:
-        displays = (await self._computer_use().display.get_info(request_timeout=REQUEST_TIMEOUT)).displays or []
+        displays = (await self._get_computer_use().display.get_info(request_timeout=REQUEST_TIMEOUT)).displays or []
         display = next((display for display in displays if display.is_active), None)
         if display is None or not display.width or not display.height:
             raise WorkspaceError(f'Daytona reported no display size: {displays!r}')
         return display.width, display.height
 
     async def screenshot(self) -> bytes:
-        response = await self._computer_use().screenshot.take_full_screen(request_timeout=REQUEST_TIMEOUT)
+        response = await self._get_computer_use().screenshot.take_full_screen(request_timeout=REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def zoom(self, region: Region) -> bytes:
         area = ScreenshotRegion(
             x=region.left, y=region.top, width=region.right - region.left, height=region.bottom - region.top
         )
-        response = await self._computer_use().screenshot.take_region(area, request_timeout=REQUEST_TIMEOUT)
+        response = await self._get_computer_use().screenshot.take_region(area, request_timeout=REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def cursor_position(self) -> Point:
-        position = await self._computer_use().mouse.get_position(request_timeout=REQUEST_TIMEOUT)
+        position = await self._get_computer_use().mouse.get_position(request_timeout=REQUEST_TIMEOUT)
         if position.x is None or position.y is None:
             raise WorkspaceError(f'Daytona reported no pointer position: {position!r}')
         return Point(x=position.x, y=position.y)
@@ -230,7 +227,7 @@ class DaytonaDisplayDriver:
 
         A failure that leaves keys down says which, so the model doesn't type on with them held.
         """
-        keyboard = self._computer_use().keyboard
+        keyboard = self._get_computer_use().keyboard
         pressed: list[str] = []
         try:
             for key in keys:
@@ -251,7 +248,7 @@ class DaytonaDisplayDriver:
         for start in range(0, amount, _MAX_SCROLL_CLICKS_PER_CALL):
             clicks = min(_MAX_SCROLL_CLICKS_PER_CALL, amount - start)
             scroll = partial(
-                self._computer_use().mouse.scroll,
+                self._get_computer_use().mouse.scroll,
                 x,
                 y,
                 direction,
@@ -267,13 +264,16 @@ class DaytonaDisplayDriver:
         """Type `text`, `_MAX_CHARS_PER_CALL` characters at a time."""
         if any(ord(character) > 0xFFFF for character in text):
             raise UnsupportedActionError("Daytona's desktop cannot type characters beyond U+FFFF, such as most emoji.")
-        keyboard = self._computer_use().keyboard
+        keyboard = self._get_computer_use().keyboard
+        # Daytona does this within each request. Doing it first keeps a `\r\n` split across two requests from being
+        # typed as two Enters.
+        text = text.replace('\r\n', '\n')
         for start in range(0, len(text), _MAX_CHARS_PER_CALL):
             part = text[start : start + _MAX_CHARS_PER_CALL]
             await _send_input(partial(keyboard.type, part, request_timeout=_TYPE_TIMEOUT))
 
     async def act(self, action: DisplayAction) -> None:
-        mouse = self._computer_use().mouse
+        mouse = self._get_computer_use().mouse
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 modifier_names = _daytona_key_names(modifiers)
@@ -314,7 +314,7 @@ class DaytonaDisplayDriver:
                 raise UnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")
 
     async def _drag(self, path: Sequence[Point]) -> None:
-        mouse, start, end = self._computer_use().mouse, path[0], path[-1]
+        mouse, start, end = self._get_computer_use().mouse, path[0], path[-1]
         try:
             await _send_input(partial(mouse.down, start.x, start.y, request_timeout=REQUEST_TIMEOUT))
             for point in drag_steps(path):
@@ -333,7 +333,7 @@ class DaytonaDisplayDriver:
         non_modifiers = [name for name in names if name not in modifiers]
         for _ in range(repeat):
             if len(non_modifiers) == 1:
-                keyboard = self._computer_use().keyboard
+                keyboard = self._get_computer_use().keyboard
                 await _send_input(partial(keyboard.press, non_modifiers[0], modifiers, request_timeout=REQUEST_TIMEOUT))
             else:  # only modifiers, or several other keys: `press` takes a single key
                 async with self._holding(names):
