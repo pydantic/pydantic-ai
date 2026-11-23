@@ -84,6 +84,14 @@ def test_huggingface_provider_init_api_key_error(monkeypatch: pytest.MonkeyPatch
         HuggingFaceProvider()
 
 
+def test_huggingface_provider_hf_client_without_api_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('HF_TOKEN', raising=False)
+    hf_client = AsyncInferenceClient(api_key='client-key', provider='fireworks-ai')
+    provider = HuggingFaceProvider(hf_client=hf_client)
+    assert provider.client is hf_client
+    assert provider.client.token == 'client-key'
+
+
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
 def test_huggingface_provider_init_api_key_from_env(
     MockAsyncInferenceClient: MagicMock, monkeypatch: pytest.MonkeyPatch

@@ -139,7 +139,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         """
         api_key = api_key or os.getenv('HF_TOKEN')
 
-        if api_key is None:
+        if api_key is None and hf_client is None:
             raise UserError(
                 'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
                 ' to use the HuggingFace provider.'
