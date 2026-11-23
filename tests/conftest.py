@@ -140,7 +140,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 def pytest_configure(config: pytest.Config) -> None:
     # `PYTEST_JUNIT_DIR` gives every pytest session in a CI job its own JUnit report, for the `never-ran` job's
     # `.github/scripts/never_ran.py`. This hook runs before the `junitxml` plugin's, which opens the report.
-    if (junit_dir := os.environ.get('PYTEST_JUNIT_DIR')) and not config.option.xmlpath:
+    if (junit_dir := os.environ.get('PYTEST_JUNIT_DIR')) and not config.option.xmlpath:  # pragma: no branch
         config.option.xmlpath = str(Path(__file__).parent.parent / junit_dir / f'{secrets.token_hex(8)}.xml')
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
