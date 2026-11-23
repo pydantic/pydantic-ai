@@ -8,7 +8,7 @@ import os
 import re
 import socket
 import sys
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,9 +19,7 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
-    Agent,
     AgentRunResult,
-    AgentStreamEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -30,7 +28,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
-    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -43,16 +40,13 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.file_system import (
     EditFileCallPart,
     FileChangeRequestedEvent,
     FileEditedEvent,
-    FileSystem,
     FileWrittenEvent,
 )
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
@@ -325,57 +319,6 @@ def test_history_items() -> None:
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
-
-
-CALC = 'def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n'
-
-
-@pytest.mark.parametrize(
-    'args',
-    [
-        pytest.param(
-            {'old_text': '    return a * b\n', 'new_text': '    return a * b\n\n\ndef sub(a, b):\n    return a - b\n'},
-            id='prefix',
-        ),
-        pytest.param({'old_text': '\n\ndef mul(a, b):\n    return a * b\n', 'new_text': ''}, id='deletion'),
-        pytest.param(
-            {
-                'replacements': [
-                    {'old_text': '    return a + b\n', 'new_text': '    return b + a\n'},
-                    {'old_text': 'def mul(a, b):\n', 'new_text': 'def times(a, b):\n'},
-                ]
-            },
-            id='replacements',
-        ),
-    ],
-)
-async def test_a_reloaded_edit_shows_the_lines_the_live_one_did(tmp_path: Path, args: dict[str, JsonValue]) -> None:
-    """A reloaded `edit_file` card changes the lines its live diff did, not all of `old_text` and `new_text`."""
-    (tmp_path / 'calc.py').write_text(CALC)
-    call = json.dumps({'path': 'calc.py', **args})
-
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        if len(messages) > 1:
-            yield 'done'
-        else:
-            yield {0: DeltaToolCall(name='edit_file', json_args=call, tool_call_id='e1')}
-
-    translate = EventTranslator().translate
-    live: list[Diff] = []
-
-    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in events:
-            live.extend(message.diff for message in translate(event) if isinstance(message, DiffAdded))
-
-    agent = Agent(FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path)])
-    result = await agent.run('edit', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
-    reloaded = next(item for item in history_items(result.all_messages()) if item.kind == 'tool')
-
-    def changed(diffs: list[Diff]) -> list[str]:
-        lines = [line for diff in diffs for line in diff.diff.split('\n')]
-        return [line for line in lines if line[:1] in '+-' and not line.startswith(('--- a/', '+++ b/'))]
-
-    assert changed(live) and changed(reloaded.diffs) == changed(live)
 
 
 def test_a_reloaded_edit_without_a_diff() -> None:

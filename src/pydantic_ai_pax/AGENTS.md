@@ -461,6 +461,10 @@ existing path. For updates, `/update now` is the working interactive path.
   cancelled turn, the rewritten text), not a mock call count.
 - Renderers get synthetic events. They must not need `Coder` installed.
 - Cancellation: use a real `anyio` cancel scope, order with `Event`s, no sleeps.
+- The web transcript has two producers: `EventTranslator` live and `history_entries` on reload.
+  `tests/pax/test_transcript_parity.py` compares them for every live message type. A new message type
+  fails there until the scripted session emits it. A new `Item` field fails until `COMPARED` or
+  `KNOWN_LIVE_ONLY` classifies it.
 
 ### Settings and database compatibility
 
