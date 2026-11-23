@@ -22,7 +22,13 @@ from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
+from pydantic_ai_pax.ui.rendering.rendering import (
+    LinkOutput,
+    PartWriter,
+    color_system,
+    render_markdown,
+    thinking_heading,
+)
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 
@@ -130,9 +136,17 @@ async def test_burst_is_queued_then_drained() -> None:
 
 
 @pytest.mark.parametrize('part', [TextPart(content='x' * 60 + '\n'), ThinkingPart(content='x' * 60 + '\n')])
-async def test_part_end_writes_queued_text_at_once(part: TextPart | ThinkingPart) -> None:
+async def test_part_end_writes_queued_text_at_once(
+    part: TextPart | ThinkingPart, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The tool line must not wait for the smoother to type out the rest of the part."""
     writes: list[str] = []
+
+    # A tick an hour apart: only the first can run before the part ends, so the count does not depend on the clock.
+    def make_writer(self: StreamRenderer, output: IO[str]) -> PartWriter:
+        return PartWriter(LinkOutput(output=output), tick_interval=3600, catch_up_seconds=0.5, min_chars_per_tick=1)
+
+    monkeypatch.setattr(StreamRenderer, '_make_writer', make_writer)
 
     class ObservedOutput(io.StringIO):
         def write(self, text: str) -> int:
@@ -145,7 +159,7 @@ async def test_part_end_writes_queued_text_at_once(part: TextPart | ThinkingPart
         await renderer.on_stream_event(PartStartEvent(index=0, part=part))
         await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
     counts = [text.count('x') for text in writes if 'x' in text]
-    # At most the writer's first tick, then the rest in one write; typing it out takes about 30 writes.
+    # At most the writer's first tick, then the rest in one write.
     assert sum(counts) == 60
     assert len(counts) <= 2
 
