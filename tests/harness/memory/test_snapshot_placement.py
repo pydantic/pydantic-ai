@@ -7,9 +7,9 @@ cassette would replay a recording whatever the request body, so it couldn't catc
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import pytest
+from pydantic import JsonValue
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest
@@ -17,6 +17,7 @@ from pydantic_ai.models import Model
 from pydantic_ai_harness.memory import InMemoryMemoryStore, Memory
 from tests._inline_snapshot import snapshot
 from tests.conftest import try_import
+from tests.models.conftest import json_objects
 
 with try_import() as provider_imports:
     import httpx2
@@ -29,11 +30,12 @@ with try_import() as provider_imports:
 pytestmark = pytest.mark.skipif(not provider_imports(), reason='anthropic or openai not installed')
 
 
-def _capturing_model(provider: str, model_name: str, bodies: list[dict[str, Any]]) -> Model:
+def _capturing_model(provider: str, model_name: str, bodies: list[dict[str, JsonValue]]) -> Model:
     """A real `provider` model whose request bodies are appended to `bodies`, answered with the text `done`."""
 
     def respond(request: httpx2.Request) -> httpx2.Response:
-        body = json.loads(request.content)
+        body: JsonValue = json.loads(request.content)
+        assert isinstance(body, dict)
         bodies.append(body)
         # `Memory` listens for events, so `agent.run` streams.
         if provider == 'anthropic':
@@ -60,7 +62,7 @@ def _capturing_model(provider: str, model_name: str, bodies: list[dict[str, Any]
 
 def _anthropic_stream(model_name: str) -> bytes:
     """An Anthropic streamed response with the text `done`."""
-    events: list[tuple[str, dict[str, Any]]] = [
+    events: list[tuple[str, dict[str, JsonValue]]] = [
         (
             'message_start',
             {
@@ -94,15 +96,17 @@ def _anthropic_stream(model_name: str) -> bytes:
     return ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events).encode()
 
 
-def _wire(body: dict[str, Any]) -> list[tuple[str, str]]:
+def _wire(body: dict[str, JsonValue]) -> list[tuple[str, str]]:
     """Each message `body` sends as `(role, text)`, one entry per text block, shortened to its first line."""
     entries: list[tuple[str, str]] = []
-    for message in body['messages']:
-        content = message['content']
-        blocks = [{'text': content}] if isinstance(content, str) else content
+    for message in json_objects(body['messages']):
+        role, content = message['role'], message['content']
+        assert isinstance(role, str)
+        blocks: list[dict[str, JsonValue]] = [{'text': content}] if isinstance(content, str) else json_objects(content)
         for block in blocks:
-            text: str = block.get('text', block.get('type', ''))
-            entries.append((message['role'], text.strip().splitlines()[0][:60]))
+            text = block.get('text', block.get('type'))
+            assert isinstance(text, str)
+            entries.append((role, text.strip().splitlines()[0][:60]))
     return entries
 
 
@@ -123,7 +127,7 @@ async def test_run_start_snapshot_goes_before_the_prompt_and_the_prefix_holds(
     """The model reads memory, then the question; the next run sends the first run's request unchanged."""
     store = InMemoryMemoryStore()
     await store.write('main/MEMORY.md', '- likes tea', expected_version=None)
-    bodies: list[dict[str, Any]] = []
+    bodies: list[dict[str, JsonValue]] = []
     agent = Agent(_capturing_model(provider, model_name, bodies), capabilities=[Memory(store=store, guidance='')])
 
     first = await agent.run('What do I like to drink?')
@@ -163,8 +167,8 @@ async def test_run_start_snapshot_goes_before_the_prompt_and_the_prefix_holds(
             ]
         )
     # The first run's request is sent again byte for byte, so the provider's cached prefix holds.
-    first_messages = bodies[0]['messages']
-    assert bodies[1]['messages'][: len(first_messages)] == first_messages
+    first_messages = json_objects(bodies[0]['messages'])
+    assert json_objects(bodies[1]['messages'])[: len(first_messages)] == first_messages
 
 
 async def test_instruction_change_stays_after_the_question_on_a_sealed_model(allow_model_requests: None) -> None:
@@ -175,7 +179,7 @@ async def test_instruction_change_stays_after_the_question_on_a_sealed_model(all
     """
     store = InMemoryMemoryStore()
     mutation = await store.write('main/MEMORY.md', '- likes tea', expected_version=None)
-    bodies: list[dict[str, Any]] = []
+    bodies: list[dict[str, JsonValue]] = []
     agent = Agent(
         _capturing_model('anthropic', 'claude-sonnet-4-6', bodies),
         deps_type=str,

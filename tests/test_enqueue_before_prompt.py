@@ -1,4 +1,10 @@
-"""Tests for `enqueue(..., placement='before_prompt')`: context placed before the user's prompt in the request being sent."""
+"""Tests for `enqueue(..., placement='before_prompt')`: context placed before the user's prompt in the request being sent.
+
+These use `FunctionModel` rather than recordings: what they pin is where content lands in message history, which
+`EnqueuedMessagesEvent`s are emitted in what order, and which content is refused before any request is made, none of
+which a provider recording can show. The wire order on real adapters is pinned in
+`tests/harness/memory/test_snapshot_placement.py`.
+"""
 
 from __future__ import annotations
 
