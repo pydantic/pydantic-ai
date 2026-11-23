@@ -852,8 +852,10 @@ def test_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -1951,8 +1953,10 @@ def test_openrouter_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2258,8 +2262,10 @@ def test_github_copilot_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4023,8 +4029,10 @@ def test_vercel_vertex_gemini():
                 'application/pdf',
                 'text/plain',
             ),
+            'google_supports_minimal_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_thinking_levels': frozenset({'HIGH', 'LOW', 'MEDIUM'}),
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
