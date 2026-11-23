@@ -18,7 +18,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_pax import warm_imports
-from pydantic_ai_pax.clai_docs import ClaiDocs
 from pydantic_ai_pax.cli.self_update import WebHandoff
 from pydantic_ai_pax.commands import (
     Commands,
@@ -61,7 +60,7 @@ OutputT = TypeVar('OutputT')
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), ClaiDocs()])
+    return Agent(model, deps_type=type(None), capabilities=[PaxDocs()])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -69,7 +68,7 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[PaxDocs(), ClaiDocs()], name='clai2')
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[PaxDocs()], name='clai2')
 
 
 @asynccontextmanager

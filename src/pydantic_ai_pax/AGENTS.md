@@ -524,7 +524,7 @@ Agent-readable docs are indexed by `pax_docs._PAX_DOCS`. Docs outside
 `pydantic_ai_pax/` ship through `pyproject.toml`'s wheel `force-include` and sdist
 `include`. The catalog and packaging guards in `tests/pax/test_pax_docs.py`
 reject new docs missing from either surface. If a new feature falls outside the
-existing discovery triggers, update `pax_docs._DESCRIPTION` and `_HINT`.
+existing discovery triggers, update `pax_docs._DESCRIPTION` and `_hint`.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
 it needs independently focused projects/sessions and two-line cards. Keep its

@@ -23,10 +23,10 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
 from pydantic_ai_pax import app, open_stock_agent
+from pydantic_ai_pax.app import create_stock_agent
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.models.resolver import ModelResolver
-from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.plugins.loader import PluginSettingsError
 
 
@@ -131,7 +131,9 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
 
     # The CLI adds the docs capability to this stock set, as `create_stock_agent` does.
     async with open_stock_agent(
-        workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[PaxDocs()]
+        workspace=tmp_path,
+        model=FunctionModel(stream_function=stream),
+        capabilities=[create_stock_agent().root_capability],
     ) as agent:
         await agent.run('hello')
     first, second = seen

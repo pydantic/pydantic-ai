@@ -272,7 +272,9 @@ class PKCESignIn:
         save_codex_credentials(account=self.account, value=tokens.stored())
 
     def _lock(self) -> AbstractContextManager[None]:
-        return credential_lock(account=self.account, busy=f'Another Pax is refreshing the {self.service} sign-in.')
+        return credential_lock(
+            account=self.account, busy=f'Another Pax process is refreshing the {self.service} sign-in.'
+        )
 
     def signed_in(self) -> bool:
         """Whether this client has tokens that are live or refreshable. Reads the keyring; call it off the loop."""
