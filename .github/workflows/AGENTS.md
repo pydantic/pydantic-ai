@@ -523,6 +523,18 @@ Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback lab
 The release and docs-deploy jobs run only in pydantic/pydantic-ai, so a tag pushed to a copy
 starts none of them.
 
+# CI looks for flaky tests
+
+A flaky test passes or fails on the same code depending on test order, timing or load. CI looks for flaky tests
+without blocking a merge.
+
+- `test-changed-under-stress` in `ci.yml` runs on pull requests. It runs twice the test files the pull request adds
+  or changes: `tests/**/test_*.py`, outside `tests/durable_exec`. Both runs use the `test-all-extras` install on that
+  job's newest Python. Each run takes its own `pytest-randomly` order and twice as many xdist workers as CPUs. A busy
+  loop holds every CPU meanwhile. The job logs each run's seed and wall time as notices. Keep the job out of the
+  needs of `check` and `never-ran`, and keep its `continue-on-error`. `CI Review` requires the run's conclusion to be
+  `success`, and an advisory failure must not change it.
+
 # Code owners review dependency, CI config and durable runtime changes
 
 `.github/CODEOWNERS` owns three scopes:

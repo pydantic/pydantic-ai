@@ -1,0 +1,41 @@
+name: Start PostgreSQL 16
+description: Start the Ubuntu 24.04 runner image's PostgreSQL 16 on 127.0.0.1:5432 as `postgres`/`postgres`, in the Docker database's locale.
+runs:
+  using: composite
+  steps:
+    # Ubuntu 24.04 includes PostgreSQL 16. Create a separate cluster with the Docker
+    # database's locale; the runner's pre-created cluster defaults to C.UTF-8.
+    - name: Start PostgreSQL 16
+      shell: bash
+      env:
+        PGHOST: 127.0.0.1
+        PGPORT: "5432"
+        PGUSER: postgres
+        PGDATABASE: postgres
+        PGPASSWORD: postgres
+        PGCONNECT_TIMEOUT: "5"
+      run: |
+        sudo pg_createcluster --port=5432 --locale=en_US.utf8 --start-conf=manual --pgoption=timezone=Etc/UTC 16 ci \
+          -- --auth-local=peer --auth-host=scram-sha-256
+        sudo -u postgres pg_ctlcluster 16 ci start -- -w -t 60
+        sudo -u postgres psql -X -h /var/run/postgresql -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'postgres'"
+        psql -X -v ON_ERROR_STOP=1 <<'SQL'
+        SELECT version(), datcollate, datctype, current_setting('server_encoding')
+        FROM pg_database WHERE datname = current_database();
+        DO $verify$
+        BEGIN
+          ASSERT current_setting('server_version_num')::int / 10000 = 16;
+          ASSERT current_setting('server_encoding') = 'UTF8';
+          ASSERT current_setting('TimeZone') = 'Etc/UTC';
+          ASSERT (SELECT datcollate = 'en_US.utf8' AND datctype = 'en_US.utf8'
+                  FROM pg_database WHERE datname = current_database());
+          ASSERT (SELECT array_agg(v ORDER BY v) FROM
+                  (VALUES ('a'), ('A'), ('z'), ('Z'), ('é'), ('😀')) AS sample(v))
+                  = ARRAY['😀', 'a', 'A', 'é', 'z', 'Z'];
+        END
+        $verify$;
+        SQL
+        if PGPASSWORD=deliberately-wrong psql -X -c 'SELECT 1'; then
+          echo '::error::PostgreSQL accepted an incorrect password'
+          exit 1
+        fi

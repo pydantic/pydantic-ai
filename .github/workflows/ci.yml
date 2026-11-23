@@ -1121,42 +1121,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # Ubuntu 24.04 includes PostgreSQL 16. Create a separate cluster with the Docker
-      # database's locale; the runner's pre-created cluster defaults to C.UTF-8.
       - name: start PostgreSQL 16
         id: postgres
-        env:
-          PGHOST: 127.0.0.1
-          PGPORT: "5432"
-          PGUSER: postgres
-          PGDATABASE: postgres
-          PGPASSWORD: postgres
-          PGCONNECT_TIMEOUT: "5"
-        run: |
-          sudo pg_createcluster --port=5432 --locale=en_US.utf8 --start-conf=manual --pgoption=timezone=Etc/UTC 16 ci \
-            -- --auth-local=peer --auth-host=scram-sha-256
-          sudo -u postgres pg_ctlcluster 16 ci start -- -w -t 60
-          sudo -u postgres psql -X -h /var/run/postgresql -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'postgres'"
-          psql -X -v ON_ERROR_STOP=1 <<'SQL'
-          SELECT version(), datcollate, datctype, current_setting('server_encoding')
-          FROM pg_database WHERE datname = current_database();
-          DO $verify$
-          BEGIN
-            ASSERT current_setting('server_version_num')::int / 10000 = 16;
-            ASSERT current_setting('server_encoding') = 'UTF8';
-            ASSERT current_setting('TimeZone') = 'Etc/UTC';
-            ASSERT (SELECT datcollate = 'en_US.utf8' AND datctype = 'en_US.utf8'
-                    FROM pg_database WHERE datname = current_database());
-            ASSERT (SELECT array_agg(v ORDER BY v) FROM
-                    (VALUES ('a'), ('A'), ('z'), ('Z'), ('é'), ('😀')) AS sample(v))
-                    = ARRAY['😀', 'a', 'A', 'é', 'z', 'Z'];
-          END
-          $verify$;
-          SQL
-          if PGPASSWORD=deliberately-wrong psql -X -c 'SELECT 1'; then
-            echo '::error::PostgreSQL accepted an incorrect password'
-            exit 1
-          fi
+        uses: ./.github/actions/start-postgres
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -1320,6 +1287,101 @@ jobs:
           path: junit-reports
           if-no-files-found: ignore
           overwrite: true
+
+  # Runs the test files a pull request adds or changes under load, so a test that depends on timing or on what
+  # an earlier test left behind fails before it merges: twice, each run in its own `pytest-randomly` order, with
+  # twice as many xdist workers as CPUs while a busy loop holds every CPU. It installs the `test-all-extras` shape on
+  # that job's newest Python, where every test can run, without coverage or blocking-call detection, and leaves
+  # `tests/durable_exec` and the `temporal` tests to `test-durable-exec` as `test-all-extras` does.
+  # Advisory: neither `check` nor `never-ran` needs it, and `continue-on-error` keeps its failure out of the run's
+  # conclusion, which `CI Review` requires to be `success`. It uploads no JUnit report for `never-ran` to read.
+  test-changed-under-stress:
+    name: changed test files under stress
+    needs: classify
+    # Temporary: the push to this branch runs it before the branch has a pull request. Reverted before the pull
+    # request opens.
+    if: >-
+      needs.classify.outputs.content_only != 'true'
+      && (github.event_name == 'pull_request' || github.ref == 'refs/heads/test-suite-reliability')
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 20
+    env:
+      CI: true
+      # As on the 3.15 `test-all-extras` legs.
+      BLOCKBUSTER_ENABLED: false
+      TYPECHECK_EXAMPLES: false
+      ABSURD_REQUIRE_LIVE: "1"
+      ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PGTASK_REQUIRE_LIVE: "1"
+      PGTASK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its base.
+          fetch-depth: 2
+          # Temporary: the push to this branch fetches `main`'s history to find the merge base. Reverted before the
+          # pull request opens.
+          filter: ${{ github.event_name == 'push' && 'blob:none' || '' }}
+
+      # `--no-renames` lists a renamed file under its new path, as added.
+      - name: list the changed test files
+        id: changed
+        run: |
+          base=HEAD^1
+          # Temporary: the push to this branch diffs against its merge base with `main`. Reverted before the pull
+          # request opens.
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            git fetch --no-tags --unshallow origin main
+            base=$(git merge-base FETCH_HEAD HEAD)
+          fi
+          git diff --name-only --no-renames --diff-filter=AM "$base" HEAD -- tests/ > "$RUNNER_TEMP/changed.txt"
+          mapfile -t files < <(grep -P '^tests/(?!durable_exec/)(?:[^/]+/)*test_[^/]*\.py$' "$RUNNER_TEMP/changed.txt")
+          if (( ${#files[@]} == 0 )); then
+            echo '::notice::No test file outside tests/durable_exec changed, so nothing runs under stress.'
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' "${files[@]}" | tee "$RUNNER_TEMP/changed-tests.txt"
+          echo 'found=true' >> "$GITHUB_OUTPUT"
+
+      - name: start PostgreSQL 16
+        if: steps.changed.outputs.found == 'true'
+        uses: ./.github/actions/start-postgres
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: steps.changed.outputs.found == 'true'
+        with:
+          python-version: "3.15"
+          enable-cache: true
+          cache-suffix: all-extras
+
+      - if: steps.changed.outputs.found == 'true'
+        run: uv sync --all-packages --all-extras
+
+      # `-p randomly` turns on `pytest-randomly`, which `addopts` in `pyproject.toml` turns off. The second run goes
+      # ahead when the first fails. Each run's seed and wall time are notices on the run.
+      - name: run the changed test files twice under stress
+        if: steps.changed.outputs.found == 'true'
+        run: |
+          mapfile -t files < "$RUNNER_TEMP/changed-tests.txt"
+          cpus=$(nproc)
+          for _ in $(seq "$cpus"); do
+            while :; do :; done &
+          done
+          trap 'kill $(jobs -p)' EXIT
+          args=(-n "$((2 * cpus))" --dist=loadgroup --ignore=tests/durable_exec -m 'not temporal' "${files[@]}")
+          printf -v shown '%q ' "${args[@]}"
+          status=0
+          for run in 1 2; do
+            seed=$(((RANDOM << 15) | RANDOM))
+            echo "::notice::Stress run $run shuffles with seed $seed. Reproduce its order with: uv run --all-packages --all-extras pytest -p randomly --randomly-seed=$seed $shown"
+            start=$SECONDS
+            uv run --no-sync pytest -p randomly --randomly-seed="$seed" "${args[@]}" || status=1
+            echo "::notice::Stress run $run took $((SECONDS - start)) s."
+          done
+          exit "$status"
 
   # The durable-execution suites pin their tests to xdist groups sharing a real local server --
   # one group per core Temporal test module, one shared harness Temporal group, one for DBOS, and
