@@ -779,7 +779,7 @@ class SteeredRun:
 _steered_events: list[AgentStreamEvent] = []
 
 
-async def _record_steered_events(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+async def _record_steered_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
     async for event in stream:
         _steered_events.append(event)
 
