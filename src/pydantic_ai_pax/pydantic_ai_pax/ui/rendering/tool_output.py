@@ -3,7 +3,6 @@
 import io
 import json
 import re
-from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import partial
@@ -156,45 +155,21 @@ class DisplayArgs(BaseModel):
     recursive: bool = True
 
 
-READ_LIMIT = 2000
-"""Coder's default and largest `read_file` limit, which a header leaves out."""
-
-FAILURE_TAIL_LINES = 3
-"""Last output lines a failed command repeats when its preview left them out, so the reason is on screen."""
-
-
 @dataclass
 class ShellPreview:
-    """Count a command's logical lines across output chunks, keeping the last few for a failure."""
+    """Count displayed logical lines across output chunks."""
 
     completed_lines: int = 0
-    shown: int = 0
-    """Lines printed as the output preview."""
     cut: bool = False
     """Whether a preview line was wider than the terminal and lost its end."""
     pending: str = ''
     carriage_return: bool = False
-    tail: deque[str] = field(default_factory=lambda: deque[str](maxlen=FAILURE_TAIL_LINES))
     decoder: AnsiDecoder = field(default_factory=AnsiDecoder)
 
-
-def _read_details(args: DisplayArgs) -> list[str]:
-    details = [f'offset={args.offset}'] if args.offset else []
-    if args.limit is not None:
-        limit = f'limit={min(args.limit, READ_LIMIT)} lines'
-        if args.limit > READ_LIMIT:
-            limit += f' (requested {args.limit})'
-        details.append(limit)
-    return details
-
-
-def _list_details(args: DisplayArgs) -> list[str]:
-    details = [] if args.recursive else ['recursive=false']
-    if args.limit is not None:
-        details.append(f'limit={args.limit}')
-    if args.glob is not None:
-        details.append(f'glob={args.glob!r}')
-    return details
+    @property
+    def shown(self) -> int:
+        """Include a displayed unterminated line."""
+        return self.completed_lines
 
 
 class ToolOutput:
@@ -253,38 +228,21 @@ class ToolOutput:
         self._blank_owed = True
 
     def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None, name: str = '') -> None:
-        """Print one result row under the call's header, naming the call first when another header is in between.
+        """Print one result row under the call's header, naming the call last when another header is in between.
 
-        The call's name gets the room a short result leaves, or half the row beside a long one.
         `name` stands in for a call whose header this renderer did not print.
         """
         under_header = self._blank_owed and tool_call_id is not None and self._owed == tool_call_id
         if not under_header:
             self.separate()
         row = Text('  ⎿ ', style=theme.color(theme.MUTED))
-        result = Text(terminal_text(text, keep=''), style=style)
+        row.append(terminal_text(text, keep=''), style=style)
+        if log is not None:
+            row.append(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED))
         label = self._labels.get(tool_call_id, name)
         if not under_header and label:
-            call = Text(terminal_text(label, keep=''), style=theme.color(theme.MUTED))
-            half = self.console.width // 2
-            # A short result keeps all of itself. A long one gives the name at most half the row,
-            # less if its first part (a shell call's exit status) would not fit, leaving a cell for the ellipsis.
-            head = Text(text.split(' · ')[0]).cell_len if ' · ' in text else 0
-            room = (
-                self.console.width - row.cell_len - result.cell_len - 3
-                if result.cell_len <= half
-                else min(half, self.console.width - row.cell_len - head - 4)
-            )
-            call.truncate(max(room, 1), overflow='ellipsis')
-            row.append_text(call)
-            row.append(' · ', style=theme.color(theme.MUTED))
-        row.append_text(result)
-        if log is None:
-            self.console.print(row, overflow='ellipsis', no_wrap=True)
-        else:
-            row.truncate(self.console.width, overflow='ellipsis')
-            # The path wraps rather than clips, so it stays usable.
-            self.console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED)))
+            row.append(f' · {terminal_text(label, keep="")}', style=theme.color(theme.MUTED))
+        self.console.print(row, overflow='ellipsis', no_wrap=True)
         self._blank_owed = False
         self._owed = None
 
@@ -313,14 +271,21 @@ class ToolOutput:
         return True
 
     def _inspection_header(self, tool_call_id: str, name: str, args: DisplayArgs) -> bool:
-        """Show the path and only the arguments that differ from Coder's defaults."""
         if name == 'read_file':
             if args.path is None:
                 return False
-            path, details = args.path, _read_details(args)
+            limit = min(args.limit, 2000) if args.limit is not None else 2000
+            details = f'offset={args.offset} limit={limit} lines'
+            if args.limit is not None and args.limit > 2000:
+                details += f' (requested {args.limit})'
+            path = args.path
         else:
-            path, details = args.path or '.', _list_details(args)
-        self.header(tool_call_id, name=name, argument=' '.join([repr(path), *details]))
+            path = args.path or '.'
+            limit = args.limit if args.limit is not None else 200
+            details = f'recursive={str(args.recursive).lower()} limit={limit}'
+            if args.glob is not None:
+                details += f' glob={args.glob!r}'
+        self.header(tool_call_id, name=name, argument=f'{path!r} {details}')
         return True
 
     def render_result(self, event: FunctionToolResultEvent) -> None:
@@ -342,6 +307,8 @@ class ToolOutput:
     def _shell_chunk(self, event: CommandOutputEvent) -> None:
         preview = self._shells.setdefault(event.tool_call_id, ShellPreview())
         for char in event.text:
+            if preview.completed_lines >= self.shell_lines:
+                break
             if char == '\n':
                 self._shell_line(event.tool_call_id, preview)
                 preview.carriage_return = False
@@ -355,33 +322,29 @@ class ToolOutput:
                 preview.pending += char
 
     def _shell_line(self, tool_call_id: str | None, preview: ShellPreview) -> None:
-        if self.show_output and preview.shown < self.shell_lines:
-            if not (self._blank_owed and self._owed == tool_call_id):
-                # Output under another call's header starts its own block.
-                self.separate()
-            line = shell_text(preview.pending, preview.decoder)
-            preview.cut = preview.cut or line.cell_len > self.console.width
-            self.console.print(
-                line,
-                style=theme.color(theme.MUTED),
-                markup=False,
-                highlight=False,
-                overflow='ellipsis',
-                no_wrap=True,
-            )
-            preview.shown += 1
-        preview.tail.append(preview.pending)
+        if not (self._blank_owed and self._owed == tool_call_id):
+            # Output under another call's header starts its own block.
+            self.separate()
+        line = shell_text(preview.pending, preview.decoder)
+        preview.cut = preview.cut or line.cell_len > self.console.width
+        self.console.print(
+            line,
+            style=theme.color(theme.MUTED),
+            markup=False,
+            highlight=False,
+            overflow='ellipsis',
+            no_wrap=True,
+        )
         preview.pending = ''
         preview.completed_lines += 1
 
     def _shell_finished(self, event: CommandFinishedEvent) -> None:
         """One row: the exit status and line count, and the log when output was cut or keeps coming.
 
-        With `show_output`, a failure also repeats the last lines its preview left out. Without it no
-        output is shown: the events carry the raw output, before the harness masks secrets.
+        Without `show_output` no output is shown: the events carry the raw output, before the harness masks secrets.
         """
         preview = self._shells.pop(event.tool_call_id, ShellPreview())
-        if preview.pending:
+        if preview.pending and preview.completed_lines < self.shell_lines:
             self._shell_line(event.tool_call_id, preview)
         failed = event.exit_code not in (None, 0)
         parts = [f'exit {event.exit_code}' if event.exit_code is not None else 'running in background']
@@ -394,16 +357,6 @@ class ToolOutput:
         clipped = self.show_output and (preview.cut or preview.shown < (event.line_count or 0))
         log = event.output_path if event.truncated or event.exit_code is None or clipped else None
         self._row(event.tool_call_id, ' · '.join(parts), style=style, log=log)
-        # The tail of a cut preview is not the end of the output, so the log is the place to look.
-        unseen = preview.completed_lines - preview.shown
-        if failed and not event.truncated and unseen and self.shell_lines:
-            for line in list(preview.tail)[-unseen:]:
-                self.console.print(
-                    Text('    ') + shell_text(line, AnsiDecoder()),
-                    style=theme.color(theme.MUTED),
-                    overflow='ellipsis',
-                    no_wrap=True,
-                )
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:

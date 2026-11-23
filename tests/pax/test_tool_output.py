@@ -73,21 +73,18 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
 @pytest.mark.parametrize(
     ('name', 'args', 'expected'),
     [
-        ('list_files', {}, "● list_files '.'"),
-        ('list_files', {'recursive': False}, "● list_files '.' recursive=false"),
+        ('list_files', {}, "● list_files '.' recursive=true limit=200"),
         (
             'list_files',
             {'path': '/tmp', 'glob': '*.cpp', 'limit': 10},
-            "● list_files '/tmp' limit=10 glob='*.cpp'",
+            "● list_files '/tmp' recursive=true limit=10 glob='*.cpp'",
         ),
-        # Coder's defaults are left out, so the header shows only what this call chose.
-        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp'"),
-        ('read_file', {'path': 'main.py', 'offset': 20}, "● read_file 'main.py' offset=20"),
+        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp' offset=0 limit=2000 lines"),
         ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, "● read_file 'main.py' offset=20 limit=15 lines"),
         (
             'read_file',
             {'path': 'main.py', 'limit': 5000},
-            "● read_file 'main.py' limit=2000 lines (requested 5000)",
+            "● read_file 'main.py' offset=0 limit=2000 lines (requested 5000)",
         ),
     ],
 )
@@ -482,22 +479,18 @@ async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() 
     renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
     part = ToolReturnPart('deploy', '', tool_call_id='d', outcome='failed')
     await renderer.on_stream_event(FunctionToolResultEvent(part=part))
-    assert output.getvalue() == '  ⎿ deploy · failed\n\n'
+    assert output.getvalue() == '  ⎿ failed · deploy\n\n'
 
 
-@pytest.mark.parametrize(
-    ('line_count', 'expected'),
-    [(0, '  ⎿ echo exa… · exit 123\n\n'), (1, '  ⎿ echo ex… · exit 123…\n\n')],
-)
-async def test_a_narrow_detached_row_keeps_its_exit_code(line_count: int, expected: str) -> None:
+async def test_a_narrow_detached_row_clips_its_command_not_its_exit_code() -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, width=24), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output, width=28), stop_loading=lambda: None)
     for call_id in ('a', 'b'):
         await renderer.on_stream_event(
             FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo example'}, tool_call_id=call_id))
         )
-    await renderer.on_stream_event(_finished('a', exit_code=123, line_count=line_count))
-    assert output.getvalue().endswith(expected)
+    await renderer.on_stream_event(_finished('a', exit_code=123, line_count=1))
+    assert output.getvalue().endswith('  ⎿ exit 123 · 1 line · ech…\n\n')
 
 
 async def test_a_row_under_another_calls_header_names_its_command() -> None:
@@ -511,33 +504,9 @@ async def test_a_row_under_another_calls_header_names_its_command() -> None:
     await renderer.on_stream_event(_finished('b', exit_code=0, line_count=1))
     await renderer.finish()
     assert output.getvalue() == (
-        '● shell git status\n\n● shell git log -1\n\n  ⎿ git status · exit 0 · 2 lines\n\n'
-        '  ⎿ git log -1 · exit 0 · 1 line\n\n'
+        '● shell git status\n\n● shell git log -1\n\n  ⎿ exit 0 · 2 lines · git status\n\n'
+        '  ⎿ exit 0 · 1 line · git log -1\n\n'
     )
-
-
-@pytest.mark.parametrize(
-    ('shell_lines', 'expected'),
-    [
-        # Every line is already on screen, so the failure adds no tail.
-        (20, 'one\ntwo\nthree\nfour\n  ⎿ exit 2 · 4 lines\n\n'),
-        # Only the lines the preview left out are repeated.
-        (2, 'one\ntwo\n  ⎿ exit 2 · 4 lines, 2 shown · log /tmp/out\n    three\n    four\n\n'),
-        # Zero lines hides all output, failures included.
-        (0, '  ⎿ exit 2 · 4 lines, 0 shown · log /tmp/out\n\n'),
-    ],
-)
-async def test_a_failed_command_with_output_on_repeats_only_unseen_last_lines(shell_lines: int, expected: str) -> None:
-    output = io.StringIO()
-    renderer = StreamRenderer(
-        Console(file=output, width=80), stop_loading=lambda: None, show_tool_output=True, shell_lines=shell_lines
-    )
-    await renderer.on_stream_event(
-        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
-    )
-    await renderer.on_stream_event(CommandOutputEvent(tool_call_id='m', text='one\ntwo\nthree\nfour'))
-    await renderer.on_stream_event(_finished('m', exit_code=2, line_count=4))
-    assert output.getvalue() == '● shell make\n' + expected
 
 
 async def test_a_preview_line_cut_at_the_terminal_edge_keeps_the_log_path() -> None:

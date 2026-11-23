@@ -1571,12 +1571,12 @@ Tool and argument names are pink; argument values and bullet markers are muted g
 Successful file writes and edits also show their diffs, even with `display.tool_output` off.
 A finished shell command always adds one result row under its header, such as
 `⎿ exit 0 · 23 lines`, or `⎿ running in background · log PATH` for a background command.
-A nonzero exit is red; with `display.tool_output` on, its last lines follow, so the reason is
-on screen. The row ends with the path of the command's log when the command keeps
+A nonzero exit is red. The row shows the path of the command's log when the command keeps
 running or its output was cut. A call of any tool that fails or is refused gets a red row with
 the first line of the reason; a file change you refuse says `refused` and why, and a call whose
 arguments did not validate says `invalid arguments`. When calls run in parallel, a row that
-does not sit under its own header starts with the command or call it belongs to. Other shell
+does not sit under its own header ends with the command or call it belongs to. A row too wide
+for the terminal is clipped at its end. Other shell
 output and grep results stay out of the terminal; the model still receives full tool results.
 Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
@@ -1690,17 +1690,15 @@ Shell output defaults to the first 20 logical lines per command. Change it with
 `/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
 to the next prompt. After the command returns, its result row counts the lines in the
 log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown`,
-including an unterminated final line. A failed command repeats only the last lines the preview
-left out (the last 3 at most), so the reason is on screen. When the preview is cut, by this limit
-or by the capability's 16 KB event preview cap, the row ends with the log path, where the full
+including an unterminated final line. When the preview is cut, by this limit
+or by the capability's 16 KB event preview cap, the row shows the log path, where the full
 output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, plus the offset and line limit only when the call sets them
-(Coder's default offset is 0, and its default and largest limit 2000 lines). Listing
-headers show the directory, plus `recursive=false`, a result limit, or a glob only when
-the call sets them. Coder listings recurse using ripgrep and honor ignore rules. These
-defaults describe Coder tools. Read and listing calls add no result row on success.
+Read headers show the path, zero-based offset, and effective line limit (Coder
+default and maximum: 2000). Listing headers show the directory, recursive mode,
+result limit (default 200), and optional glob. Coder listings recurse using
+ripgrep and honor ignore rules. These displayed defaults describe Coder tools. Read and listing calls add no result row on success.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no
