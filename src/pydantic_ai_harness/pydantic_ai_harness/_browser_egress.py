@@ -53,15 +53,17 @@ def to_idna(host: str) -> str:
 def url_host(url: str) -> str | None:
     """Extract the host that policy checks run against, or `None` when there is none.
 
-    A URL containing a backslash is treated as hostless: WHATWG parsing (what
-    Chromium applies) turns a backslash into `/`, so `urlparse` would report a
-    host the browser never connects to. A malformed URL that `urlparse` rejects
-    is also treated as hostless, so it fails closed instead of crashing the caller.
+    Only the part before the query and fragment is parsed. A backslash in that part
+    makes the URL hostless: WHATWG parsing (what Chromium applies) turns it into `/`,
+    so `urlparse` would report a host the browser never connects to. A malformed URL
+    that `urlparse` rejects is also treated as hostless, so it fails closed instead of
+    crashing the caller.
     """
-    if '\\' in url:
+    head = url.partition('?')[0].partition('#')[0]
+    if '\\' in head:
         return None
     try:
-        return urlparse(url).hostname
+        return urlparse(head).hostname
     except ValueError:
         return None
 

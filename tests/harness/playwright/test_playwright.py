@@ -42,6 +42,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness._browser_egress import url_host
 from pydantic_ai_harness.playwright import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_ALLOWLIST_REACH,
@@ -5046,3 +5047,16 @@ class TestReviewFollowUps:
         assert f'URL: {redacted}' in await toolset.click('a#next')
         assert f'URL: {redacted}' in await toolset.go_back()
         assert redacted in await toolset.tabs('list')
+
+
+@pytest.mark.parametrize(
+    ('url', 'host'),
+    [
+        ('https://example.com/a', 'example.com'),
+        ('https://example.com/a?b=c#d', 'example.com'),
+        ('https://example.com/a?b=c\\d', 'example.com'),
+        ('https://example.com\\a?b=c', None),
+    ],
+)
+def test_url_host_parses_up_to_the_query(url: str, host: str | None) -> None:
+    assert url_host(url) == host
