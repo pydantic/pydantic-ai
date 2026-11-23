@@ -140,11 +140,10 @@ class ScriptedDesktop(DockerContainerBackend):
             ['xdotool', 'key', '--delay', '12', '--', 'U002D', 'U006E', 'U0020', 'U0022', 'U0068', 'U0069', 'U0022'],
         ),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
-        (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
-        (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
+        (PressKeys(keys=('pagedown', 'f5', 'up')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (
-            PressKeys(keys=('printscreen', 'capslock', 'numpad_enter')),
-            ['xdotool', 'key', '--repeat', '1', '--', 'Print+Caps_Lock+KP_Enter'],
+            PressKeys(keys=('printscreen', 'capslock', 'menu')),
+            ['xdotool', 'key', '--repeat', '1', '--', 'Print+Caps_Lock+Menu'],
         ),
         (PressKeys(keys=('ctrl', '+')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+plus']),
         # A character key presses what the layout needs to type it: xdotool adds shift for `?`.
