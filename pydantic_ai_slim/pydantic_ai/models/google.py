@@ -926,28 +926,28 @@ class GoogleModel(Model[Client]):
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         with (
             _map_api_errors(self.model_name, self._provider.model_id_namespace),
-            map_decode_errors(self.model_name, errors.UnknownApiResponseError),
+            map_decode_errors(self.model_name),
         ):
             return await _batch_module().batch_create(self, requests)
 
     async def batch_status(self, batch: Batch) -> Batch:
         with (
             _map_api_errors(self.model_name, self._provider.model_id_namespace),
-            map_decode_errors(self.model_name, errors.UnknownApiResponseError),
+            map_decode_errors(self.model_name),
         ):
             return await _batch_module().batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         with (
             _map_api_errors(self.model_name, self._provider.model_id_namespace),
-            map_decode_errors(self.model_name, errors.UnknownApiResponseError),
+            map_decode_errors(self.model_name),
         ):
             return await _batch_module().batch_results(self, batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with (
             _map_api_errors(self.model_name, self._provider.model_id_namespace),
-            map_decode_errors(self.model_name, errors.UnknownApiResponseError),
+            map_decode_errors(self.model_name),
         ):
             return await _batch_module().batch_cancel(self, batch)
 

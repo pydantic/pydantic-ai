@@ -352,7 +352,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             except (HfHubHTTPError, httpx.HTTPStatusError) as e:
                 # `huggingface_hub` raises a streamed request's error status before it reads the body, which
                 # `_map_api_errors` maps. A retrying transport that gave up on a status may have closed it unread.
-                if not e.response.is_closed:
+                if stream and not e.response.is_closed:
                     await e.response.aread()
                 raise
 

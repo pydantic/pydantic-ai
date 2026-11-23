@@ -21,11 +21,13 @@ _DECODE_ERRORS: tuple[type[Exception], ...] = (json.JSONDecodeError, UnicodeDeco
 def map_decode_errors(model_name: str, *error_types: type[Exception]) -> Generator[None]:
     """Map a response body the SDK could not decode as JSON to `ModelAPIError`.
 
-    Wrap only the SDK's own work: our processing of a response parses JSON too, and those errors stay unmapped.
+    Wrap only the SDK's own work, or the decode of a body the SDK returns undecoded, like a file's content: our
+    processing of a decoded response parses JSON too, and those errors stay unmapped.
 
     Args:
         model_name: The name of the model the request was made to.
-        error_types: SDK-specific exceptions for an undecodable body, in addition to the JSON decoder's own.
+        error_types: Other exceptions that mean the body couldn't be decoded, as the SDK raises them or as decoding a
+            body it returns undecoded does, in addition to the JSON decoder's own.
     """
     try:
         yield
