@@ -1863,7 +1863,7 @@ terminal palette untouched. On a light terminal background, `default` uses darke
 shades of its colours that reach WCAG AA contrast (4.5:1) on white, cream and light grey, and shows diffs
 on pale green and red lines. CLAI finds the background at startup by asking the
 terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark one.
-It does not ask when stdin or stdout is not a terminal, or with `-p` or `--web`; keys typed
+It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
 during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 

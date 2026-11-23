@@ -73,7 +73,7 @@ def _read(*, query: bytes, timeout: float) -> bytes:
             and (chunk := os.read(0, 1024))  # Empty once the terminal is gone.
         ):
             received += chunk
-            if time.monotonic() >= deadline:  # Input that keeps coming, such as a paste, does not extend the wait.
+            if timeout and time.monotonic() >= deadline:  # A paste does not extend the wait; a drain reads all.
                 break
     finally:
         termios.tcsetattr(0, termios.TCSANOW, saved)  # Not `TCSAFLUSH`, which would drop keys typed meanwhile.
