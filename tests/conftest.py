@@ -782,7 +782,10 @@ BLOCKBUSTER_PACKAGES = (
     'pydantic_evals',
     'clai',
 )
-"""The shipped packages the detector scans. `tests/test_tool_scopes.py` checks that it names every workspace member."""
+"""The shipped packages the detector scans.
+
+`tests/test_tool_scopes.py` checks that it names every shipped package its `EXEMPT` does not exempt.
+"""
 
 
 def _blockbuster_packages() -> list[str]:

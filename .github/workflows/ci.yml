@@ -540,6 +540,7 @@ jobs:
           PYRIGHT_REPORT: ${{ runner.temp }}/pyright.json
         run: make typecheck-changed
 
+      # A pull request that pyright-rs checked skips this; its merge group checks with Pyright and runs it.
       - name: Check Pyright read every file its configuration names
         if: ${{ !cancelled() && steps.pyright.outcome == 'success' }}
         run: uv run --no-sync python scripts/check_pyright_sources.py "$RUNNER_TEMP/pyright.json"

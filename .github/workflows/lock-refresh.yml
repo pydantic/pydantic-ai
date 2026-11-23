@@ -9,9 +9,10 @@ name: Lock refresh
 # that takes the result through CI and review.
 #
 # `uv lock` can build an sdist to read its metadata, which runs that package's build backend, so the refresh has a job
-# of its own with no credentials and hands the three files over as an artifact: a step can change `GITHUB_ENV` and
-# `GITHUB_PATH` for the steps after it, so a later step in the same job would not keep a dependency away from the
-# token. The pull request job copies only those three files into its checkout.
+# of its own with no credentials and hands the three files and the pull request body over as an artifact: a step can
+# change `GITHUB_ENV` and `GITHUB_PATH` for the steps after it, so a later step in the same job would not keep a
+# dependency away from the token. The pull request job copies only those three files into its checkout, and hands the
+# body to `gh` as text.
 #
 # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no workflow runs for a pull
 # request opened with GITHUB_TOKEN, so the pull request would arrive without this repository's required checks.
