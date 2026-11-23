@@ -3132,10 +3132,12 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 
 
 Built-in tool rendering shows one summary line per call by default, clipped to
-the terminal width and followed by a blank line. Tool names are pink; arguments
+the terminal width, then any result row, then a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
-diffs even with `display.tool_output` off. Shell output and completion details and grep results
-are hidden from the terminal, not from the model. Set `/set display.tool_output true`
+diffs even with `display.tool_output` off. A finished shell command always adds one result row
+(`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call
+whose result a renderer does not claim gets a red row with the reason. Other shell output and grep
+results are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
 diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
@@ -3215,8 +3217,9 @@ output without changing the draft. New output does not move a scrolled view.
 A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
-Assistant Markdown renders again at the new width and theme; tool and command
-output rewraps, and a theme change repaints its colours role by role. Output
+Assistant Markdown renders again at the new width and theme once its part
+ends; tool and command output rewraps, and a theme change repaints its colours
+role by role. Output
 coloured with `theme.color(...)` or the theme's diff and syntax colours follows
 `/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
@@ -4315,7 +4318,8 @@ including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
 or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves CLAI's existing appearance without changing terminal colours
-on startup or exit. `/theme default` restores it after a palette selection.
+on startup or exit; on a light terminal background, which CLAI asks the terminal for
+at startup, it uses darker shades that reach WCAG AA contrast on white, cream and light grey. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
 validation. A project override takes precedence again on the next startup.
 
@@ -4330,7 +4334,8 @@ Resolve the `ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`, and `THINKING` roles
 through `theme.color(role)` at render time. The constants retain their brand
 values; the resolver reads the active palette. `theme.sgr(role)` resolves raw
 ANSI surfaces itself. `theme.current()` returns the selected Termflow
-`TerminalPalette`, or `None` for the existing default appearance.
+`TerminalPalette`, or `None` for the existing default appearance, and
+`theme.light_background()` the terminal's background when `default` paints for a light one.
 
 Selecting a bundled palette changes terminal foreground, background, and ANSI
 slots via Termflow's OSC sequences. CLAI resets them to terminal defaults when

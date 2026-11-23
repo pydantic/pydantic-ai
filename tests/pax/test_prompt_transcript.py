@@ -247,25 +247,31 @@ def test_colour_reset_does_not_close_a_hyperlink_across_lines() -> None:
     assert text.get_style_at_offset(console, -1).link is None
 
 
-def _block(buffer: TranscriptBuffer, *, width: int = 40) -> MarkdownBlock:
+def _block(buffer: TranscriptBuffer, *, width: int = 40, streaming: bool = False) -> MarkdownBlock:
     def render(*, source: str, width: int) -> str:
         return f'rendered at {width}: {source}\n'
 
-    return buffer.markdown(render=render, width=width, changed=lambda: None)
+    return buffer.markdown(render=render, width=width, changed=lambda: None, streaming=streaming)
 
 
 def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
     buffer = TranscriptBuffer()
     buffer.write('tool header')
-    block = _block(buffer)
+    block = _block(buffer, streaming=True)
     assert buffer.ids() == range(0, 3)
     block.extend('**hi**')
     block.write('streamed\npartial')
     block.flush()
     buffer.write('after\n')
     assert plain(buffer, width=40) == ['tool header', 'streamed', 'partial', 'after', '']
+    assert plain(buffer, width=7) == ['tool he', 'ader', 'streame', 'd', 'partial', 'after', ''], (
+        'a part still streaming wraps its streamed rows at a new width'
+    )
+    block.end()
     assert plain(buffer, width=30) == ['tool header', 'rendered at 30: **hi**', 'after', '']
-    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
+    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['rendered at 40: **hi**'], (
+        'shown at another width while streaming, so its streamed rows may mix widths'
+    )
 
 
 def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None:
@@ -409,12 +415,15 @@ def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output(
     block = _block(transcript)
     block.extend('answer')
     block.write(f'answer\n{PREVIEW}mo')
+    # Blocks from before parts ended had neither flag; a reload happens between turns.
+    del vars(block)['streaming'], vars(block)['_resized_while_streaming']
     for _ in range(2):
         assert TranscriptBuffer.rebind(transcript) is transcript
         assert plain(transcript, width=40) == ['notice', 'answer', 'mo', '']
     block.extend(' more')
     block.write(f'{DROP}more\n')
     assert plain(transcript, width=40) == ['notice', 'answer', 'more', '']
+    assert plain(transcript, width=30) == ['notice', 'rendered at 30: answer more', '']
     transcript.max_lines = 1
     transcript.write('latest\n')
     assert plain(transcript, width=40) == ['latest', '']
@@ -514,6 +523,15 @@ def test_recolor_accepts_spans_styled_by_name() -> None:
     assert isinstance(style, Style)
     assert style.bold and style.color is not None and style.color.name == TOKYO_MUTED
     assert text.spans[0].style == f'bold {theme.GREY}', 'the retained line is unchanged'
+
+
+def test_recolor_to_default_follows_the_terminal_background() -> None:
+    text = Text('muted', spans=[Span(0, 5, TOKYO_MUTED)])
+    for background, shade in (('#FFFFFF', '#6c6c6c'), ('#000000', theme.GREY.lower())):
+        with theme.use(lambda: 'default', background=background):
+            style = recolor(text, source='tokyo_night', target='default').spans[0].style
+        assert isinstance(style, Style) and style.color is not None
+        assert style.color.name == shade
 
 
 def test_rebind_assumes_the_current_theme_for_lines_retained_without_one() -> None:
