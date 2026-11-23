@@ -73,6 +73,7 @@ async def test_provider_error_message(
         output = stream.getvalue()
         assert 'Goodbye.' in output
         assert 'Retained history may include partial progress' in output
+        assert 'Done in' not in output
 
     if chain in ('direct', 'cause', 'context'):
         assert 'Could not refresh your Codex login.' in output

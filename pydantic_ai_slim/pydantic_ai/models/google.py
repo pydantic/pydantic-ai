@@ -765,12 +765,20 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` and the image media types by the client's transport, before the user's `profile=` applies.
+        """Set the profile defaults that follow the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`.
         """
         profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
-        return _with_google_cloud_media_types(profile) if self._is_google_cloud else profile
+        if self._is_google_cloud:
+            return _with_google_cloud_media_types(profile)
+        # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
+        # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex documents the
+        # same minimum but is not probed, so it keeps 128: https://github.com/pydantic/pydantic-ai/issues/14206
+        if self._model_name == 'gemini-2.5-flash-lite':
+            profile = merge_profile(profile, GoogleModelProfile(google_minimal_thinking_budget=512))
+        return profile
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -1262,7 +1270,7 @@ class GoogleModel(Model[Client]):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
+                'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,
