@@ -683,7 +683,7 @@ async def test_capability_tool_reveal_parity(
         await session.send('What will the weather be in Paris tomorrow?')
         events: list[RealtimeEvent] = []
         answered = False
-        with anyio.fail_after(60):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async for event in session:  # pragma: no branch
                 events.append(event)
                 if isinstance(event, FunctionToolResultEvent) and event.part.tool_name == 'get_forecast':
