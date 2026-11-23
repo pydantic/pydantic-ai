@@ -14,7 +14,7 @@ TIMEOUT = 20
 
 
 class _CodexModel(BaseModel):
-    """One catalog entry; only what CLAI reads."""
+    """One catalog entry; only what Pax reads."""
 
     slug: str = Field(min_length=1)
     visibility: str = 'list'

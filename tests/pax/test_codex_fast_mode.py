@@ -1,4 +1,4 @@
-"""Codex speeds: CLAI defaults `openai-codex` models to ultrafast, and `/fast` and the settings menu pick another."""
+"""Codex speeds: Pax defaults `openai-codex` models to ultrafast, and `/fast` and the settings menu pick another."""
 
 import json
 from collections.abc import Sequence

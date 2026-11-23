@@ -1,7 +1,7 @@
 """The orchestrator's tools: make a workspace, start a session in it with a prompt, watch it, steer it, and report back.
 
 They work over the `workspaces` plugin's registry, whose settings are the kinds of workspace the model may
-make. Each workspace's session is a live session of this CLAI in its checkout, followed through
+make. Each workspace's session is a live session of this Pax in its checkout, followed through
 `local_client.LocalClient` as a page follows it, so the sidebar lists it under its repository like any
 other. Only the orchestrator's own agent gets these tools (`web.orchestrator`), never a session's.
 """

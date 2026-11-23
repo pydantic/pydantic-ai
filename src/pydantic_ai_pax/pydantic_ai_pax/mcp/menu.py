@@ -129,7 +129,7 @@ class ServersSource:
                 title=f'Remove {name}?',
                 yes='Remove',
                 no='Keep it',
-                description='CLAI stops it and forgets its configuration and sign-in.',
+                description='Pax stops it and forgets its configuration and sign-in.',
             ):
                 continue
             args = {'sign-in': ['auth', name], 'sign-out': ['auth', name, 'logout']}.get(picked, [picked, name])

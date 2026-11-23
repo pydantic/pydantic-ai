@@ -445,5 +445,5 @@ async def test_delegates_that_carry_the_sessions_permissions_are_not_refused(
 
 
 def test_settings_copy_the_harness_permission_mode() -> None:
-    """CLAI spells `PermissionMode` out so reading settings imports no harness code; the copy must match."""
+    """Pax spells `PermissionMode` out so reading settings imports no harness code; the copy must match."""
     assert get_args(PermissionMode) == get_args(HarnessPermissionMode)

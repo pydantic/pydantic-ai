@@ -68,7 +68,7 @@ def _repeat(count: int) -> str:
     return str(count)
 
 
-_BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
+_BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3'}
 
 _WHEEL_BUTTONS = {'up': '4', 'down': '5', 'left': '6', 'right': '7'}
 """X reports the scroll wheel as buttons."""
@@ -624,8 +624,8 @@ class X11DisplayDriver:
                     release_chain=('mouseup', _BUTTONS[button]),
                     pause_seconds=count * _CLICK_SECONDS,
                 )
-            case MouseMove(x=x, y=y, modifiers=modifiers):
-                await self._xdotool(_mousemove_args(x, y), held_keys=modifiers)
+            case MouseMove(x=x, y=y):
+                await self._xdotool(_mousemove_args(x, y))
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
                 pause = ['sleep', str(DRAG_STEP_PAUSE)]
