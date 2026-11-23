@@ -30,8 +30,6 @@ from pydantic_ai.computer_use import (
     ComputerReturnPart,
     Drag,
     HoldKeys,
-    KeyDown,
-    KeyUp,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -147,26 +145,6 @@ async def test_each_action_maps_onto_daytona_calls(
     await screen(backend).act(action)
 
     assert sandbox.desktop_calls == calls
-
-
-async def test_a_key_held_with_key_down_stays_pressed_through_a_click(
-    fake_daytona: FakeDaytona, no_pauses: None
-) -> None:
-    backend, sandbox = await _started(fake_daytona)
-    display = screen(backend)
-
-    await display.act(KeyDown(keys=('shift', '!')))
-    await display.act(Click(x=3, y=4))
-    await display.act(KeyUp(keys=('shift', '!')))
-
-    # `!` is on the 1 key with shift, so `shift` is pressed once.
-    assert sandbox.desktop_calls == [
-        'keydown shift',
-        'keydown 1',
-        'click 3 4 left clicks=1 modifiers=[]',
-        'keyup 1',
-        'keyup shift',
-    ]
 
 
 @pytest.mark.parametrize(

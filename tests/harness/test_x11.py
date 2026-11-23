@@ -18,8 +18,6 @@ from pydantic_ai.computer_use import (
     Click,
     Drag,
     HoldKeys,
-    KeyDown,
-    KeyUp,
     MouseDown,
     MouseMove,
     MouseUp,
@@ -155,9 +153,6 @@ class ScriptedDesktop(DockerContainerBackend):
         (PressKeys(keys=('ctrl', '?')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+U003F']),
         (PressKeys(keys=('@',)), ['xdotool', 'key', '--repeat', '1', '--', 'U0040']),
         (HoldKeys(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
-        # A key pressed with `key_down` stays pressed until a `key_up`, as a modifier held across clicks.
-        (KeyDown(keys=('shift', 'ctrl')), ['xdotool', 'keydown', 'shift', 'ctrl']),
-        (KeyUp(keys=('shift', 'ctrl')), ['xdotool', 'keyup', 'ctrl', 'shift']),
         # Enter and Tab for newlines and tabs in typed text.
         (
             TypeText(text='l\n\tx\n'),

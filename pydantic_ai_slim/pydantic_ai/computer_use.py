@@ -59,8 +59,6 @@ __all__ = (
     'CursorPosition',
     'Drag',
     'HoldKeys',
-    'KeyDown',
-    'KeyUp',
     'MouseButton',
     'MouseDown',
     'MouseMove',
@@ -411,24 +409,6 @@ class HoldKeys:
 
 
 @dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
-class KeyDown:
-    """Press keys and keep them pressed until a `key_up`, for example to hold `shift` through several clicks."""
-
-    type: Literal['key_down'] = 'key_down'
-    keys: _Keys
-    """One key per entry, pressed together."""
-
-
-@dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
-class KeyUp:
-    """Release keys pressed with `key_down`."""
-
-    type: Literal['key_up'] = 'key_up'
-    keys: _Keys
-    """One key per entry, released together."""
-
-
-@dataclass(frozen=True, kw_only=True, config=_ACTION_CONFIG)
 class Wait:
     """Pause, for example while a page or application loads."""
 
@@ -470,8 +450,6 @@ ComputerToolAction: TypeAlias = Annotated[
     | TypeText
     | PressKeys
     | HoldKeys
-    | KeyDown
-    | KeyUp
     | Wait
     | Screenshot
     | Zoom
