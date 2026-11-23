@@ -98,6 +98,7 @@ For the `zoom` and `cursor_position` actions, also implement
   images on its models with a 200k-token context.
 - A 1280x800 screen suits every model. A larger one costs more tokens per screenshot, and below about 1024x768 models
   start to miss detail.
+- A drag must finish within one run, approvals included: when a run ends, held mouse buttons are released.
 
 ## API reference
 
