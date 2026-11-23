@@ -162,7 +162,9 @@ def review_verdicts(
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if size_labels != {size}:
         for verdict in verdicts.values():
-            verdict.failures.append(f'Expected exactly the recomputed `{size}` label; found {sorted(size_labels)!r}.')
+            verdict.failures.append(
+                f'Edit or push the PR so PR Bots leaves only the `{size}` label; found {sorted(size_labels)!r}.'
+            )
         return verdicts
     if size == 'size: S':
         for verdict in verdicts.values():
@@ -205,9 +207,13 @@ def douwebot_approval(
                 if body.endswith(suffix):
                     body = body[: -len(suffix)]
                 else:
-                    verdict.failures.append('Douwebot review engine attribution is missing.')
+                    verdict.failures.append(
+                        'Douwebot review lacks its engine attribution: push a new head, then request a douwebot review.'
+                    )
             if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
-                verdict.failures.append('Douwebot has discussion findings on this head.')
+                verdict.failures.append(
+                    'Douwebot left findings in its review body: address them, push, then request a new douwebot review.'
+                )
             if github.verified_review_run(int(marker[1]), pull.head.sha):
                 own_reviews.append(review)
 
@@ -215,7 +221,10 @@ def douwebot_approval(
         review for review in own_reviews if review.state in ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED')
     ]
     if not decisions or max(decisions, key=review_order).state != 'APPROVED':
-        verdict.failures.append('Requires a marked, successful douwebot approval on the current head.')
+        verdict.failures.append(
+            'No douwebot approval on this head: request a douwebot review, '
+            'or address its findings, push and request another.'
+        )
     by_id: dict[int, Review] = {review.id: review for review in reviews}
     for comment in comments:
         if comment.user.login != 'github-actions[bot]' or comment.user.type != 'Bot':
@@ -228,12 +237,15 @@ def douwebot_approval(
         if comment.pull_request_review_id in marked_ids:
             if parent in own_reviews and settled_optional_finding(comment, parent, resolved):
                 continue
-            verdict.failures.append('Douwebot has blocking or unresolved optional inline findings on this head.')
+            verdict.failures.append(
+                'Douwebot has inline findings on this head: resolve each addressed `Optional:` thread; '
+                'fix the rest, push, request a new review.'
+            )
         else:
             if other_review_receipt(comment, parent):
                 continue
             verdict.failures.append(
-                'Cannot attribute an unmarked bot comment on this head; obtain a fresh review/head.'
+                'An unattributable bot comment is on this head: push a new head, then request a douwebot review.'
             )
         break
     return verdict
@@ -302,7 +314,7 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
             ):
                 break
         else:
-            raise GateError('PR changed repeatedly while evaluating reviews; retry the gate.')
+            raise GateError('PR changed repeatedly while evaluating reviews.')
     except (GateError, ValidationError, OSError) as error:
         failed = True
         if not head:
@@ -310,7 +322,9 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
             # Never write to a caller-supplied SHA when no PR snapshot was read.
             print(f'Cannot read live PR: {type(error).__name__}: {error}')
             return 1
-        verdicts = {gate: Verdict(failures=[f'{type(error).__name__}: {error}']) for gate in REVIEW_CONTEXTS}
+        # Lead with the instruction: GitHub truncates a status description to 140 characters.
+        failure = f'Rerun this PR Review Gates run. {type(error).__name__}: {error}'
+        verdicts = {gate: Verdict(failures=[failure]) for gate in REVIEW_CONTEXTS}
     for gate, verdict in verdicts.items():
         state = 'failure' if verdict.failures else 'success'
         description = verdict.failures[0] if verdict.failures else 'Review requirement satisfied.'

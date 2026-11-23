@@ -599,6 +599,70 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
 
 
 @pytest.mark.parametrize(
+    ('github', 'description'),
+    [
+        pytest.param(
+            ReviewGitHub(labels=['size: M', 'size: L']),
+            "Edit or push the PR so PR Bots leaves only the `size: M` label; found ['size: L', 'size: M'].",
+            id='size-labels',
+        ),
+        pytest.param(
+            ReviewGitHub(current_reviews=[]),
+            'No douwebot approval on this head: request a douwebot review, '
+            'or address its findings, push and request another.',
+            id='no-approval',
+        ),
+        pytest.param(
+            ReviewGitHub(
+                current_reviews=[
+                    review(body=f'No blocking findings.\n\n<!-- douwebot:review run=20 head={HEAD} engine=claude -->')
+                ]
+            ),
+            'Douwebot review lacks its engine attribution: push a new head, then request a douwebot review.',
+            id='engine-attribution',
+        ),
+        pytest.param(
+            ReviewGitHub(
+                current_reviews=[
+                    review(body=f'No blocking findings.\n\nDiscussion\n\n<!-- douwebot:review run=20 head={HEAD} -->')
+                ]
+            ),
+            'Douwebot left findings in its review body: address them, push, then request a new douwebot review.',
+            id='body-finding',
+        ),
+        pytest.param(
+            ReviewGitHub(
+                comments=[
+                    review_gates.ReviewComment(
+                        id=30, pull_request_review_id=10, user=BOT, original_commit_id=HEAD, body='Finding'
+                    )
+                ]
+            ),
+            'Douwebot has inline findings on this head: resolve each addressed `Optional:` thread; '
+            'fix the rest, push, request a new review.',
+            id='inline-finding',
+        ),
+        pytest.param(
+            ReviewGitHub(
+                current_reviews=[review(), review(9, state='COMMENTED', body='Unmarked')],
+                comments=[
+                    review_gates.ReviewComment(
+                        id=31, pull_request_review_id=9, user=BOT, original_commit_id=HEAD, body='Comment'
+                    )
+                ],
+            ),
+            'An unattributable bot comment is on this head: push a new head, then request a douwebot review.',
+            id='unattributable-comment',
+        ),
+    ],
+)
+def test_each_failing_status_description_says_what_to_do(github: ReviewGitHub, description: str):
+    # `reconcile_reviews` publishes the first failure, and GitHub keeps 140 characters of it.
+    assert verdicts(github)['douwebot'].failures[0] == description
+    assert len(description) <= 140
+
+
+@pytest.mark.parametrize(
     'candidate',
     [
         review(head=OLD_HEAD),
