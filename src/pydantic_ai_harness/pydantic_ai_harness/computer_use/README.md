@@ -75,7 +75,7 @@ with a panel inside the sandbox, which needs these programs:
 - `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal
 
 The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. Add
-them to your image to skip that wait. If one of the first five can't be installed, for example because the image has
+them to your image so the first use doesn't wait for the install. If one of the first five can't be installed, for example because the image has
 no `apt-get` or no root, the run ends with a `WorkspaceUnavailableError` naming what's missing. Without the last three,
 the screen still works, without the panel.
 
