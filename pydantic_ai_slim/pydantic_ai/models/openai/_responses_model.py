@@ -2905,7 +2905,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 'call_id': call_id,
                 'status': 'completed',
             }
-            if id and should_send_item_id:  # pragma: no branch
+            # A local `search_tools` call made on a model without native tool search carries a
+            # function-call (`fc_*`) item ID, which the Responses API rejects on a `tool_search_call`
+            # item. The item ID is optional here, so only that prefix is dropped: compatible APIs
+            # can issue opaque IDs of their own.
+            if id and should_send_item_id and not id.startswith('fc_'):
                 tool_search_call['id'] = id
             context.openai_messages.append(tool_search_call)
         else:
