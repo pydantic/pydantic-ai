@@ -4066,7 +4066,7 @@ async def download_item(
         except ValueError:
             pass
     if media_type is None:
-        content_type = response.headers.get('content-type', '').split(';')[0].strip()
+        content_type = _utils.bare_media_type(response.headers.get('content-type', ''))
         # Generic binary types (S3 serves `binary/octet-stream`) say nothing, so infer from the URL instead.
         if content_type.lower() in ('', 'application/octet-stream', 'binary/octet-stream'):
             media_type = item.media_type

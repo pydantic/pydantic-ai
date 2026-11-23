@@ -46,15 +46,17 @@ except ImportError as _import_error:
     ) from _import_error
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
 from ._http import DEFAULT_HTTP_LIMITS
 from ._warnings import PydanticAIDeprecationWarning
-from .exceptions import _parse_retry_after_ms  # pyright: ignore[reportPrivateUsage]
+from .exceptions import (
+    _parse_retry_after_date,  # pyright: ignore[reportPrivateUsage]
+    _parse_retry_after_ms,  # pyright: ignore[reportPrivateUsage]
+    _parse_retry_after_seconds,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from tenacity.asyncio.retry import RetryBaseT
@@ -597,31 +599,15 @@ def wait_retry_after(
             # Like the OpenAI and Anthropic SDKs, prefer their more precise `retry-after-ms` over `Retry-After`.
             if (retry_after_ms := _parse_retry_after_ms(exc.response.headers)) is not None:
                 return min(retry_after_ms, max_wait)
-            retry_after = exc.response.headers.get('retry-after')
-            if retry_after:
-                try:
-                    # Try parsing as seconds first
-                    wait_seconds = int(retry_after)
+            if retry_after := exc.response.headers.get('retry-after'):
+                # Unlike `ModelHTTPError.retry_after`, a number too large for a float waits `max_wait`, and a date
+                # that has passed falls back.
+                if (wait_seconds := _parse_retry_after_seconds(retry_after)) is not None:
                     if wait_seconds >= 0:
                         return float(min(wait_seconds, max_wait))
-                except ValueError:
-                    # Try parsing as HTTP date
-                    try:
-                        retry_time = parsedate_to_datetime(retry_after)
-                        assert isinstance(retry_time, datetime)
-                        # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
-                        if retry_time.tzinfo is None:
-                            retry_time = retry_time.replace(tzinfo=UTC)
-                        now = datetime.now(UTC)
-                        wait_seconds = (retry_time - now).total_seconds()
+                elif (wait := _parse_retry_after_date(retry_after)) is not None and wait > 0:
+                    return min(wait, max_wait)
 
-                        if wait_seconds > 0:
-                            return min(wait_seconds, max_wait)
-                    except (ValueError, TypeError, AssertionError, OverflowError):
-                        # If date parsing fails, fall back to fallback strategy
-                        pass
-
-        # Use fallback strategy
         return fallback_strategy(state)
 
     return wait_func

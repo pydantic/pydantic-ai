@@ -108,6 +108,14 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: shared-parsers
+        name: Shared parsers of external input
+        # Like `complexity`, `--staged` checks only what is staged, against `HEAD` and during a merge `MERGE_HEAD`.
+        entry: uv
+        args: [run, --no-sync, scripts/check_shared_parsers.py, --staged]
+        types: [python]
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv

@@ -28,7 +28,7 @@ from typing_extensions import TypeVar
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai._conversation_marks import mark_stored
 from pydantic_ai._instrumentation import record_exception
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import bare_media_type, is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
@@ -152,7 +152,7 @@ def _check_content_type(request: Request, allowed_content_types: frozenset[str] 
     # built from the same set the comparison uses.
     allowed = {allowed_type.strip().lower() for allowed_type in allowed_content_types}
 
-    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    media_type = bare_media_type(request.headers.get('content-type', '')).lower()
     if media_type in allowed:
         return
 

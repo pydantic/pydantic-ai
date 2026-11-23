@@ -1284,6 +1284,11 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(obj, dict)
 
 
+def is_usage_count(value: object) -> TypeIs[int]:
+    """Whether a value from a provider's usage report is a count: an `int`, but not a `bool`, which subclasses `int`."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
     """Whether a value is a mapping whose keys are all strings."""
     if not isinstance(value, Mapping):
@@ -1315,14 +1320,22 @@ def host_derived_id(url: str) -> str | None:
     return host.replace(':', '-') if host else None
 
 
+def bare_media_type(media_type: str) -> str:
+    """`media_type` without its parameters, such as `; charset=utf-8`, and without surrounding whitespace.
+
+    Parameters follow the `type/subtype` after a `;` (RFC 9110 section 8.3.1). The case is kept: a caller that
+    compares media types case-insensitively lowercases the result itself.
+    """
+    return media_type.split(';', 1)[0].strip()
+
+
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
     Returns True for `text/*`, JSON, XML, YAML and TOML, and the `+json` and `+xml` structured syntax suffixes.
     `+yaml` types aren't included: see `has_yaml_structured_suffix`.
     """
-    # Media types may carry parameters (RFC 2045); classify on the bare type.
-    media_type = media_type.split(';', 1)[0].strip()
+    media_type = bare_media_type(media_type)
     return (
         media_type.startswith('text/')
         or media_type == 'application/json'
@@ -1341,7 +1354,7 @@ def has_yaml_structured_suffix(media_type: str) -> bool:
     `is_text_like_media_type` doesn't include these types, so only the adapters that call this inline them as text:
     https://github.com/pydantic/pydantic-ai/issues/13925.
     """
-    return media_type.split(';', 1)[0].strip().endswith('+yaml')
+    return bare_media_type(media_type).endswith('+yaml')
 
 
 def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:

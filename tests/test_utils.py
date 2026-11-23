@@ -28,6 +28,7 @@ from pydantic_ai._utils import (
     PeekableAsyncStream,
     ScopedTask,
     await_maybe,
+    bare_media_type,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
     format_inlined_text_file,
@@ -37,6 +38,7 @@ from pydantic_ai._utils import (
     is_async_callable,
     is_google_files_api_url,
     is_str_dict,
+    is_text_like_media_type,
     merge_json_schema_defs,
     replace_no_init,
     run_in_executor,
@@ -1534,6 +1536,23 @@ def test_has_yaml_structured_suffix() -> None:
     assert has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
     assert has_yaml_structured_suffix('application/yaml') is False
     assert has_yaml_structured_suffix('application/ld+json') is False
+
+
+@pytest.mark.parametrize('classify', [is_text_like_media_type, has_yaml_structured_suffix])
+@pytest.mark.parametrize(
+    'media_type', ['text/plain', 'application/json', 'application/openapi+yaml', 'application/x-yaml', 'image/png']
+)
+@pytest.mark.parametrize('parameters', ['; charset=utf-8', ';charset=utf-8 ', ' ; q=1; profile="a;b"'])
+def test_media_type_parameters_leave_the_classification_unchanged(
+    classify: Callable[[str], bool], media_type: str, parameters: str
+) -> None:
+    """A media type with parameters (RFC 9110 section 8.3.1) classifies as its bare type does, case kept.
+
+    A plain unit test rather than a public-API/VCR test because it exercises the pure media-type predicates directly.
+    """
+    assert bare_media_type(f' {media_type}{parameters}') == media_type
+    assert bare_media_type('Text/Plain; charset=UTF-8') == 'Text/Plain'
+    assert classify(f'{media_type}{parameters}') == classify(media_type)
 
 
 def test_replace_no_init() -> None:

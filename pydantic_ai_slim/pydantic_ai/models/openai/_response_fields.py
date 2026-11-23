@@ -10,7 +10,7 @@ from openai.types.responses import ResponseCompactionItem
 from openai.types.responses.response_status import ResponseStatus
 
 from ... import usage
-from ..._utils import is_str_dict as _is_str_dict
+from ..._utils import is_str_dict as _is_str_dict, is_usage_count as _is_usage_count
 from ...messages import STANDING_PROMPT_PLANTED_KEY, CompactionPart, FinishReason, ModelResponseState
 
 RESPONSES_FINISH_REASON_MAP: dict[
@@ -148,7 +148,7 @@ def map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int) and not isinstance(v, bool)
+        if _is_usage_count(v)
     }
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
@@ -181,7 +181,7 @@ def map_usage(
     # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
     if _is_str_dict(input_tokens_details):
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
-        if isinstance(cache_write_tokens, int):
+        if _is_usage_count(cache_write_tokens):
             request_usage.cache_write_tokens = cache_write_tokens
     return request_usage
 

@@ -16,7 +16,12 @@ from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._utils import (
+    generate_tool_call_id,
+    guard_tool_call_id as _guard_tool_call_id,
+    is_usage_count as _is_usage_count,
+    number_to_datetime,
+)
 from ..exceptions import ModelAPIError, ModelUnavailableError, UserError
 from ..messages import (
     AudioUrl,
@@ -1043,13 +1048,13 @@ def _map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
-        if isinstance(v, int)
+        if _is_usage_count(v)
     }
     # Lift only `completion_tokens_details` (reasoning_tokens) into `details`: genai-prices
     # doesn't surface those, but it does map `prompt_tokens_details.cached_tokens` to
     # first-class `cache_read_tokens`, so lifting that too would double-report it.
     completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
-    details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
+    details.update({k: v for k, v in completion_tokens_details.items() if _is_usage_count(v)})
 
     request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),

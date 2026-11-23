@@ -19,6 +19,7 @@ from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     has_yaml_structured_suffix as _has_yaml_structured_suffix,
     is_text_like_media_type as _is_text_like_media_type,
+    is_usage_count as _is_usage_count,
     now_utc as _now_utc,
     number_to_datetime,
 )
@@ -1203,7 +1204,7 @@ def _map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
-        if isinstance(v, int)
+        if _is_usage_count(v)
     }
     return RequestUsage.extract(
         dict(model=model, usage=usage_data),

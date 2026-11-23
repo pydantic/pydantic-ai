@@ -2689,7 +2689,7 @@ class BedrockStreamedResponse(StreamedResponse):
 
 def _map_usage(usage_data: TokenUsageTypeDef, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     details: dict[str, int] = {
-        k: v for k, v in usage_data.items() if k not in _BEDROCK_USAGE_FIELDS if isinstance(v, int)
+        k: v for k, v in usage_data.items() if k not in _BEDROCK_USAGE_FIELDS if _utils.is_usage_count(v)
     }
     return usage.RequestUsage.extract(
         dict(model=remove_bedrock_geo_prefix(model), usage=usage_data),

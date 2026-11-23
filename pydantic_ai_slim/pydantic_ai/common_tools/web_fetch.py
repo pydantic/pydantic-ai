@@ -20,7 +20,7 @@ from anyio.lowlevel import RunVar
 from typing_extensions import TypedDict
 
 from pydantic_ai._ssrf import safe_download
-from pydantic_ai._utils import is_text_like_media_type, run_in_executor
+from pydantic_ai._utils import bare_media_type, is_text_like_media_type, run_in_executor
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
@@ -169,8 +169,7 @@ class WebFetchLocalTool:
         except (ValueError, httpx2.InvalidURL, httpx2.HTTPStatusError, httpx2.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
-        media_type = response.headers.get('content-type', '')
-        media_type = media_type.split(';')[0].strip().lower()
+        media_type = bare_media_type(response.headers.get('content-type', '')).lower()
 
         if media_type and not is_text_like_media_type(media_type):
             return BinaryContent(data=response.content, media_type=media_type)

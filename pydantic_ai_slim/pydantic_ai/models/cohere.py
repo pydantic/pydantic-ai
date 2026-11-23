@@ -22,6 +22,7 @@ from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
+    is_usage_count as _is_usage_count,
     now_utc as _now_utc,
 )
 from ..messages import (
@@ -598,8 +599,8 @@ def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model
     return _map_cohere_usage(u, provider, provider_url, model)
 
 
-def _map_cohere_usage(u: CohereUsage, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
-    """Map usage shared by chat responses and message-end stream events."""
+def _billed_unit_details(u: CohereUsage) -> dict[str, int]:
+    """The billed units Cohere reports, as usage details."""
     details: dict[str, int] = {}
     if billed_units := u.billed_units:
         for key, value in (
@@ -610,14 +611,19 @@ def _map_cohere_usage(u: CohereUsage, provider: str, provider_url: str, model: s
         ):
             if value:
                 details[key] = int(value)
+    return details
 
+
+def _map_cohere_usage(u: CohereUsage, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
+    """Map usage shared by chat responses and message-end stream events."""
+    details = _billed_unit_details(u)
     usage_data: dict[str, object] = u.model_dump(exclude_none=True)
     # Cohere SDK usage counts are typed as floats, while genai-prices extracts integer token fields.
     if _is_str_dict(tokens := usage_data.get('tokens')):
         for key in ('input_tokens', 'output_tokens'):
-            if isinstance(value := tokens.get(key), int | float):
+            if _is_usage_count(value := tokens.get(key)) or isinstance(value, float):
                 tokens[key] = int(value)
-    if isinstance(cached_tokens := usage_data.get('cached_tokens'), int | float):
+    if _is_usage_count(cached_tokens := usage_data.get('cached_tokens')) or isinstance(cached_tokens, float):
         usage_data['cached_tokens'] = int(cached_tokens)
 
     if not tokens and not cached_tokens:

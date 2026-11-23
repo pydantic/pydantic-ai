@@ -250,6 +250,29 @@ async def test_request_simple_usage(allow_model_requests: None):
     assert result.output == 'world'
 
 
+async def test_usage_details_leave_out_bool_fields(allow_model_requests: None):
+    """A `bool` in the usage report is not a count, though `bool` subclasses `int`.
+
+    Groq's SDK keeps usage fields it doesn't declare, so a flag reaches the usage mapper as sent. No recorded Groq
+    response carries one, hence the mocked client.
+    """
+    usage = CompletionUsage.model_validate(
+        {
+            'completion_tokens': 1,
+            'prompt_tokens': 2,
+            'total_tokens': 3,
+            'is_byok': True,
+            'completion_tokens_details': {'reasoning_tokens': 4, 'is_estimate': False},
+        }
+    )
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'), usage=usage)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(c)))
+
+    result = await Agent(m).run('Hello')
+
+    assert result.usage.details == {'reasoning_tokens': 4}
+
+
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(

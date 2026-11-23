@@ -16,7 +16,7 @@ import pytest
 
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-from .conftest import try_import
+from .conftest import IsFloat, try_import
 
 with try_import() as imports_successful:
     from tenacity import (
@@ -27,6 +27,7 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai import PydanticAIDeprecationWarning
+    from pydantic_ai.exceptions import ModelHTTPError
     from pydantic_ai.retries import (
         AsyncHTTPX2TenacityTransport,
         AsyncTenacityTransport,
@@ -640,6 +641,10 @@ class TestAsyncTenacityTransport:
         mock_response_success.raise_for_status.assert_called_once()
 
 
+_FALLBACK = 7.0
+"""What the fallback strategy waits in `TestWaitRetryAfter.test_retry_after_table`."""
+
+
 class TestWaitRetryAfter:
     """Tests for the wait_retry_after wait strategy."""
 
@@ -754,29 +759,47 @@ class TestWaitRetryAfter:
         fallback.assert_not_called()
 
     @pytest.mark.parametrize(
-        ('headers', 'max_wait', 'expected'),
+        ('headers', 'retry_after', 'wait'),
         [
-            pytest.param({'retry-after-ms': '1500'}, 300, 1.5, id='ms-only'),
-            pytest.param({'retry-after-ms': '1500', 'retry-after': '2'}, 300, 1.5, id='ms-preferred'),
-            pytest.param({'retry-after-ms': '90000'}, 60, 60.0, id='ms-capped'),
-            pytest.param({'retry-after-ms': 'invalid', 'retry-after': '2'}, 300, 2.0, id='invalid-ms-falls-through'),
+            pytest.param({'retry-after': '5'}, 5.0, 5.0, id='seconds'),
+            pytest.param({'retry-after': '0'}, 0.0, 0.0, id='zero-seconds'),
+            pytest.param({'retry-after': ' 5 '}, 5.0, 5.0, id='seconds-with-whitespace'),
+            pytest.param({'retry-after': '1000'}, 1000.0, 300.0, id='seconds-past-max-wait'),
+            pytest.param({'retry-after': '-1'}, None, _FALLBACK, id='negative-seconds'),
+            pytest.param({'retry-after': '1.5'}, None, _FALLBACK, id='fractional-seconds'),
+            pytest.param({'retry-after': ''}, None, _FALLBACK, id='empty'),
+            pytest.param({'retry-after': '9' * 400}, None, 300.0, id='seconds-too-large-for-a-float'),
+            pytest.param({'retry-after': 'Fri, 31 Dec 9999 23:59:59 GMT'}, IsFloat(gt=300), 300.0, id='future-date'),
+            pytest.param({'retry-after': 'Sun, 06 Nov 1994 08:49:37 GMT'}, 0.0, _FALLBACK, id='past-date'),
+            pytest.param({'retry-after': 'Sun Nov  6 08:49:37 1994'}, 0.0, _FALLBACK, id='past-asctime-date'),
+            pytest.param({'retry-after': 'Wed, 21 Oct 999999999999 07:28:00 GMT'}, None, _FALLBACK, id='date-overflow'),
+            pytest.param({'retry-after': 'soon'}, None, _FALLBACK, id='unreadable'),
+            pytest.param({'retry-after-ms': '1500'}, 1.5, 1.5, id='ms-only'),
+            pytest.param({'retry-after-ms': '1500', 'retry-after': '2'}, 1.5, 1.5, id='ms-preferred'),
+            pytest.param({'retry-after-ms': '900000'}, 900.0, 300.0, id='ms-past-max-wait'),
+            pytest.param({'retry-after-ms': 'soon', 'retry-after': '2'}, 2.0, 2.0, id='unreadable-ms-falls-through'),
+            pytest.param({'retry-after-ms': 'inf', 'retry-after': '2'}, 2.0, 2.0, id='infinite-ms-falls-through'),
+            pytest.param({'retry-after-ms': '-5', 'retry-after': '2'}, 2.0, 2.0, id='negative-ms-falls-through'),
         ],
     )
-    def test_retry_after_ms(self, headers: dict[str, str], max_wait: float, expected: float):
-        """`retry-after-ms`, as OpenAI and Anthropic send it, takes precedence over `Retry-After` like in their SDKs."""
-        fallback = Mock(return_value=8.0)
-        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=max_wait)
+    def test_retry_after_table(self, headers: dict[str, str], retry_after: float | None, wait: float):
+        """`ModelHTTPError.retry_after` and `wait_retry_after` read each header the same way.
 
+        `retry-after-ms`, as OpenAI and Anthropic send it, takes precedence over `Retry-After` like in their SDKs.
+        The two keep their own answer for a number too large for a float and for a date that has passed:
+        `wait_retry_after` waits `max_wait` for the first and falls back for the second.
+        """
+        assert ModelHTTPError(status_code=429, model_name='m', headers=headers).retry_after == retry_after
+
+        wait_func = wait_retry_after(fallback_strategy=lambda _: _FALLBACK, max_wait=300)
         request = httpx2.Request('POST', 'https://api.openai.com/v1/chat/completions')
         response = httpx2.Response(429, headers=headers, request=request)
-        http_error = httpx2.HTTPStatusError('Rate limited', request=request, response=response)
-
         retry_state = Mock(spec=RetryCallState)
         retry_state.outcome = Mock()
-        retry_state.outcome.exception.return_value = http_error
-
-        assert wait_func(retry_state) == expected
-        fallback.assert_not_called()
+        retry_state.outcome.exception.return_value = httpx2.HTTPStatusError(
+            'Rate limited', request=request, response=response
+        )
+        assert wait_func(retry_state) == wait
 
     def test_retry_after_http_date_format(self):
         """Test parsing Retry-After header in HTTP date format."""

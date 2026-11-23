@@ -51,6 +51,8 @@ from pydantic_ai_harness.browser_use import (
     default_browser_agent,
 )
 
+from ..secret_forms import COVERED, ENCODINGS, SECRET
+
 T = TypeVar('T', bound=BaseModel)
 
 _LOCAL_FILE_RULES = ['[fF][iI][lL][eE]://*', '[!a-zA-Z]*/*', '*[\t\n\r]*/*']
@@ -1406,6 +1408,22 @@ class TestSensitiveDataSafety:
         result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert result == 'The browser agent stopped without producing a result (typed <secret>x_password</secret>).'
+
+    @pytest.mark.parametrize('encoding', ENCODINGS)
+    async def test_redacts_the_encodings_its_docs_promise(
+        self, kill_calls: list[BrowserSession], encoding: str
+    ) -> None:
+        """The value as written, JSON-escaped and `quote_plus`-encoded is redacted; see `tests/harness/secret_forms.py`."""
+        form = ENCODINGS[encoding](SECRET)
+        history = _FakeHistory(step_errors=[f'typed {form}'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': SECRET}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert (form not in result) == (encoding in COVERED['BrowserUse'])
 
     async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
         self, kill_calls: list[BrowserSession]

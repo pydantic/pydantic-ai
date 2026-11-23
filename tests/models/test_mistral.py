@@ -480,6 +480,25 @@ async def test_usage_with_cached_tokens(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
+async def test_usage_details_leave_out_bool_fields(allow_model_requests: None):
+    """A `bool` in the usage report is not a count, though `bool` subclasses `int`.
+
+    Mistral's SDK keeps usage fields it doesn't declare, so a flag reaches the usage mapper as sent. No recorded
+    Mistral response carries one, hence the mocked client.
+    """
+    usage = MistralUsageInfo.model_validate(
+        {'prompt_tokens': 1, 'completion_tokens': 2, 'total_tokens': 3, 'is_byok': True, 'prompt_audio_seconds': 4}
+    )
+    completion = completion_message(MistralAssistantMessage(content='world'), usage=usage)
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(completion))
+    )
+
+    result = await Agent(model=model).run('hello')
+
+    assert result.usage.details == {'prompt_audio_seconds': 4}
+
+
 @pytest.mark.vcr()
 async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
     instructions = ' '.join(['Retain this instruction prefix for the entire conversation.'] * 24)

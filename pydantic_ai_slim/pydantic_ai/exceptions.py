@@ -1223,11 +1223,39 @@ def _parse_retry_after_ms(headers: Mapping[str, str]) -> float | None:
     return None
 
 
+def _parse_retry_after_seconds(value: str) -> int | None:
+    """A `Retry-After` value read as an integer number of seconds, or `None` when it isn't one.
+
+    The result can be negative, or too large for a float: what that means is the caller's to decide.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _parse_retry_after_date(value: str) -> float | None:
+    """Seconds until a `Retry-After` [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date), or `None` when it isn't one.
+
+    The result is negative when the date has passed: what that means is the caller's to decide.
+    """
+    try:
+        retry_time = parsedate_to_datetime(value)
+        assert isinstance(retry_time, datetime)
+        # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
+        if retry_time.tzinfo is None:
+            retry_time = retry_time.replace(tzinfo=UTC)
+        return (retry_time - datetime.now(UTC)).total_seconds()
+    except (ValueError, TypeError, AssertionError, OverflowError):
+        return None
+
+
 def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """Seconds to wait before retrying, from the `retry-after-ms` or `Retry-After` header (keys lowercased).
 
     `retry-after-ms` is a number of milliseconds, as OpenAI and Anthropic send it. `Retry-After` is interpreted first
-    as an integer number of seconds, then as an [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date).
+    as an integer number of seconds, then as an [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date). A
+    negative number, or one too large for a float, says nothing; a date that has passed means no wait.
     """
     if headers is None:
         return None
@@ -1236,23 +1264,16 @@ def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     raw = headers.get('retry-after')
     if raw is None:
         return None
-    try:
-        seconds = int(raw)
+    if (seconds := _parse_retry_after_seconds(raw)) is not None:
         if seconds < 0:
             return None
-        return float(seconds)
-    except (ValueError, OverflowError):
-        pass
-    try:
-        retry_time = parsedate_to_datetime(raw)
-        assert isinstance(retry_time, datetime)
-        # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
-        if retry_time.tzinfo is None:
-            retry_time = retry_time.replace(tzinfo=UTC)
-        wait = (retry_time - datetime.now(UTC)).total_seconds()
+        try:
+            return float(seconds)
+        except OverflowError:
+            return None
+    if (wait := _parse_retry_after_date(raw)) is not None:
         return max(0.0, wait)
-    except (ValueError, TypeError, AssertionError, OverflowError):
-        return None
+    return None
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import bare_media_type
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
@@ -168,7 +169,7 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        if (media_type := request.headers.get('content-type', '').split(';')[0].strip().lower()) != JSON_MEDIA_TYPE:
+        if (media_type := bare_media_type(request.headers.get('content-type', '')).lower()) != JSON_MEDIA_TYPE:
             # Checked up front so a cross-origin-forgeable request is turned away before the body is
             # parsed and before the agent is dispatched — the attacker never needs to read the
             # response, so the run itself is the damage.
