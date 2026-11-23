@@ -355,6 +355,14 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 if stream and not e.response.is_closed:
                     await e.response.aread()
                 raise
+            except httpx.ResponseNotRead as e:
+                # For a 422, `huggingface_hub` reads the error body itself to extend its message, before a streamed
+                # request has read it.
+                status_error = e.__context__
+                if not isinstance(status_error, HfHubHTTPError):
+                    raise  # pragma: no cover
+                await status_error.response.aread()
+                raise status_error
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""

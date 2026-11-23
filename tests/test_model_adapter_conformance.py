@@ -290,6 +290,7 @@ HTTP_FAULTS = [
     _HttpFault('status-429', lambda: _status(429), _RATE_LIMITED),
     _HttpFault('status-503', lambda: _status(503), _UNAVAILABLE),
     _HttpFault('status-400', lambda: _status(400), _REJECTED),
+    _HttpFault('status-422', lambda: _status(422), _REJECTED),
     _HttpFault('gave-up-429', lambda: gave_up_on(_status(429)), _RATE_LIMITED, gave_up=True),
     _HttpFault('gave-up-503', lambda: gave_up_on(_status(503)), _UNAVAILABLE, gave_up=True),
     _HttpFault('gave-up-400', lambda: gave_up_on(_status(400)), _REJECTED, gave_up=True),
@@ -443,6 +444,16 @@ DECLARED_FAULT_ERRORS: dict[tuple[str, str], _DeclaredError] = {
 Raising a `ModelAPIError` instead would change the type a caller catches, so each stays as its pinning test has it.
 """
 
+UNKNOWN_PHASE_FAULTS: dict[tuple[str, str], str] = {
+    ('BedrockConverseModel.count_tokens', fault): (
+        'botocore raises `ConnectionClosedError` for a connection closed before the request was sent, as at the TLS '
+        'handshake, as well as for one closed while the response was read, so `phase` is `None`, as '
+        '`ModelConnectionError.phase` documents for a connection closed at an unknown point'
+    )
+    for fault in ('body-breaks-off', 'error-body-breaks-off')
+}
+"""Faults whose transport error doesn't say at what stage the connection closed, each with the reason."""
+
 
 def _known_gap(cell: SdkCell, fault_id: str) -> tuple[pytest.MarkDecorator, ...]:
     reason = KNOWN_FAULT_GAPS.get((cell.id, fault_id))
@@ -450,8 +461,8 @@ def _known_gap(cell: SdkCell, fault_id: str) -> tuple[pytest.MarkDecorator, ...]
 
 
 def test_fault_tables_name_real_cells():
-    """An entry in `KNOWN_FAULT_GAPS` or `DECLARED_FAULT_ERRORS` names a cell that's sent that fault, so a renamed cell
-    can't leave it behind, and no cell is in both."""
+    """An entry in `KNOWN_FAULT_GAPS`, `DECLARED_FAULT_ERRORS` or `UNKNOWN_PHASE_FAULTS` names a cell that's sent that
+    fault, so a renamed cell can't leave it behind, and no cell is in both of the first two."""
     cells = {
         (cell.id, fault.id) for cell in sdk_cells() for fault in [*HTTP_FAULTS, *XAI_FAULTS] if _applies(fault, cell)
     }
@@ -464,6 +475,7 @@ def test_fault_tables_name_real_cells():
 
     assert named(KNOWN_FAULT_GAPS) <= cells, sorted(named(KNOWN_FAULT_GAPS) - cells)
     assert named(DECLARED_FAULT_ERRORS) <= http_cells, sorted(named(DECLARED_FAULT_ERRORS) - http_cells)
+    assert named(UNKNOWN_PHASE_FAULTS) <= http_cells, sorted(named(UNKNOWN_PHASE_FAULTS) - http_cells)
     assert not KNOWN_FAULT_GAPS.keys() & DECLARED_FAULT_ERRORS.keys()
 
 
@@ -498,7 +510,7 @@ async def test_transport_fault_raises_model_api_error(
     assert _categories(error) == fault.categories
     if fault.phase is not None:
         assert isinstance(error, ModelConnectionError)
-        assert error.phase == fault.phase
+        assert error.phase == (None if (cell.id, fault.id) in UNKNOWN_PHASE_FAULTS else fault.phase)
 
 
 def _declared_cells() -> list[object]:

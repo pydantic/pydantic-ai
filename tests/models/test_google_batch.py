@@ -646,6 +646,22 @@ async def test_gemini_succeeded_job_whose_rows_all_failed(
         model.batch_decode(two, requests[1])
 
 
+async def test_gemini_batch_results_line_that_isnt_json_raises_model_api_error(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A line of the results file that isn't JSON, like a gateway's error page, raises `ModelAPIError`."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}})
+
+    async def download(*, file: str, config: object = None) -> bytes:
+        return b'<html>Bad gateway</html>\n'
+
+    monkeypatch.setattr(model.client.aio.files, 'download', download)
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request())]))
+    with pytest.raises(ModelAPIError, match='Failed to decode response as JSON'):
+        await model.batch_results(batch)
+
+
 @pytest.mark.parametrize(
     'make_error',
     [
@@ -682,6 +698,25 @@ async def test_gemini_batch_results_survive_failing_to_delete_the_input_file(
     batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request('ok'))]))
     [result] = await model.batch_results(batch)
     assert result.status == 'succeeded'
+
+
+async def test_gemini_batch_create_raises_an_event_hook_bug_as_it_is(allow_model_requests: None) -> None:
+    """A `KeyError` from the caller's own `httpx` event hook isn't raised as a `ModelAPIError`, which `FallbackModel`
+    would fall back on. The `KeyError` `files.upload` raises for an answer naming no upload URL is one; see
+    `tests/test_model_adapter_conformance.py`.
+
+    Not a VCR test: the error is the hook's, not the provider's.
+    """
+
+    async def hook(response: httpx2.Response) -> None:
+        raise KeyError('trace-id')
+
+    http_client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda request: httpx2.Response(200, json={})), event_hooks={'response': [hook]}
+    )
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key', http_client=http_client))
+    with pytest.raises(KeyError, match='trace-id'):
+        await model.batch_create([await model.batch_encode(_request())])
 
 
 @pytest.mark.parametrize('method', ['batch_create', 'batch_status', 'batch_results', 'batch_cancel'])
