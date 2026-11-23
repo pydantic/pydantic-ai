@@ -311,12 +311,10 @@ def _rows(surface: PromptSurface, *, width: int) -> list[str]:
 async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_theme() -> None:
     surface = PromptSurface(output=io.StringIO(), size=lambda: (120, 24))
     console = Console(file=surface, force_terminal=True, width=120, color_system='truecolor')
-    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
     words = ' '.join(f'word{index}' for index in range(30))
     await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=f'{words}\n')))
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-        while 'word29' not in ''.join(streaming := _rows(surface, width=40)):
-            await anyio.sleep(0)
+    streaming = _rows(surface, width=40)
     await renderer.finish()
     wide = _rows(surface, width=120)
     assert wide[0].startswith('Thinking word0')
