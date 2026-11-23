@@ -98,7 +98,7 @@ EventSource, `sendBeacon`) to the listed hosts and their subdomains. Passive sub
 stay reachable, so a permitted page keeps its assets and its identity-provider frames. The private-address block
 applies to every request. For a denylist, apex-only matching or other kinds of request, pass an `EgressPolicy`:
 
-```python {test="skip"}
+```python
 from pydantic_ai_harness.cdp_browser import CDPBrowser, EgressPolicy
 
 browser = CDPBrowser(policy=EgressPolicy(allowed_domains=['example.com'], blocked_domains=['ads.example.com']))
