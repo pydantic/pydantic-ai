@@ -290,12 +290,13 @@ _SLOTS = {
     AI_YELLOW: 3,
 }
 # The default theme's roles on a light terminal: an xterm 256-colour shade close to each brand colour's hue that
-# reads at WCAG AA (4.5:1) on white, so 256-colour terminals show the same shade; `test_theme_preview.py` checks it.
+# reads at WCAG AA (4.5:1) on white, cream and light grey, so 256-colour terminals show the same shade;
+# `test_theme_preview.py` checks it.
 _ON_LIGHT = {
     LITHIUM: ('#AF00AF', 127),
-    PURPLE: ('#5F5FD7', 62),
+    PURPLE: ('#5F5FAF', 61),
     CALCIUM: ('#AF0000', 124),
-    AQUA: ('#00875F', 29),
+    AQUA: ('#005F00', 22),
     GREY: ('#6C6C6C', 242),
     AI_CYAN: ('#005F5F', 23),
     AI_YELLOW: ('#875F00', 94),
