@@ -192,7 +192,7 @@ async def test_selected_theme_reaches_markdown_and_diffs() -> None:
 
 
 async def _render_sample() -> str:
-    """A heading, a link, a code fence, and a diff, as the default theme streams them."""
+    """A heading, inline code, a link, a code fence, and a diff, as the default theme streams them."""
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
     renderer = StreamRenderer(console, stop_loading=lambda: None, show_tool_output=True)
@@ -200,7 +200,7 @@ async def _render_sample() -> str:
         PartStartEvent(
             index=0,
             part=TextPart(
-                content='# Heading\n\nSee https://example.com\n\n```python\ndef add(a, b):\n    return a\n```\n'
+                content='# Heading\n\nSee `add()` at https://example.com\n\n```python\ndef add(a, b):\n    return a\n```\n'
             ),
         )
     )
@@ -267,6 +267,7 @@ async def test_default_theme_reads_on_a_light_background(background: str, monkey
         theme.THINKING,
         theme.SUGAR,
     )
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     with theme.use(lambda: 'default', background=background):
         colours = {role: theme.color(role).removeprefix('bold ') for role in roles}
         rendered = await _render_sample()
@@ -278,6 +279,7 @@ async def test_default_theme_reads_on_a_light_background(background: str, monkey
         colours[f'{role} 256'] = Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex
     assert {role: colour for role, colour in colours.items() if _contrast(colour, background) < 4.5} == {}
     painted = _hex_colours(rendered)
+    assert (colours[theme.MUTED].upper(), '') in painted and '\x1b[2m' not in rendered  # Inline code, not dim.
     # Diff markers are tinted from their line, like a light palette's.
     markers = {diff.addition_marker.upper(), diff.deletion_marker.upper()}
     assert {(fg, bg) for fg, bg in painted if fg not in markers and _contrast(fg, bg or background) < 4.5} == set()

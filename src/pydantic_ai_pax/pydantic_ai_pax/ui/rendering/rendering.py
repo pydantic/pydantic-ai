@@ -99,6 +99,10 @@ HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
 _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 
 
+_CODE_SPAN_SGR_RE = re.compile(r'\x1b\[2m([^\x1b]*)\x1b\[22m')
+"""Termflow's inline code: dim on, the code, dim off (which is also bold off, so only this pair is matched)."""
+
+
 class MarkdownRenderer(Renderer):
     """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
 
@@ -124,7 +128,11 @@ class MarkdownRenderer(Renderer):
             rest = '' if match[1] else match[0][len(url) :]
             return f'{_URL_START}{url}{_URL_END}{rest}'
 
-        return _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+        formatted = _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+        if theme.current() is None and theme.light_background() is not None:
+            # Termflow dims inline code, which leaves black text near 3:1 on white; paint it muted instead.
+            formatted = _CODE_SPAN_SGR_RE.sub(lambda code: f'{theme.sgr(theme.MUTED)}{code[1]}\x1b[39m', formatted)
+        return formatted
 
     def _link(self, match: re.Match[str]) -> str:
         url = match[1]
