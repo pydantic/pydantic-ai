@@ -35,22 +35,10 @@ def _capturing_model(provider: str, model_name: str, bodies: list[dict[str, Any]
     def respond(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         bodies.append(body)
-        if provider == 'anthropic' and body.get('stream'):
-            return httpx2.Response(
-                200, headers={'content-type': 'text/event-stream'}, content=_anthropic_stream(model_name)
-            )
+        # `Memory` listens for events, so `agent.run` streams.
         if provider == 'anthropic':
             return httpx2.Response(
-                200,
-                json={
-                    'id': 'msg-1',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'model': model_name,
-                    'content': [{'type': 'text', 'text': 'done'}],
-                    'stop_reason': 'end_turn',
-                    'usage': {'input_tokens': 1, 'output_tokens': 1},
-                },
+                200, headers={'content-type': 'text/event-stream'}, content=_anthropic_stream(model_name)
             )
         return httpx2.Response(
             200,

@@ -181,16 +181,7 @@ async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_
 async def test_before_prompt_takes_only_data_and_user_content(content: SystemPromptPart | _NotePart | ModelRequest):
     """Instructions and system prompts stay after the user's words, and a complete message can't go into a request."""
 
-    @dataclass
-    class Enqueue(AbstractCapability[Any]):
-        async def before_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            ctx.enqueue(content, placement='before_prompt')
-            return request_context
-
-    agent = Agent(
-        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])), capabilities=[Enqueue()]
-    )
-    with pytest.raises(UserError, match="placement='before_prompt'"):
-        await agent.run('What now?')
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])))
+    async with agent.iter('What now?') as run:
+        with pytest.raises(UserError, match="placement='before_prompt'"):
+            run.enqueue(content, placement='before_prompt')
