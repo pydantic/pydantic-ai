@@ -16,6 +16,12 @@ from pydantic_ai_harness.sub_agents._control import (
     RemoteSubAgent,
     TaskControl,
 )
+from pydantic_ai_harness.sub_agents._deferred import (
+    DeferredStateStore,
+    InMemoryDeferredStateStore,
+    delegated_requests,
+    delegated_results,
+)
 from pydantic_ai_harness.sub_agents._disk import AgentOverride
 from pydantic_ai_harness.sub_agents._events import (
     MAX_EVENT_TEXT_CHARS,
@@ -87,12 +93,14 @@ __all__ = [
     'DelegationSnapshot',
     'DelegationTask',
     'DelegationTaskEvent',
+    'DeferredStateStore',
     'DelegationWorkspaceRequest',
     'DelegationTasks',
     'DelegationToolCall',
     'DynamicAgentFactory',
     'DynamicAgentSpec',
     'DynamicAgents',
+    'InMemoryDeferredStateStore',
     'InMemoryTransport',
     'ModelOption',
     'ParentMessageEvent',
@@ -127,6 +135,8 @@ __all__ = [
     'TaskSteeredEvent',
     'ToolResolver',
     'WorkspaceResolver',
+    'delegated_requests',
+    'delegated_results',
     'deserialize_message',
     'is_task_report',
     'serialize_message',
