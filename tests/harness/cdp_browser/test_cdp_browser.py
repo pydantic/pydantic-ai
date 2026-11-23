@@ -172,11 +172,26 @@ class TestCDPBrowser:
 
         await Agent(FunctionModel(respond), capabilities=[CDPBrowser(allowed_domains=['example.com'])]).run('hi')
         assert seen[0] is not None and 'Chrome DevTools Protocol' in seen[0]
-        assert seen[0].splitlines()[-2:] == snapshot(
-            [
-                "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) may",
-                'reach: example.com (and their subdomains) (private/internal addresses blocked). A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.',
-            ]
+        assert seen[0].splitlines()[-1] == snapshot(
+            "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) "
+            'may reach: example.com (and their subdomains) (private/internal addresses blocked). '
+            'A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.'
+        )
+
+    async def test_instructions_name_a_non_default_reach(self, chrome: FakeChrome):
+        """A policy that bounds other kinds of request is described by the policy, not by the default sentence."""
+        seen: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.instructions)
+            return ModelResponse(parts=[TextPart('ok')])
+
+        policy = EgressPolicy(allowed_domains=['example.com'], allowlist_reach=frozenset({'subresource'}))
+        await Agent(FunctionModel(respond), capabilities=[CDPBrowser(policy=policy)]).run('hi')
+        assert seen[0] is not None
+        assert seen[0].splitlines()[-1] == snapshot(
+            'Hosts the browser may reach: example.com (and their subdomains) (allowlist bounds subresource) '
+            '(private/internal addresses blocked). A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.'
         )
 
     async def test_every_target_is_guarded(self, chrome: FakeChrome):

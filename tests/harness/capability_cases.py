@@ -975,7 +975,7 @@ CASES: dict[str, CapabilityCase] = {
     'CDPBrowser': CapabilityCase(
         Narrows(
             'one browser per id, and its commands and egress settings are an access boundary',
-            lambda cls: (cls(), cls(allowed_domains=['example.com'])),
+            lambda cls: (cls(), cls(allowed_methods=['Runtime.evaluate'])),
         ),
         build=Unbuildable('Launches Chrome when a run starts, which the offline suites have no binary for.'),
         requires='websockets',

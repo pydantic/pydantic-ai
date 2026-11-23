@@ -19,6 +19,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._browser_egress import (
     DATA_RESOURCE_TYPES,
+    DEFAULT_ALLOWLIST_REACH,
     EgressPolicy,
     EgressRequest,
     RequestKind,
@@ -98,9 +99,12 @@ returning the whole HTML. Prefer one JavaScript expression that returns structur
 so if what you need is missing, wait briefly and evaluate again.
 
 `Page.captureScreenshot` returns the image itself. Page dialogs (`alert`, `confirm`, `prompt`) are dismissed.
-Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) may
-reach: {hosts}. A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.\
+{reach}: {hosts}. A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`.\
 """
+
+
+DEFAULT_REACH = "Hosts that top-level navigation and page scripts' data requests (`fetch`, XHR, EventSource, `sendBeacon`) may reach"
+"""What the allowlist bounds under `DEFAULT_ALLOWLIST_REACH`; any other reach is named by `EgressPolicy.describe()`."""
 
 
 @dataclass(frozen=True)
@@ -155,7 +159,11 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
     ):
         self.policy = policy if policy is not None else EgressPolicy()
         # CDP mistakes are common and cheap to correct, so allow a few in a row
-        super().__init__(id=id, instructions=INSTRUCTIONS.format(hosts=self.policy.describe()), max_retries=3)
+        reach = (
+            DEFAULT_REACH if self.policy.allowlist_reach == DEFAULT_ALLOWLIST_REACH else 'Hosts the browser may reach'
+        )
+        instructions = INSTRUCTIONS.format(reach=reach, hosts=self.policy.describe())
+        super().__init__(id=id, instructions=instructions, max_retries=3)
         self.headless = headless
         self.chrome_path = chrome_path
         self.chrome_sandbox = chrome_sandbox
