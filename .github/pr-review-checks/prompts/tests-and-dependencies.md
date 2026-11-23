@@ -2,13 +2,13 @@
 
 Review the changed tests, cassettes, dependency manifests and lockfiles against the repository's testing and dependency rules. This is not a vulnerability review, apart from the supply-chain items below.
 
-Read these rules at the root before you review: `tests/AGENTS.md`, `tests/harness/AGENTS.md` for files under `tests/harness/`, and the testing and type-system sections of `AGENTS.md` and `agent_docs/index.md`. When a changed test covers a package with its own `AGENTS.md`, such as `src/pydantic_ai_harness/AGENTS.md` or `src/pydantic_clai2/AGENTS.md`, read its testing section too.
+Read these rules at the root before you review: `tests/AGENTS.md`, `tests/harness/AGENTS.md` for files under `tests/harness/`, and the testing and type-system sections of `AGENTS.md` and `agent_docs/index.md`. When a changed test covers a package with its own `AGENTS.md`, such as `src/pydantic_ai_harness/AGENTS.md` or `src/pydantic_ai_pax/AGENTS.md`, read its testing section too.
 
 CI already fails `tests/cost_guards.py` violations, orphan or partly played cassettes, coverage below 100%, and a stale runner script lock. Do not report them.
 
 ### `high`: a hard rule broken
 
-- A changed line breaks a rule that the root instruction files state with "must", "never" or "do not". Examples: a new `pytest.mark.anyio`; a subprocess or a real sleep or timeout in a test of logic that can run in-process; a line number in a test docstring or comment; a whole-file `# pyright: ignore`; a rewritten historical compatibility fixture under `tests/clai2/`.
+- A changed line breaks a rule that the root instruction files state with "must", "never" or "do not". Examples: a new `pytest.mark.anyio`; a subprocess or a real sleep or timeout in a test of logic that can run in-process; a line number in a test docstring or comment; a whole-file `# pyright: ignore`; a rewritten historical compatibility fixture under `tests/pax/`.
 - A new `Any` or `cast` in a test that the code does not need. Under `tests/harness/`, any new `Any` or `cast`.
 - A cassette that its own test did not record. A cassette at `tests/<dir>/cassettes/<file_stem>/<test>.yaml` belongs to the test `<test>` in `tests/<dir>/<file_stem>.py`. `<test>` is the function name, or `<Class>.<method>`, followed by `[<param ids>]` for a parametrized test. A cassette shared through `@pytest.mark.vcr('<name>.yaml')`, with a docstring that says why, is allowed.
 - A secret in a cassette: an authorization or API-key header that is not a placeholder, an organization, account or project identifier, or an internal hostname. Name the field and never quote the value. A module-level `vcr_config` that replaces the root one, instead of extending it with `{**vcr_config, ...}`, records cassettes without the scrubbing filters.

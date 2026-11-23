@@ -140,7 +140,8 @@ Each provider takes the change on its operator channel (see [system prompts](tur
 differences:
 
 - On [GPT-Live](openai.md#how-delegation-works), where the agent's instructions are the backend's, the change is
-  appended to the backend's instructions, which only apply to the work it's delegated from then on.
+  appended to the backend's instructions, which only apply to the work it's delegated from then on. To change how
+  the voice model speaks, use [`append_voice_instructions()`](openai.md#voice-instructions).
 - On [Gemini Live](gemini.md), text sent with a tool's result is invisible to the reply that result asks for, so a
   change a tool makes reaches the model from the turn after.
 - On [ElevenLabs Agents](elevenlabs.md#elevenlabs-agents), the change is a contextual update, which the agent

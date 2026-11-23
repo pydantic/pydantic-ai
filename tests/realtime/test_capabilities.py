@@ -95,6 +95,7 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..realtime_connections import InferredConnection
 from .test_session import (
@@ -232,6 +233,31 @@ async def test_root_capability_override_reaches_session() -> None:
         await _drain(agent, model)
     assert model.instructions is not None
     assert 'from override' in model.instructions
+
+
+async def test_capabilities_override_reaches_session() -> None:
+    """`override(capabilities=...)` replaces the root capability for a realtime session, like `iter`, and stacks onto
+    the agent's own capabilities when they're listed beside the addition."""
+
+    class ConfiguredCap(AbstractCapability[object]):
+        def get_instructions(self) -> str:
+            return 'configured'
+
+    class AddedCap(AbstractCapability[object]):
+        def get_instructions(self) -> str:
+            return 'added'
+
+    agent = Agent(instructions='Be helpful.', capabilities=[ConfiguredCap()])
+
+    replaced = _RecordingModel()
+    with agent.override(capabilities=[AddedCap()]):
+        await _drain(agent, replaced)
+    stacked = _RecordingModel()
+    with agent.override(capabilities=[*agent.root_capability.capabilities, AddedCap()]):
+        await _drain(agent, stacked)
+
+    assert replaced.instructions == 'Be helpful.\n\nadded'
+    assert stacked.instructions == 'Be helpful.\n\nconfigured\n\nadded'
 
 
 async def test_regular_settings_do_not_reach_session() -> None:
@@ -1362,7 +1388,7 @@ async def _converse(
     pending = list(turns)
     connection.push(*pending.pop(0))
     events: list[RealtimeEvent] = []
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async for event in session:  # pragma: no branch
             events.append(event)
             if isinstance(event, FunctionToolResultEvent) and pending:

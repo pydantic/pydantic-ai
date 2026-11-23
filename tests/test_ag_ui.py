@@ -2580,6 +2580,7 @@ def test_activity_message_other_types_ignored() -> None:
         pytest.param('[1, 2, 3]', id='non-dict-list'),
         pytest.param('42', id='non-dict-number'),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
@@ -6724,6 +6725,60 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('[' * 100_000 + ']' * 100_000, id='list'),
+        pytest.param('{"a":' * 5_000 + '1' + '}' * 5_000, id='object'),
+    ],
+)
+async def test_tool_return_deeply_nested_json_string_stays_string(content: str) -> None:
+    """A tool return nested past the request body's depth limit reaches the model as the string, like plain text."""
+    received: list[ToolReturnPart] = []
+
+    async def stream_function(messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+        received.extend(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        yield 'done'
+
+    run_input = create_input(
+        AssistantMessage(
+            id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+        ),
+        ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+    )
+    events = await run_and_collect_events(Agent(FunctionModel(stream_function=stream_function)), run_input)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert received == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('caf\udce9', id='lone-surrogate'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_tool_return_unparseable_json_string_stays_string(content: str) -> None:
+    """A tool return `pydantic_core.from_json` rejects loads as the string, like any other plain-text return.
+
+    A str holding a lone surrogate reaches it when `build_run_input` re-reads the body with `json.loads`.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+            ),
+            ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+        ]
+    )
+    assert list(iter_message_parts(loaded, ModelRequest, ToolReturnPart)) == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
     original: list[ModelMessage] = [
@@ -7819,6 +7874,7 @@ The page the user is on.
             id='no-such-item',
         ),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 @pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
@@ -9698,6 +9754,11 @@ async def test_frontend_tool_calls_are_pending_on_success(
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
         pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
         pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
+        pytest.param('0001.0', {'type': 'cancelled'}, id='leading-zeros'),
+        pytest.param('\u0661.\u0660', {'type': 'cancelled'}, id='non-ascii-digits'),
+        # Past the 4,300 digits `int()` converts.
+        pytest.param('0' * 4301 + '.9', None, id='long-older'),
+        pytest.param('1' + '0' * 4300 + '.0', {'type': 'cancelled'}, id='long-newer'),
     ],
 )
 async def test_client_protocol_version_decides_1_0_outcomes(
@@ -9705,7 +9766,7 @@ async def test_client_protocol_version_decides_1_0_outcomes(
 ) -> None:
     """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
     `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
-    the server operator can't change what the client declares."""
+    the server operator can't change what the client declares. The numbers compare by value, however many digits they have."""
     agent = _cancelling_agent()
 
     events = await _collect_adapter_events(

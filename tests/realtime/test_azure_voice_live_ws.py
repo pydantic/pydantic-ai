@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.realtime import RealtimeModelProfile, RealtimeSessionErrorEvent, RealtimeTurnCompleteEvent
 from pydantic_ai.toolsets import FunctionToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import CassetteMessage, RealtimeCassette
@@ -195,6 +196,7 @@ async def test_audio_in_server_vad_turn(
         supports_system_messages=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,
+        supports_appending_voice_instructions=False,
         # Voice Live negotiates WebRTC over its own control channel, not the GA signaling endpoints.
         supports_webrtc=False,
         # Inherited from the OpenAI realtime profile, which Azure delegates to wholesale: Voice Live
@@ -400,7 +402,7 @@ async def test_deferred_capability_tools_are_revealed_mid_session(
     results: list[ToolReturnPart] = []
     async with agent.realtime(model).session() as session:
         await session.send('What will the weather be in Paris tomorrow?')
-        with anyio.fail_after(60):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async for event in session:  # pragma: no branch - breaks on the recorded terminal event
                 if isinstance(event, FunctionToolResultEvent):
                     results.append(event.part)

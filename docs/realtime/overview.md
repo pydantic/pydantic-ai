@@ -281,7 +281,7 @@ fit for a product, two alternatives sit outside it:
 
 | Limitation | Tracking |
 | --- | --- |
-| SIP is not built in; bridge telephony through a provider such as Twilio. | [Deployment](deployment.md#siptelephony-bridge) |
+| SIP is not built in; bridge a phone call through a provider such as Twilio. | [Twilio Media Streams](deployment.md#twilio-media-streams) |
 | Gemini Live, Eleven Realtime, and ElevenLabs Agents keep the tools a session opened with, so `defer_loading=True` tools and tool-contributing deferred capabilities are [rejected](capabilities.md#deferred-capability-loading) there. Elsewhere they're [revealed mid-session](tools.md#tools-revealed-mid-session). | [#7191](https://github.com/pydantic/pydantic-ai/issues/7191) |
 | Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |

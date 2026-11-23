@@ -47,6 +47,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
 )
 from pydantic_ai.toolsets import FunctionToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..conftest import try_import
 from .conversation import Utterance, assert_conversation_invariants, load_utterance, speak_continuously
@@ -489,7 +490,7 @@ async def test_raising_tool_parity(
     errors: list[BaseException] = []
     async with agent.realtime(model).session() as session:
         await session.send('What is the weather in London?')
-        with anyio.fail_after(60):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while True:
                 try:
                     async for event in session:  # pragma: no branch
