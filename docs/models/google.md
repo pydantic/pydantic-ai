@@ -379,18 +379,21 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
-[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
-API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
-keeps the default levels. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` and `gemini-4-neon` are the exceptions:
+Pydantic AI applies their levels only when the client talks to the Gemini API, and Vertex AI keeps the default
+levels. Google [documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for
+`gemini-3.1-flash-image`, but only the Gemini API enforces them, and
+[Vertex's thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking) doesn't
+list `gemini-4-neon` yet. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` support the `low`, `medium` and `high` levels, so
-`thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` also supports `xhigh`, its deepest reasoning,
-which `thinking='xhigh'` and `'max'` select; on models without it, they resolve to `high`. The `google-genai` SDK's
-`ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends the level
-anyway.
+`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
+`low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
+the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
+select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
+`google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
+`XHIGH is not a valid ThinkingLevel` and sends the level anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
@@ -398,6 +401,12 @@ On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinkin
 Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
 rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
 `high`. Without a `thinking` setting it thinks by default there.
+
+On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens. The exception is `gemini-2.5-flash-lite`
+on the Gemini API, which rejects budgets below 512, so it gets 512.
+To send another budget for `minimal`, set
+[`GoogleModelProfile.google_minimal_thinking_budget`][pydantic_ai.profiles.google.GoogleModelProfile.google_minimal_thinking_budget]
+in the model's `profile`.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
@@ -557,7 +566,7 @@ A job that fails or is cancelled before it writes any results doesn't report whi
 
 ## Long decode
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` cap the output of each request; Google's
+`gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon` cap the output of each request; Google's
 [long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response

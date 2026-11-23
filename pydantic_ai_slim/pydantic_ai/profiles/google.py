@@ -170,6 +170,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
     """
 
+    google_minimal_thinking_budget: int
+    """The `thinking_budget` that unified `thinking='minimal'` sends on a model that takes `thinking_budget`.
+    Default: `128`, the smallest budget Gemini 2.5 Pro accepts.
+
+    `GoogleModel` sets 512 for `gemini-2.5-flash-lite` on the Gemini API, which rejects budgets below 512 there.
+    See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
@@ -222,9 +230,10 @@ class GoogleModelProfile(ModelProfile, total=False):
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the default `GOOGLE_THINKING_LEVELS`, except where only one API enforces
-    # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
-    # does for `gemini-3.1-flash-image` on the Gemini API.
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where a level set holds on one
+    # API only: `GoogleModel.profile` applies that set by the client's transport, as it does on the
+    # Gemini API for `gemini-3.1-flash-image`, which only that API enforces, and for `gemini-4-neon`,
+    # which Vertex's thinking table doesn't list.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),

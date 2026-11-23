@@ -56,7 +56,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
 agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=pick_first)])
 ```
 
-`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
+`pick_first` stands in for a real UI. [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax/)
 ships a terminal menu built on the same protocol; a web form would be another.
 
 ## Writing an answerer

@@ -53,9 +53,9 @@ except UserError as e:
   provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a section on it:
   - E2B: `E2BSandbox(network={'rules': {host: [{'transform': {'headers': {...}}}]}})`; HTTPS only.
   - boxd: `BoxdSandbox(secrets=['GH_TOKEN'])`, naming a secret made beforehand with
-    `secrets.set(name, value, scope='private-unattached', domains=[...])`; without `domains` the real value is set.
-    boxd also substitutes request bodies, so a command can store the value on a named host (a GitHub
-    issue or gist) and read it back: use a fine-grained token without Gists access.
+    `secrets.set(name, value, scope='private-unattached', domains=[...], replace_in=['headers'])`; without
+    `domains` the real value is set. Without `replace_in`, boxd also substitutes the URL and body, so a command
+    can store the value on a named host (a GitHub issue or gist) and read it back.
   - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
     `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
   - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`
@@ -208,10 +208,15 @@ as under Coder.
 `read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
 from its leading bytes, not its extension), and a text description (size, media type, and for other
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+With `max_image_side` set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that
+on either side is downscaled first, in its own format; the header adds a
+`Shown downscaled from WxH to wxh pixels.` line and keeps the file's own size and hash; one over 25
+megapixels at its decoding scale is described as too large. It needs Pillow
+(the `coder` extra); setting `max_image_side` without it raises `ImportError`.
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
-`read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
+`read_tool_result` and `grep_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
 the files they read are in the run's workspace, also when `FileSystem` is renamed (`FileSystem().prefix_tools('wiki')`).
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
@@ -219,7 +224,8 @@ of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `User
 `LocalWorkspace('./data')` instead; `'/'` disables containment), `allowed_patterns` /
 `denied_patterns` / `read_only_patterns` (`fnmatch`: `*` spans `/`; a directory pattern covers
 descendants; denied and read-only patterns ignore case), `read_only=False` (`True` registers only read tools), `content_hashes=True`
-(`expected_hash` concurrency check), `max_read_lines=2000` (also caps a model's `limit`), `max_read_chars=50_000`, `max_*_results=1000`.
+(`expected_hash` concurrency check), `max_read_lines=2000` (also caps a model's `limit`), `max_read_chars=50_000`, `max_*_results=1000`,
+`max_image_side=None` (keyword-only).
 
 - Passing `read_only_patterns` **replaces** the defaults (`**/.git`, `**/.env`, `**/.env.*`, `*.pem`,
   `*.key`, `**/secrets*`, `**/.pydantic-ai-harness/**`).
@@ -296,7 +302,9 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
 (per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
-`allow_interactive=False`, `env`, `denied_env_patterns`.
+`allow_interactive=False`, `env`, `denied_env_patterns`, `secret_env` (added like `env`; exact occurrences
+masked as `[REDACTED:<name>]` in tool results, so not a value a command encodes or slices, nor logs the
+model reads with file tools; short values are masked everywhere).
 
 - `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
   it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
@@ -306,6 +314,8 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
+- For output pushed to the model when a command ends, add `BackgroundTools(tools=['run_command'])`.
+  Commands get stdin at EOF; there is no tool to send input.
 - Background commands **outlive the run**; a later run on the same workspace can check or stop them.
   Clean up with `stop_command` or your own code. They need `mv` and `base64` in the workspace, and
   `setsid` for process-group stops.
@@ -317,7 +327,7 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | --- | --- | --- | --- | --- | --- | --- |
 | Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` | `[daytona]` | `[boxd]` |
 | Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` | `DAYTONA_API_KEY` | `BOXD_API_KEY` |
-| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
+| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400), optional `idle_timeout`; then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
 | New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `secrets`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` |
@@ -645,6 +655,26 @@ To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitio
 `await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
 before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
 
+## ReportStaleFiles
+
+Tells the model when a file a `FileSystem` tool read or wrote has since changed or been deleted in the
+workspace, by someone else (a user, another agent, a build step). It records each file's content hash from
+`FileReadEvent` / `FileWrittenEvent` and, before each model request, reads the recorded files through
+`ctx.workspace`; a mismatch is named in a request-scoped `StaleFilesPart` (`.report_stale_files`, with the
+workspace's authority), on every request until the model reads the file again (a deleted file once). The model's
+own writes and edits refresh the record. Records are per conversation and workspace, in memory on the instance, so
+a continued run hears about changes made between runs.
+
+```python
+from pydantic_ai_harness import FileSystem, ReportStaleFiles
+
+capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20, max_checked_bytes=8 << 20)]
+```
+
+Before every request, each recorded file costs a sequential `realpath`, `stat` and read, most recent first, up to
+`max_checked_bytes`; lower `max_tracked_files` on a slow remote workspace. A file whose real path changed since it
+was read is skipped. Not supported under durable execution: the run fails at its start.
+
 ## Macroscope
 
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
@@ -684,6 +714,7 @@ and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and
 - https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
+- https://pydantic.dev/docs/ai/harness/report-stale-files/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/

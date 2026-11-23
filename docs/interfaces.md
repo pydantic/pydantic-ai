@@ -9,8 +9,8 @@ A Pydantic AI [agent](agent.md) is plain Python with no interface baked in: the 
 | Surface | What it looks like | Where |
 |---|---|---|
 | **Your code** | `result = await agent.run('...')`, an ordinary awaitable in any Python function, with [typed output](output.md) | [Running agents](agent.md#running-agents) |
-| **Terminal** | `agent.to_cli_sync()`, or `clai -a mymodule:agent` against any agent you can import | [CLI](cli.md) |
-| **Web chat** | A built-in browser chat for any agent: `clai web` or `agent.to_web()` | [Web Chat UI](web.md) |
+| **Terminal** | `agent.to_cli_sync()`, or `clai -a mymodule:agent` against any agent you can import (`clai` is [deprecated in favour of pax](cli.md#migrating-to-pax)) | [CLI](cli.md) |
+| **Web chat** | A built-in browser chat for any agent: `agent.to_web()`, or the deprecated `clai web` | [Web Chat UI](web.md) |
 | **Your frontend** | Stream agent runs to your own UI over the [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) protocols, including Vercel's `useChat` React hooks | [UI Event Streams](ui/overview.md) |
 | **Editors** | Serve an agent to Zed and other editors over the [Agent Client Protocol](https://agentclientprotocol.com) | [ACP](https://pydantic.dev/docs/ai/harness/acp/) |
 | **Other agents** | Serve an agent to other agents over the Agent2Agent protocol, via the separate `fasta2a` package | [A2A](https://github.com/datalayer/fasta2a) |

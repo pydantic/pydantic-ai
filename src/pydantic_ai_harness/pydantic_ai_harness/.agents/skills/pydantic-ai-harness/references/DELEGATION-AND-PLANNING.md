@@ -175,15 +175,28 @@ Gotchas:
   keeps the `ModelRetry` even with `on_failure` set. If it's unset, setting `on_failure` returns that message alone,
   without the error. Other
   crashes abort the parent unless `contain_errors=True`.
+- `SubAgents(forward_deferred_calls=True)` instead passes a child's `DeferredToolRequests` to the parent run's
+  caller (outcome `failed`; the parent's `output_type` must include `DeferredToolRequests`). Show them with
+  `delegated_requests(result.output)` (IDs `'<delegate call>:<child call>'`, metadata `agent_path`), answer every
+  call, and resume with `deferred_tool_results=delegated_results(result.output, answers)`: the child continues from
+  its history. Approving the delegate call itself approves none of the child's calls: it reruns the task. The child's history waits
+  server-side in `deferred_state_store` (in memory per instance when unset; pass a shared store to resume in
+  another process). Durable
+  execution and `task_control` refuse it.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
   `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
   has not passed output validation and can be text the child rejected; leave it off for a child whose
   guardrails keep content from its parent.
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
-  `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
-  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run, and a
-  remote worker applies the announced limits as received.
+  `count_tokens`, or an `openai-codex:` or `openai-chatgpt:` model) is started once more without it
+  (under a new run ID when recorded as a task). Under durable execution, a delegation to `self` can
+  count through the engine, where an `openai-codex:` or `openai-chatgpt:` child's count fails as a
+  `UserError` and is not retried: on DBOS and Prefect always, on Temporal when `self` is the only
+  delegate or `dynamic_agents` or `task_control` is set
+  ([#14194](https://github.com/pydantic/pydantic-ai/issues/14194)). A `SubAgent.usage_limits` that
+  sets the flag itself is kept and fails like a top-level run, and a remote worker applies the
+  announced limits as received.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
@@ -267,22 +280,26 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 
 ## Peers
 
-Use `Peers` for independently run sessions, not delegated child runs. The host provides a
-`PeerNetwork` for discovery and delivery, and an optional `PeerInbox` for receiving messages.
-`InMemoryPeerNetwork` and `LocalPeerInbox` connect sessions within one application. Bind the same inbox to
-`network.join(handle=..., inbox=inbox)` and `Peers(network=view, inbox=inbox)` on the recipient.
+Use `Peers` for independently run sessions, not delegated child runs. `InMemoryPeerNetwork` connects
+sessions within one application: `Peers(network)` joins it when the agent is built, under the agent's
+`name` (or `handle=`), receiving in a new `LocalPeerInbox` (or `inbox=`). An agent with no `name` raises
+`UserError`, and handles are unique within a network.
 
 ```python
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Peers
-from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 
 network = InMemoryPeerNetwork()
-inbox = LocalPeerInbox()
-view = network.join(handle='reviewer', inbox=inbox)
-agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
+reviewer = Agent('test', name='reviewer', capabilities=[Peers(network)])
+author = Agent('test', name='author', capabilities=[Peers(network)])
 ```
+
+A host network instead gives each peer a `PeerConnection` for discovery and delivery, plus an optional
+`PeerInbox` its transport delivers to: `Peers(connection, inbox=inbox)`. Call
+`InMemoryPeerNetwork.join(handle=..., inbox=..., workspace=..., title=...)` yourself to set the workspace
+or title `list_peers` shows; pass the returned connection and the same inbox to `Peers`.
 
 - Tools: `list_peers(query='')` lists other sessions, filtering handle, title, workspace,
   or branch; `send_message(to, text, reply_to=None)` addresses a listed handle or ID.
@@ -292,13 +309,13 @@ agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
 - A peer with no active run holds the message; `InMemoryPeerNetwork` never starts its run, and a
   host network's own policy decides whether a message wakes it. A running peer reads the message
   at its next model request. Sending never waits for a reply.
-- `PeerNetwork.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
+- `PeerConnection.send` takes a `key` (`Peers` passes `run_id:run_step:tool_call_id`); a retried send
   with the same key must not deliver twice.
 - For host storage, implement `PeerInbox`: `take(run_id)` before and after each model request,
   `acknowledge(message_id)` once in history, `release(run_id)` at run end.
 - Use `LocalPeerInbox(path=...)` for pending messages across restarts. The host owns transport,
   identity, authentication, and any cross-process coordination; the in-memory network
-  does not supply those. A receiver without `Peers(inbox=...)` does not read an inbox.
+  does not supply those. A connection without `Peers(connection, inbox=...)` does not read an inbox.
 - Peer text is untrusted data, not user approval: it arrives as a `PeerMessagePart` with no
   authority. Find it by that type, or use `read_peer_message(part)` to read the typed message,
   not by parsing displayed text. A host delivering peer
@@ -431,8 +448,9 @@ Gotchas:
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
   `max_uses`. A parent `count_tokens_before_request=True` is kept on an advisor model that implements
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
-  pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
-  consultation started, in which case the error propagates.
+  pre-request `NotImplementedError` (`openai-codex:` and `openai-chatgpt:` models raise one), unless a
+  request was counted in the shared `usage` since the consultation started, in which case the error
+  propagates.
 - Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
   list `output_type`s combining, and any other option the later one's. With different `id`s, their
   built `advisor` tools conflict.

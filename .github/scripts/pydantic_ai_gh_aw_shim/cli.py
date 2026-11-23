@@ -58,7 +58,7 @@ from urllib.parse import urlparse
 import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError
 from opentelemetry.trace import Span, Status, StatusCode, get_current_span, get_tracer
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, wait_random_exponential
@@ -110,7 +110,7 @@ from pydantic_ai.messages import (
     repair_messages,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
@@ -141,15 +141,18 @@ TaskCallable: TypeAlias = Callable[[RunContext[object], str, str], Awaitable[str
 PROXY_BEARER_PLACEHOLDER = 'gh-aw-proxy-injected'
 
 
+def _is_anthropic(base_url: str | None) -> bool:
+    """Whether `base_url`, an `ANTHROPIC_BASE_URL` value, is real Anthropic: empty or unset means the SDK default."""
+    return not base_url or urlparse(base_url).hostname == 'api.anthropic.com'
+
+
 def _anthropic_native_capabilities() -> list[NativeTool]:
     """`NativeTool(WebFetchTool())` for real Anthropic only.
 
     Anthropic-compatible endpoints may not implement Anthropic's
-    `web_fetch_20250910` server-side tool. Detect via `ANTHROPIC_BASE_URL` —
-    empty/unset means the Anthropic SDK default (real Anthropic).
+    `web_fetch_20250910` server-side tool.
     """
-    base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
-    if not base_url or urlparse(base_url).hostname == 'api.anthropic.com':
+    if _is_anthropic(os.environ.get('ANTHROPIC_BASE_URL')):
         return [NativeTool(WebFetchTool())]
     return []
 
@@ -268,7 +271,7 @@ class MarkTimedOutSpans(AbstractCapability[object]):
     A cut-off request also has no finish reason, and no usage when the provider reports it only at
     the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
     failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
-    Each hook runs inside the span pydantic-ai opens for it. Under the CLAI 2 engine, a cut-off run
+    Each hook runs inside the span pydantic-ai opens for it. Under the Pax engine, a cut-off run
     reaches `wrap_run` as the `RunTimeLimitExceeded` that `agent.WorkflowPolicy.on_run_error` raises
     in place of the cancellation, which records an error but no `error.type`.
     """
@@ -499,14 +502,19 @@ _ZAI_PLAN_LIMIT_CODES = frozenset(
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
 
-def zai_error_code(body: object) -> str | None:
-    """Return the `error.code` of a decoded Z.ai error body, or `None` when it has none."""
+def _error_field(body: object, name: str) -> str | None:
+    """Return `error.<name>` of a decoded error body, or `None` when it has none."""
     try:
         error = _ERROR_BODY_ADAPTER.validate_python(_ERROR_BODY_ADAPTER.validate_python(body).get('error'))
     except ValidationError:
         return None
-    code = error.get('code')
-    return str(code) if isinstance(code, (str, int)) and not isinstance(code, bool) else None
+    value = error.get(name)
+    return str(value) if isinstance(value, (str, int)) and not isinstance(value, bool) else None
+
+
+def zai_error_code(body: object) -> str | None:
+    """Return the `error.code` of a decoded Z.ai error body, or `None` when it has none."""
+    return _error_field(body, 'code')
 
 
 def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
@@ -674,7 +682,7 @@ def time_budget_notice() -> str | None:
 
 
 # gh-aw's `safeoutputs` MCP server: the shim's Claude Code tool-name prefix, then the
-# `<server>_` prefix `load_mcp_toolsets` gives it in the CLAI 2 engine. Tools on it are
+# `<server>_` prefix `load_mcp_toolsets` gives it in the Pax engine. Tools on it are
 # named by their safe-output type through `_safe_output_type`, never by prefixed name.
 SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 
@@ -683,7 +691,7 @@ SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 # the deadline and never submitted.
 CI_REVIEW_RESERVE_SAFE_OUTPUTS = frozenset({'submit_pull_request_review', 'create_pull_request_review_comment'})
 
-# The shell tool of the CLAI 2 engine's `Coder`, which runs foreground commands for `MAX_FOREGROUND_WAIT` by default.
+# The shell tool of the Pax engine's `Coder`, which runs foreground commands for `MAX_FOREGROUND_WAIT` by default.
 CODER_SHELL_TOOL = 'shell'
 
 
@@ -940,7 +948,7 @@ async def compact_history(
     ctx: RunContext[object], messages: list[ModelMessage], *, preserve_prompt: bool = False
 ) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
-    # CLAI supplies the workflow task as the first user message. Keep that exact
+    # Pax supplies the workflow task as the first user message. Keep that exact
     # contract outside the summary, including when summarisation fails.
     if preserve_prompt and messages and isinstance(messages[0], ModelRequest):
         if any(isinstance(part, UserPromptPart) for part in messages[0].parts):
@@ -1160,8 +1168,17 @@ def build_model(args: Args) -> tuple[Model, str]:
         max_retries=_LLM_MAX_RETRIES,
         http_client=httpx2.AsyncClient(transport=rate_limit_retry_transport(), timeout=_LLM_TIMEOUT),
     )
+    # Z.AI's Anthropic-compatible endpoint, which the workflows reach through the AWF api-proxy, maps
+    # `output_config.effort` to its own effort levels, and any enabled `thinking`, a token budget included,
+    # to its default `max`: https://docs.z.ai/devpack/latest-model. Unified `thinking` sends a budget to a
+    # model its profile does not know, so the effort is set directly. A base URL that is unset or names
+    # `api.anthropic.com` keeps Anthropic's default; any other endpoint, the AWF api-proxy included, gets it.
     return (
-        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
+        AnthropicModel(
+            model_name,
+            provider=AnthropicProvider(anthropic_client=client),
+            settings=None if _is_anthropic(anthropic_base) else AnthropicModelSettings(anthropic_effort='low'),
+        ),
         f'anthropic:{model_name}',
     )
 
@@ -1180,7 +1197,7 @@ def source_digest() -> str:
 
     The sources name the code that ran. A commit SHA from the run's environment does not: a
     workflow can run the shim from a different checkout than the one that triggered it.
-    `stage-gh-aw-agent.sh` passes the staged copy's digest to the CLAI 2 engine.
+    `stage-gh-aw-agent.sh` passes the staged copy's digest to the Pax engine.
     """
     digest = hashlib.sha256()
     for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
@@ -1375,7 +1392,11 @@ def failure_details(error: BaseException | None) -> dict[str, object]:
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code
-        if error.status_code in (401, 403):
+        # AWF's API proxy refuses every request once the run's consecutive cache misses reach its cap.
+        # Its counter spans this run's root agent and sub-agents, so the refusal says nothing about Z.ai.
+        if error.status_code == 403 and _error_field(error.body, 'type') == 'max_cache_misses_exceeded':
+            kind = 'cache_miss_limit'
+        elif error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
             kind = 'plan_limit' if zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'

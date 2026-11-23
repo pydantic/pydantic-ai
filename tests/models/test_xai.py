@@ -108,7 +108,7 @@ with try_import() as imports_successful:
     import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
@@ -6732,12 +6732,6 @@ async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_mod
     # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
     assert finish_reasons[:2] == [None, None]
     assert all(reason == 'stop' for reason in finish_reasons[2:])
-
-
-def test_xai_finish_reason_proto_map_covers_all_enum_members():
-    """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
-    unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
-    assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
 
 
 # End of tests

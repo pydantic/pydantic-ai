@@ -85,7 +85,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     ToolSearchToolset,
-    keywords_search_fn,
+    keywords_search,
     parse_discovered_tools,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -3112,6 +3112,44 @@ async def test_live_tool_search_handoff_anthropic_openai_anthropic(
     _assert_anthropic_native_search_replay(anthropic_bodies[-1], 'tool_search_tool_result')
 
 
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='native tool search replays the local search_tools call as tool_search_call')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_local_tool_search_replays_on_native_tool_search_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A `search_tools` call made on a model without native tool search replays on one with it.
+
+    The local call carries a function-call (`fc_*`) item ID, which the Responses API rejects on the
+    `tool_search_call` item it is replayed as, so the item ID is omitted there.
+    """
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    search_calls = list(iter_message_parts(first.all_messages(), ModelResponse, ToolSearchCallPart))
+    assert search_calls and all(call.id and call.id.startswith('fc_') for call in search_calls)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel(
+            'gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        )
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    replayed_input = request_capture.body('/responses')['input']
+    assert isinstance(replayed_input, list)
+    assert [
+        (item.get('type'), 'id' in item)
+        for item in replayed_input
+        if isinstance(item, dict) and item.get('type') in ('reasoning', 'tool_search_call')
+    ] == snapshot([('reasoning', True), ('tool_search_call', False), ('reasoning', True)])
+
+
 def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
     """Compact one-line-per-part trace of a deferred-capability conversation.
 
@@ -5267,14 +5305,27 @@ async def test_tool_search_capability_named_strategy_wraps_with_tool_search_tool
 
 async def test_tool_search_named_strategy_raises_on_unsupported_model():
     """Named native strategies error on models that don't support `ToolSearchTool`
-    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4."""
+    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4.
+
+    The supported tools come from a `frozenset` of classes, whose iteration order changes per process,
+    so the exact message pins their sorted order."""
 
     m = TestModel()
-    with pytest.raises(UserError, match='not supported by this model'):
+    with pytest.raises(UserError) as exc_info:
         m.prepare_request(
             None,
             ModelRequestParameters(function_tools=[], native_tools=[ToolSearchTool(strategy='bm25')]),
         )
+    assert str(exc_info.value) == snapshot(
+        "Native tool(s) ['ToolSearchTool'] not supported by this model. "
+        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'FileSearchTool', 'ImageGenerationTool', 'MCPServerTool', "
+        "'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
+        'To use these tools with this model, provide a local fallback via NativeOrLocalTool(native=..., local=...) '
+        "or the `local` parameter of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+        'MCP(local=True), ImageGeneration(local=my_func)). '
+        'Some capabilities require an optional install group for the local fallback '
+        '(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+    )
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
@@ -7889,17 +7940,17 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     )
 
 
-def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
+def test_keywords_search_returns_empty_for_no_tokens() -> None:
     """The shared keyword algorithm returns `[]` when the queries tokenize to nothing
     (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
     in the toolset) translate that into the empty-discoveries `_empty_return` shape.
     """
 
     ctx = _build_run_context(None)
-    assert keywords_search_fn(ctx, ['   '], []) == []
+    assert keywords_search(ctx, ['   '], []) == []
     # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
     # `[a-z0-9]+` only.
-    assert keywords_search_fn(ctx, ['!!!'], []) == []
+    assert keywords_search(ctx, ['!!!'], []) == []
 
 
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:

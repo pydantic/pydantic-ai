@@ -25,12 +25,13 @@ To regenerate after an intentional change: `pytest tests/profiles/test_resolutio
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from textwrap import dedent
 from typing import Any, Literal
 
 import pytest
 
+from pydantic_ai import ModelDeprecation
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
@@ -44,15 +45,22 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.profiles._family import ModelProfileFunc
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.minimax import minimax_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     openai_model_profile,
 )
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 from pydantic_ai.providers import Provider, infer_provider_class
 
 from .._inline_snapshot import snapshot
@@ -125,9 +133,11 @@ with try_import() as openai_imports:
         # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -396,6 +406,11 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'anthropic_enforces_strict_schema_limits': True,
             'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
+            'deprecation': ModelDeprecation(
+                source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
+                retirement_date=date(2025, 10, 28),
+                replacement='claude-sonnet-5-5',
+            ),
         }
     )
 
@@ -437,10 +452,18 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400.
+
+    OpenAI has deprecated gpt-5.4-nano, and not gpt-5.4, so only gpt-5.4-nano's profile carries a `deprecation`.
+    """
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
     expected['supported_native_tools'] -= {ToolSearchTool}
+    expected['deprecation'] = ModelDeprecation(
+        source_url='https://developers.openai.com/api/docs/deprecations#2026-10-01-gpt-53-codex-gpt-51-gpt-54-nano',
+        retirement_date=date(2027, 4, 1),
+        replacement='gpt-6-luna',
+    )
     assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
@@ -618,6 +641,33 @@ def test_openrouter_gpt_6_1_sol(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
+def test_openai_gpt_6_2(model_name: str):
+    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`."""
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name', ['openai/gpt-6.2-sol', 'openai/gpt-6.2-sol-pro', 'openai/gpt-6.2-astra', 'openai/gpt-6.2-astra-pro']
+)
+def test_openrouter_gpt_6_2(model_name: str):
+    """OpenRouter's published GPT-6.2 routes retain the OpenAI reasoning capabilities.
+
+    OpenRouter accepted a mid-conversation `configuration_update` on both non-pro routes (probed live 2026-11-17).
+    """
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+    assert profile.get('supports_mid_conversation_effort') is not model_name.endswith('-pro')
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
@@ -735,6 +785,11 @@ def test_openai_o3_mini():
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
             'rejects_unpaired_tool_calls': True,
+            'deprecation': ModelDeprecation(
+                source_url='https://developers.openai.com/api/docs/deprecations#2026-04-22-legacy-gpt-model-snapshots',
+                retirement_date=date(2026, 10, 23),
+                replacement='gpt-5.6-sol',
+            ),
         }
     )
 
@@ -1818,6 +1873,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'supports_video_input': False,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1867,6 +1923,7 @@ def test_openrouter_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
@@ -2026,6 +2083,7 @@ def test_openrouter_x_ai_grok_4_7():
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
             ),
+            'supports_video_input': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2060,6 +2118,7 @@ def test_openrouter_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'tool_call_id_length': 9,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2088,6 +2147,7 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'thinking_always_enabled': True,
             'openrouter_lowest_reasoning_effort': 'minimal',
             'supports_thinking': True,
@@ -2119,6 +2179,7 @@ def test_openrouter_xai_grok_4():
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
             ),
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
@@ -2320,6 +2381,7 @@ def test_openrouter_qwen():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2347,6 +2409,7 @@ def test_openrouter_deepseek():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2373,6 +2436,7 @@ def test_openrouter_meta_llama():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -2399,6 +2463,7 @@ def test_openrouter_moonshotai():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2428,6 +2493,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -3458,6 +3524,38 @@ def test_together_qwen():
                 }
             ),
         ),
+        # Models of the open-weight families that don't reason keep the OpenAI-compatible default:
+        # https://github.com/pydantic/pydantic-ai/issues/12096
+        (
+            'nvidia/nemotron-mini-4b-instruct',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'tencent/hy-mt2-7b',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
     ],
 )
 def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, Any]):
@@ -3565,6 +3663,93 @@ def test_openai_compatible_groq_route_keeps_json_mode_unset():
                     'json_schema_transformer': InlineDefsJsonSchemaTransformer,
                     'supports_thinking': True,
                     'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        # The open-weight families only add thinking flags to Together's defaults:
+        # https://github.com/pydantic/pydantic-ai/issues/12096
+        (
+            'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'thinkingmachines/Inkling-Small',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'XiaomiMiMo/MiMo-V2.5',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'stepfun/step-5-preview',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'tencent/Hy3',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'inclusionAI/Ling-3.1-flash',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'thinking_enabled_by_default': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        # An NVIDIA model that doesn't reason keeps Together's defaults.
+        (
+            'nvidia/nemotron-mini-4b-instruct',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'may_tokenize_special_tokens_in_content': True,
                 }
             ),
@@ -4046,6 +4231,250 @@ def test_nebius_moonshotai():
 
 
 # =============================================================================
+# Otari — multi-provider gateway, `provider:model` names
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_routing_policy_name():
+    profile = OtariProvider.model_profile('my-routing-policy')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_anthropic():
+    """`provider:model` and the catalogue's `creator/model` name the same family."""
+    profile = OtariProvider.model_profile('anthropic:claude-sonnet-5-5')
+    assert profile == OtariProvider.model_profile('anthropic/claude-sonnet-5-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'thinking_enabled_by_default': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_disables_thinking_with_between_tools': True,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'supports_forced_tool_choice': False,
+            'anthropic_binds_thinking_blocks': True,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_gemini():
+    """Otari's own `gemini` provider id gets the Google family profile."""
+    profile = OtariProvider.model_profile('gemini:gemini-2.5-flash')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'google_supports_thinking_level': False,
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': True,
+            'supported_image_media_types': frozenset(
+                {
+                    'image/avif',
+                    'image/bmp',
+                    'image/gif',
+                    'image/heic',
+                    'image/heif',
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                }
+            ),
+            'supported_document_media_types': frozenset(
+                {'application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'}
+            ),
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_claude_on_vertex():
+    """A host of many vendors' models, like `vertexai`, doesn't pick the family: Claude on Vertex isn't Gemini."""
+    profile = OtariProvider.model_profile('vertexai:claude-sonnet-5-5')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': False}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_gpt_oss_on_groq():
+    """The vendor after a host names the family."""
+    profile = OtariProvider.model_profile('groq:openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'default_framing_announcement': 'always',
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_otari_open_weight_model():
+    profile = OtariProvider.model_profile('together:qwen/qwen3.8-27b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+# =============================================================================
+# Stav — multi-lab routing
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_bare_name():
+    profile = StavProvider.model_profile('auto')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_deepseek():
+    profile = StavProvider.model_profile('deepseek-ai/deepseek-v4-flash-0731')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_mistral():
+    profile = StavProvider.model_profile('mistral-ai/mistral-large-4')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_gpt_oss():
+    profile = StavProvider.model_profile('openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'default_framing_announcement': 'always',
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_openai():
+    profile = StavProvider.model_profile('openai/gpt-5-mini')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'thinking_enabled_by_default': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_reasoning_efforts': frozenset({'high', 'low', 'medium', 'minimal'}),
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_stav_anthropic():
+    profile = StavProvider.model_profile('anthropic/claude-sonnet-4-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_max_effort': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
+            'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 64000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+# =============================================================================
 # Crusoe — multi-lab routing, structured output forced on for every model
 # =============================================================================
 
@@ -4275,14 +4704,16 @@ _RouteProvider = Literal[
     'nebius',
     'ollama',
     'openrouter',
+    'otari',
     'snowflake',
+    'stav',
     'together',
     'vercel',
 ]
 """The provider names the forced-tool-choice route tests use."""
 
 
-def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
+def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # noqa: C901
     """The provider class behind a route name in the forced-tool-choice route tests below.
 
     Only the requested class is looked up, so a test needs only the extras of the routes it uses.
@@ -4310,8 +4741,12 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
             return OllamaProvider
         case 'openrouter':
             return OpenRouterProvider
+        case 'otari':
+            return OtariProvider
         case 'snowflake':
             return SnowflakeProvider
+        case 'stav':
+            return StavProvider
         case 'together':
             return TogetherProvider
         case 'vercel':  # pragma: no branch
@@ -4330,6 +4765,7 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:
         ('heroku', 'claude-opus-5-5'),
         ('litellm', 'anthropic/claude-opus-5-5'),
         ('snowflake', 'claude-opus-5-5'),
+        ('otari', 'anthropic:claude-opus-5-5'),
     ],
 )
 def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: _RouteProvider, model_name: str):
@@ -4402,6 +4838,184 @@ def test_minimax_unmatched(model_name: str):
     assert minimax_model_profile(model_name) is None
 
 
+@pytest.mark.parametrize(
+    ('family_profile', 'model_name', 'expected'),
+    [
+        # Hybrid: thinks by default and can be turned off.
+        (
+            nvidia_model_profile,
+            'nemotron-3-super-120b-a12b',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        (
+            nvidia_model_profile,
+            'NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        (thinkingmachines_model_profile, 'inkling', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (
+            thinkingmachines_model_profile,
+            'Inkling-Small',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        (tencent_model_profile, 'hy3', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (tencent_model_profile, 'hy4-flash', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (inclusionai_model_profile, 'ling-3.1-flash', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (
+            inclusionai_model_profile,
+            'Ling-3.0-flash-VL',
+            {'supports_thinking': True, 'thinking_enabled_by_default': True},
+        ),
+        # Thinks when asked to.
+        (nvidia_model_profile, 'nemotron-3.5-lightning', {'supports_thinking': True}),
+        (nvidia_model_profile, 'NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', {'supports_thinking': True}),
+        (xiaomi_model_profile, 'mimo-v2.6-pro', {'supports_thinking': True}),
+        (xiaomi_model_profile, 'MiMo-V2.5', {'supports_thinking': True}),
+        # Always thinks.
+        (stepfun_model_profile, 'step-5-preview', {'supports_thinking': True, 'thinking_always_enabled': True}),
+        (stepfun_model_profile, 'step-3.7-flash', {'supports_thinking': True, 'thinking_always_enabled': True}),
+    ],
+)
+def test_open_weight_family_thinking(family_profile: ModelProfileFunc, model_name: str, expected: dict[str, bool]):
+    """Thinking flags for the open-weight families, per OpenRouter's model catalog
+    (https://openrouter.ai/api/v1/models), for ids as gateways and Hugging Face repos spell them.
+
+    See https://github.com/pydantic/pydantic-ai/issues/12096.
+    """
+    profile = family_profile(model_name)
+    assert profile is not None
+    assert _normalize(profile) == expected
+
+
+@pytest.mark.parametrize(
+    ('family_profile', 'model_name'),
+    [
+        # Published models that don't reason.
+        (nvidia_model_profile, 'nemotron-mini-4b-instruct'),
+        (tencent_model_profile, 'hy-mt2-7b'),
+        # Ids the families don't describe.
+        (thinkingmachines_model_profile, 'inkling-medium'),
+        (xiaomi_model_profile, 'mimo-v2.7'),
+        (stepfun_model_profile, 'step-4'),
+        (inclusionai_model_profile, 'ling-2.5'),
+    ],
+)
+def test_open_weight_family_unmatched(family_profile: ModelProfileFunc, model_name: str):
+    assert family_profile(model_name) is None
+
+
+_HYBRID_THINKING = {'supports_thinking': True, 'thinking_enabled_by_default': True}
+_OPT_IN_THINKING = {'supports_thinking': True}
+_ALWAYS_THINKING = {'supports_thinking': True, 'thinking_always_enabled': True}
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking'),
+    [
+        ('nvidia/nemotron-3-super-120b-a12b', _HYBRID_THINKING),
+        ('nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', _OPT_IN_THINKING),
+        ('thinkingmachines/inkling', _HYBRID_THINKING),
+        ('xiaomi/mimo-v2.6-pro', _OPT_IN_THINKING),
+        ('XiaomiMiMo/MiMo-V2.5', _OPT_IN_THINKING),
+        ('stepfun/step-5-preview', _ALWAYS_THINKING),
+        ('stepfun-ai/Step-3.7-Flash', _ALWAYS_THINKING),
+        ('tencent/hy3', _HYBRID_THINKING),
+        ('inclusionAI/Ling-3.1-flash', _HYBRID_THINKING),
+    ],
+)
+def test_openai_compatible_open_weight_family(model_name: str, thinking: dict[str, bool]):
+    """The open-weight families keep the OpenAI-compatible default, pinned for `nvidia/nemotron-mini-4b-instruct` in
+    `test_openai_compatible_vendor_family`, and add only their thinking flags. `LiteLLMProvider` shares the resolution.
+    """
+    default = _normalize(OpenAICompatibleProvider.model_profile('nvidia/nemotron-mini-4b-instruct'))
+    profile = OpenAICompatibleProvider.model_profile(model_name)
+    assert _normalize(profile) == default | thinking
+    assert LiteLLMProvider.model_profile(model_name) == profile
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking'),
+    [
+        ('nemotron-3-super', _HYBRID_THINKING),
+        ('nemotron-3-ultra:cloud', _HYBRID_THINKING),
+        ('nemotron-3.5-lightning', _OPT_IN_THINKING),
+        ('mimo-v2.6-pro:cloud', _OPT_IN_THINKING),
+    ],
+)
+def test_ollama_open_weight_family(model_name: str, thinking: dict[str, bool]):
+    """Ollama's Nemotron and MiMo models add only their thinking flags to the profile `nemotron-mini` keeps."""
+    default = OllamaProvider.model_profile('nemotron-mini')
+    assert _normalize(default) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert _normalize(OllamaProvider.model_profile(model_name)) == _normalize(default) | thinking
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking', 'reasoning_efforts'),
+    [
+        ('nvidia/nemotron-3-ultra-550b-a55b', _HYBRID_THINKING, {'none', 'low', 'medium', 'high'}),
+        # Vercel's catalog lists no reasoning controls for Nemotron 3 Super.
+        ('nvidia/nemotron-3-super-120b-a12b', _HYBRID_THINKING, set[str]()),
+        ('nvidia/nemotron-3.5-lightning-free', _OPT_IN_THINKING, {'none', 'low', 'medium', 'high'}),
+        (
+            'thinkingmachines/inkling-small',
+            _HYBRID_THINKING,
+            {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'},
+        ),
+        ('xiaomi/mimo-v2.6-flash', _OPT_IN_THINKING, {'none', 'minimal', 'low', 'medium', 'high'}),
+        ('stepfun/step-3.7-flash', _ALWAYS_THINKING, {'low', 'medium', 'high'}),
+        ('tencent/hy3', _HYBRID_THINKING, {'none', 'low', 'high'}),
+        ('tencent/hy4', _HYBRID_THINKING, {'none', 'high'}),
+    ],
+)
+def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool], reasoning_efforts: set[str]):
+    """Vercel's open-weight family slugs add their thinking flags, and the efforts Vercel's catalog lists for the model
+    (https://ai-gateway.vercel.sh/v1/models), to the profile `tencent/hy-mt2-pro` keeps."""
+    default = VercelProvider.model_profile('tencent/hy-mt2-pro')
+    assert _normalize(default) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert _normalize(VercelProvider.model_profile(model_name)) == _normalize(default) | thinking | {
+        'openai_reasoning_efforts': frozenset(reasoning_efforts)
+    }
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'unprofiled_model_name', 'thinking'),
+    [
+        ('nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-mini-4b-instruct', _HYBRID_THINKING),
+        ('stepfun/step-5-preview', 'stepfun/step-4', _ALWAYS_THINKING),
+    ],
+)
+@pytest.mark.parametrize('provider_name', ['stav', 'otari'])
+def test_family_map_routes_add_only_open_weight_thinking(
+    provider_name: _RouteProvider, model_name: str, unprofiled_model_name: str, thinking: dict[str, bool]
+):
+    """Stav and Otari resolve the open-weight families through the shared family map, which adds only the thinking
+    flags to what an id the family doesn't describe gets."""
+    if provider_name == 'otari':
+        # Otari names the host before the model.
+        model_name, unprofiled_model_name = f'together:{model_name}', f'together:{unprofiled_model_name}'
+    provider = _route_provider(provider_name)
+    default = provider.model_profile(unprofiled_model_name)
+    profile = provider.model_profile(model_name)
+    assert default is not None and profile is not None
+    assert _normalize(profile) == _normalize(default) | thinking
+
+
 def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:
     """Whether a route lets a forced tool choice through while the model thinks.
 
@@ -4453,6 +5067,12 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
         ),
         pytest.param(
             _DEEPSEEK_V4,
+            ('stav', 'deepseek-ai/deepseek-v4-flash-0731'),
+            id='deepseek-v4-stav',
+            marks=_diverges('#12104', 'Stav allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
             ('nebius', 'deepseek-ai/DeepSeek-V4-Pro'),
             id='deepseek-v4-nebius',
             marks=_diverges('#12104', 'Nebius allows forcing while DeepSeek V4 thinks'),
@@ -4462,6 +5082,12 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             ('vercel', 'deepseek/deepseek-v4-pro'),
             id='deepseek-v4-vercel',
             marks=_diverges('#12104', 'Vercel allows forcing while DeepSeek V4 thinks'),
+        ),
+        pytest.param(
+            _DEEPSEEK_V4,
+            ('otari', 'together:deepseek-ai/DeepSeek-V4-Pro'),
+            id='deepseek-v4-otari',
+            marks=_diverges('#12104', 'Otari allows forcing while DeepSeek V4 thinks'),
         ),
         pytest.param(
             _DEEPSEEK_V4_1,
@@ -4534,6 +5160,7 @@ def test_forced_tool_choice_guard_agrees_across_routes(
         ('ollama', 'deepseek-v4.1-flash:1017', True),
         ('fireworks', 'accounts/fireworks/models/deepseek-v4p1-flash', True),
         ('crusoe', 'deepseek-ai/DeepSeek-V4.1-Flash', True),
+        ('otari', 'together:deepseek-ai/DeepSeek-V4.1-Flash', True),
         ('together', 'deepseek-ai/DeepSeek-V3.2', False),
     ],
 )

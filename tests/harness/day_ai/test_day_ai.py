@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -22,9 +21,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.day_ai import DayAI
 from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -39,7 +36,7 @@ def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = _http_transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -64,7 +61,7 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 class TestDayAI:
     async def test_agent_runs_with_day_ai_tools(self) -> None:
-        server = FastMCP('day-ai-fake')
+        server = MCPServer('day-ai-fake')
 
         @server.tool()
         def search_objects() -> dict[str, str]:
@@ -77,7 +74,7 @@ class TestDayAI:
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('day-ai-fake', instructions='Day AI instructions.')
+        server = MCPServer('day-ai-fake', instructions='Day AI instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[DayAI(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)

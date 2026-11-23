@@ -711,12 +711,13 @@ class XaiModel(Model[AsyncClient]):
                 ),
             )
         elif item.tool_name == WebSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', WebSearchTool.kind)
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=WebSearchTool.kind,
+                    name=function_name,
                     arguments=item.args_as_json_str(),
                 ),
             )
@@ -1603,7 +1604,7 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         else:  # pragma: no cover
-            supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
+            supported = ', '.join(sorted(t.__name__ for t in XaiModel.supported_native_tools()))
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
                 f'Supported built-in tools: {supported}.'

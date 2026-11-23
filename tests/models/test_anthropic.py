@@ -178,6 +178,7 @@ with try_import() as imports_successful:
         BetaDirectCaller,
         BetaDocumentBlock,
         BetaInputJSONDelta,
+        BetaMCPToolUseBlock,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
         BetaMemoryTool20250818InsertCommand,
@@ -7086,6 +7087,39 @@ async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: N
         await agent.run('What is 2+2?')
 
 
+async def test_anthropic_extra_body_budget_thinking_reaches_api(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Budget thinking in `extra_body['thinking']` is sent as is, and the API's 400 comes back as a `ModelHTTPError`.
+
+    Only typed `anthropic_thinking` is checked before sending. `FallbackModel` and `ModelFallback` fall back on the 400,
+    while a check before sending would stop `ModelFallback` with structured output, and fail a whole
+    `model_request_batch` instead of returning the 400 in that request's place.
+    """
+    agent = Agent(
+        anthropic_model('claude-opus-4-7', capture=True),
+        model_settings=AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('What is 2+2?')
+
+    assert (exc_info.value.status_code, exc_info.value.body) == snapshot(
+        (
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.',
+                },
+                'request_id': 'req_011Ch9EAuo6tvE72oqfMtLyV',
+            },
+        )
+    )
+    assert request_capture.body('/v1/messages')['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
+
+
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None, model_name: str):
     responses = [
@@ -7603,6 +7637,64 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     )
     assert response.provider_response_id == 'x'
     assert response.model_name == 'claude-haiku-4-5'
+
+
+async def test_unknown_content_block_is_skipped(allow_model_requests: None):
+    """Unit test: a block type the SDK doesn't know can't be recorded in a cassette."""
+    # Built the way the SDK builds a response: an unknown type becomes one of its classes, without validation.
+    future_block = cast(
+        BetaContentBlock, construct_type(type_=BetaContentBlock, value={'type': 'future_block', 'id': 'fb_1'})
+    )
+    c = completion_message(
+        [future_block, BetaTextBlock(text='hello', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(c)))
+
+    with pytest.warns(UserWarning, match='future_block'):
+        result = await Agent(m).run('hello')
+    assert result.output == 'hello'
+
+
+async def test_unknown_streamed_content_block_and_delta_are_skipped(allow_model_requests: None):
+    """Unit test: a block or delta type the SDK doesn't know can't be recorded in a cassette."""
+
+    def unknown_event(value: dict[str, Any]) -> BetaRawMessageStreamEvent:
+        # Built the way the SDK builds a stream event: an unknown type becomes one of its classes, without validation.
+        return cast(BetaRawMessageStreamEvent, construct_type(type_=BetaRawMessageStreamEvent, value=value))
+
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=4, output_tokens=0)), type='message_start'),
+        unknown_event({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'future_block'}}),
+        unknown_event({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'future_delta', 'x': 1}}),
+        BetaRawContentBlockStopEvent(index=0, type='content_block_stop'),
+        BetaRawContentBlockStartEvent(
+            content_block=BetaTextBlock(text='', type='text'), index=1, type='content_block_start'
+        ),
+        BetaRawContentBlockDeltaEvent(
+            delta=BetaTextDelta(text='hello', type='text_delta'), index=1, type='content_block_delta'
+        ),
+        unknown_event({'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'future_delta', 'x': 1}}),
+        BetaRawContentBlockStopEvent(index=1, type='content_block_stop'),
+        BetaRawMessageDeltaEvent(
+            delta=Delta(stop_reason='end_turn'), usage=BetaMessageDeltaUsage(output_tokens=2), type='message_delta'
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    m = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream))
+    )
+
+    with pytest.warns(UserWarning) as warned:
+        async with Agent(m).run_stream('hello') as result:
+            output = await result.get_output()
+    assert output == 'hello'
+    # The unknown block's own delta is dropped with it; only the delta on the text block warns on its own.
+    assert [str(w.message) for w in warned] == snapshot(
+        [
+            "Handling of this content block type is not yet implemented, so it was skipped. Please report on our GitHub: 'future_block'",
+            "Handling of this content block delta type is not yet implemented, so it was skipped. Please report on our GitHub: 'future_delta'",
+        ]
+    )
 
 
 def test_streaming_usage_with_compaction():
@@ -10105,6 +10197,58 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
     assert completion_kwargs['messages'][1]['content'][0] == snapshot(
         {'id': 'mcptoolu_123', 'type': 'mcp_tool_use', 'server_name': 'clock', 'name': 'current_time', 'input': {}}
     )
+
+
+@pytest.mark.parametrize('empty_delta', [False, True], ids=['no-delta', 'empty-delta'])
+async def test_anthropic_mcp_call_streams_empty_tool_args(allow_model_requests: None, empty_delta: bool):
+    """Mocked, not recorded: no MCP server in the cassettes exposes a zero-argument tool."""
+    input_deltas: list[BetaRawMessageStreamEvent] = []
+    if empty_delta:
+        input_deltas.append(
+            BetaRawContentBlockDeltaEvent(
+                type='content_block_delta', index=0, delta=BetaInputJSONDelta(type='input_json_delta', partial_json='')
+            )
+        )
+    stream: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_1',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaMCPToolUseBlock(
+                type='mcp_tool_use', id='mcptoolu_01', name='who_am_i', server_name='srv', input={}
+            ),
+        ),
+        *input_deltas,
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=1, content_block=BetaTextBlock(type='text', text='ok')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawMessageDeltaEvent(
+            type='message_delta', delta=Delta(stop_reason='end_turn'), usage=BetaMessageDeltaUsage(output_tokens=1)
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    model = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream))
+    )
+    agent = Agent(model, capabilities=[NativeTool(MCPServerTool(id='srv', url='https://mcp.example/mcp'))])
+
+    async with agent.run_stream('Who am I?') as result:
+        await result.get_output()
+    call = next(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    assert call.args == '{"action":"call_tool","tool_name":"who_am_i","tool_args":{}}'
 
 
 @pytest.mark.vcr()
