@@ -1978,6 +1978,9 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 # Wait for the deferred tool requests to be handled externally.
                 deferred_tool_results = DBOS.recv('deferred_tool_results', timeout_seconds=30)
             else:
+                # The workflow runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing
+                # else closes.
+                asyncio.get_event_loop().close()
                 return result
 
     wf_handle = DBOS.start_workflow(hitl_main_loop_sync, 'Delete the file `.env` and create `test.txt`')
