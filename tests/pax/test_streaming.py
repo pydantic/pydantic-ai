@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import re
 from typing import IO, Literal
 
 import pytest
@@ -9,8 +10,18 @@ from rich.console import Console
 from rich.text import Text
 from termflow.stream import SmoothWriter
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
+from pydantic_ai import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPart,
+)
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.file_system import FileEditedEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
@@ -42,6 +53,84 @@ async def test_tools_have_one_line_with_blank_separators(show_tool_output: bool)
         )
     await renderer.finish()
     assert output.getvalue() == '● shell\n\n● write_file\n\n● shell\n\n'
+
+
+MIXED_TURN = """\
+I will look first.
+
+● shell ls
+
+● edit_file a.py
+
+-x = 1
++x = 2
+
+deploy: staging ok
+
+● lint path="a.py"
+
+● read_file 'a.py' offset=0 limit=2000 lines
+
+The new code:
+
+python ─────────────────────────────────────────
+x = 2
+────────────────────────────────────────────────
+
+Done.
+
+"""
+
+
+@pytest.mark.parametrize('terminal', [False, True])
+async def test_one_blank_row_between_every_block_of_a_mixed_turn(terminal: bool) -> None:
+    """Diffs, plugin output and code fences each get one blank row before and after."""
+    output = io.StringIO()
+    console = Console(file=output, width=48, force_terminal=terminal, color_system=None)
+
+    def deploy(event: AgentStreamEvent) -> Text | None:
+        deploying = isinstance(event, FunctionToolCallEvent) and event.part.tool_name == 'deploy'
+        return Text('deploy: staging ok') if deploying else None
+
+    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[deploy], smooth=False)
+
+    async def text(index: int, content: str) -> None:
+        await renderer.on_stream_event(PartStartEvent(index=index, part=TextPart(content)))
+        await renderer.on_stream_event(PartEndEvent(index=index, part=TextPart(content)))
+
+    def call(name: str, call_id: str, **args: str) -> FunctionToolCallEvent:
+        return FunctionToolCallEvent(part=ToolCallPart(name, args, tool_call_id=call_id))
+
+    await text(0, 'I will look first.\n')
+    await renderer.on_stream_event(call('shell', 'a', command='ls'))
+    await renderer.on_stream_event(CommandStartedEvent(tool_call_id='a', command='ls', pid=1))
+    await renderer.on_stream_event(
+        CommandFinishedEvent(tool_call_id='a', pid=1, output_path='/o', status_path='/s', exit_code=0, truncated=False)
+    )
+    await renderer.on_stream_event(call('edit_file', 'b', path='a.py'))
+    await renderer.on_stream_event(
+        FileEditedEvent(
+            tool_call_id='b',
+            root_dir='/r',
+            path='a.py',
+            diff='--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n',
+            truncated=False,
+            content_hash='h',
+        )
+    )
+    await renderer.on_stream_event(call('deploy', 'c'))
+    await renderer.on_stream_event(call('lint', 'd', path='a.py'))
+    await renderer.on_stream_event(call('read_file', 'e', path='a.py'))
+    await text(1, 'The new code:\n```python\nx = 2\n```\nDone.\n')
+    await renderer.finish()
+    if terminal:
+        # The terminal diff is Termflow's own rendering, which drops the file and hunk headers.
+        rows = re.sub(r'\x1b\[[0-9;]*m', '', output.getvalue())
+        assert rows == MIXED_TURN.replace('-x = 1\n+x = 2', '- x = 1\n+ x = 2')
+    else:
+        assert output.getvalue() == MIXED_TURN.replace(
+            '-x = 1\n+x = 2', '--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2'
+        )
 
 
 async def test_long_tool_name_does_not_wrap() -> None:

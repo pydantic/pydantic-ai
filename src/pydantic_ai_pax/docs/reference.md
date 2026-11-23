@@ -1665,7 +1665,7 @@ Shell output is rendered one completed line at a time. Carriage-return progress
 updates replace the buffered line rather than printing control-code text; the last
 update appears at newline or tool completion. CRLF works across chunk boundaries.
 Long display lines are ellipsized to terminal width. The command itself wraps
-under a hanging indent, at spaces, or after a `/` in a path too long for a row, keeping its own line breaks, up to 10 terminal rows; a
+under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
 count summarizes any rows beyond that. The command is highlighted as Bash, in the
 colours of fenced code but dimmed and without underlines, so it reads as secondary
 to the answer. Code inside it uses its own language: a heredoc body

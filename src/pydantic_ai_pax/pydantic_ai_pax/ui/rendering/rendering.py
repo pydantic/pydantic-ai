@@ -232,6 +232,8 @@ class MarkdownPipeline:
         self._continued_fence = continuation is not None and self._parser.state.is_in_code()
         self._spaced = True
         """Whether a block starting now would follow a blank row, or nothing of this part."""
+        self._fenced = False
+        """Whether the last row painted closed a code block."""
 
     def continuation(self) -> tuple[Parser, str]:
         """Snapshot parsing context before finishing this display segment."""
@@ -246,15 +248,18 @@ class MarkdownPipeline:
         self._render_events(self._space_code(self._parser.finalize()))
 
     def _space_code(self, events: list[ParseEvent]) -> list[ParseEvent]:
-        """Add the blank row a code block needs when its source starts right under other text."""
+        """Add the blank row a code block needs before and after it when its source has none."""
         spaced: list[ParseEvent] = []
         for event in events:
-            if isinstance(event, CodeBlockStartEvent) and not self._spaced:
+            # Closing a list or quote paints no row, so a blank row before it still spaces what follows.
+            paints = not isinstance(event, (ListItemEndEvent, ListEndEvent, BlockquoteEndEvent))
+            opens = isinstance(event, CodeBlockStartEvent) and not self._spaced
+            if paints and not isinstance(event, EmptyLineEvent) and (opens or self._fenced):
                 spaced.append(EmptyLineEvent())
             spaced.append(event)
-            # Closing a list or quote paints no row, so a blank row before it still spaces what follows.
-            if not isinstance(event, (ListItemEndEvent, ListEndEvent, BlockquoteEndEvent)):
+            if paints:
                 self._spaced = isinstance(event, EmptyLineEvent)
+                self._fenced = isinstance(event, CodeBlockEndEvent)
         return spaced
 
     def _render_events(self, events: list[ParseEvent]) -> None:
