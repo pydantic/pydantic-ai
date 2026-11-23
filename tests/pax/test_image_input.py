@@ -99,6 +99,22 @@ def test_mixed_and_non_image_paths(image_path: Path) -> None:
         read_image(image_path)
 
 
+def test_decompression_bombs_are_value_errors(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Paste handlers catch `ValueError`; Pillow's own bomb error would otherwise escape them."""
+    with Image.open(image_path) as image:
+        pixels = image.width * image.height
+    monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', pixels // 2 - 1)
+    with pytest.raises(ValueError, match='decompression bomb'):
+        read_image(image_path)
+
+    def grab() -> None:
+        raise Image.DecompressionBombError('Image size exceeds limit, could be decompression bomb DOS attack.')
+
+    monkeypatch.setattr(ImageGrab, 'grabclipboard', grab)
+    with pytest.raises(ValueError, match='decompression bomb'):
+        clipboard_images()
+
+
 @pytest.mark.parametrize('kind', ['image', 'files', 'empty', 'empty_files', 'error'])
 def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
     def grab() -> Image.Image | list[str] | None:

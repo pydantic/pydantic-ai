@@ -41,8 +41,12 @@ def read_image(path: Path) -> BinaryContent:
     # Pillow is imported where images are read, not at startup, which rarely sees one.
     from PIL import Image
 
-    with Image.open(path, formats=FORMATS) as image:
-        return encode_image(image)
+    try:
+        with Image.open(path, formats=FORMATS) as image:
+            return encode_image(image)
+    except Image.DecompressionBombError as exc:
+        # A `ValueError`, so a paste handler can catch it without importing Pillow.
+        raise ValueError(str(exc)) from exc
 
 
 def read_images(paths: Sequence[Path]) -> list[BinaryContent]:
@@ -83,6 +87,8 @@ def clipboard_images() -> list[BinaryContent]:
 
     try:
         content = ImageGrab.grabclipboard()
+    except Image.DecompressionBombError as exc:
+        raise ValueError(str(exc)) from exc
     except (NotImplementedError, ChildProcessError) as exc:
         if sys.platform != 'linux':
             raise
@@ -218,8 +224,6 @@ class ImageInput:
             insert(event=event, text=event.data)
 
         def insert(*, event: KeyPressEvent, text: str | None) -> None:
-            from PIL import Image
-
             buffer = event.current_buffer
             self.retain([buffer.text, *queued()])
             self.notice = ''
@@ -234,7 +238,7 @@ class ImageInput:
                     images = read_images(paths)
                 buffer.insert_text(self.attach(images))
                 self.notice = ATTACHED
-            except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
+            except (OSError, ValueError, NotImplementedError) as exc:
                 self.paste_failed(exc)
                 self.resume_notice(event.app)
             finally:
