@@ -914,6 +914,19 @@ class TestReadFile:
             'Too large to view: the limit is 5000000 bytes.\n'
         )
 
+    async def test_read_tall_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
+        # A full-page screenshot: its short side is under the target, but the scale follows the long side.
+        raw = _encoded_image((1000, 26000), 'JPEG', mode='L')
+        (tmp_path / 'page.jpg').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('page.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[page.jpg | image/jpeg | {len(raw)} bytes]\nShown downscaled from 1000x26000 to 39x1024 pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (39, 1024)
+
     async def test_read_image_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
         # 30 megapixels in a small file: decoding it to downscale would take far more memory than the file.
         raw = _encoded_image((6000, 5000), mode='1')

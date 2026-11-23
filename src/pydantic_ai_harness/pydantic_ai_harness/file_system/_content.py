@@ -130,7 +130,8 @@ def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledIm
             original = image.size
             # A progressive JPEG keeps full-size coefficients however small it decodes.
             if not image.info.get('progressive'):
-                image.draft(None, (max_side, max_side))
+                scale = max_side / max(original)
+                image.draft(None, (max(1, round(original[0] * scale)), max(1, round(original[1] * scale))))
             if image.width * image.height > MAX_DECODE_PIXELS:
                 return TooLargeToDecode(original)
             oriented = ImageOps.exif_transpose(image)
