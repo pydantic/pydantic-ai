@@ -535,14 +535,14 @@ jobs:
           # budget times this step alone, so a pyright-rs run before it never counts against it.
           PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
-          # Prints the root run's source-file count for the next step. pyright-rs is not asked to.
-          PYRIGHT_STATS: "1"
-        shell: bash
-        run: make typecheck-changed | tee "$RUNNER_TEMP/pyright.log"
+          # Saves the root run's JSON report, which carries the number of files Pyright read, for the next
+          # step: Pyright refuses `--stats` with `--threads`. pyright-rs is not asked to.
+          PYRIGHT_REPORT: ${{ runner.temp }}/pyright.json
+        run: make typecheck-changed
 
       - name: Check Pyright read every file its configuration names
         if: ${{ !cancelled() && steps.pyright.outcome == 'success' }}
-        run: uv run --no-sync python scripts/check_pyright_sources.py "$RUNNER_TEMP/pyright.log"
+        run: uv run --no-sync python scripts/check_pyright_sources.py "$RUNNER_TEMP/pyright.json"
 
       # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
       - name: Check public API compatibility with the latest release
@@ -1953,7 +1953,7 @@ jobs:
   # whose Pyright bump stopped reading twelve configured files, and at its parent; removed before this
   # branch's pull request opens.
   prove-pyright-sources:
-    name: prove the Pyright source count at ${{ matrix.pyright }}
+    name: prove the Pyright source count at ${{ matrix.pyright }} on ${{ matrix.ref || 'this branch' }}
     if: github.ref == 'refs/heads/ci-package-shape'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1964,6 +1964,9 @@ jobs:
           - ref: 5a2e2d9c5fe18348cec0b69560614cfb2169961b
             pyright: 1.1.413
           - ref: fbb696c266abaf867e72164ff1e1784a5ad21780
+            pyright: 1.1.414
+          # This branch, at the version the lock pins: the threaded report's count must equal `--stats`'s.
+          - ref: ''
             pyright: 1.1.414
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1985,10 +1988,12 @@ jobs:
         env:
           PYRIGHT_VERSION: ${{ matrix.pyright }}
         run: |
-          (PYRIGHT_PYTHON_IGNORE_WARNINGS=1 timeout 600 uvx "pyright@$PYRIGHT_VERSION" --stats || true) > "$RUNNER_TEMP/pyright.log" 2>&1
-          grep -E '^(Found|Auto-excluding|pyright )' "$RUNNER_TEMP/pyright.log" || true
+          export PYRIGHT_PYTHON_IGNORE_WARNINGS=1
+          (timeout 600 uvx "pyright@$PYRIGHT_VERSION" --stats || true) > "$RUNNER_TEMP/pyright.log" 2>&1
+          grep -E '^(Found [0-9]+ source files?|pyright )' "$RUNNER_TEMP/pyright.log" || true
+          (timeout 600 uvx "pyright@$PYRIGHT_VERSION" --threads 3 --outputjson || true) > "$RUNNER_TEMP/pyright.json"
           status=0
-          uv run --no-project python ../current/scripts/check_pyright_sources.py "$RUNNER_TEMP/pyright.log" || status=$?
+          uv run --no-project --with pydantic python ../current/scripts/check_pyright_sources.py "$RUNNER_TEMP/pyright.json" || status=$?
           echo "check_pyright_sources.py exited $status"
 
   # TEMPORARY: collects the suite on Windows at the parent of https://github.com/pydantic/pydantic-ai/pull/12678,

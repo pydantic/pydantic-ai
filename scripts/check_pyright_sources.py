@@ -1,24 +1,61 @@
-"""Fail when Pyright read fewer source files than the root `[tool.pyright]` configuration names.
+"""Print a Pyright JSON report as Pyright does, and fail when Pyright read fewer files than its configuration names.
 
 Pyright drops files from its configured scope without a diagnostic: 1.1.414 started applying its default
 excludes (`**/.*` among them) over explicit `include` entries, and the twelve `.github/scripts` files the root
 configuration listed went unchecked with CI green (https://github.com/pydantic/pydantic-ai/pull/8732).
 
-Usage: `check_pyright_sources.py <log>`, where `<log>` is the output of `make typecheck-pyright` run with
-`PYRIGHT_STATS=1`, which makes the root run print `Found <n> source files`. The expected count is every tracked
-`.py` and `.pyi` file under an `include` entry and under no `exclude` entry, with none of Pyright's own excludes
-applied, so a file Pyright stops reading on its own lowers the count it reports below that.
+`make typecheck-pyright` run with `PYRIGHT_REPORT=<report>` saves the root run's `--outputjson` report there and
+runs `check_pyright_sources.py print <report>`, which prints its diagnostics in Pyright's own text format and exits 1
+when the report holds an error or is not a report. `check_pyright_sources.py <report>` compares the report's
+`summary.filesAnalyzed` with the expected count: every tracked `.py` and `.pyi` file under an `include` entry and
+under no `exclude` entry, with none of Pyright's own excludes applied, so a file Pyright stops reading on its own
+lowers the count it reports below that. The report carries the count because Pyright refuses `--stats` with
+`--threads`, which CI passes.
 """
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import NotRequired
 
-_FOUND = re.compile(r'^Found (\d+) source files?$', re.MULTILINE)
+from pydantic import TypeAdapter, ValidationError
+from typing_extensions import TypedDict
+
+
+class _Position(TypedDict):
+    line: int
+    character: int
+
+
+class _Range(TypedDict):
+    start: _Position
+
+
+class _Diagnostic(TypedDict):
+    file: str
+    severity: str
+    message: str
+    range: NotRequired[_Range]
+    """Left out when the diagnostic has no position."""
+    rule: NotRequired[str]
+
+
+class _Summary(TypedDict):
+    filesAnalyzed: int
+    errorCount: int
+    warningCount: int
+    informationCount: int
+
+
+class _Report(TypedDict):
+    generalDiagnostics: list[_Diagnostic]
+    summary: _Summary
+
+
+_REPORT = TypeAdapter(_Report)
 
 
 def configured_sources(pyproject: Path) -> list[str]:
@@ -40,14 +77,42 @@ def configured_sources(pyproject: Path) -> list[str]:
     return [path for path in tracked if path and covered(path, include) and not covered(path, exclude)]
 
 
-def main(log: str) -> int:
-    """Compare the count the root run printed to `log` with the configured sources, and return the exit code."""
-    found = _FOUND.search(Path(log).read_text(encoding='utf-8'))
-    if found is None:
-        print(f'No `Found <n> source files` line in {log}: run `make typecheck-pyright` with `PYRIGHT_STATS=1`.')
+def _plural(count: int, noun: str) -> str:
+    return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
+
+
+def print_report(path: str) -> int:
+    """Print the report's diagnostics and summary as Pyright's text output does; 1 if it holds an error."""
+    text = Path(path).read_text(encoding='utf-8')
+    try:
+        report = _REPORT.validate_json(text)
+    except ValidationError:
+        print(text)
+        print(f'{path} is not a Pyright JSON report.')
         return 1
+    by_file: dict[str, list[_Diagnostic]] = {}
+    for diagnostic in report['generalDiagnostics']:
+        by_file.setdefault(diagnostic['file'], []).append(diagnostic)
+    for file, diagnostics in by_file.items():
+        print(file)
+        for diagnostic in diagnostics:
+            start = diagnostic['range']['start'] if 'range' in diagnostic else None
+            where = f'{start["line"] + 1}:{start["character"] + 1} - ' if start else ' '
+            rule = f' ({diagnostic["rule"]})' if 'rule' in diagnostic else ''
+            message = diagnostic['message'].replace('\n', '\n  ')
+            print(f'  {file}:{where}{diagnostic["severity"]}: {message}{rule}')
+    summary = report['summary']
+    print(
+        f'{_plural(summary["errorCount"], "error")}, {_plural(summary["warningCount"], "warning")}, '
+        f'{_plural(summary["informationCount"], "information")}'
+    )
+    return 1 if summary['errorCount'] else 0
+
+
+def check_count(path: str) -> int:
+    """Compare the number of files the report says Pyright read with the configured sources; the exit code."""
+    read = _REPORT.validate_json(Path(path).read_text(encoding='utf-8'))['summary']['filesAnalyzed']
     expected = len(configured_sources(Path('pyproject.toml')))
-    read = int(found.group(1))
     print(f'Pyright read {read} source files; the root `[tool.pyright]` configuration names {expected}.')
     if read < expected:
         print(
@@ -59,4 +124,4 @@ def main(log: str) -> int:
 
 
 if __name__ == '__main__':
-    sys.exit(main(*sys.argv[1:]))
+    sys.exit(print_report(sys.argv[2]) if sys.argv[1] == 'print' else check_count(sys.argv[1]))
