@@ -101,6 +101,25 @@ def test_ui_check_owns_the_clai2_live_session_socket() -> None:
         ('pydantic_ai_slim/pydantic_ai/messages.py', 'ui'),
         ('pydantic_ai_slim/pydantic_ai/realtime/_utils.py', 'url-fetch'),
         ('.github/scripts/agent_provider_health.py', 'telemetry'),
+        # Path containment: the files the symlink-escape fixes of #13632, #13595, #12044, #11639 and #9613 changed,
+        # the other harness components that confine a path under a root, and the workspace layer they build on.
+        *(
+            (f'src/pydantic_ai_harness/pydantic_ai_harness/{module}', 'sandboxes')
+            for module in (
+                'tool_output_limits/_store.py',
+                'repo_context/_loader.py',
+                'file_system/_toolset.py',
+                'filesystem/__init__.py',
+                'memory/_file.py',
+                'skills/_capability.py',
+                'smart_search/_chunks.py',
+                'localstack/_toolset.py',
+            )
+        ),
+        *(
+            (f'pydantic_ai_slim/pydantic_ai/workspaces/{module}', 'sandboxes')
+            for module in ('workspace.py', '_host.py', '_confine.py')
+        ),
     ],
 )
 def test_joint_path_runs_its_check_and_the_general_check(path: str, check: str) -> None:
