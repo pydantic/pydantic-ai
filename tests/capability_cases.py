@@ -8,7 +8,9 @@ or why it can't run offline (`Unbuildable`). The suites that run over every capa
 here: `tests/test_history_append_only.py` and `tests/test_capability_combine.py`, and their Harness twins. A case
 whose `calls` run its tools is also run by the `CONTRACTS` at the end of this module, which
 `tests/harness/test_capability_contracts.py` checks, and by `tests/harness/test_durable_tool_io.py` when its
-calls name `durable_steps`.
+calls name `durable_steps`. A case's `edits_history` says whether and how it edits the history it is sent, which
+`tests/harness/test_history_editors.py` holds to the history invariants, and its `faults` say how the fault contracts
+at the end of this module reach it.
 
 This module imports nothing from Pydantic AI Harness: `tests/conftest.py` leaves `tests/harness` out of a
 lane that doesn't install it, and the core suites import this module on every lane.
@@ -19,12 +21,16 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from typing import Any, TypeGuard
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Any, Literal, TypeAlias, TypeGuard
 from unittest.mock import patch
 
+import pytest
+
+from pydantic_ai import CapabilityEvent
 from pydantic_ai.capabilities import (
     MCP,
     Caching,
@@ -197,6 +203,11 @@ class CapabilityCase:
     """Credentials it checks when it's built; nothing is sent, as the scripted model never calls its tools."""
     calls: Calls | None = None
     """Calls that run its tools, for the contracts and suites that call them."""
+    edits_history: EditsHistory | None = None
+    """Whether it edits the history it is sent, which a capability that overrides `before_model_request` or
+    `after_tool_execute` must declare."""
+    faults: Faults | None = None
+    """How the fault contracts reach it, past what its `calls` already give them."""
 
     @property
     def reason(self) -> str:
@@ -752,3 +763,118 @@ selects only after every `for_run`."""
 
 CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID, COMBINE_FIXED_POINT, FORWARDS_USAGE, WORKSPACE_FROM_FUNCTION)
 """Every contract, so a meta-test can check each one's exemptions."""
+
+
+# --- History editors and fault contracts ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EditorConfig:
+    """A configuration that makes a capability edit history, held to the invariants of `test_history_editors.py`."""
+
+    build: Callable[[], AbstractCapability[None] | Sequence[AbstractCapability[None]]]
+    summarizes: bool = False
+    """Whether it replaces messages with a summary, which must then keep what each of them said."""
+    calls: tuple[ToolCall, ...] = (('look_up', {'topic': 'sports'}),)
+    """The calls the model makes, one per response, before it answers: for a capability that edits when one of its
+    tools is called. Call `i` gets the ID `call_{i}`."""
+
+
+EditsHistory: TypeAlias = Literal['no'] | Exempt | Mapping[str, EditorConfig]
+"""`'no'` for a capability that only adds to what the model is sent, the configurations that make one edit it, or
+`Exempt` for one whose edits the invariants can't hold, with the reason."""
+
+
+@dataclass(frozen=True)
+class Teardown:
+    """How to see what a capability's teardown left behind, for `TEARDOWN_UNDER_ANYIO_CANCEL`."""
+
+    build: Callable[
+        [Path, pytest.MonkeyPatch],
+        tuple[Sequence[AbstractCapability[None]], Callable[[], Awaitable[object]]],
+    ]
+    """The capabilities, built in a directory, and a probe of what their teardown left behind once the run ended."""
+    calls: tuple[ToolCall, ...] = ()
+    """Calls that put the capability in the state its teardown must undo, made before the fault."""
+
+
+Channel: TypeAlias = Literal['listener', 'stream']
+"""Where a capability event reaches the application: an `@on_event` capability, or the run's `event_stream_handler`."""
+
+
+@dataclass(frozen=True)
+class FaultRun:
+    """Calls that run into a fault, and what they run against."""
+
+    calls: tuple[ToolCall, ...]
+    build: Callable[[Path, pytest.MonkeyPatch], Sequence[AbstractCapability[None]]]
+    """The capabilities, built in a directory, with the fault in place."""
+
+
+@dataclass(frozen=True)
+class Pairs:
+    """An event a capability opens and the event that closes it, for `PAIRS_CLOSE_ON_RAISE`."""
+
+    opens: type[CapabilityEvent]
+    closes: type[CapabilityEvent]
+    raising: Mapping[str, FaultRun]
+    """Calls that raise after one of them opened the event, keyed by the path the raise takes."""
+    unchecked: str | None = None
+    """A raise the capability leaves unclosed by design, with the documentation that says so."""
+    known_breaks: Mapping[Channel, Exempt] = field(default_factory=dict[Channel, Exempt])
+    """The channels on which a raise leaves the event open on main, each linked to the issue that tracks it. A listed
+    channel must still break."""
+
+
+@dataclass(frozen=True)
+class Faults:
+    """How the fault contracts reach a capability."""
+
+    teardown: Teardown | Exempt | None = None
+    """How to see its teardown, or why it can't be seen offline: required of a capability that overrides `on_run_error`
+    or `__aexit__`."""
+    pairs: Pairs | None = None
+    """The event pair it opens and closes, which every capability that defines one must declare."""
+
+
+TEARDOWN_UNDER_ANYIO_CANCEL = Contract(
+    'teardown_under_anyio_cancel',
+    applies=lambda _, case: case.faults is not None and isinstance(case.faults.teardown, Teardown),
+)
+"""A run that an outer `anyio` scope cancels tears down like one that raises at the same point: a checkpoint in a
+teardown that isn't shielded lets the cancellation skip the rest of it."""
+
+SAME_RESPONSE_CALLS = Contract(
+    'same_response_calls',
+    applies=lambda _, case: case.calls is not None and len(case.calls.made) > 1,
+)
+"""A capability's calls made in one response, which run concurrently, end as they do run one per response in some
+order, and in the order sent when one of its tools is `sequential`: a tool that reads, then writes shared state
+without a lock loses the other call's change."""
+
+PAIRS_CLOSE_ON_RAISE = Contract(
+    'pairs_close_on_raise',
+    applies=lambda _, case: case.faults is not None and case.faults.pairs is not None,
+)
+"""Every event a capability opens is closed, on every channel, when the call that opened it raises."""
+
+FAULT_CONTRACTS = (TEARDOWN_UNDER_ANYIO_CANCEL, SAME_RESPONSE_CALLS, PAIRS_CLOSE_ON_RAISE)
+"""The contracts that drive a capability into a fault: a cancellation, a raise, or calls that race."""
+
+_USERS_FUNCTIONS = 'it runs functions its user supplies, which no offline check can hold to anything'
+
+_HISTORY_EDITS: dict[str, EditsHistory] = {
+    'Hooks': Exempt(_USERS_FUNCTIONS),
+    'ProcessHistory': Exempt(_USERS_FUNCTIONS),
+    'OpenAICompaction': Exempt('it compacts through the OpenAI Responses API, which the suite reaches only recorded'),
+    'ReinjectSystemPrompt': 'no',
+    'ToolSearch': 'no',
+}
+_FAULTS: dict[str, Faults] = {
+    'Hooks': Faults(teardown=Exempt(_USERS_FUNCTIONS)),
+    'BatchModelRequests': Faults(
+        teardown=Exempt('its requests go through a provider batch API, which the suite reaches only recorded')
+    ),
+}
+CASES.update({name: replace(CASES[name], edits_history=edits) for name, edits in _HISTORY_EDITS.items()})
+CASES.update({name: replace(CASES[name], faults=faults) for name, faults in _FAULTS.items()})

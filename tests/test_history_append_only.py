@@ -93,6 +93,9 @@ UNSUPPORTED: dict[tuple[str, Provider], str] = {
     ('WebFetch', 'openai-responses'): _NO_LOCAL_FALLBACK.format('web fetch'),
     ('WebFetch', 'openai-chat'): _NO_LOCAL_FALLBACK.format('web fetch'),
     ('WebSearch', 'openai-chat'): _NO_LOCAL_FALLBACK.format('web search'),
+    ('ImageGeneration', 'openrouter'): _NO_LOCAL_FALLBACK.format('image generation'),
+    ('NativeTool', 'openrouter'): 'OpenRouter has no native code execution.',
+    ('WebFetch', 'openrouter'): _NO_LOCAL_FALLBACK.format('web fetch'),
 }
 """(capability, provider) pairs where the capability refuses the provider, so there is no conversation to check."""
 
@@ -108,9 +111,10 @@ ALLOWED: dict[str, Allowed] = {
     'agent:effort_change': Allowed(
         'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
         'effort, which is part of the cache key',
-        (('settings', 'setting:reasoning_effort'),),
+        # OpenRouter takes the effort in its `reasoning` object, and the route here has no mid-conversation channel.
+        (('settings', 'setting:reasoning_effort'), ('settings', 'setting:reasoning')),
         max_moves=2,
-        providers=('openai-chat',),
+        providers=('openai-chat', 'openrouter'),
     ),
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
@@ -126,7 +130,7 @@ ALLOWED: dict[str, Allowed] = {
             (('messages', 'system-prompt'),),
             tail=True,
             records=('request-scoped system prompt',),
-            providers=('openai-responses', 'openai-chat'),
+            providers=('openai-responses', 'openai-chat', 'openrouter'),
         )
         for name in ('tool-retry', 'output-validation-retry')
     },
@@ -134,13 +138,13 @@ ALLOWED: dict[str, Allowed] = {
         'docs/capabilities/on-demand.md: Chat Completions has no deferred-tool channel, so a load adds the '
         "capability's tools to `tools`, like #9405's mid-run newcomers",
         tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
-        providers=('openai-chat',),
+        providers=('openai-chat', 'openrouter'),
     ),
     'deferred:loaded_from_code': Allowed(
         'docs/capabilities/on-demand.md: Chat Completions has no deferred-tool channel, so a load adds the '
         "capability's tools to `tools`, like #9405's mid-run newcomers",
         tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
-        providers=('openai-chat',),
+        providers=('openai-chat', 'openrouter'),
     ),
     # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
     # Anthropic drops it from the tail like the OpenAI APIs.

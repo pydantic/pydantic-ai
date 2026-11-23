@@ -2,28 +2,38 @@
 
 They run here, where the Harness is installed, because its cases are most of what they apply to, over the public
 capabilities the suites build. A case a contract exempts must still break it, so fixing the capability fails the
-suite until the exemption is removed.
+suite until the exemption is removed. The fault contracts drive a case into a cancellation, a raise or racing calls,
+through what its `faults` declare.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import replace
+from itertools import permutations
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import anyio
 import pytest
 from _pytest.mark import ParameterSet
 
-from pydantic_ai import Agent, AgentRunResult
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, Toolset
+from pydantic_ai import Agent, AgentRunResult, CapabilityEvent, RunContext, Tool
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    Toolset,
+    WrapperCapability,
+    on_event,
+)
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
@@ -36,15 +46,23 @@ from ..capability_cases import (
     CONTRACTS as CORE_CONTRACTS,
     CORE_CAPABILITY_PACKAGES,
     CUSTOM_ID,
+    FAULT_CONTRACTS,
     FORWARDS_USAGE,
+    PAIRS_CLOSE_ON_RAISE,
     RENAMED,
+    SAME_RESPONSE_CALLS,
+    TEARDOWN_UNDER_ANYIO_CANCEL,
     UNSET_ID,
     WORKSPACE_FROM_FUNCTION,
     Anonymous,
     Calls,
     CapabilityCase,
+    Channel,
     Combines,
     Contract,
+    Pairs,
+    Teardown,
+    shipped_capability_types,
 )
 from ..function_model_prefix import RequestRecorder, patch_models
 from .capability_cases import (
@@ -58,7 +76,7 @@ from .capability_cases import (
 DepsT = TypeVar('DepsT')
 
 CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
-CONTRACTS: tuple[Contract, ...] = (*CORE_CONTRACTS, *HARNESS_CONTRACTS)
+CONTRACTS: tuple[Contract, ...] = (*CORE_CONTRACTS, *HARNESS_CONTRACTS, *FAULT_CONTRACTS)
 PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
 """The public capabilities, which the suites build; a private class only has to say what two of it mean."""
 
@@ -399,3 +417,229 @@ async def test_a_workspace_from_a_function_works_like_a_static_one(
         name,
         [] if actual == expected else [f'from a capability function, the first request is {actual}, not {expected}'],
     )
+
+
+# --- Fault contracts -----------------------------------------------------------------------------------------------
+
+
+def _own_override(cls: type[AbstractCapability[None]], hooks: Sequence[str]) -> bool:
+    """Whether `cls` overrides one of `hooks` itself, rather than through capabilities it is made of."""
+    if issubclass(cls, CombinedCapability | WrapperCapability):
+        return False
+    return any(getattr(cls, hook, None) is not getattr(AbstractCapability, hook, None) for hook in hooks)
+
+
+def test_every_capability_with_teardown_says_how_to_see_it() -> None:
+    """A capability that tears down in `on_run_error` or `__aexit__` names a probe of its teardown, or why there is none."""
+    problems: list[str] = []
+    for name, ref in sorted(PUBLIC.items()):
+        try:
+            cls = ref.load()
+        except ImportError:  # pragma: lax no cover
+            continue
+        if _own_override(cls, ('on_run_error', '__aexit__')) and (
+            (faults := CASES[name].faults) is None or faults.teardown is None
+        ):
+            problems.append(
+                f'{name} overrides `on_run_error` or `__aexit__`: give its case `faults=Faults(teardown=...)`'
+            )
+    assert not problems, '\n'.join(problems)
+
+
+async def _run_into(
+    capabilities: Sequence[AgentCapability[None]],
+    calls: tuple[ToolCall, ...],
+    fault: Literal['raise', 'cancel'],
+) -> bool:
+    """Make `calls`, then a call whose tool raises or cancels the run's scope; return whether the scope was cancelled."""
+    with anyio.CancelScope() as scope:
+
+        async def fail() -> str:
+            if fault == 'cancel':
+                scope.cancel()
+                await anyio.sleep_forever()
+            raise RuntimeError('the tool failed')
+
+        faulting = Toolset(FunctionToolset[None]([Tool(fail, name='fault')]))
+        agent = Agent(
+            _one_call_per_response((*calls, ('fault', {})), ''),
+            deps_type=type(None),
+            capabilities=[*capabilities, faulting],
+        )
+        with suppress(RuntimeError):
+            await agent.run('go', event_stream_handler=drain_events)
+    return scope.cancelled_caught
+
+
+@pytest.mark.parametrize('name', _cases(TEARDOWN_UNDER_ANYIO_CANCEL))
+async def test_a_cancelled_run_tears_down_like_a_failed_one(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    faults = CASES[name].faults
+    assert faults is not None and isinstance(faults.teardown, Teardown)
+    left: dict[str, object] = {}
+    for fault in ('raise', 'cancel'):
+        (directory := tmp_path / fault).mkdir()
+        capabilities, probe = faults.teardown.build(directory, monkeypatch)
+        cancelled = await _run_into(capabilities, faults.teardown.calls, fault)
+        assert cancelled == (fault == 'cancel'), f'the {fault} did not end the run as expected'
+        left[fault] = await probe()
+    breaks = (
+        [] if left['cancel'] == left['raise'] else [f'cancelled, teardown left {left["cancel"]}, not {left["raise"]}']
+    )
+    _assert_holds(TEARDOWN_UNDER_ANYIO_CANCEL, name, breaks)
+
+
+def _in_order(
+    made: tuple[ToolCall, ...], order: Sequence[int], *, together: bool, sequential: set[str]
+) -> FunctionModel:
+    """A model that makes the calls in `order`, all in one response or one per response; call `i` gets the ID `call_{i}`.
+
+    It notes the tools that are `sequential` in `sequential`.
+    """
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        sequential.update(tool.name for tool in info.function_tools if tool.sequential)
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        batch = [order] if together else [[index] for index in order]
+        if step == len(batch):
+            yield 'done'
+            return
+        yield {
+            position: DeltaToolCall(
+                name=made[index][0], json_args=json.dumps(made[index][1]), tool_call_id=f'call_{index}'
+            )
+            for position, index in enumerate(batch[step])
+        }
+
+    return FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]), stream_function=respond)
+
+
+async def _outcome(case: CapabilityCase, directory: Path, model: FunctionModel) -> list[tuple[str, str, object]]:
+    """How each call ended, and what it returned or the retry it asked for, as `_comparable` writes it."""
+    assert case.calls is not None
+    directory.mkdir()
+    capabilities = _capabilities(await anyio.to_thread.run_sync(case.calls.build, directory))
+    result = await Agent(model, capabilities=capabilities).run('go', event_stream_handler=drain_events)
+    return sorted(
+        (part.tool_call_id, part.outcome, _comparable(part.content, directory))
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+
+
+@pytest.mark.parametrize('name', _cases(SAME_RESPONSE_CALLS))
+async def test_calls_in_one_response_end_as_in_some_order(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Calls made in one response run concurrently, so they may end as in any order, but not as in none.
+
+    Every order of the calls runs one per response, so a case of `n` calls makes `n!` runs.
+    """
+    case = CASES[name]
+    _prepare(name, case, monkeypatch)
+    assert case.calls is not None
+    sent = tuple(range(len(case.calls.made)))
+    sequential: set[str] = set()
+    together = await _outcome(
+        case, tmp_path / 'together', _in_order(case.calls.made, sent, together=True, sequential=sequential)
+    )
+    serial = {
+        order: await _outcome(
+            case,
+            tmp_path / f'order-{position}',
+            _in_order(case.calls.made, order, together=False, sequential=sequential),
+        )
+        for position, order in enumerate(permutations(sent))
+    }
+    called = {made_name for made_name, _ in case.calls.made}
+    # A `sequential` tool runs in the order the model sent it, so only that order is the one to match.
+    allowed = [serial[sent]] if called & sequential else list(serial.values())
+    breaks = (
+        [] if together in allowed else [f'in one response the calls end {together}, as in no order one per response']
+    )
+    _assert_holds(SAME_RESPONSE_CALLS, name, breaks)
+
+
+def _event_pairs() -> set[tuple[type[CapabilityEvent], type[CapabilityEvent]]]:
+    """Every event that opens and the event that closes it, found by name in the modules that define them."""
+    shipped_capability_types(CORE_CAPABILITY_PACKAGES)
+    shipped_capability_types(HARNESS_CAPABILITY_PACKAGES)
+    events: list[type[CapabilityEvent]] = []
+    pending = list(CapabilityEvent.__subclasses__())
+    while pending:
+        event = pending.pop()
+        events.append(event)
+        pending += event.__subclasses__()
+    by_name = {(event.__module__, event.__name__): event for event in events}
+    return {
+        (event, closer)
+        for (module, event_name), event in by_name.items()
+        for opening, closing in (('StartedEvent', 'FinishedEvent'), ('RequestedEvent', 'AnsweredEvent'))
+        if event_name.endswith(opening)
+        and (closer := by_name.get((module, event_name.removesuffix(opening) + closing))) is not None
+    }
+
+
+def test_every_event_pair_is_declared() -> None:
+    """An event a capability opens and closes is held to `pairs_close_on_raise` once its case declares the pair."""
+    declared = {
+        (case.faults.pairs.opens, case.faults.pairs.closes)
+        for case in CASES.values()
+        if case.faults is not None and case.faults.pairs is not None
+    }
+    undeclared = sorted(f'{opens.__name__} / {closes.__name__}' for opens, closes in _event_pairs() - declared)
+    assert not undeclared, (
+        f'declare these with `faults=Faults(pairs=Pairs(...))` in the case that emits them: {undeclared}'
+    )
+
+
+async def _channels(
+    pairs: Pairs, capabilities: Sequence[AgentCapability[None]], calls: tuple[ToolCall, ...]
+) -> dict[Channel, list[type[CapabilityEvent]]]:
+    """The pair's events each channel got from a run that makes `calls`, which may raise."""
+    listened: list[type[CapabilityEvent]] = []
+    streamed: list[type[CapabilityEvent]] = []
+
+    class Listener(AbstractCapability[None]):
+        @on_event(pairs.opens, pairs.closes)
+        async def observe(self, ctx: RunContext[None], event: CapabilityEvent) -> None:
+            listened.append(type(event))
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, pairs.opens | pairs.closes):
+                streamed.append(type(event))
+
+    agent = Agent(_one_call_per_response(calls, ''), deps_type=type(None), capabilities=[*capabilities, Listener()])
+    with suppress(Exception):
+        await agent.run('go', event_stream_handler=handler)
+    return {'listener': listened, 'stream': streamed}
+
+
+@pytest.mark.parametrize('name', _cases(PAIRS_CLOSE_ON_RAISE))
+async def test_an_event_a_raising_call_opened_is_closed(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = CASES[name]
+    assert case.faults is not None and case.faults.pairs is not None
+    pairs = case.faults.pairs
+    breaks: dict[Channel, list[str]] = {'listener': [], 'stream': []}
+    for index, (path, run) in enumerate(pairs.raising.items()):
+        (directory := tmp_path / f'path-{index}').mkdir()
+        for channel, got in (await _channels(pairs, run.build(directory, monkeypatch), run.calls)).items():
+            opened, closed = got.count(pairs.opens), got.count(pairs.closes)
+            assert opened, (
+                f'{path}: the calls opened no `{pairs.opens.__name__}` on the {channel}, so there is nothing to check'
+            )
+            if closed < opened:
+                breaks[channel].append(
+                    f'{path}: on the {channel}, {opened} `{pairs.opens.__name__}` and {closed} `{pairs.closes.__name__}`'
+                )
+    for channel, found in breaks.items():
+        if (known := pairs.known_breaks.get(channel)) is not None:
+            assert found, f'{name} now closes its events on the {channel}: remove its known break ({known.reason})'
+        else:
+            assert not found, '; '.join(found)

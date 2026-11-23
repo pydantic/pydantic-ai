@@ -4,8 +4,8 @@ The provider prompt cache is keyed on the bytes we send: each request in a conve
 with the previous request's bytes, or every token after the first difference is billed and processed
 again. `run_conversation` runs a fixed multi-request scenario (tool calls, then a second run that
 continues from `message_history`, with the clock advancing between requests and optional state-changing
-tool calls) against Anthropic, OpenAI Responses and OpenAI Chat over a mock HTTP transport that returns
-scripted provider responses. `ConversationResult` then answers three questions:
+tool calls) against Anthropic, OpenAI Responses, OpenAI Chat and OpenRouter over a mock HTTP transport that
+returns scripted provider responses. `ConversationResult` then answers three questions:
 
 - `prefix_breaks`: where a request stops starting with the previous one, ignoring the providers' own
   cache-breakpoint markers (Anthropic's `cache_control`, OpenAI's `prompt_cache_breakpoint`), which roll
@@ -62,8 +62,8 @@ from pydantic_ai.toolsets import FunctionToolset
 from .cassette_utils import PrefixBlock, anthropic_deferred_tool_blocks, canonical_prefix_blocks
 from .conftest import try_import
 
-Provider = Literal['anthropic', 'openai-responses', 'openai-chat']
-PROVIDERS: tuple[Provider, ...] = ('anthropic', 'openai-responses', 'openai-chat')
+Provider = Literal['anthropic', 'openai-responses', 'openai-chat', 'openrouter']
+PROVIDERS: tuple[Provider, ...] = ('anthropic', 'openai-responses', 'openai-chat', 'openrouter')
 
 ToolCall = tuple[str, dict[str, Any]]
 
@@ -77,6 +77,7 @@ _ENDPOINTS: dict[Provider, str] = {
     'anthropic': '/v1/messages',
     'openai-responses': '/responses',
     'openai-chat': '/chat/completions',
+    'openrouter': '/chat/completions',
 }
 
 
@@ -249,6 +250,23 @@ def _chat_response(turn: Turn, index: int) -> dict[str, Any]:
     }
 
 
+def _openrouter_response(turn: Turn, index: int) -> dict[str, Any]:
+    """A Chat Completions response from a reasoning model on OpenRouter, which reasons on every response but the first.
+
+    So a run's first tool-call turn is sent back without reasoning and a later one with it, which is what a model
+    that thinks only on some steps does (#12309).
+    """
+    response = _chat_response(turn, index)
+    response |= {'model': 'openai/gpt-5.6-sol', 'provider': 'OpenAI'}
+    if index > 1:
+        thought = f'Step {index} needs one more look.'
+        response['choices'][0]['message'] |= {
+            'reasoning': thought,
+            'reasoning_details': [{'type': 'reasoning.summary', 'summary': thought, 'format': 'openai-responses-v1'}],
+        }
+    return response
+
+
 def _responses_event_stream(response: dict[str, Any]) -> bytes:
     events: list[dict[str, Any]] = [
         {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'output': []}}
@@ -281,9 +299,13 @@ def _chat_event_stream(response: dict[str, Any]) -> bytes:
     choice = response['choices'][0]
     message = choice['message']
     delta: dict[str, Any] = {'role': 'assistant', 'content': message['content']}
+    # OpenRouter streams a response's reasoning in the delta, as its own Chat Completions extension.
+    delta |= {key: message[key] for key in ('reasoning', 'reasoning_details') if key in message}
     if tool_calls := message.get('tool_calls'):
         delta['tool_calls'] = [{**call, 'index': index} for index, call in enumerate(tool_calls)]
-    base = {key: response[key] for key in ('id', 'created', 'model')} | {'object': 'chat.completion.chunk'}
+    base = {key: response[key] for key in ('id', 'created', 'model', 'provider') if key in response} | {
+        'object': 'chat.completion.chunk'
+    }
     chunks: list[dict[str, Any]] = [
         {**base, 'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]},
         {
@@ -299,6 +321,7 @@ _EVENT_STREAMS: dict[Provider, Callable[[dict[str, Any]], bytes]] = {
     'anthropic': _anthropic_event_stream,
     'openai-responses': _responses_event_stream,
     'openai-chat': _chat_event_stream,
+    'openrouter': _chat_event_stream,
 }
 
 
@@ -306,6 +329,7 @@ _RESPONSE_BUILDERS: dict[Provider, Callable[[Turn, int], dict[str, Any]]] = {
     'anthropic': _anthropic_response,
     'openai-responses': _responses_response,
     'openai-chat': _chat_response,
+    'openrouter': _openrouter_response,
 }
 
 
@@ -366,8 +390,10 @@ class _RecordsParameters(Model):
 with try_import() as provider_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     class _RecordingAnthropicModel(_RecordsParameters, AnthropicModel):
         pass
@@ -376,6 +402,9 @@ with try_import() as provider_imports_successful:
         pass
 
     class _RecordingChatModel(_RecordsParameters, OpenAIChatModel):
+        pass
+
+    class _RecordingOpenRouterModel(_RecordsParameters, OpenRouterModel):
         pass
 
 
@@ -390,6 +419,9 @@ _DEFAULT_MODEL_NAMES: dict[Provider, str] = {
     'anthropic': 'claude-opus-5-5',
     'openai-responses': 'gpt-5.6-sol',
     'openai-chat': 'gpt-5.6-sol',
+    # A route that keeps a mid-conversation `system` message where it was sent, as the other legs' models do, so the
+    # leg checks what OpenRouter itself adds to Chat Completions rather than the `<system>` fallback of other routes.
+    'openrouter': 'openai/gpt-5.6-sol',
 }
 
 
@@ -398,6 +430,8 @@ def _model(provider: Provider, transport: _ScriptedTransport, model_name: str | 
     model_name = model_name or _DEFAULT_MODEL_NAMES[provider]
     if provider == 'anthropic':
         return _RecordingAnthropicModel(model_name, provider=AnthropicProvider(api_key='x', http_client=client))
+    if provider == 'openrouter':
+        return _RecordingOpenRouterModel(model_name, provider=OpenRouterProvider(api_key='x', http_client=client))
     model_class = _RecordingResponsesModel if provider == 'openai-responses' else _RecordingChatModel
     return model_class(model_name, provider=OpenAIProvider(api_key='x', http_client=client))
 
@@ -769,12 +803,13 @@ _CACHE_KEYED_SETTINGS: dict[Provider, tuple[str, ...]] = {
     'anthropic': ('model', 'tool_choice', 'thinking', 'output_config'),
     'openai-responses': ('model', 'tool_choice', 'reasoning', 'prompt_cache_key'),
     'openai-chat': ('model', 'tool_choice', 'reasoning_effort', 'prompt_cache_key'),
+    'openrouter': ('model', 'tool_choice', 'reasoning', 'prompt_cache_key'),
 }
 """Top-level request fields that are part of the provider's cache key: changing one misses the cache like a prefix edit.
 
 Anthropic documents `tool_choice`, the thinking parameters and the request-level effort (`output_config.effort`) as
 invalidating the message cache; OpenAI caches per model, per `prompt_cache_key` (requests are routed by it) and, as
-measured, per reasoning effort.
+measured, per reasoning effort. OpenRouter takes the effort in its own `reasoning` object.
 """
 
 

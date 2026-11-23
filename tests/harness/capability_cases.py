@@ -26,16 +26,21 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import (
@@ -95,7 +100,7 @@ from pydantic_ai_harness import (
     TrajectoryJudge,
     WarnNearLimits,
 )
-from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequest, AskUserRequestedEvent, AskUserResponse
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
@@ -104,11 +109,20 @@ from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, Peers
 from pydantic_ai_harness.planning import SqlitePlanStore
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
+from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.slack import Slack
-from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.step_persistence import FileStepStore, InMemoryStepStore
+from pydantic_ai_harness.sub_agents import (
+    DelegationFinishedEvent,
+    DelegationReports,
+    DelegationStartedEvent,
+    DelegationTasks,
+    TaskControl,
+)
 from pydantic_ai_harness.system_reminders import Reminder
+from pydantic_ai_harness.tool_output_limits import Band, Truncate
 
 from ..append_only import CLOCK, Fixture, discover_capabilities
 from ..capability_cases import (
@@ -118,8 +132,15 @@ from ..capability_cases import (
     Collides,
     Combines,
     Contract,
+    EditorConfig,
+    EditsHistory,
+    Exempt,
+    FaultRun,
+    Faults,
     Narrows,
+    Pairs,
     Rejected,
+    Teardown,
     Unbuildable,
 )
 from ..function_model_prefix import COMPACTION_REWRITES_HISTORY
@@ -1114,3 +1135,244 @@ saying so.
 
 CONTRACTS = (HOSTED_MCP_CONNECTION,)
 """The contracts only Pydantic AI Harness capabilities are subject to."""
+
+
+# --- History editors and fault contracts ---------------------------------------------------------------------------
+
+MARKER = re.compile(r'\[m\d+\]')
+"""How `tests/harness/test_history_editors.py` marks what each message says, which a summary must keep."""
+
+
+def _echo_summary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A summary that keeps the marker of every message it summarizes, and says nothing else."""
+    return ModelResponse(parts=[TextPart('Summary: ' + ' '.join(sorted(set(MARKER.findall(str(messages))))))])
+
+
+def _summarizing(**settings: int | bool) -> SummarizingCompaction[None]:
+    return SummarizingCompaction(FunctionModel(_echo_summary), **settings)  # pyright: ignore[reportArgumentType]
+
+
+def _judge_unneeded(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Judges every step unneeded, so each one that can be is dropped or summarized."""
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'needed_verbatim': 0, 'still_matters': 0})])
+
+
+_HISTORY_EDITS: dict[str, EditsHistory] = {
+    'ClampOversizedMessages': {'100 characters': EditorConfig(lambda: ClampOversizedMessages(max_part_chars=100))},
+    'ClearToolResults': {'one pair kept': EditorConfig(lambda: ClearToolResults(max_messages=6, keep_pairs=1))},
+    'CompactOnRequest': {
+        'sliding window': EditorConfig(
+            lambda: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+            calls=(('compact_context', {'focus': 'the news'}),),
+        )
+    },
+    'DeduplicateFileReads': {'by path': EditorConfig(lambda: DeduplicateFileReads(file_key=_read_file_key))},
+    'FallbackCompaction': {
+        'sliding window': EditorConfig(
+            lambda: FallbackCompaction(
+                fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)], max_tokens=100
+            )
+        ),
+        'summarizing': EditorConfig(
+            lambda: FallbackCompaction(fallback_chain=[_summarizing(max_messages=3, keep_messages=2)], max_tokens=100),
+            summarizes=True,
+        ),
+    },
+    'PruneToolResults': {
+        'the previous step': EditorConfig(
+            PruneToolResults,
+            calls=(
+                ('look_up', {'topic': 'news'}),
+                ('prune_tool_result', {'tool_call_id': 'call_0', 'summary': 'Quiet.'}),
+            ),
+        )
+    },
+    'RelevanceCompaction': {
+        'dropping': EditorConfig(
+            lambda: RelevanceCompaction(FunctionModel(_judge_unneeded), max_tokens=1, keep_tokens=1)
+        ),
+        'summarizing': EditorConfig(
+            lambda: RelevanceCompaction(
+                FunctionModel(_judge_unneeded),
+                summarizer=_summarizing(max_messages=1),
+                max_tokens=1,
+                keep_tokens=1,
+            ),
+            summarizes=True,
+        ),
+    },
+    'SlidingWindowCompaction': {
+        # The receipt must not take the only kept slot from the current request (#9719).
+        'receipts': EditorConfig(lambda: SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)),
+        'nothing kept': EditorConfig(lambda: SlidingWindowCompaction(max_messages=1, keep_messages=0)),
+        # Five kept messages start inside the legacy retry history, between a call and its retry (#10759).
+        'five kept': EditorConfig(
+            lambda: SlidingWindowCompaction(max_messages=1, keep_messages=5, preserve_first_user_message=False)
+        ),
+    },
+    'SummarizingCompaction': {
+        # Copies of earlier user turns fill the kept slots (#9715) and displace the tail they replace (#12652).
+        'user turns kept': EditorConfig(
+            lambda: _summarizing(max_messages=3, keep_messages=2, keep_user_messages=True), summarizes=True
+        ),
+        'nothing kept': EditorConfig(
+            lambda: _summarizing(max_messages=1, keep_messages=0, preserve_first_user_message=False), summarizes=True
+        ),
+    },
+    'TieredCompaction': {
+        'clearing tier': EditorConfig(
+            lambda: TieredCompaction(tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10)
+        ),
+        'summarizing tier': EditorConfig(
+            lambda: TieredCompaction(tiers=[_summarizing(max_messages=3, keep_messages=2)], target_tokens=10),
+            summarizes=True,
+        ),
+    },
+    # Reduces every tool result over ten characters, as a small band does: a load's or a search's included (#11446).
+    'ToolOutputLimits': {
+        'truncating': EditorConfig(lambda: ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))]))
+    },
+    'WarnNearLimits': Exempt(
+        'it strips only the warnings an earlier release kept in history, which the editor histories do not hold'
+    ),
+    **dict.fromkeys(
+        (
+            'AWSLambdaDurability',
+            'AbsurdDurability',
+            'AzureDurableTaskDurability',
+            'CodeMode',
+            'DetectLoops',
+            'Memory',
+            'PGTaskDurability',
+            'Peers',
+            'Permissions',
+            'Planning',
+            'PromptInjectionDefender',
+            'RenderWorkflows',
+            'RepoContext',
+            'ReportContextUsage',
+            'ReportRemainingBudget',
+            'ReportStaleFiles',
+            'RequireVerification',
+            'SpendLimits',
+            'StepPersistence',
+            'SystemReminders',
+            'ToolGuardrail',
+            'WrapUpAtLimits',
+        ),
+        'no',
+    ),
+}
+"""What each capability with a history hook does to the history it is sent."""
+
+
+async def _step_persistence_outcome(store: FileStepStore) -> object:
+    """The last event of the run and the state of its last snapshot, which a failed run must leave."""
+    [run] = await store.list_runs()
+    events = await store.list_events(run_id=run.run_id)
+    snapshot = await store.latest_snapshot(run_id=run.run_id, include_interrupted=True)
+    return events[-1].kind, None if snapshot is None else snapshot.state
+
+
+def _step_persistence_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Sequence[AbstractCapability[None]], Callable[[], Awaitable[object]]]:
+    # The default in-memory store never checkpoints, so only a store that writes through a thread shows #11993.
+    store = FileStepStore(tmp_path / 'steps')
+    return [StepPersistence(store=store)], lambda: _step_persistence_outcome(store)
+
+
+async def _answer_fails(request: AskUserRequest) -> AskUserResponse:
+    raise ConnectionError('the answering service is unreachable')
+
+
+def _second_status_read_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sequence[AbstractCapability[None]]:
+    """A foreground command whose second status read raises, after the call announced the command."""
+    status = Job.status
+    reads = 0
+
+    async def failing(job: Job) -> tuple[bool, int | None]:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            raise RuntimeError('the status read failed')
+        return await status(job)
+
+    monkeypatch.setattr(Job, 'status', failing)
+    return [Shell(denied_commands=[], tools=['shell']), LocalWorkspace(tmp_path)]
+
+
+def _child_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ValueError('the sub-agent crashed')
+
+
+def _failing_delegate(**settings: object) -> Callable[[Path, pytest.MonkeyPatch], Sequence[AbstractCapability[None]]]:
+    """A delegate whose sub-agent raises, under `SubAgents` with `settings`."""
+    return lambda tmp_path, monkeypatch: [
+        SubAgents(agents=[SubAgent(Agent(FunctionModel(_child_fails), name='worker'))], agent_folders=None, **settings)  # pyright: ignore[reportArgumentType]
+    ]
+
+
+_DELEGATE = (('delegate_task', {'agent_name': 'worker', 'task': 'Check the logs.'}),)
+_ASK = (
+    (
+        'ask_user_question',
+        {
+            'questions': [
+                {'header': 'Approach', 'question': 'How?', 'options': [{'label': 'Refactor'}, {'label': 'Patch'}]}
+            ]
+        },
+    ),
+)
+
+_FAULTS: dict[str, Faults] = {
+    'StepPersistence': Faults(teardown=Teardown(_step_persistence_teardown)),
+    'BrowserUse': Faults(
+        teardown=Exempt('its browser session runs in the browser-use library, which has no offline seam to cancel')
+    ),
+    'AskUser': Faults(
+        pairs=Pairs(
+            AskUserRequestedEvent,
+            AskUserAnsweredEvent,
+            {'the answerer raises': FaultRun(_ASK, lambda tmp_path, monkeypatch: [AskUser(answerer=_answer_fails)])},
+            known_breaks={
+                'stream': Exempt(
+                    'events a `handle_deferred_tool_calls` hook emits before raising never reach `event_stream_handler`'
+                )
+            },
+        )
+    ),
+    'Shell': Faults(
+        pairs=Pairs(
+            CommandStartedEvent,
+            CommandFinishedEvent,
+            {
+                'a status read raises': FaultRun(
+                    (('shell', {'command': 'sleep 5', 'timeout': 2}),), _second_status_read_fails
+                )
+            },
+            known_breaks=dict.fromkeys(
+                ('listener', 'stream'),
+                Exempt('a foreground command whose call raises after it started gets no `CommandFinishedEvent`'),
+            ),
+        )
+    ),
+    'SubAgents': Faults(
+        pairs=Pairs(
+            DelegationStartedEvent,
+            DelegationFinishedEvent,
+            {
+                'under a task owner': FaultRun(_DELEGATE, _failing_delegate(task_control=TaskControl())),
+                'contained': FaultRun(_DELEGATE, _failing_delegate(contain_errors=True)),
+            },
+            unchecked=(
+                'outside a task owner, a sub-agent error that propagates ends the delegation with no '
+                '`DelegationFinishedEvent`, as `sub_agents/_events.py` documents'
+            ),
+        )
+    ),
+}
+"""How the fault contracts reach each capability, past what its `calls` give them."""
+
+CASES.update({name: replace(CASES[name], edits_history=edits) for name, edits in _HISTORY_EDITS.items()})
+CASES.update({name: replace(CASES[name], faults=faults) for name, faults in _FAULTS.items()})

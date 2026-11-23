@@ -427,7 +427,7 @@ ALLOWED: dict[str, Allowed] = {
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
-        providers=('openai-responses', 'openai-chat'),
+        providers=('openai-responses', 'openai-chat', 'openrouter'),
     ),
     'ReportRemainingBudget': Allowed(
         f'Request-scoped system prompt ({_ISSUES}9019): sent for one request, then left out. Anthropic clears it '
@@ -435,7 +435,7 @@ ALLOWED: dict[str, Allowed] = {
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
-        providers=('openai-responses', 'openai-chat'),
+        providers=('openai-responses', 'openai-chat', 'openrouter'),
     ),
     'ReportStaleFiles': Allowed(
         'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
@@ -443,7 +443,7 @@ ALLOWED: dict[str, Allowed] = {
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
-        providers=('openai-responses', 'openai-chat'),
+        providers=('openai-responses', 'openai-chat', 'openrouter'),
     ),
     'SystemReminders': Allowed(
         f'Request-scoped system prompt ({_PULLS}9712): sent for one request, then left out. Anthropic clears it '
@@ -451,7 +451,7 @@ ALLOWED: dict[str, Allowed] = {
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
-        providers=('openai-responses', 'openai-chat'),
+        providers=('openai-responses', 'openai-chat', 'openrouter'),
     ),
     # docs/harness/code-mode.md#tool-search-interaction: each discovery grows `run_code`'s description, and deferred
     # tools are declared to the native tool search and dropped when they move into `run_code`. Once the last one has
@@ -483,7 +483,7 @@ ALLOWED: dict[str, Allowed] = {
         name: Allowed(
             'Chat Completions has no native tool search, so a native reveal adds the tool to `tools`, as documented',
             (('tools', 'tool:search_tools'), ('tools', 'tool:run_code')),
-            providers=('openai-chat',),
+            providers=('openai-chat', 'openrouter'),
         )
         for name in ('CodeMode(tools=not-tides)+ToolSearch', 'CodeMode(tools=not-tides)+ToolSearch()')
     },
@@ -492,7 +492,7 @@ ALLOWED: dict[str, Allowed] = {
         'Chat Completions has no native tool search, so each native reveal adds the tool to `tools`, as documented',
         (('tools', 'tool:search_tools'), ('tools', 'tool:run_code')),
         max_moves=2,
-        providers=('openai-chat',),
+        providers=('openai-chat', 'openrouter'),
     ),
 }
 """Documented prefix movers, checked exactly."""

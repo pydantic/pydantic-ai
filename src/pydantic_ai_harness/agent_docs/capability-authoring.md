@@ -120,6 +120,10 @@ A `CapabilityEvent` subclass has three names: its class, its namespace, and its 
   `FileChangeRequestedEvent`). A start/stop pair is `*StartedEvent` and `*FinishedEvent`
   (`CommandStartedEvent`, `CommandFinishedEvent`), not the `Start`/`End` of core's part events. A
   streamed chunk of data is a noun (`CommandOutputEvent`).
+
+An event that opens a pair (`*StartedEvent`, `*RequestedEvent`) is closed on every exit, a raise
+included, through the same channel that opened it. Document a raise that leaves the pair open by
+design next to the events, as `sub_agents/_events.py` does for a sub-agent error that propagates.
 - **Namespace**: the snake_case of the emitting capability's class, exported from the capability's
   package as `<NAMESPACE>_EVENTS` (`SUB_AGENTS_EVENTS = 'sub_agents'`).
 - **Kind**: `<namespace>.<name>`, the discriminator that persisted and streamed events are
