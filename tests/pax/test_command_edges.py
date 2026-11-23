@@ -232,7 +232,10 @@ SUBCOMMAND_WRITES: dict[str, Refuses | Exempt] = {
     'config': Refuses('`set` and `reset` write the settings `/config` edits'),
     'plugins': Refuses('`add`, `enable`, `disable` and `remove` write plugin declarations'),
     'sessions': Exempt('lists the live sessions and writes nothing'),
-    'update': Exempt('installs the newest build on the saved `updates.channel` and writes no setting'),
+    'update': Exempt(
+        'installs the newest build on the `updates.channel` the user saved, which `pax config` refuses to change, '
+        'and writes no setting: it cannot change what the agent may do'
+    ),
 }
 
 WIDENING_CASES = [

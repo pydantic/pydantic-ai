@@ -113,8 +113,7 @@ async def _shown(kind: type[WidgetT], show: Callable[[Path], object], tmp_path: 
         def capture(self: object, *args: object, **kwargs: object) -> object:
             raise _Shown(self)
 
-        def unscripted(self: object, *args: object, **kwargs: object) -> object:  # pragma: no cover
-            # Only a case that forgot to script an earlier widget gets here.
+        def unscripted(self: object, *args: object, **kwargs: object) -> object:
             raise AssertionError(f'{show} ran a {type(self).__name__} before its {kind.__name__}: script it')
 
         for widget in (Menu, TextInput, Pager):
@@ -127,7 +126,7 @@ async def _shown(kind: type[WidgetT], show: Callable[[Path], object], tmp_path: 
             widget = event.widget
             assert isinstance(widget, kind)
             return widget
-    raise AssertionError(f'{show} never ran a {kind.__name__}')  # pragma: no cover
+    raise AssertionError(f'{show} never ran a {kind.__name__}')
 
 
 def _termflow_outcome(result: MenuResult | TextInputResult | PagerResult) -> Outcome:

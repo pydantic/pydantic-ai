@@ -3,6 +3,8 @@
 `test_key_surfaces.py` fails on a construction of a key-reading widget that this table does not list, and presses
 every key in `KEYS` on each case. A key a case does not list stays open. Each cell declares what the surface does on
 `main`; a change that gives a key a new meaning on purpose updates its cell.
+
+A case drives the construction site it is registered under, so it calls that site even when the site is private.
 """
 
 from __future__ import annotations

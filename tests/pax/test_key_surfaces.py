@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
 import pydantic_ai_pax
+from pydantic_ai_pax.ui.menus.dialogs import build_pager
 from tests.manifests import assert_classified
-from tests.pax.key_contract import Case, Surface, observed
+from tests.pax.key_contract import PICK, Case, Surface, observed, widget_case
 from tests.pax.key_surfaces import KEY_SURFACES, Site
 
 PACKAGE = Path(pydantic_ai_pax.__file__).parent
@@ -23,9 +24,38 @@ WIDGETS = {
 """The classes whose instances read keys, by the top-level package that defines them."""
 
 
-def _widget(name: str, imported: dict[str, tuple[str, str]], module: str) -> str | None:
-    source, original = imported.get(name, (module, name))
-    return original if original in WIDGETS.get(source.split('.')[0], set()) else None
+def _origins(tree: ast.Module) -> dict[str, str]:
+    """Each name a module imports, by the dotted path it comes from."""
+    origins: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            origins.update({alias.asname or alias.name: f'{node.module}.{alias.name}' for alias in node.names})
+        elif isinstance(node, ast.Import):
+            origins.update(
+                {
+                    alias.asname or alias.name.split('.')[0]: alias.name if alias.asname else alias.name.split('.')[0]
+                    for alias in node.names
+                }
+            )
+    return origins
+
+
+def _callee(func: ast.expr) -> str | None:
+    """The dotted name a call goes through: `Menu`, `menus.Menu`, or `PromptSession` for `PromptSession[str]`."""
+    if isinstance(func, ast.Subscript):
+        return _callee(func.value)
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute) and (base := _callee(func.value)) is not None:
+        return f'{base}.{func.attr}'
+    return None
+
+
+def _widget(callee: str, origins: dict[str, str], own: str) -> str | None:
+    head, _, rest = callee.partition('.')
+    origin = '.'.join(part for part in (origins.get(head, f'{own}.{head}'), rest) if part)
+    name = origin.rpartition('.')[2]
+    return name if name in WIDGETS.get(origin.partition('.')[0], set()) else None
 
 
 def construction_sites() -> Iterator[Site]:
@@ -33,29 +63,38 @@ def construction_sites() -> Iterator[Site]:
     for path in sorted(PACKAGE.rglob('*.py')):
         module = '.'.join(path.relative_to(PACKAGE).with_suffix('').parts)
         tree = ast.parse(path.read_text(encoding='utf-8'))
-        imported = {
-            alias.asname or alias.name: (node.module, alias.name)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module is not None
-            for alias in node.names
-        }
-        own = f'pydantic_ai_pax.{module}'
-        yield from _sites(tree, module, own, imported, ())
+        yield from _sites(tree, module, f'pydantic_ai_pax.{module}', _origins(tree), ())
 
 
-def _sites(
-    node: ast.AST, module: str, own: str, imported: dict[str, tuple[str, str]], scope: tuple[str, ...]
-) -> Iterator[Site]:
+def _sites(node: ast.AST, module: str, own: str, origins: dict[str, str], scope: tuple[str, ...]) -> Iterator[Site]:
     for child in ast.iter_child_nodes(node):
         inner = scope
         if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
             inner = (*scope, child.name)
-        elif isinstance(child, ast.Call):
-            # `PromptSession[str]()` subscripts the class before calling it.
-            func = child.func.value if isinstance(child.func, ast.Subscript) else child.func
-            if isinstance(func, ast.Name) and (widget := _widget(func.id, imported, own)) is not None:
-                yield module, '.'.join(scope) or '<module>', widget
-        yield from _sites(child, module, own, imported, inner)
+        elif (
+            isinstance(child, ast.Call)
+            and (callee := _callee(child.func)) is not None
+            and (widget := _widget(callee, origins, own)) is not None
+        ):
+            yield module, '.'.join(scope) or '<module>', widget
+        yield from _sites(child, module, own, origins, inner)
+
+
+@pytest.mark.parametrize(
+    ('source', 'widget'),
+    [
+        ('from termflow.tui.menu import Menu as Picker\n\ndef f():\n    Picker([])\n', 'Menu'),
+        ('import termflow.tui.menu as menus\n\ndef f():\n    menus.Menu([])\n', 'Menu'),
+        ('import prompt_toolkit\n\ndef f():\n    prompt_toolkit.PromptSession[str]()\n', 'PromptSession'),
+        (
+            'from pydantic_ai_pax.ui.menus.question_menu import QuestionMenu\n\ndef f():\n    QuestionMenu()\n',
+            'QuestionMenu',
+        ),
+    ],
+)
+def test_the_scan_sees_renamed_and_qualified_constructions(source: str, widget: str) -> None:
+    tree = ast.parse(source)
+    assert set(_sites(tree, 'demo', 'pydantic_ai_pax.demo', _origins(tree), ())) == {('demo', 'f', widget)}
 
 
 def test_every_key_reading_surface_is_registered() -> None:
@@ -76,3 +115,32 @@ CASES = [
 async def test_each_key_does_what_its_cell_declares(case: Case, tmp_path: Path) -> None:
     """Every key in `KEYS` on a fresh surface: a mismatch prints the whole row as the surface behaves now."""
     assert await observed(case, tmp_path) == case.expected()
+
+
+def _shows_nothing(path: Path) -> None:
+    return None
+
+
+async def _no_widget(path: Path) -> None:
+    return None
+
+
+def _pager_first(path: Path) -> None:
+    """A site whose case expects a menu but whose first widget is a pager the case did not script."""
+    build_pager('Notes', 'text').run()
+
+
+@pytest.mark.parametrize(
+    ('show', 'message'),
+    [
+        pytest.param(_shows_nothing, 'returned without running a widget', id='sync site shows nothing'),
+        pytest.param(_no_widget, 'never ran a Menu', id='async site shows nothing'),
+        pytest.param(_pager_first, 'ran a Pager before its Menu: script it', id='earlier widget unscripted'),
+    ],
+)
+async def test_a_case_that_never_reaches_its_widget_fails(
+    show: Callable[[Path], object], message: str, tmp_path: Path
+) -> None:
+    """A mis-built case fails loudly instead of reporting an outcome for a widget it never pressed a key on."""
+    with pytest.raises(AssertionError, match=message):
+        await widget_case('broken', show, PICK).press(tmp_path, 'enter')
