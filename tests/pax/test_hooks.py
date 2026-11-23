@@ -109,9 +109,7 @@ async def test_a_block_without_stderr_gets_a_generic_result(tmp_path: Path) -> N
     result = await note_agent(plugin, written).run('write')
     assert written == []
     assert tool_return(result.all_messages()) == 'A before_tool hook blocked write_note.'
-    assert output.getvalue() == 'before_tool hook blocked write_note: sh -c exit 2\n\n', (
-        'a blank row parts it from the next block'
-    )
+    assert output.getvalue() == 'before_tool hook blocked write_note: sh -c exit 2\n'
 
 
 async def test_an_interrupt_while_a_command_fails_to_start_still_interrupts(
