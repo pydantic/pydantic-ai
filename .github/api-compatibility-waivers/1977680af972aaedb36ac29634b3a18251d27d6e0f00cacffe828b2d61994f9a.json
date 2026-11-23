@@ -1,5 +1,0 @@
-{
-  "against": "v2.69.0",
-  "reason": "`XaiModel.unsupported_settings` adds `presence_penalty` and `frequency_penalty`: every Grok model rejects them with a 400 (verified live), so they are now dropped silently instead of failing the request. No request that succeeded changes. It also carries #13524's change, which dropped `service_tier` from the set because xAI now receives a unified `'default'` or `'priority'`; this waiver replaces that PR's, whose fingerprint no longer matches once both changes apply.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12426"
-}
