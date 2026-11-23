@@ -70,7 +70,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards, gc_isolation, home_isolation, span_schema
+from . import cassette_hooks, cost_guards, gc_isolation, home_isolation, leak_guards, span_schema
 from ._inline_snapshot import Builder, Custom, customize
 from ._ports import reserve_loopback_port
 from ._timeouts import READINESS_WAIT_TIMEOUT
@@ -141,6 +141,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
     config.pluginmanager.register(home_isolation, home_isolation.PLUGIN_NAME)
+    config.pluginmanager.register(leak_guards, leak_guards.PLUGIN_NAME)
     config.pluginmanager.register(span_schema, span_schema.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',

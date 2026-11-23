@@ -325,6 +325,12 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
   - An object in a cycle that's still referenced when its test ends, such as one a module-scoped fixture holds, is collected after the last test if it's dropped later. It's reported on stderr as `Leaked by a test, and dropped after it ended`, without failing anything or naming a test. Until then it keeps whatever it holds, so close resources explicitly in higher-scoped fixtures.
   - A leak finalized in an `xfail` test's teardown is reported as `xfail`, not as an error.
 
+## Leaks
+
+`tests/leak_guards.py` fails a test, in its teardown, for a resource it leaves for someone else to clean up:
+
+- An event loop it created on a thread other than the main one and left open, such as the one `Agent.run_sync()` sets on the thread that calls it. While the thread lives it keeps the loop alive, and once the thread exits the collector finalizes the loop under a warning the suite ignores, so nothing else reports it. Close it on that thread, with `asyncio.get_event_loop().close()` at the end of the function the thread runs. Loops that a `module`, `class`, `package` or `session`-scoped fixture or third-party code creates are left to their owner.
+
 ## Home directory
 
 `tests/home_isolation.py` gives each pytest process, every xdist worker included, its own temporary home directory before collection. `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `IPYTHONDIR` point into it, and subprocesses inherit them. Caches (`XDG_CACHE_HOME`) and the credential files live recordings read (`_CREDENTIAL_PATHS`) keep their real paths.
