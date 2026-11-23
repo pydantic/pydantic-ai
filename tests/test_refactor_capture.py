@@ -691,6 +691,7 @@ def test_infer_realtime_model(monkeypatch):
 
 TOOL_PLUMBING = """
 import asyncio
+import threading
 import warnings
 from dataclasses import dataclass
 from unittest.mock import AsyncMock
@@ -748,6 +749,36 @@ def call_once(tool_name):
         return ModelResponse(parts=[TextPart('done')])
 
     return respond
+
+
+def test_tool_hooks_of_concurrent_calls():
+    # `first` returns only once the hooks after `second` have been called.
+    second_done = threading.Event()
+
+    class Signals(AbstractCapability[None]):
+        async def after_tool_execute(self, ctx, *, call, tool_def, args, result):
+            if call.tool_name == 'second':
+                second_done.set()
+            return result
+
+    def respond(messages, info):
+        if len(messages) == 1:
+            calls = [ToolCallPart('first', tool_call_id='a'), ToolCallPart('second', tool_call_id='b')]
+            return ModelResponse(parts=calls)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Signals()])
+
+    @agent.tool_plain
+    def first() -> str:
+        assert second_done.wait(5)
+        return 'first'
+
+    @agent.tool_plain
+    def second() -> str:
+        return 'second'
+
+    agent.run_sync('both')
 
 
 def test_tool_hooks_of_a_nested_run():
@@ -1837,10 +1868,11 @@ def test_capture_records_tool_hooks_sampling_exceptions_and_warnings(run: RunCap
     The agent combines `Rewrites`, a capability defined once the capture started, with `Untouched`; the calls the
     combined capability makes on them aren't recorded again, and the one the test makes on `Rewrites` directly is. The
     first tool call fails once `Rewrites` raised its argument, and `Rewrites` recovers it; the second fails validation.
-    The calls of an agent run inside a tool, while the outer run's `wrap_tool_execute` call runs, are recorded too. A
+    The calls of an agent run inside a tool, while the outer run's `wrap_tool_execute` call runs, are recorded too. Each
+    call's hooks come before the next call's, though the hooks after `second` were called before `first` returned. A
     session that isn't a mock keeps no calls to record.
     """
-    run(tmp_path, tool_plumbing=True).assert_outcomes(passed=7)
+    run(tmp_path, tool_plumbing=True).assert_outcomes(passed=8)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -1919,6 +1951,18 @@ n
 """,
             ),
             ('Rewrites.before_tool_execute', 'direct', ['args', 'call', 'tool_def'], {'n': 0}, {'n': 1}, None),
+            ('CombinedCapability.wrap_tool_validate', 'a', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.before_tool_validate', 'a', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.after_tool_validate', 'a', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.wrap_tool_execute', 'a', ['args', 'call', 'tool_def'], {}, 'first', None),
+            ('CombinedCapability.before_tool_execute', 'a', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.after_tool_execute', 'a', ['args', 'call', 'result', 'tool_def'], {}, 'first', None),
+            ('CombinedCapability.wrap_tool_validate', 'b', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.before_tool_validate', 'b', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.after_tool_validate', 'b', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.wrap_tool_execute', 'b', ['args', 'call', 'tool_def'], {}, 'second', None),
+            ('CombinedCapability.before_tool_execute', 'b', ['args', 'call', 'tool_def'], {}, {}, None),
+            ('CombinedCapability.after_tool_execute', 'b', ['args', 'call', 'result', 'tool_def'], {}, 'second', None),
             ('CombinedCapability.wrap_tool_validate', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
             ('CombinedCapability.before_tool_validate', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
             ('CombinedCapability.after_tool_validate', 'delegate', ['args', 'call', 'tool_def'], {}, {}, None),
@@ -2138,7 +2182,7 @@ n
                 'node': 'test_tool_plumbing.py::test_warnings',
                 'category': 'builtins.UserWarning',
                 'message': 'reported in the test module',
-                'frame': {'module': 'test_tool_plumbing', 'function': 'test_warnings', 'line': 132},
+                'frame': {'module': 'test_tool_plumbing', 'function': 'test_warnings', 'line': 163},
             },
             {
                 'node': 'test_tool_plumbing.py::test_warnings',
@@ -2578,6 +2622,66 @@ def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path,
     assert capsys.readouterr().out.splitlines()[-2:] == snapshot(
         ['only in base: 0, only in head: 0, differing: 1', '  differing: test_requests.py::test_anthropic_beta']
     )
+
+
+FAILING = """
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+
+def test_passes():
+    Agent(TestModel()).run_sync('hello')
+
+
+def test_fails_after_a_request():
+    Agent(TestModel()).run_sync('hello')
+    assert False
+
+
+def test_fails_first():
+    assert False
+"""
+
+
+def test_compare_names_the_nodes_that_failed(
+    pytester: pytest.Pytester, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """A node that fails is listed for each side it failed on, first, so it shows even when a side recorded nothing.
+
+    A test that fails records only what it did before it failed, like one whose MCP server missed its startup timeout,
+    so matching records don't prove it. Listing it doesn't fail the comparison; the failed pytest run does.
+    """
+    pytester.makeconftest(CONFTEST)
+    pytester.makepyfile(test_failing=FAILING)
+    base, head, nothing = tmp_path / 'base', tmp_path / 'head', tmp_path / 'nothing'
+    for capture_dir, args in ((base, ()), (head, ('-k', 'request')), (nothing, ('-k', 'first'))):
+        pytester.runpytest_inprocess(
+            '-p', 'no:cacheprovider', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={capture_dir}', *args
+        )
+        (capture_dir / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{capture_dir}/pydantic_ai/__init__.py'}))
+    capsys.readouterr()
+
+    assert compare(base, head) == 1
+    assert capsys.readouterr().out.splitlines()[:4] == snapshot(
+        [
+            'nodes that failed, base: 2',
+            '  test_failing.py::test_fails_after_a_request',
+            '  test_failing.py::test_fails_first',
+            'nodes that failed, head: 1',
+        ]
+    )
+    assert compare(base, nothing) == 2
+    output = capsys.readouterr()
+    assert output.out.splitlines() == snapshot(
+        [
+            'nodes that failed, base: 2',
+            '  test_failing.py::test_fails_after_a_request',
+            '  test_failing.py::test_fails_first',
+            'nodes that failed, head: 1',
+            '  test_failing.py::test_fails_first',
+        ]
+    )
+    assert output.err.startswith('Nothing recorded in')
 
 
 def test_compare_names_the_nodes_that_recorded_no_request(

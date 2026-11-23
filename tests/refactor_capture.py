@@ -111,7 +111,9 @@ result it returns or the error it raises. The run context and a wrap hook's hand
 hooks where `AbstractCapability` or a subclass defines them, whether the subclass is defined before the capture starts
 or after. A call on a hook while a recorded call on the same hook runs in the same agent run, like the one a combined
 capability makes on each capability it combines, isn't recorded again; one an agent run inside a hook or a tool makes
-is.
+is. The calls a run step makes run concurrently, and a sync tool on a worker thread, so the hook lines of each step's
+tool calls are put in the order the calls started, each call's own in the order they were made: how one call's hooks
+interleave with another's isn't compared.
 
 Each exception a `pytest.raises` or `pytest.RaisesGroup` block catches is one line of kind `exception`, with its class,
 message and notes, whether it suppresses its context, and, described alike, the exceptions it groups, its `__cause__`
@@ -148,7 +150,10 @@ any. It refuses two captures that imported `pydantic_ai` from the same file, sin
 base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams reach
 each module that defines a `StreamedResponse` subclass, the nodes that send to each request target and the nodes with a
 UI, realtime, session or hook record from each UI, realtime, session or hook target, and names the selected nodes that
-recorded no request, realtime or session record, so the capture's reach over the changed code shows.
+recorded no request, realtime or session record, so the capture's reach over the changed code shows. It first names the
+nodes that failed on each side: a test that fails records only what it did before it failed, so matching records don't
+prove it. A test that waits on a fixed timeout, like the five seconds an MCP server started from `--mcp-config` has to
+initialize, can fail on both sides on a loaded machine; run it again once the load is down.
 """
 
 from __future__ import annotations
@@ -208,7 +213,7 @@ import pydantic_ai.ui._web.app as web_app
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -230,6 +235,7 @@ REPO = Path(__file__).resolve().parent.parent
 CAPTURE_OPTION = '--refactor-capture'
 SOURCE_FILE = 'source.json'
 NODES_SUFFIX = '.nodes'
+FAILED_SUFFIX = '.failed'
 # Request headers left out of a capture; the module docstring says why.
 UNRECORDED_HEADERS = frozenset(
     {
@@ -425,6 +431,9 @@ class RefactorCapture:
         self.records: list[dict[str, object]] = []
         # Each stream record with its stream, whose response `write` adds.
         self._streams: list[tuple[dict[str, object], StreamedResponse]] = []
+        # Each hook record of a tool call in a run, with the run and step it's in and the call's ID, by which `write`
+        # orders them.
+        self._tool_calls: list[tuple[dict[str, object], tuple[str | None, int], str]] = []
         # Per stream, by `id`: the iterator `__aiter__` first returned and the recording that wraps it. `_streams` keeps
         # the stream alive meanwhile, so its `id` isn't reused.
         self._iterators: dict[
@@ -482,6 +491,12 @@ class RefactorCapture:
 
     def pytest_unconfigure(self) -> None:
         self._monkeypatch.undo()
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.failed:
+            worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
+            with open(self.capture_dir / f'{worker}{FAILED_SUFFIX}', 'a', encoding='utf-8') as f:
+                f.write(f'{report.nodeid}\n')
 
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_protocol(self, item: pytest.Item) -> Generator[None, object, object]:
@@ -616,14 +631,35 @@ class RefactorCapture:
         if self.records:
             for record, stream in self._streams:
                 record['response'] = normalized(stream.get())
+            self._order_tool_calls()
             with open(self.capture_dir / f'{worker}.jsonl', 'a', encoding='utf-8') as f:
                 f.writelines(json.dumps(record) + '\n' for record in self.records)
             self.clear()
+
+    def _order_tool_calls(self) -> None:
+        """Put the hook records of the tool calls each run step makes in the order the calls started, each call's own
+        in the order they were made, in the places the step's hook records take among the others.
+
+        The calls of a step run concurrently, and a sync tool on a worker thread, so how the hooks of one call called
+        after its tool returns interleave with another's is the threads' order.
+        """
+        steps: dict[tuple[str | None, int], list[tuple[dict[str, object], str]]] = {}
+        for record, step, call_id in self._tool_calls:
+            steps.setdefault(step, []).append((record, call_id))
+        places = {id(record): place for place, record in enumerate(self.records)}
+        for calls in steps.values():
+            started: dict[str, int] = {}
+            for index, (_, call_id) in enumerate(calls):
+                started.setdefault(call_id, index)
+            ordered = sorted(range(len(calls)), key=lambda index: (started[calls[index][1]], index))
+            for (record, _), index in zip(calls, ordered):
+                self.records[places[id(record)]] = calls[index][0]
 
     def clear(self) -> None:
         """Drop the records so far."""
         self.records.clear()
         self._streams.clear()
+        self._tool_calls.clear()
         self._iterators.clear()
         self._numbers.clear()
         self._next_numbers.clear()
@@ -1308,6 +1344,8 @@ class RefactorCapture:
                     },
                 }
                 self.records.append(record)
+                if isinstance(ctx, RunContext) and isinstance(call := kwargs.get('call'), ToolCallPart):
+                    self._tool_calls.append((record, (ctx.run_id, ctx.run_step), call.tool_call_id))
                 token = _RUNNING_TOOL_HOOKS.set(running | {key})
                 try:
                     result = await original(capability, *args, **kwargs)
@@ -1615,6 +1653,14 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     if base_source == head_source:
         print(f'Both captures imported `pydantic_ai` from the same file: {base_source}', file=sys.stderr)
         return 2
+    # A test that fails records only what it did before it failed, so it proves nothing even when both sides match.
+    for side, capture_dir in (('base', base_dir), ('head', head_dir)):
+        if failed := sorted(
+            {node for path in capture_dir.glob(f'*{FAILED_SUFFIX}') for node in path.read_text().split()}
+        ):
+            print(f'nodes that failed, {side}: {len(failed)}')
+            for node in failed:
+                print(f'  {node}')
     base, head = _load(base_dir), _load(head_dir)
     if empty := [d for d, nodes in ((base_dir, base), (head_dir, head)) if not nodes]:
         print(
@@ -1704,7 +1750,8 @@ def main(argv: list[str] | None = None) -> int:
         command = ['-m', 'pytest', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={out / side}', *args.pytest_args]
         env = os.environ | {'PYTHONPATH': pythonpath, 'PYTHONHASHSEED': '0'}
         code = subprocess.run([sys.executable, *command], cwd=REPO, env=env).returncode
-        print(f'{side} capture: pytest exited {code}')
+        # Flushed, so a run stopped from outside, like by `timeout`, still says which side finished.
+        print(f'{side} capture: pytest exited {code}', flush=True)
         failed = failed or code != 0
     print(f'captures: {out}')
     # Tests that fail alike on both sides compare equal, but they don't prove the refactor.
