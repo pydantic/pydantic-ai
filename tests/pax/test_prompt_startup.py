@@ -86,7 +86,7 @@ async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: py
             console=Console(file=output, force_terminal=True, width=80, height=24),
             store=SettingsStore(tmp_path / 'config.db'),
             # A compact panel prints the conversation into scrollback when a command takes over.
-            settings=Settings(full_screen=True),
+            settings=Settings(full_screen=True, model=None),
         )
     text = '\n'.join(Text.from_ansi(row).plain for row in surfaces[0].transcript.frame(width=200, height=200).rows)
     assert text.count('/new starts a session') == 1
@@ -113,7 +113,7 @@ async def test_the_editor_starts_compact_unless_the_setting_asks_for_full_screen
             Agent(TestModel()),
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=24),
-            settings=Settings(full_screen=full_screen),
+            settings=Settings(full_screen=full_screen, model=None),
             store=SettingsStore(tmp_path / 'config.db'),
         )
     assert (ENTER in output.getvalue()) is full_screen

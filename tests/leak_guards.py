@@ -15,7 +15,8 @@ garbage. This plugin fails the test for what that cannot see:
 - An HTTP client an agent run built and left open, such as the one a run gets for a model it builds from a name
   (https://github.com/pydantic/pydantic-ai/pull/10067). The autouse `track_httpx_clients` fixture closes every client
   a test leaves open, and fails the test only for one a run built: a client that test code built, or that a provider
-  or agent built outside a run, is its builder's to close.
+  or agent built outside a run, is its builder's to close. So is the client a provider builds, when a run starts, to
+  replace its own closed one.
 - An async generator of this repository's code that the collector finalized, because nothing closed it after its
   consumer stopped early (https://github.com/pydantic/pydantic-ai/pull/13859). asyncio then schedules its `aclose()` on
   a loop that may never run it, so its `finally` blocks run late or not at all. `GC_FINALIZED_BASELINE` lists the ones
@@ -46,6 +47,7 @@ _ASYNCIO = Path(asyncio.__file__).resolve().parent
 _TESTS = f'{_ROOT / "tests"}{os.sep}'
 _AGENT = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / 'agent' / '__init__.py')
 _AGENT_GRAPH = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / '_agent_graph.py')
+_PROVIDERS = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / 'providers' / '__init__.py')
 
 
 GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
@@ -214,14 +216,17 @@ setattr(asyncio.BaseEventLoop, '_asyncgen_finalizer_hook', _tracking_finalizer_h
 def note_client_created(client: object) -> None:
     """Note the HTTP client that `track_httpx_clients`' factory just created, if an agent run built it.
 
-    A run built it when an `Agent.iter` or agent graph frame asked for it with no test code in between.
+    A run built it when an `Agent.iter` or agent graph frame asked for it with no test code, and no provider
+    replacing its own closed client, in between.
     """
     frame = inspect.currentframe()
     # This function and the fixture's factory come first; the frame after them asked for the client.
     frame = frame and frame.f_back and frame.f_back.f_back
     while frame is not None:
         code = frame.f_code
-        if code.co_filename.startswith(_TESTS):
+        if code.co_filename.startswith(_TESTS) or (
+            code.co_filename == _PROVIDERS and code.co_name == '_refresh_http_client'
+        ):
             return
         if code.co_filename == _AGENT_GRAPH or (code.co_filename == _AGENT and code.co_name == 'iter'):
             site = f'{Path(code.co_filename).relative_to(_ROOT)}:{frame.f_lineno} in {code.co_name}'
