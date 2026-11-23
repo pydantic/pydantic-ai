@@ -156,6 +156,21 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
             provider_error_code=grpc_status.name,
             in_stream=in_stream,
         ) from e
+    except AttributeError as e:
+        # gRPC hands back `None` for a response its deserializer couldn't read, and `xai_sdk` then reads its fields.
+        if e.obj is not None or not _raised_by_xai_sdk(e):
+            raise
+        raise ModelAPIError(
+            model_name=model_name, message='xAI sent a response that could not be decoded', in_stream=in_stream
+        ) from e
+
+
+def _raised_by_xai_sdk(error: BaseException) -> bool:
+    """Whether `xai_sdk` raised `error`: an `AttributeError` raised by any other code is a bug, not a response."""
+    innermost = error.__traceback__
+    while innermost is not None and innermost.tb_next is not None:
+        innermost = innermost.tb_next
+    return innermost is not None and innermost.tb_frame.f_globals.get('__name__', '').startswith('xai_sdk.')
 
 
 # The gRPC client reports its own transport failures with the same status codes a server sends, `UNAVAILABLE` and

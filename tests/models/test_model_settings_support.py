@@ -49,11 +49,9 @@ carries a parenthetical caveat in the docstring (`Bedrock (Anthropic and Amazon 
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect
 import itertools
 import json
-import pkgutil
 import re
 import textwrap
 import types
@@ -68,40 +66,48 @@ import httpx
 import httpx2
 import pytest
 
-from pydantic_ai import UnsupportedSettingWarning, models
+from pydantic_ai import UnsupportedSettingWarning
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.system_one import SystemOneModel
-from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
+from ..manifests import Exempt
+from ..model_adapter_cases import (
+    CASES as MODEL_ADAPTER_CASES,
+    PROBE_KEY,
+    anthropic,
+    bedrock_converse,
+    bedrock_mantle_chat,
+    bedrock_mantle_responses,
+    cerebras,
+    cohere,
+    crusoe,
+    github_copilot,
+    google,
+    google_decisions,
+    groq,
+    huggingface,
+    mistral,
+    ollama,
+    openai_chat,
+    openai_codex,
+    openai_decisions,
+    openai_responses,
+    openrouter,
+    shipped_model_classes,
+    snowflake,
+    system_one,
+    typesafe,
+    xai,
+    zai,
+)
 
 with try_import() as openai_available:
-    from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
-    from pydantic_ai.models.cerebras import CerebrasModel
-    from pydantic_ai.models.crusoe import CrusoeModel
-    from pydantic_ai.models.github_copilot import GitHubCopilotModel
-    from pydantic_ai.models.ollama import OllamaModel
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-    from pydantic_ai.models.openai_codex import OpenAICodexModel
-    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
-    from pydantic_ai.models.openrouter import OpenRouterModel
-    from pydantic_ai.models.snowflake import SnowflakeModel
-    from pydantic_ai.models.zai import ZaiModel
-    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
-    from pydantic_ai.providers.cerebras import CerebrasProvider
-    from pydantic_ai.providers.crusoe import CrusoeProvider
-    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
-    from pydantic_ai.providers.ollama import OllamaProvider
-    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials, OpenAIChatGPTProvider
-    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-    from pydantic_ai.providers.snowflake import SnowflakeProvider
-    from pydantic_ai.providers.zai import ZaiProvider
 
 with try_import() as anthropic_available:
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
@@ -113,12 +119,10 @@ with try_import() as google_available:
     from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.models.google_decisions import GoogleDecisionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_available:
-    from pydantic_ai.models.groq import GroqModel
-    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.models.groq import GroqModel  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 with try_import() as mistral_available:
     from mistralai.client import Mistral
@@ -128,26 +132,18 @@ with try_import() as mistral_available:
     from pydantic_ai.providers.mistral import MistralProvider
 
 with try_import() as cohere_available:
-    from pydantic_ai.models.cohere import CohereModel
-    from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.models.cohere import CohereModel  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
-    from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as huggingface_available:
     from huggingface_hub import AsyncInferenceClient
-
-    from pydantic_ai.models.huggingface import HuggingFaceModel
-    from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     from .test_huggingface import MockHuggingFace
 
 with try_import() as xai_available:
     from xai_sdk import AsyncClient as AsyncXaiClient
-
-    from pydantic_ai.models.xai import XaiModel
-    from pydantic_ai.providers.xai import XaiProvider
 
     from .mock_xai import MockXai
 
@@ -157,8 +153,7 @@ with try_import() as mcp_available:
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
 with try_import() as typesafe_available:
-    from pydantic_ai.models.typesafe import TypeSafeModel
-    from pydantic_ai.providers.typesafe import TypeSafeProvider
+    import typesafe_sdk  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 
 WARNED_SETTINGS = frozenset(
@@ -206,8 +201,6 @@ PROBE_TOOL = ToolDefinition(
     name='probe_tool', description='Probe tool.', parameters_json_schema={'type': 'object', 'properties': {}}
 )
 """OpenAI and Groq only send `parallel_tool_calls` when the request carries tools."""
-
-PROBE_KEY = 'probe-key'
 
 
 def _field_docstrings() -> dict[str, str]:
@@ -495,22 +488,13 @@ def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     return probe
 
 
-bedrock_probe = botocore_probe(
-    lambda: BedrockConverseModel(
-        'anthropic.claude-sonnet-4-5-20250929-v1:0',
-        provider=BedrockProvider(aws_access_key_id=PROBE_KEY, aws_secret_access_key=PROBE_KEY, region_name='us-east-1'),
-    )
-)
+bedrock_probe = botocore_probe(bedrock_converse)
 
 
 async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
     """Probe HuggingFace at the SDK call — its provider rejects `http_client` outright."""
     recorder = MockHuggingFace(completions=[ProbeAborted()])
-    model = HuggingFaceModel(
-        'probe-model',
-        provider=HuggingFaceProvider(api_key=PROBE_KEY, hf_client=cast(AsyncInferenceClient, recorder)),
-    )
-    observed = await run_probe_request(model, settings)
+    observed = await run_probe_request(huggingface(cast(AsyncInferenceClient, recorder)), settings)
     return ProbeResult(
         canonical(recorder.chat_completion_kwargs[0]) if recorder.chat_completion_kwargs else None, observed
     )
@@ -527,7 +511,7 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     return probe
 
 
-xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+xai_probe = xai_sdk_probe(xai)
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -611,14 +595,6 @@ class Case:
     """Settings the model doesn't send but doesn't declare it ignores either, because its output can't break them."""
 
 
-def _openai_chat(client: httpx2.AsyncClient) -> Model:
-    return OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _openai_responses(client: httpx2.AsyncClient) -> Model:
-    return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
-
-
 def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel(
         'gpt-6.1-sol',
@@ -631,103 +607,6 @@ def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
     )
 
 
-def _openai_codex(client: httpx2.AsyncClient) -> Model:
-    return OpenAICodexModel(
-        'gpt-5.6-luna',
-        provider=OpenAICodexProvider(
-            credentials=OpenAICodexCredentials(access_token=PROBE_KEY, refresh_token=PROBE_KEY, account_id='probe'),
-            http_client=client,
-        ),
-    )
-
-
-def _cerebras(client: httpx2.AsyncClient) -> Model:
-    return CerebrasModel('llama3.1-8b', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _crusoe(client: httpx2.AsyncClient) -> Model:
-    return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _github_copilot(client: httpx2.AsyncClient) -> Model:
-    # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
-    return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _ollama(client: httpx2.AsyncClient) -> Model:
-    return OllamaModel(
-        'llama3.2', provider=OllamaProvider(base_url='http://probe/v1', api_key=PROBE_KEY, http_client=client)
-    )
-
-
-def _openrouter(client: httpx2.AsyncClient) -> Model:
-    return OpenRouterModel('openai/gpt-4o', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _snowflake(client: httpx2.AsyncClient) -> Model:
-    return SnowflakeModel(
-        'llama3.1-70b', provider=SnowflakeProvider(account='probe', token=PROBE_KEY, http_client=client)
-    )
-
-
-def _zai(client: httpx2.AsyncClient) -> Model:
-    return ZaiModel('glm-4.6', provider=ZaiProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _bedrock_mantle_chat(client: httpx2.AsyncClient) -> Model:
-    # `gpt-oss-safeguard-*` are the only Mantle models served on the Chat Completions interface.
-    return BedrockMantleChatModel(
-        'openai.gpt-oss-safeguard-20b',
-        provider=BedrockMantleProvider(api_key=PROBE_KEY, region_name='us-east-1', http_client=client),
-    )
-
-
-def _bedrock_mantle_responses(client: httpx2.AsyncClient) -> Model:
-    # GPT-5.4 keeps reasoning off by default, so sampling params are not dropped before the wire.
-    return BedrockMantleResponsesModel(
-        'openai.gpt-5.4',
-        provider=BedrockMantleProvider(api_key=PROBE_KEY, region_name='us-east-1', http_client=client),
-    )
-
-
-def _anthropic(client: httpx2.AsyncClient) -> Model:
-    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _groq(client: httpx.AsyncClient) -> Model:
-    return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _mistral(client: httpx2.AsyncClient) -> Model:
-    return MistralModel('mistral-large-latest', provider=MistralProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _cohere(client: httpx.AsyncClient) -> Model:
-    return CohereModel('command-r-plus', provider=CohereProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _google(client: httpx2.AsyncClient) -> Model:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _google_decisions(client: httpx2.AsyncClient) -> Model:
-    return GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _typesafe(client: httpx2.AsyncClient) -> Model:
-    return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
-
-
-def _system_one(client: httpx2.AsyncClient) -> Model:
-    return SystemOneModel(
-        'clm-latest', provider=SystemOneProvider(base_url='http://localhost:8700', http_client=client)
-    )
-
-
-def _openai_decisions(client: httpx2.AsyncClient) -> Model:
-    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
-
-
 DECISION_HOLDS_WITHOUT_SENDING = frozenset({'max_tokens', 'stop_sequences', 'parallel_tool_calls'})
 """A decision model writes no text and makes at most one tool call, so these hold whether or not they're sent."""
 
@@ -735,16 +614,16 @@ CASES = [
     Case(
         'OpenAIChatModel',
         ('OpenAI', 'OpenAI Chat Completions'),
-        http_probe(_openai_chat),
+        http_probe(openai_chat),
         _needs(openai_available, 'openai'),
     ),
-    Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
+    Case('OpenAIResponsesModel', ('OpenAI',), http_probe(openai_responses), _needs(openai_available, 'openai')),
     # `temperature`/`top_p` provoke the reasoning-model sampling warning, which the suite's
     # `filterwarnings = error` would otherwise turn into a request that never sends.
     Case(
         'OpenAICodexModel',
         ('OpenAI Codex',),
-        http_probe(_openai_codex),
+        http_probe(openai_codex),
         _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
     ),
     # ChatGPT plan usage runs on `OpenAIResponsesModel`, so it is probed as its own case.
@@ -754,30 +633,30 @@ CASES = [
         http_probe(_openai_chatgpt),
         _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
     ),
-    Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
-    Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
-    Case('GitHubCopilotModel', ('GitHub Copilot',), http_probe(_github_copilot), _needs(openai_available, 'openai')),
-    Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),
-    Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter), _needs(openai_available, 'openai')),
-    Case('SnowflakeModel', ('Snowflake',), http_probe(_snowflake), _needs(openai_available, 'openai')),
-    Case('ZaiModel', ('Z.AI',), http_probe(_zai), _needs(openai_available, 'openai')),
+    Case('CerebrasModel', ('Cerebras',), http_probe(cerebras), _needs(openai_available, 'openai')),
+    Case('CrusoeModel', ('Crusoe',), http_probe(crusoe), _needs(openai_available, 'openai')),
+    Case('GitHubCopilotModel', ('GitHub Copilot',), http_probe(github_copilot), _needs(openai_available, 'openai')),
+    Case('OllamaModel', ('Ollama',), http_probe(ollama), _needs(openai_available, 'openai')),
+    Case('OpenRouterModel', ('OpenRouter',), http_probe(openrouter), _needs(openai_available, 'openai')),
+    Case('SnowflakeModel', ('Snowflake',), http_probe(snowflake), _needs(openai_available, 'openai')),
+    Case('ZaiModel', ('Z.AI',), http_probe(zai), _needs(openai_available, 'openai')),
     Case(
         'BedrockMantleChatModel',
         ('Bedrock Mantle', 'Bedrock Mantle Chat Completions'),
-        http_probe(_bedrock_mantle_chat),
+        http_probe(bedrock_mantle_chat),
         _needs(openai_available, 'openai'),
     ),
     Case(
         'BedrockMantleResponsesModel',
         ('Bedrock Mantle',),
-        http_probe(_bedrock_mantle_responses),
+        http_probe(bedrock_mantle_responses),
         _needs(openai_available, 'openai'),
     ),
-    Case('AnthropicModel', ('Anthropic',), http_probe(_anthropic), _needs(anthropic_available, 'anthropic')),
-    Case('GroqModel', ('Groq',), legacy_http_probe(_groq), _needs(groq_available, 'groq')),
-    Case('MistralModel', ('Mistral',), http_probe(_mistral), _needs(mistral_available, 'mistral')),
-    Case('CohereModel', ('Cohere',), legacy_http_probe(_cohere), _needs(cohere_available, 'cohere')),
-    Case('GoogleModel', ('Google',), http_probe(_google), _needs(google_available, 'google')),
+    Case('AnthropicModel', ('Anthropic',), http_probe(anthropic), _needs(anthropic_available, 'anthropic')),
+    Case('GroqModel', ('Groq',), legacy_http_probe(groq), _needs(groq_available, 'groq')),
+    Case('MistralModel', ('Mistral',), http_probe(mistral), _needs(mistral_available, 'mistral')),
+    Case('CohereModel', ('Cohere',), legacy_http_probe(cohere), _needs(cohere_available, 'cohere')),
+    Case('GoogleModel', ('Google',), http_probe(google), _needs(google_available, 'google')),
     Case('BedrockConverseModel', ('Bedrock',), bedrock_probe, _needs(bedrock_available, 'bedrock')),
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
@@ -785,22 +664,22 @@ CASES = [
     Case(
         'TypeSafeModel',
         ('TypeSafe',),
-        decision_probe(_typesafe),
+        decision_probe(typesafe),
         _needs(typesafe_available, 'typesafe-sdk'),
         DECISION_HOLDS_WITHOUT_SENDING,
     ),
-    Case('SystemOneModel', ('System One',), decision_probe(_system_one), (), DECISION_HOLDS_WITHOUT_SENDING),
+    Case('SystemOneModel', ('System One',), decision_probe(system_one), (), DECISION_HOLDS_WITHOUT_SENDING),
     Case(
         'OpenAIDecisionsModel',
         ('OpenAI Decisions',),
-        decision_probe(_openai_decisions),
+        decision_probe(openai_decisions),
         _needs(openai_available, 'openai'),
         DECISION_HOLDS_WITHOUT_SENDING,
     ),
     Case(
         'GoogleDecisionsModel',
         ('Google Decisions',),
-        decision_probe(_google_decisions),
+        decision_probe(google_decisions),
         _needs(google_available, 'google'),
         DECISION_HOLDS_WITHOUT_SENDING,
     ),
@@ -883,47 +762,25 @@ def test_every_documented_name_is_probed():
     )
 
 
-_NOT_API_BACKED = frozenset(
-    {
-        'WrapperModel',
-        'InstrumentedModel',
-        'ConcurrencyLimitedModel',
-        'FallbackModel',
-        'FunctionModel',
-        'TestModel',
-        'BatchedModel',
-    }
-)
-"""Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
+_NOT_API_BACKED = frozenset(name for name, entry in MODEL_ADAPTER_CASES.items() if isinstance(entry, Exempt)) - {
+    'MCPSamplingModel'
+}
+"""Model classes that wrap or stand in for another model, so they have no wire of their own to probe.
+
+`MCPSamplingModel` has no provider SDK for `tests/model_adapter_cases.py` to build it over, but its MCP message is
+a wire this file probes.
+"""
 
 
 def test_every_api_backed_model_class_is_probed():
     """A new `Model` class in a `pydantic_ai.models` module has to join `CASES`.
 
-    The walk is not recursive: a provider package such as `models.openai` counts the classes its `__init__`
-    re-exports from its submodules, and a model it does not re-export would escape it.
-
     Derived from the package rather than a hardcoded list because the hardcoded list is the failure
     this file exists to prevent: `CrusoeModel`, `SnowflakeModel` and the Bedrock Mantle models drifted
     out of the `Supported by:` lists exactly by being added and never enumerated anywhere.
     """
-    discovered: set[str] = set()
-    for module_info in pkgutil.iter_modules(models.__path__, f'{models.__name__}.'):
-        try:
-            module = importlib.import_module(module_info.name)
-        except ImportError:  # pragma: lax no cover
-            continue  # an optional provider SDK isn't installed; its classes can't be probed either
-        for name, obj in vars(module).items():
-            if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
-                continue
-            if obj.__module__ != module_info.name and not obj.__module__.startswith(f'{module_info.name}.'):
-                continue
-            if not issubclass(obj, Model):
-                continue
-            # An abstract base such as `DecisionModel` has no wire of its own; its concrete subclasses are probed.
-            if not inspect.isabstract(cast('type[Model[Any]]', obj)):
-                discovered.add(name)
-
+    classes, _ = shipped_model_classes()
+    discovered = {name for name, model_class in classes.items() if issubclass(model_class, Model)}
     unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}
     assert not unprobed, f'model classes with no probe case, so no `Supported by:` list covers them: {sorted(unprobed)}'
 
@@ -1048,25 +905,23 @@ class RetryCase:
 
 _OPENAI = _needs(openai_available, 'openai')
 RETRY_CASES = [
-    RetryCase('OpenAIChatModel', ('OpenAI',), _openai_chat, (3, 1, 2), marks=_OPENAI),
-    RetryCase('OpenAIResponsesModel', ('OpenAI',), _openai_responses, (3, 1, 2), marks=_OPENAI),
-    RetryCase('OpenAICodexModel', ('OpenAI Codex',), _openai_codex, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAIChatModel', ('OpenAI',), openai_chat, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAIResponsesModel', ('OpenAI',), openai_responses, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAICodexModel', ('OpenAI Codex',), openai_codex, (3, 1, 2), marks=_OPENAI),
     RetryCase(
         'OpenAIResponsesModel (ChatGPT plan usage)', ('OpenAI ChatGPT',), _openai_chatgpt, (3, 1, 2), marks=_OPENAI
     ),
-    RetryCase('CerebrasModel', ('Cerebras',), _cerebras, (3, 1, 2), marks=_OPENAI),
-    RetryCase('CrusoeModel', ('Crusoe',), _crusoe, (3, 1, 2), marks=_OPENAI),
-    RetryCase('GitHubCopilotModel', ('GitHub Copilot',), _github_copilot, (3, 1, 2), marks=_OPENAI),
-    RetryCase('OllamaModel', ('Ollama',), _ollama, (3, 1, 2), marks=_OPENAI),
-    RetryCase('OpenRouterModel', ('OpenRouter',), _openrouter, (3, 1, 2), marks=_OPENAI),
-    RetryCase('SnowflakeModel', ('Snowflake',), _snowflake, (3, 1, 2), marks=_OPENAI),
-    RetryCase('ZaiModel', ('Z.AI',), _zai, (3, 1, 2), marks=_OPENAI),
-    RetryCase('BedrockMantleChatModel', ('Bedrock Mantle',), _bedrock_mantle_chat, (3, 1, 2), marks=_OPENAI),
-    RetryCase('BedrockMantleResponsesModel', ('Bedrock Mantle',), _bedrock_mantle_responses, (3, 1, 2), marks=_OPENAI),
-    RetryCase(
-        'OpenAIDecisionsModel', ('OpenAI Decisions',), _openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI
-    ),
-    RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
+    RetryCase('CerebrasModel', ('Cerebras',), cerebras, (3, 1, 2), marks=_OPENAI),
+    RetryCase('CrusoeModel', ('Crusoe',), crusoe, (3, 1, 2), marks=_OPENAI),
+    RetryCase('GitHubCopilotModel', ('GitHub Copilot',), github_copilot, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OllamaModel', ('Ollama',), ollama, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenRouterModel', ('OpenRouter',), openrouter, (3, 1, 2), marks=_OPENAI),
+    RetryCase('SnowflakeModel', ('Snowflake',), snowflake, (3, 1, 2), marks=_OPENAI),
+    RetryCase('ZaiModel', ('Z.AI',), zai, (3, 1, 2), marks=_OPENAI),
+    RetryCase('BedrockMantleChatModel', ('Bedrock Mantle',), bedrock_mantle_chat, (3, 1, 2), marks=_OPENAI),
+    RetryCase('BedrockMantleResponsesModel', ('Bedrock Mantle',), bedrock_mantle_responses, (3, 1, 2), marks=_OPENAI),
+    RetryCase('OpenAIDecisionsModel', ('OpenAI Decisions',), openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI),
+    RetryCase('AnthropicModel', ('Anthropic',), anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
     # Below anthropic 2.6, a copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which
     # would send the retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
     RetryCase(
@@ -1084,12 +939,12 @@ RETRY_CASES = [
         (3, 1, 2),
         marks=_needs(anthropic_available, 'anthropic'),
     ),
-    RetryCase('GroqModel', ('Groq',), _groq, (3, 1, 2), legacy_http=True, marks=_needs(groq_available, 'groq')),
+    RetryCase('GroqModel', ('Groq',), groq, (3, 1, 2), legacy_http=True, marks=_needs(groq_available, 'groq')),
     # Cohere ignores a sub-second `Retry-After` and backs off for a second or more instead.
     RetryCase(
         'CohereModel',
         ('Cohere',),
-        _cohere,
+        cohere,
         (3, 1, 2),
         legacy_http=True,
         sdk_patches=(('cohere.core.http_client._retry_timeout', _no_backoff),),
@@ -1099,7 +954,7 @@ RETRY_CASES = [
     RetryCase(
         'GoogleModel',
         ('Google',),
-        _google,
+        google,
         (1, 1, 2),
         sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
         marks=_needs(google_available, 'google'),
@@ -1118,13 +973,13 @@ RETRY_CASES = [
     RetryCase(
         'GoogleDecisionsModel',
         ('Google Decisions',),
-        _google_decisions,
+        google_decisions,
         (1, 1, 2),
         decision=True,
         sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
         marks=_needs(google_available, 'google'),
     ),
-    RetryCase('MistralModel', ('Mistral',), _mistral, (1, 1, 1), marks=_needs(mistral_available, 'mistral')),
+    RetryCase('MistralModel', ('Mistral',), mistral, (1, 1, 1), marks=_needs(mistral_available, 'mistral')),
     # Mistral bounds retries by elapsed time, so the count can only be set to `0`; `1` keeps the client's config.
     RetryCase(
         'MistralModel[retry_config]',
@@ -1137,12 +992,12 @@ RETRY_CASES = [
     RetryCase(
         'TypeSafeModel',
         ('TypeSafe',),
-        _typesafe,
+        typesafe,
         (3, 1, 2),
         decision=True,
         marks=_needs(typesafe_available, 'typesafe-sdk'),
     ),
-    RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
+    RetryCase('SystemOneModel', ('System One',), system_one, (1, 1, 1), decision=True),
 ]
 """Every model reached over a mockable HTTP client.
 

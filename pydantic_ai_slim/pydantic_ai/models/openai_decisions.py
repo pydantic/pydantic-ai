@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import ClassVar, Literal, assert_never, cast
 
+import httpx2
 from pydantic import JsonValue
 
 from .. import _model_errors
@@ -275,6 +276,20 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             )
         except APIError as e:
             raise _api_error(e, self._model_name) from e
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
+            body, error, text = _model_errors.transport_error_body(e.response)
+            code, error_type = _model_errors.openai_error_fields(error)
+            raise _model_errors.openai_compatible_status_error(
+                self._model_name,
+                status_code=e.response.status_code,
+                body=body,
+                code=code,
+                error_type=error_type,
+                # `openai`'s own message holds the whole body.
+                message=text,
+                headers=dict(e.response.headers),
+            ) from e
 
         # The SDK builds its response models without validating them, so the body is validated here.
         try:
