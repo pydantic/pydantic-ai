@@ -623,3 +623,15 @@ class ToolResultInfo(ToolCallInfo):
 Each guard takes the inspected value (the prompt, the output, each completed streamed part for `StreamGuardrail`, or a `ToolCallInfo` or `ToolResultInfo`), optionally preceded by a `RunContext`. `InputGuardrailFunc`, `OutputGuardrailFunc`, `StreamGuardrailFunc`, `ToolGuardrailFunc`, and `ToolResultGuardrailFunc` are the signature aliases; `GuardrailError` is the base of `InputBlocked`, `OutputBlocked`, and `ToolBlocked`.
 
 Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/).
+
+## API reference
+
+::: pydantic_ai_harness.guardrails.InputGuardrail
+
+::: pydantic_ai_harness.guardrails.OutputGuardrail
+
+::: pydantic_ai_harness.guardrails.StreamGuardrail
+
+::: pydantic_ai_harness.guardrails.ToolGuardrail
+
+::: pydantic_ai_harness.guardrails.GuardrailResult
