@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -22,7 +21,7 @@ from pydantic_ai.output import OutputContext
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, OutputGuardrail
-from pydantic_ai_harness.guardrails import GuardrailError
+from pydantic_ai_harness.guardrails import GuardrailError, OutputGuardrailFunc
 from tests.harness.conftest import Instrumented
 
 
@@ -309,7 +308,7 @@ class TestOutputGuardrailTracing:
         ],
     )
     async def test_a_chain_span_names_the_guard_that_decided(
-        self, guards: list[Any], output: str, decided_by: tuple[str, int]
+        self, guards: list[OutputGuardrailFunc[object]], output: str, decided_by: tuple[str, int]
     ):
         tracer, exporter = _recording_tracer()
         og = OutputGuardrail(guard=guards)

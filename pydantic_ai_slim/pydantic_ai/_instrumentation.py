@@ -989,7 +989,7 @@ def record_uncaught_errors(
     *,
     include_content: bool,
     event_attributes: Callable[[Exception], Mapping[str, AttributeValue]] | None = None,
-    not_errors: tuple[type[Exception], ...] = (),
+    not_errors: tuple[type[BaseException], ...] = (),
 ) -> Generator[None]:
     """Record exceptions leaving `span`'s scope the way `use_span` would have.
 
