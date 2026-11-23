@@ -135,7 +135,9 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
         if isinstance(pai_message, messages.ModelRequest):
             if pai_message.instructions is not None:
                 system_prompt.append(pai_message.instructions)
-            sampling_msgs.extend(_map_request_history(pai_message, system_prompt))
+            request_msgs, request_system_prompts = _map_request_history(pai_message)
+            system_prompt.extend(request_system_prompts)
+            sampling_msgs.extend(request_msgs)
         else:
             sampling_msgs.append(
                 mcp_types.SamplingMessage(role='assistant', content=_map_response_history(pai_message))
@@ -143,15 +145,18 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
     return '\n\n'.join(system_prompt), sampling_msgs
 
 
-def _map_request_history(request: messages.ModelRequest, system_prompt: list[str]) -> list[mcp_types.SamplingMessage]:
-    """Map a request's parts to sampling messages, adding its system prompts to `system_prompt`."""
+def _map_request_history(
+    request: messages.ModelRequest,
+) -> tuple[list[mcp_types.SamplingMessage], list[str]]:
+    """Map a request's parts to sampling messages, and collect its system prompts."""
     sampling_msgs: list[mcp_types.SamplingMessage] = []
+    system_prompts: list[str] = []
     tool_results: list[mcp_types.SamplingMessageContentBlock] = []
     for part in _sendable_request_parts(request.parts):
         if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
             raise _unprojected_instruction_delta_error()
         if isinstance(part, messages.SystemPromptPart):
-            system_prompt.append(part.content)
+            system_prompts.append(part.content)
         elif isinstance(part, messages.UserPromptPart):
             for content in _map_user_prompt(part):
                 sampling_msgs.append(mcp_types.SamplingMessage(role='user', content=content))
@@ -175,7 +180,7 @@ def _map_request_history(request: messages.ModelRequest, system_prompt: list[str
     if tool_results:
         # MCP requires all results from a turn in one message, before ordinary user content.
         sampling_msgs.insert(0, mcp_types.SamplingMessage(role='user', content=tool_results))
-    return sampling_msgs
+    return sampling_msgs, system_prompts
 
 
 def _map_tool_return(part: messages.ToolReturnPart) -> mcp_types.ToolResultContent:

@@ -73,10 +73,10 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
     stored by durable execution still loads after the module defining its kind is gone.
     """
     for tool in tools.values():
-        _check_tool_kind(tool.tool_def)
+        _check_tool_definition_kind(tool.tool_def)
 
 
-def _check_tool_kind(tool_def: ToolDefinition) -> None:
+def _check_tool_definition_kind(tool_def: ToolDefinition) -> None:
     """Refuse one tool's `tool_kind` the way `_check_tool_kinds` describes."""
     kind_id = tool_def.tool_kind
     if kind_id is None:
@@ -719,7 +719,7 @@ class ToolManager(Generic[AgentDepsT]):
                 nonlocal handler_validated_args
                 handler_validated_args = None
                 validated_args = await self._run_validation_lifecycle(
-                    cap, call, tool, ctx, args, allow_partial=allow_partial
+                    cap, ctx, call, tool, args, allow_partial=allow_partial
                 )
                 # A wrap deferral is valid only after its most recent handler call completed.
                 handler_validated_args = validated_args
@@ -751,9 +751,9 @@ class ToolManager(Generic[AgentDepsT]):
     async def _run_validation_lifecycle(
         self,
         cap: AbstractCapability[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
         tool: ToolsetTool[AgentDepsT],
-        ctx: RunContext[AgentDepsT],
         args: str | dict[str, Any],
         *,
         allow_partial: bool,
