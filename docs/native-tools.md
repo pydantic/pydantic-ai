@@ -854,7 +854,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both for you.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds the `computer` tool and the `ComputerTool` for you.
 
 A request needs exactly one `computer` tool the model can call. With none, an `optional` `ComputerTool` is left out and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]; with more than one, the request raises `UserError`.
 
