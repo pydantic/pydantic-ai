@@ -543,7 +543,8 @@ class StreamRenderer:
             console=self.console,
             thinking=self._thinking,
             hyperlinks=self.console.is_terminal,
-            preview=self._block is not None,
+            # History replays whole parts, so there is nothing to show early.
+            preview=self._block is not None and self.smooth,
             continuation=continuation,
         )
 
