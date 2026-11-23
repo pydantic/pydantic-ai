@@ -93,7 +93,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
-| `display.theme` | `default` | Keep CLAI colours, or select a bundled Termflow palette with /theme. |
+| `display.theme` | `default` | Keep CLAI colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
 | `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
@@ -1884,7 +1884,12 @@ searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
-terminal palette untouched. The default preview has no forced background.
+terminal palette untouched. On a light terminal background, `default` uses darker
+shades of its colours that reach WCAG AA contrast (4.5:1) on white, cream and light grey, and shows diffs
+on pale green and red lines. CLAI finds the background at startup by asking the
+terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark one.
+It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
+during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
 All other choices come from Termflow's bundled registry, including
