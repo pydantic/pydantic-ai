@@ -59,4 +59,4 @@ def _decode(data: bytes) -> BinaryContent:
         with Image.open(BytesIO(data), formats=FORMATS) as image:
             return encode_image(image)
     except (OSError, Image.DecompressionBombError) as exc:
-        raise ValueError(f'Not an image CLAI can read: {exc}') from exc
+        raise ValueError(f'Not an image Pax can read: {exc}') from exc

@@ -1,6 +1,6 @@
-"""`open_stock_agent`: CLAI's stock agent run from code, apart from the user's saved CLAI configuration.
+"""`open_stock_agent`: Pax's stock agent run from code, apart from the user's saved Pax configuration.
 
-The agent is driven by `FunctionModel` and `TestModel`: what is under test is how CLAI assembles the
+The agent is driven by `FunctionModel` and `TestModel`: what is under test is how Pax assembles the
 agent, not what a provider returns.
 """
 
@@ -23,9 +23,9 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
 from pydantic_ai_pax import app, open_stock_agent
+from pydantic_ai_pax.app import create_stock_agent
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.customization import customization_guide
 from pydantic_ai_pax.models.resolver import ModelResolver
 from pydantic_ai_pax.plugins.loader import PluginSettingsError
 
@@ -119,7 +119,7 @@ async def test_plugin_settings_override_the_stock_coder(
 
 
 async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
-    """Everything else, starting with the CLAI docs capability, is one catalog line until the model loads it."""
+    """Everything else, starting with the Pax docs capability, is one catalog line until the model loads it."""
     seen: list[AgentInfo] = []
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -131,7 +131,9 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
 
     # The CLI adds the docs capability to this stock set, as `create_stock_agent` does.
     async with open_stock_agent(
-        workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[customization_guide()]
+        workspace=tmp_path,
+        model=FunctionModel(stream_function=stream),
+        capabilities=[create_stock_agent().root_capability],
     ) as agent:
         await agent.run('hello')
     first, second = seen
@@ -144,7 +146,8 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
         if 'capability:deferred_capabilities' in part.content
     ]
     assert len(catalog) == 1
-    assert '- clai_customization: Use when asked to customize CLAI itself' in catalog[0]
+    assert 'clai_customization' not in catalog[0]
+    assert '- pax_customization: Use when asked to customize Pax itself' in catalog[0]
     assert catalog == [
         part.content
         for part in second.model_request_parameters.instruction_parts or ()

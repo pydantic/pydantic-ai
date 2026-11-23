@@ -333,7 +333,7 @@ def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
     data = base64.b64encode(image_path.read_bytes()).decode()
     assert decode_images([data, data]) == [read_image(image_path)] * 2
-    with pytest.raises(ValueError, match='Not an image CLAI can read'):
+    with pytest.raises(ValueError, match='Not an image Pax can read'):
         decode_images([base64.b64encode(b'not an image').decode()])
     with pytest.raises(ValueError, match='base64'):
         decode_images(['not base64!'])

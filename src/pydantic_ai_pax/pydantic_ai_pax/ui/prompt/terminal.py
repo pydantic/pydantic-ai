@@ -1,4 +1,4 @@
-"""The terminal CLAI runs in: its console, editor, and transcript, showing one live session at a time."""
+"""The terminal Pax runs in: its console, editor, and transcript, showing one live session at a time."""
 
 import io
 from collections.abc import AsyncGenerator
@@ -18,6 +18,7 @@ from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.terminal_background import drain_late_reply
 
 if TYPE_CHECKING:
     from pydantic_ai_pax.cli.self_update import WebHandoff
@@ -38,7 +39,7 @@ NOWHERE = _Nowhere()
 
 
 class Terminal(Generic[DepsT, OutputT]):
-    """The terminal CLAI runs in, showing one live session of its process at a time.
+    """The terminal Pax runs in, showing one live session of its process at a time.
 
     The session shown prints to the console, reads the editor (or the line prompt when the console is
     not a terminal), and takes Ctrl-C. Every other one prints nowhere and reads only what `send_input`
@@ -64,7 +65,7 @@ class Terminal(Generic[DepsT, OutputT]):
         """The line prompt, when the console is not a terminal."""
         self.shown: SessionRuntime[DepsT, OutputT] | None = None
         self.home: SessionRuntime[DepsT, OutputT] | None = None
-        """The session CLAI started with, while `drive` runs it."""
+        """The session Pax started with, while `drive` runs it."""
         self.ended_in: SessionRuntime[DepsT, OutputT] | None = None
         """The session whose end ended `drive`: the one shown then."""
         self.home_closed = False
@@ -102,7 +103,7 @@ class Terminal(Generic[DepsT, OutputT]):
         self.attach(runtime)
         await runtime.sessions.show_resumed()
         runtime.console.print(
-            f'Showing session {runtime.session.conversation_id}, which is live in this CLAI.', markup=False
+            f'Showing session {runtime.session.conversation_id}, which is live in this Pax.', markup=False
         )
 
     def ended(self, runtime: 'SessionRuntime[DepsT, OutputT]', reason: SessionEndReason) -> None:
@@ -114,7 +115,7 @@ class Terminal(Generic[DepsT, OutputT]):
         self._ended.set()
 
     async def drive(self, home: 'SessionRuntime[DepsT, OutputT]') -> SessionEndReason:
-        """Run `home`, the session CLAI started with, until the session shown ends; returns that one's reason.
+        """Run `home`, the session Pax started with, until the session shown ends; returns that one's reason.
 
         `home` stays live while another session is shown: it ends with its input, or by idle closing.
         The terminal shows it again before `drive` returns.
@@ -152,13 +153,14 @@ class Terminal(Generic[DepsT, OutputT]):
         if self.lines:
             yield
             return
+        drain_late_reply()  # Just before the editor reads keys, the last moment a late reply can be told apart.
         self.editor = LivePrompt(
             console=self.console,
             commands=self._shown().commands,
             history=self.history,
             images=self.images,
             interrupts=self._shown().interrupts,
-            toolbar=lambda: self._shown().status.toolbar(),
+            toolbar=lambda: self._shown().status.toolbar(width=self.console.width),
             steer=lambda text: self._shown().steer(text),
             run_now=lambda text: self._shown().run_now(text),
             transcript=self.transcript,
@@ -196,7 +198,9 @@ class Terminal(Generic[DepsT, OutputT]):
                 [
                     (theme.color(style), text)
                     for style, text in (
-                        [(theme.MUTED, self.images.notice)] if self.images.notice else self._shown().status.toolbar()
+                        [(theme.MUTED, self.images.notice)]
+                        if self.images.notice
+                        else self._shown().status.toolbar(width=self.console.width)
                     )
                 ]
             ),

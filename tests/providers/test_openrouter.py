@@ -557,3 +557,21 @@ def test_openrouter_optional_reasoning_routes_are_not_always_on(model_name: str)
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('thinking_always_enabled', False) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supports_json_schema_output'),
+    [
+        ('moonshotai/kimi-k3', True),
+        ('moonshotai/kimi-k3.1-pro', True),
+        ('moonshotai/kimi-k2.6', False),
+    ],
+)
+def test_openrouter_kimi_json_schema_output(model_name: str, supports_json_schema_output: bool):
+    """Only the recorded Kimi K3 routes take `NativeOutput`; `test_openrouter_kimi_native_output` records them.
+
+    A unit test because the flag-off side is a pre-request guard, which no recording reaches.
+    """
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_json_schema_output', False) is supports_json_schema_output

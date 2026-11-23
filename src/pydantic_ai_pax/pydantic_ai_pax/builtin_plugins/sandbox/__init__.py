@@ -147,7 +147,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         if re.fullmatch(KEY_NAME, name) is None:
             return f'{name!r} is not an environment variable name: use capitals, digits, and underscores.'
         if name in _SET_BY_CLAI:
-            return f'CLAI sets {name} in the sandbox itself, so it cannot be replaced.'
+            return f'Pax sets {name} in the sandbox itself, so it cannot be replaced.'
         ref = _owned(ctx.workspace.ref)
         assert ref is not None  # `_in_sandbox` offers the tool only there.
         async with self.plugin.host.full_screen():
@@ -165,7 +165,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
             return f'The user did not give {name}.'
         self.plugin.sandbox(ref).env[name] = saved.get_secret_value()
         return (
-            f'{name} is set for every command started from now on, until CLAI restarts; ask again if a command '
+            f'{name} is set for every command started from now on, until Pax restarts; ask again if a command '
             'then finds it missing. Restart a server started before it.'
         )
 
@@ -316,8 +316,8 @@ class SandboxPlugin(Plugin):
         checkout = await to_thread.run_sync(snapshot, self.host.workspace)
         ref, backend = await _create(provider, github)
         try:
-            # Saved before seeding, which can take minutes, so a CLAI that dies meanwhile leaves a conversation
-            # naming the sandbox, which `/sandbox delete` can delete. The request is CLAI's, not a prompt the user
+            # Saved before seeding, which can take minutes, so a Pax that dies meanwhile leaves a conversation
+            # naming the sandbox, which `/sandbox delete` can delete. The request is Pax's, not a prompt the user
             # typed, so `/rewind` cannot cut the history back to before it. The response only names the sandbox:
             # it is empty, so providers send nothing for it, and the run's instructions say where the tools run.
             request = imported_context(
@@ -360,7 +360,7 @@ class SandboxPlugin(Plugin):
 
 
 _SET_BY_CLAI = frozenset({'GH_TOKEN', *SANDBOX_ENV})
-"""What `request_env` refuses: `GH_TOKEN` is CLAI's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
+"""What `request_env` refuses: `GH_TOKEN` is Pax's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
 
 
 async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition | None:

@@ -50,7 +50,7 @@ class CommandContext:
     edits: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     """Held by each save, so the terminal's `/set` menu, typed commands, and the web UI, each on its own thread, never lose one."""
     settings_for: Callable[[ProjectSettings], Settings] | None = None
-    """The settings CLAI starts with beside a project file, launch flags included; without it, saved ones, then the project's."""
+    """The settings Pax starts with beside a project file, launch flags included; without it, saved ones, then the project's."""
     workspace: Callable[[], Path] = Path.cwd
     """The directory this session works in, where `/project` looks for approvals when no file sets them."""
     saved: Callable[[str], None] = lambda key: None
@@ -66,7 +66,7 @@ class CommandContext:
         return key in self.project.overrides
 
     def use_project(self, project: ProjectSettings, settings: Settings) -> None:
-        """Adopt another directory's project file and the settings CLAI starts with there, applying each one."""
+        """Adopt another directory's project file and the settings Pax starts with there, applying each one."""
         self.project = project
         self.settings = settings
         if settings.model:
@@ -78,13 +78,13 @@ class CommandContext:
         """`/project` lists what the project file sets; `approve` and `revoke` decide its other keys for this repository.
 
         The model's tools never reach `/commands`, and a file a repository ships cannot approve itself. This
-        does not hold against a process that drives CLAI's input or writes the user's settings database, such as
+        does not hold against a process that drives Pax's input or writes the user's settings database, such as
         an agent's shell. An approval keeps the value approved, so a changed value waits again.
         """
         project, root = self.project, self.project.root
         stored = self._stored_approvals()
         if root is None and not stored:
-            raise ValueError('No project file: CLAI looks for .clai/settings.json from here up to the repository root.')
+            raise ValueError('No project file: Pax looks for .clai/settings.json from here up to the repository root.')
         match args:
             case [] | ['list']:
                 return _project_listing(project, stored)
@@ -132,7 +132,7 @@ class CommandContext:
         return {folder: rows for folder in folders if (rows := self.store.approved_project_settings(folder))}
 
     def _use_project(self, project: ProjectSettings) -> None:
-        """Adopt `project` for this session, applying each key that starts or stops applying, as CLAI would start with it.
+        """Adopt `project` for this session, applying each key that starts or stops applying, as Pax would start with it.
 
         That includes a key another live session approved or revoked since; such a session is not told at the time.
         """
@@ -184,7 +184,7 @@ class CommandContext:
             if key in STRING_SETTINGS or (key == 'sessions.naming_model' and raw != 'null')
             else adapter.validate_json(raw)
         )
-        # Unset fields stay unset, so a field the user never chose keeps reading as CLAI's default.
+        # Unset fields stay unset, so a field the user never chose keeps reading as Pax's default.
         updated = self.settings.model_dump(exclude_unset=True)
         updated[SETTING_FIELDS[key]] = value
         settings = Settings.model_validate(updated)
@@ -195,7 +195,7 @@ class CommandContext:
         return value, settings
 
     def model_settings(self, model: str) -> ModelSettings | None:
-        """Family defaults plus saved overrides: what CLAI applies to a run with `model`."""
+        """Family defaults plus saved overrides: what Pax applies to a run with `model`."""
         from pydantic_ai_pax.models.model_settings import model_settings_from_json
 
         form = model_settings_from_json(self.store.model_settings(model), model=self.settings_model(model))

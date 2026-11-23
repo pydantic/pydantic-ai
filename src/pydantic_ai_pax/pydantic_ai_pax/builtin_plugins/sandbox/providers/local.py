@@ -7,13 +7,13 @@ this machine is mounted into the VM: like a cloud sandbox, it holds a copy of th
 access, from this machine's network, to clone and push.
 
 SmolVM: where smolmachines is installed, which has wheels for macOS and Linux only, the VM runs through it in
-CLAI's process (harness `SmolSandboxBackend`), and it ends with that process, so `close` runs `sync`: smolmachines
-writes a VM's disk back only then or on a stop. Elsewhere, Windows included, CLAI drives the `smolvm` CLI on
-`PATH`, whose VM would outlive CLAI, so `close` stops it. That path has passed the workspace conformance suite against
+Pax's process (harness `SmolSandboxBackend`), and it ends with that process, so `close` runs `sync`: smolmachines
+writes a VM's disk back only then or on a stop. Elsewhere, Windows included, Pax drives the `smolvm` CLI on
+`PATH`, whose VM would outlive Pax, so `close` stops it. That path has passed the workspace conformance suite against
 smolvm 1.36.1 on Linux, but not yet run on a Windows host. Either way the next command starts the VM again, and a conversation
 resumed later finds its files.
 
-BoxLite: the box runs in CLAI's process (harness `BoxLiteSandboxBackend`) and stops when CLAI exits, keeping its
+BoxLite: the box runs in Pax's process (harness `BoxLiteSandboxBackend`) and stops when Pax exits, keeping its
 disk, writes included, so `close` has nothing to do. One process at a time can use BoxLite's home directory.
 """
 
@@ -45,7 +45,7 @@ _SYNC_TIMEOUT = 60.0
 
 logger = logging.getLogger(__name__)
 
-_INSTALL = "Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
+_INSTALL = "Install Pax with it: uv tool install 'pydantic-ai-pax[local]'."
 
 
 def _not_on_intel_mac(title: str) -> str | None:
@@ -184,7 +184,7 @@ class BoxLiteProvider:
         return self._backend(ref)
 
     async def close(self, backend: SandboxBackend) -> None:
-        # The box stops when CLAI exits, keeping its disk, so there is nothing to write back or stop.
+        # The box stops when Pax exits, keeping its disk, so there is nothing to write back or stop.
         pass
 
     async def delete(self, ref: WorkspaceRef) -> None:

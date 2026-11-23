@@ -1,6 +1,6 @@
 """Sign in to GitHub through the GitHub CLI, and read its token on every run.
 
-GitHub's hosted MCP server offers no dynamic client registration, so CLAI cannot run its own
+GitHub's hosted MCP server offers no dynamic client registration, so Pax cannot run its own
 OAuth flow without a registered OAuth App. `gh auth login --web` already has one: it shows a
 one-time code, the user approves it in the browser, and `gh` keeps the token in the OS keyring.
 """
