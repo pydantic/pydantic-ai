@@ -2288,6 +2288,16 @@ class SimpleAgentWorkflowWithOverrideModel:
             pass
 
 
+async def test_temporal_agent_override_capabilities_in_workflow() -> None:
+    """The guard raises before any model request, so there is nothing to record: `in_workflow` is patched instead."""
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(
+            UserError, match='Capabilities cannot be contextually overridden inside a Temporal workflow'
+        ):
+            with simple_temporal_agent.override(capabilities=[]):
+                pass
+
+
 async def test_temporal_agent_override_model_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,

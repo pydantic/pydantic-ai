@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import RealtimeSession, RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
@@ -364,6 +365,70 @@ The code word is ORANGE. Tell the user when they ask for it.
         if isinstance(part, SpeechPart)
     ]
     assert speech[-1] is not None and 'orange' in speech[-1].lower()
+
+
+async def test_voice_instructions_steer_the_voice_model(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
+) -> None:
+    """`append_voice_instructions()` adds to the voice model's own prompt with `session.instructions.append`.
+
+    Live acknowledges it, and the voice model follows it in the reply it speaks, while history records only the
+    conversation.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Answer in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.append_voice_instructions("End every reply you speak with the exact word 'pineapple'.")
+        await session.send('What is the capital of France?')
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await session.wait_for_reply()
+        if realtime_recording:  # pragma: no cover
+            # Replay's clock moves with the recorded frames: keep the ones that carry it past the turn's end.
+            await anyio.sleep(0.5)  # real-wait: recording only, so the cassette holds the frames past the turn's end
+        messages = session.all_messages()
+
+    voice_instructions = [
+        (interaction.direction, {key: value for key, value in interaction.data.items() if key != 'event_id'})
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage)
+        and interaction.data.get('type', '').startswith('session.instructions.')
+    ]
+    assert voice_instructions == snapshot(
+        [
+            (
+                'sent',
+                {
+                    'type': 'session.instructions.append',
+                    'delegation_id': None,
+                    'content': "End every reply you speak with the exact word 'pineapple'.",
+                },
+            ),
+            ('received', {'type': 'session.instructions.appended', 'start_ms': 600, 'end_ms': 800}),
+        ]
+    )
+    # The instructions aren't part of the conversation: history has the question and the spoken answer.
+    assert [
+        [
+            f'{part.part_kind}: {part.content}'
+            if isinstance(part, UserPromptPart)
+            else f'{part.part_kind}: {part.transcript}'
+            if isinstance(part, SpeechPart)
+            else part.part_kind
+            for part in message.parts
+        ]
+        for message in messages
+    ] == snapshot(
+        [
+            ['user-prompt: What is the capital of France?'],
+            ["speech: What is the capital of France? It's Paris, pineapple."],
+        ]
+    )
 
 
 async def test_typed_small_talk_is_answered_in_one_reply(

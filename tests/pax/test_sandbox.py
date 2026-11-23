@@ -2656,21 +2656,23 @@ class TestCompaction:
                 working_dirs.append(await ctx.workspace.working_dir())
 
         waiting = anyio.Event()
-        answers = iter(['first answer', 'unanswered', 'third answer'])
-        sent: list[int] = []
+        answers = iter(['first answer', 'second answer', 'unanswered', 'fourth answer'])
+        sent: list[list[ModelMessage]] = []
 
         async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            sent.append(len(messages))
-            if next(answers) == 'unanswered':
+            sent.append(list(messages))
+            answer = next(answers)
+            if answer == 'unanswered':
                 if ending == 'failed':
                     raise RuntimeError('the provider is down')
                 waiting.set()
                 await anyio.sleep_forever()
-            yield 'ok'
+            yield answer
 
         loaded = load(checkout)
         agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
-        # Compacts the second turn's request down to its prompt alone, before the model is called.
+        # Compacts the third turn's history before the model is called, down to the first prompt, the second
+        # answer (the latest naming the sandbox) and the third prompt.
         compaction = SlidingWindowCompaction[None](max_messages=4, keep_messages=1)
         session = Session(
             agent,
@@ -2682,16 +2684,19 @@ class TestCompaction:
         loaded.host.conversation = session
         await plugin_of(loaded).command(['fake'])
         await session.prompt('first question')
+        await session.prompt('second question')
         if ending == 'failed':
             with pytest.raises(RuntimeError):
-                await session.prompt('second question')
+                await session.prompt('third question')
         else:
             async with anyio.create_task_group() as tasks:
-                tasks.start_soon(session.prompt, 'second question')
+                tasks.start_soon(session.prompt, 'third question')
                 await waiting.wait()
                 tasks.cancel_scope.cancel()
 
-        await session.prompt('third question')
+        await session.prompt('fourth question')
         ref = WorkspaceRef(provider='fake', id='sbx-1')
-        assert sent[1] == 1
+        _, kept, _ = sent[2]
+        assert isinstance(kept, ModelResponse)
+        assert (kept.text, kept.workspace_ref) == ('second answer', ref)
         assert working_dirs[-1] == str(provider.folder(ref))

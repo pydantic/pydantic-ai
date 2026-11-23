@@ -811,6 +811,11 @@ account alone opens no incident. Keep these outcomes local to their run:
   `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
   concurrency, so such an incident has no recovery signal. An exhausted plan still blocks
   the next run at its quota check.
+- A 403 `max_cache_misses_exceeded` from AWF's API proxy (runner kind `cache_miss_limit`).
+  `awf` starts the proxy with each run's containers and removes it when the run ends, so
+  its count of consecutive cache misses spans one run's root agent and sub-agents, and the
+  next run starts a fresh count. Z.AI never saw the refused request, so the host record
+  runs no Z.ai check for it.
 - A gate on a `pull_request`, `pull_request_review` or `pull_request_review_comment` event
   that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds secrets
   from these events on fork and Dependabot pull requests. Gates on other events, and the
