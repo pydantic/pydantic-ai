@@ -185,7 +185,10 @@ def _map_computer_action(raw: Any) -> list[Any]:
         case _OpenAIDoubleClick():
             return [{'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}]
         case _OpenAIMove():
-            return [{'type': 'mouse_move', 'x': action.x, 'y': action.y}]
+            # The tool can't hold keys during a move. Held keys go along, so the tool refuses the move instead of
+            # running it without them.
+            held = {'modifiers': action.keys} if action.keys else {}
+            return [{'type': 'mouse_move', 'x': action.x, 'y': action.y, **held}]
         case _OpenAIDrag():
             path = [{'x': point.x, 'y': point.y} for point in action.path]
             return [{'type': 'drag', 'path': path, 'modifiers': action.keys}]

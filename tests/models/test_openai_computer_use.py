@@ -934,6 +934,11 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
         ({'type': 'move', 'x': 1, 'y': 2}, {'type': 'mouse_move', 'x': 1, 'y': 2}),
+        # The tool refuses held keys on a move, rather than moving without them.
+        (
+            {'type': 'move', 'x': 1, 'y': 2, 'keys': ['CTRL']},
+            {'type': 'mouse_move', 'x': 1, 'y': 2, 'modifiers': ['ctrl']},
+        ),
         (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []},
@@ -1234,9 +1239,8 @@ _VALID_ACTION: st.SearchStrategy[dict[str, Any]] = st.one_of(
             'keys': _MODIFIERS,
         }
     ),
-    st.fixed_dictionaries(
-        {'type': st.sampled_from(['double_click', 'move']), 'x': _COORDINATE, 'y': _COORDINATE, 'keys': _MODIFIERS}
-    ),
+    st.fixed_dictionaries({'type': st.just('double_click'), 'x': _COORDINATE, 'y': _COORDINATE, 'keys': _MODIFIERS}),
+    st.fixed_dictionaries({'type': st.just('move'), 'x': _COORDINATE, 'y': _COORDINATE}),
     st.fixed_dictionaries(
         {
             'type': st.just('scroll'),
