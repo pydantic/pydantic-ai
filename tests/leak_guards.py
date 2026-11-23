@@ -94,6 +94,7 @@ GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
         'tests/harness/boxd_sandbox/fake_boxd.py:_FakeExecCall._chunks',
         'tests/harness/code_mode/test_temporal.py:test_uncaught_remote_setup_error_fails_workflow_task.<locals>.<genexpr>',
         'tests/harness/guardrails/test_stream_guardrail.py:TestStreamGuardrail.test_block_and_redaction_spans_gate_content.<locals>.events',
+        'tests/harness/kubernetes_sandbox/fake_sandboxd.py:FakeSandboxd._start',
         'tests/harness/modal_sandbox/fake_modal.py:_FakeStream.__aiter__',
         'tests/harness/render_sandbox/workspace_helpers.py:_supervise',
         'tests/harness/sub_agents/test_tasks.py:parent_model.<locals>.stream',
