@@ -5305,14 +5305,27 @@ async def test_tool_search_capability_named_strategy_wraps_with_tool_search_tool
 
 async def test_tool_search_named_strategy_raises_on_unsupported_model():
     """Named native strategies error on models that don't support `ToolSearchTool`
-    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4."""
+    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4.
+
+    The supported tools come from a `frozenset` of classes, whose iteration order changes per process,
+    so the exact message pins their sorted order."""
 
     m = TestModel()
-    with pytest.raises(UserError, match='not supported by this model'):
+    with pytest.raises(UserError) as exc_info:
         m.prepare_request(
             None,
             ModelRequestParameters(function_tools=[], native_tools=[ToolSearchTool(strategy='bm25')]),
         )
+    assert str(exc_info.value) == snapshot(
+        "Native tool(s) ['ToolSearchTool'] not supported by this model. "
+        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'FileSearchTool', 'ImageGenerationTool', 'MCPServerTool', "
+        "'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
+        'To use these tools with this model, provide a local fallback via NativeOrLocalTool(native=..., local=...) '
+        "or the `local` parameter of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+        'MCP(local=True), ImageGeneration(local=my_func)). '
+        'Some capabilities require an optional install group for the local fallback '
+        '(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+    )
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
