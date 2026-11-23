@@ -7,7 +7,8 @@ The body properties call each model's private message mapper instead of recordin
 about the request body itself, over many histories per run: no request is sent, and a cassette holds
 one recorded body per test and isn't always matched on it. Each history goes through what an agent run
 does before mapping, in its order: `repair_messages`, `Model.prepare_messages` with the run's parameters,
-`repair_messages` again, then `Model.prepare_request`, whose parameters the mapper gets. Every body test also
+`repair_messages` again, then `Model.prepare_request`, whose parameters the mapper gets. Each model maps with its
+default settings, so a branch on a setting the run passes is outside the body properties. Every body test also
 checks P1, that mapping doesn't raise: no drawn history is one a model should refuse, so a `UserError` fails a
 test too, except the one refusal a case declares (`MapperCase.refusal`).
 
@@ -18,10 +19,11 @@ draws it out of that property's histories, and a strict expected failure on a ha
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, assert_never
 
@@ -53,6 +55,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, override_allow_model_requests
 from pydantic_ai.models.decision import DecisionModel
+from pydantic_ai.settings import ModelSettings
 
 from .conftest import try_import
 from .history_invariants import (
@@ -78,20 +81,20 @@ from .history_strategies import (
     SERVER_REF_SHAPES,
     Damage,
     Drawn,
+    ServerRefApi,
     ServerRefField,
     histories,
 )
 from .manifests import assert_classified, union_members
 from .model_adapter_cases import SdkCell, sdk_cells, shipped_model_classes
-from .model_adapter_transports import XaiTransport
+from .model_adapter_transports import Httpx2Transport, XaiTransport
 
 with try_import():
     import grpc
     import grpc.aio
 
 with try_import() as openai_imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 pytestmark = IGNORE_RANDOM_STATE_NOTE
 
@@ -671,9 +674,9 @@ _TESTS = Path(__file__).parent
 
 
 @pytest.mark.parametrize('key', list(SERVER_REF_SHAPES), ids='-'.join)
-def test_server_ref_shapes_match_their_cassettes(key: tuple[str, str]):
+def test_server_ref_shapes_match_their_cassettes(key: tuple[ServerRefApi, ServerRefField]):
     """Each drawn server reference has the shape its cassette recorded."""
-    shape = SERVER_REF_SHAPES[key]  # pyright: ignore[reportArgumentType]
+    shape = SERVER_REF_SHAPES[key]
     recorded = (_TESTS / shape.cassette).read_text()
     assert re.search(rf'(?<![A-Za-z0-9_]){shape.pattern}(?![A-Za-z0-9_])', recorded), shape
 
@@ -697,9 +700,11 @@ class _Refusal:
     """A provider that answers every request it receives with a 400, so a request that reaches it ends there."""
 
     reached: int = 0
+    bodies: list[bytes] = field(default_factory=list[bytes])
 
     def handler(self, request: httpx2.Request) -> httpx2.Response:
         self.reached += 1
+        self.bodies.append(request.content)
         return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe', 'code': 'probe'}})
 
     async def unary(self) -> object:
@@ -712,12 +717,14 @@ class _Refusal:
         yield await self.unary()
 
 
-async def _send(model: Model, cell: SdkCell, history: list[ModelMessage]) -> UserError | None:
+async def _send(
+    model: Model, cell: SdkCell, history: list[ModelMessage], settings: ModelSettings | None = None
+) -> UserError | None:
     """Send `history` through `model` as an agent run prepares it, with `cell`'s parameters."""
     prepared = prepare(model, history, cell.case.parameters)
     try:
         with override_allow_model_requests(True):
-            await model.request(prepared.messages, None, cell.case.parameters)
+            await model.request(prepared.messages, settings, cell.case.parameters)
     except ModelAPIError:
         pass
     except UserError as error:
@@ -788,15 +795,28 @@ def _redacted_histories(draw: st.DrawFn) -> tuple[list[ModelMessage], set[str]]:
     return history, stale
 
 
+async def _sent_previous_response_id(history: list[ModelMessage]) -> JsonValue:
+    """The `previous_response_id` the request OpenAI Responses sends for `history` carries, set to continue stored
+    responses where it can."""
+    cell = next(cell for cell in _REQUEST_CELLS if cell.id == 'OpenAIResponsesModel.request')
+    transport = cell.case.transport
+    assert isinstance(transport, Httpx2Transport)
+    refusal = _Refusal()
+    async with transport.model(refusal.handler) as model:
+        assert isinstance(model, Model)
+        settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto'}
+        assert await _send(model, cell, history, settings) is None
+    body: JsonValue = json.loads(refusal.bodies[-1])
+    return body.get('previous_response_id') if isinstance(body, dict) else None
+
+
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 @PROPERTY_SETTINGS
 @given(_redacted_histories())
 def test_responses_continuation_skips_edited_history(edit: tuple[list[ModelMessage], set[str]]):
     """P10: OpenAI Responses continues a stored response only from a history it can tell is unchanged: after a response
-    is redacted, no request names it or a later response as `previous_response_id`, since the server would answer
-    from the unredacted copy it stored."""
+    is redacted, the request sends neither it nor a later response as `previous_response_id`, since the server would
+    answer from the unredacted copy it stored."""
     history, stale = edit
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test-key'))
-    messages = prepare(model, history).messages
-    previous_response_id = model._get_previous_response_id_and_new_messages(messages)[0]  # pyright: ignore[reportPrivateUsage]
-    assert stale_reference_violations(stale, [previous_response_id]) == []
+    with asyncio.Runner() as runner:
+        assert stale_reference_violations(stale, [runner.run(_sent_previous_response_id(history))]) == []
