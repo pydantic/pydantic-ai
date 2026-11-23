@@ -63,12 +63,12 @@ try:
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
-from pydantic_ai_harness._display import LazyDisplay, desktop_size
+from pydantic_ai_harness._display import LazyDisplay, checked_desktop_size
 from pydantic_ai_harness.daytona_sandbox._desktop import (
-    ALLOW_CHROMIUM,
+    ADD_CHROMIUM_NO_SANDBOX_FLAG,
     DISPLAY,
     REQUEST_TIMEOUT as _REQUEST_TIMEOUT,
-    DaytonaDesktop,
+    DaytonaDisplayDriver,
 )
 
 _AUTH_MESSAGE = (
@@ -500,14 +500,14 @@ class DaytonaSandboxBackend(
         self._create_name: str | None = None
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
-        self._desktop_size = desktop_size(desktop)
+        self._desktop_size = checked_desktop_size(desktop)
         # Commands see the desktop too, so a program the agent starts from the shell opens on it.
         self._env = {**({'DISPLAY': DISPLAY} if self._desktop_size else {}), **(env or {})}
         self._display = (
             None
             if self._desktop_size is None
             else LazyDisplay(
-                DaytonaDesktop(self._attached_computer_use), self._start_display, scope=self._display_scope
+                DaytonaDisplayDriver(self._computer_use_api), self._start_display, operation=self._display_operation
             )
         )
         self._secrets = dict(secrets) if secrets is not None else None
@@ -683,7 +683,7 @@ class DaytonaSandboxBackend(
             # Under the lock, so a sandbox still being created is recorded before its client closes.
             async with self._lock:
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
-                self._reset_display()
+                self._mark_display_stopped()
             if client is not None:
                 await _close_quietly(client)
 
@@ -699,7 +699,7 @@ class DaytonaSandboxBackend(
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
                 # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
-                self._reset_display()
+                self._mark_display_stopped()
                 await run_to_completion(lambda: _close_quietly(client))
 
     async def working_dir(self) -> str:
@@ -876,13 +876,13 @@ class DaytonaSandboxBackend(
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
 
-    def _reset_display(self) -> None:
+    def _mark_display_stopped(self) -> None:
         # The sandbox may stop before it is attached again, and its desktop with it.
         if self._display is not None:
-            self._display.reset()
+            self._display.mark_stopped()
 
     @asynccontextmanager
-    async def _display_scope(self) -> AsyncGenerator[None]:
+    async def _display_operation(self) -> AsyncGenerator[None]:
         async with self._operation():
             sandbox = await self.get_sandbox()
             if sandbox.public:
@@ -910,8 +910,8 @@ class DaytonaSandboxBackend(
                 # Such as a desktop that stopped with its sandbox. The next call starts the display again.
                 raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
 
-    def _attached_computer_use(self) -> AsyncComputerUse:
-        # The display calls it inside `_display_scope`, which attaches the sandbox and keeps it attached.
+    def _computer_use_api(self) -> AsyncComputerUse:
+        # The display calls it inside `_display_operation`, which attaches the sandbox and keeps it attached.
         assert self._sandbox is not None
         return self._sandbox.computer_use
 
@@ -923,16 +923,16 @@ class DaytonaSandboxBackend(
             if status.status != 'active':
                 await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
         except daytona.DaytonaServiceUnavailableError as error:
-            if not _desktop_broken(error):
+            if not _is_desktop_broken(error):
                 raise
             raise WorkspaceUnavailableError(
                 f'The desktop of the Daytona sandbox {sandbox.id!r} stopped answering. Stop and start the sandbox '
                 f'to bring it back. ({error})'
             ) from error
-        await sandbox.process.exec(ALLOW_CHROMIUM, timeout=_REQUEST_TIMEOUT)
+        await sandbox.process.exec(ADD_CHROMIUM_NO_SANDBOX_FLAG, timeout=_REQUEST_TIMEOUT)
 
 
-def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
+def _is_desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
     """Whether a 503 error comes from a broken desktop, not from Daytona's proxy briefly refusing traffic.
 
     A desktop that took input before it started answers every request with `connection is shut down`.

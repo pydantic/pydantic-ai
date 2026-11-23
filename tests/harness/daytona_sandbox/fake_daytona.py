@@ -42,7 +42,7 @@ from daytona import (
 )
 from daytona.common.errors import SOURCE_PROXY
 
-from pydantic_ai_harness.daytona_sandbox._desktop import ALLOW_CHROMIUM
+from pydantic_ai_harness.daytona_sandbox._desktop import ADD_CHROMIUM_NO_SANDBOX_FLAG
 
 from ..display_fakes import FAKE_SCREENSHOT
 
@@ -82,7 +82,7 @@ class FakeProcess:
             target = shlex.split(command)[-1]
             resolved = posixpath.normpath(posixpath.join(cwd or self.owner.workdir, target))
             return SimpleNamespace(result=resolved + '\n', exit_code=0)
-        if command == ALLOW_CHROMIUM:
+        if command == ADD_CHROMIUM_NO_SANDBOX_FLAG:
             # Not run on the host: it writes under `/etc`.
             return SimpleNamespace(result='', exit_code=0)
         if command.startswith('[ -p '):

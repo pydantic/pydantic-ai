@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -107,7 +107,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
-        desktop_size(self.desktop)
+        checked_desktop_size(self.desktop)
         if (error := secrets_error(self.secrets, self.env)) is not None:
             raise UserError(f'{error}.')
 

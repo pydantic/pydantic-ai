@@ -40,7 +40,7 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from ..display_contract_live import check_display_contract, png_size
-from ..display_fakes import screen
+from ..display_fakes import full_display
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live
@@ -342,7 +342,7 @@ class TestLiveDaytonaDesktop:
 
     async def test_display_contract(self, backend: WorkspaceBackend) -> None:
         """The desktop is 1280x800, and its screenshots, zoom and pointer agree with that size."""
-        display = screen(backend)
+        display = full_display(backend)
         assert await display.display_size() == (1280, 800)
         await check_display_contract(display)
 
@@ -355,7 +355,7 @@ class TestLiveDaytonaDesktop:
         """Validates the mapping the fake assumes: Daytona holds a click's or scroll's modifiers around it, and `cmd`,
         which `super` maps to, is `Super_L`."""
         assert isinstance(backend, DaytonaSandboxBackend)
-        display = screen(backend)
+        display = full_display(backend)
         await display.display_size()  # starts the desktop, so the window opens on it
         await backend.write_bytes('log_events.py', _EVENT_LOGGER.encode())
         await backend.run('rm -f events.txt; setsid python3 log_events.py >/dev/null 2>&1 &', shell=True)
