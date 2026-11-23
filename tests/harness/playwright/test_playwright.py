@@ -23,7 +23,7 @@ from typing import Literal, Protocol, get_args
 
 import anyio
 import pytest
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
@@ -33,7 +33,7 @@ from playwright.async_api import Error as PlaywrightError, StorageState, Timeout
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn, ToolReturnPart
@@ -57,6 +57,7 @@ from pydantic_ai_harness.playwright import (
     PlaywrightBrowserToolset,
     RequestKind,
 )
+from tests.harness.conftest import Instrumented
 
 _STORAGE_STATE: StorageState = {'cookies': [{'name': 'session', 'value': 'abc', 'domain': 'example.com', 'path': '/'}]}
 
@@ -3774,23 +3775,6 @@ def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
     return provider.get_tracer('test'), exporter
 
 
-async def _run_browser_operation(
-    instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]],
-    operation: Callable[[], Awaitable[object]],
-    include_content: bool = True,
-) -> list[ReadableSpan]:
-    tracing, exporter = instrumented(include_content)
-    agent = Agent(TestModel(call_tools=['drive']), capabilities=[tracing])
-
-    @agent.tool_plain
-    async def drive() -> str:
-        await operation()
-        return ''
-
-    await agent.run('drive')
-    return [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
-
-
 class TestBrowserEvents:
     """What the page did between tool calls: console, network, refusals, popups."""
 
@@ -3933,7 +3917,7 @@ class TestBrowserEvents:
 
     @pytest.mark.parametrize('include_content', [True, False])
     async def test_page_urls_and_event_text_are_recorded_only_with_content(
-        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
+        self, include_content: bool, instrumented: Instrumented
     ) -> None:
         # What the page logged and the URLs it touched are content; the event's shape is not.
         page = _FakePage()
@@ -3948,10 +3932,16 @@ class TestBrowserEvents:
 
         session.page = _BusyPage()
 
-        async def drive() -> None:
-            await toolset.get_text()
+        tracing, exporter = instrumented(include_content)
+        agent = Agent(TestModel(call_tools=['drive']), capabilities=[tracing])
 
-        (span,) = await _run_browser_operation(instrumented, drive, include_content)
+        @agent.tool_plain
+        async def drive() -> str:
+            await toolset.get_text()
+            return ''
+
+        await agent.run('drive')
+        (span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
         assert span.attributes is not None
         assert ('url.full' in span.attributes) is include_content
         console, response = span.events
