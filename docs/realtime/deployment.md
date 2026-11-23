@@ -260,6 +260,8 @@ async def media_stream(websocket: WebSocket):
             async for event in session:
                 if isinstance(event, RealtimeInputSpeechStartEvent):
                     played = marks.played_bytes
+                    # Unheard, but still behind the next interruption's position.
+                    marks.played_bytes += sum(marks.pending.values())
                     marks.pending.clear()
                     await websocket.send_json({'event': 'clear', 'streamSid': stream_sid})
                     await session.interrupt(played_bytes=played)
@@ -290,7 +292,8 @@ What a bridge has to get right:
   `clear` too. Twilio then drops what it hasn't played and echoes every mark still pending, though nobody heard
   that audio. Read the played count and forget the pending marks before sending `clear`, so those echoes count
   for nothing, and name each chunk's mark before sending the chunk, so a `clear` sent in between drops the mark
-  too.
+  too. Then add the bytes of those chunks to the count: the session handed them over and can't learn that the
+  caller skipped them, so every later `interrupt()` would otherwise land that many bytes early.
 - **Models that interrupt themselves.** Gemini and ElevenLabs Agents cut their own reply short when the caller
   talks and report a [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
   rather than a speech start: send `clear` on it too, with no `interrupt()` call, as the example does.

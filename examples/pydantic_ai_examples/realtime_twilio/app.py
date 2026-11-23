@@ -144,8 +144,8 @@ class PlaybackMarks:
     """How much of the session's audio Twilio has played to the caller.
 
     Each chunk sent to Twilio is followed by a `mark`, which Twilio echoes once the
-    chunk has played. `played_bytes` counts the session's PCM16 bytes, the unit
-    `interrupt(played_bytes=...)` takes.
+    chunk has played. `played_bytes` counts the session's PCM16 bytes Twilio is done
+    with, played or dropped by a `clear`: the position `interrupt(played_bytes=...)` takes.
     """
 
     played_bytes: int = 0
@@ -161,16 +161,23 @@ class PlaybackMarks:
 
     def played(self, name: str) -> None:
         """Twilio echoed a mark: the chunk before it has played."""
-        # A mark dropped by `discard_pending()` was never played, though `clear` echoes it.
+        # A mark dropped by `clear()` was never played, though Twilio echoes it.
         self.played_bytes += self._pending.pop(name, 0)
 
-    def discard_pending(self) -> None:
-        """Forget the chunks Twilio hasn't played, ahead of a `clear` that drops them."""
+    def clear(self) -> int:
+        """Note a `clear` dropping the chunks Twilio hasn't played, returning the position the caller heard to.
+
+        The echoes `clear` sends for their marks count for nothing. Their bytes still count
+        toward later positions: the session handed them over, and has no other way to learn
+        the caller skipped them.
+        """
+        heard = self.played_bytes
+        self.played_bytes += sum(self._pending.values())
         self._pending.clear()
+        return heard
 
 
 app = FastAPI()
-validator = RequestValidator(os.environ.get('TWILIO_AUTH_TOKEN', ''))
 public_url = os.environ.get('PUBLIC_URL', 'http://localhost:8000')
 # The calls `/twiml` answered, whose stream `/media-stream` is waiting for. A production
 # server would also forget a call whose stream never arrives.
@@ -179,10 +186,16 @@ answered_calls: set[str] = set()
 
 @app.post('/twiml')
 async def twiml(request: Request) -> Response:
+    # Anyone can sign with an empty key, so without the token every request would pass as Twilio's.
+    if not (auth_token := os.environ.get('TWILIO_AUTH_TOKEN')):
+        raise RuntimeError(
+            'Set `TWILIO_AUTH_TOKEN` to check that requests come from Twilio.'
+        )
     form = await request.form()
     params = {key: str(value) for key, value in form.items()}
     # Twilio signs the public URL it called, which a tunnel or proxy hides from the request.
     signature = request.headers.get('X-Twilio-Signature', '')
+    validator = RequestValidator(auth_token)
     # The SDK is untyped.
     if not validator.validate(f'{public_url}/twiml', params, signature):  # pyright: ignore[reportUnknownMemberType]
         raise HTTPException(status_code=403)
@@ -278,10 +291,9 @@ async def bridge(
             if isinstance(
                 event, RealtimeInputSpeechStartEvent | RealtimeResponseInterruptedEvent
             ):
-                played = marks.played_bytes
                 # `clear` makes Twilio echo every mark still pending, for audio the
                 # caller never heard: drop them first, so they don't count as played.
-                marks.discard_pending()
+                played = marks.clear()
                 await websocket.send_json({'event': 'clear', 'streamSid': stream_sid})
                 if isinstance(
                     event, RealtimeInputSpeechStartEvent

@@ -114,12 +114,14 @@ with try_import() as imports_successful:
         so the test waits for the cancel on a `threading.Event`.
         """
 
-        def __init__(self, interruption: RealtimeCodecEvent | None = None) -> None:
+        def __init__(self, interruption: RealtimeCodecEvent | None = None, *, replies: int = 1) -> None:
             self.interruption = interruption or RealtimeInputSpeechStartEvent()
+            self.replies = replies
             self.sent: list[RealtimeInput] = []
             self.instructions: str | None = None
             self.cancelled = threading.Event()
             self._caller_spoke = asyncio.Event()
+            self._reply_cancelled = asyncio.Event()
 
         async def send_input(self, content: RealtimeInput) -> None:
             self.sent.append(content)
@@ -127,12 +129,20 @@ with try_import() as imports_successful:
                 self._caller_spoke.set()
             elif isinstance(content, CancelResponse):
                 self.cancelled.set()
+                self._reply_cancelled.set()
 
         async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
-            yield AudioDelta(data=REPLY_CHUNK)
-            yield AudioDelta(data=REPLY_CHUNK)
-            await self._caller_spoke.wait()
-            yield self.interruption
+            for reply in range(self.replies):
+                if reply:
+                    # As a provider does, end the reply spoken over once the session cancels it, then start the next.
+                    await self._reply_cancelled.wait()
+                    self._reply_cancelled.clear()
+                    yield ResponseDone(interrupted=True)
+                yield AudioDelta(data=REPLY_CHUNK)
+                yield AudioDelta(data=REPLY_CHUNK)
+                await self._caller_spoke.wait()
+                self._caller_spoke.clear()
+                yield self.interruption
             await asyncio.Event().wait()
 
 
@@ -339,7 +349,7 @@ TWILIO_TOKEN = 'test-auth-token'
 
 def _twilio_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
-    monkeypatch.setattr(realtime_twilio, 'validator', RequestValidator(TWILIO_TOKEN))
+    monkeypatch.setenv('TWILIO_AUTH_TOKEN', TWILIO_TOKEN)
     monkeypatch.setattr(realtime_twilio, 'public_url', 'https://bridge.example')
     monkeypatch.setattr(realtime_twilio, 'answered_calls', set[str]())
     return TestClient(realtime_twilio.app)
@@ -422,6 +432,17 @@ def test_twilio_webhook_connects_only_the_calls_it_answers(mocker: MockerFixture
     assert connection.instructions is None
 
 
+def test_twilio_webhook_needs_the_auth_token(monkeypatch: pytest.MonkeyPatch):
+    """Anyone can sign with an empty key, so without the token the webhook answers no call."""
+    client = _twilio_client(monkeypatch)
+    monkeypatch.setenv('TWILIO_AUTH_TOKEN', '')
+    params = {'CallSid': 'CA1', 'From': '+1'}
+    signature = RequestValidator('').compute_signature('https://bridge.example/twiml', params)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(RuntimeError, match='Set `TWILIO_AUTH_TOKEN`'):
+        client.post('/twiml', data=params, headers={'X-Twilio-Signature': signature})
+    assert realtime_twilio.answered_calls == set()
+
+
 def test_twilio_bridge_interrupts_at_what_the_caller_heard(mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
     """When the caller talks over the reply, the bridge clears Twilio's buffer and interrupts the session at
     the audio Twilio confirmed playing: the first chunk's mark came back before the caller spoke, the
@@ -458,6 +479,39 @@ def test_twilio_bridge_interrupts_at_what_the_caller_heard(mocker: MockerFixture
         )
         in connection.sent
     )
+
+
+def test_twilio_bridge_interrupts_each_reply_at_what_the_caller_heard(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """The audio a `clear` dropped still counts toward the next interruption's position: the session handed it
+    over, so the second interruption, like the first, lands after the one chunk the caller heard of its reply."""
+    client = _twilio_client(monkeypatch)
+    connection = TwilioCallConnection(replies=2)
+    _connect_to(mocker, connection)
+    _answer(client, 'CA1')
+
+    with client.websocket_connect('/media-stream') as twilio:
+        twilio.send_json({'event': 'connected', 'protocol': 'Call', 'version': '1.0.0'})
+        twilio.send_json(_start('CA1'))
+        for _ in range(2):
+            reply = [twilio.receive_json() for _ in range(4)]
+            assert [message['event'] for message in reply] == ['media', 'mark', 'media', 'mark']
+            twilio.send_json({'event': 'mark', 'streamSid': STREAM_SID, 'mark': reply[1]['mark']})
+            twilio.send_json(_caller_audio())
+            assert twilio.receive_json() == {'event': 'clear', 'streamSid': STREAM_SID}
+            twilio.send_json({'event': 'mark', 'streamSid': STREAM_SID, 'mark': reply[3]['mark']})
+            assert connection.cancelled.wait(READINESS_WAIT_TIMEOUT)
+            connection.cancelled.clear()
+        twilio.send_json({'event': 'stop', 'streamSid': STREAM_SID})
+        assert _until_closed(twilio) == []
+
+    assert [content for content in connection.sent if isinstance(content, (TruncateOutput, CancelResponse))] == [
+        TruncateOutput(audio_end_ms=100),
+        CancelResponse(),
+        TruncateOutput(audio_end_ms=100),
+        CancelResponse(),
+    ]
 
 
 def test_twilio_bridge_passes_the_call_context_and_key_presses(mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
@@ -529,13 +583,14 @@ def test_twilio_bridge_clears_without_interrupting_a_model_that_cant_be(
 
 
 def test_twilio_marks_echoed_by_clear_are_not_played():
-    """`clear` makes Twilio echo every pending mark, for audio the caller never heard."""
+    """`clear` makes Twilio echo every pending mark, for audio the caller never heard: the caller heard up to
+    the played chunk, and the dropped one counts only toward later positions."""
     marks = realtime_twilio.PlaybackMarks()
     first, second = marks.sent(4800), marks.sent(4800)
     marks.played(first)
-    marks.discard_pending()
+    assert marks.clear() == 4800
     marks.played(second)
-    assert marks.played_bytes == 4800
+    assert marks.played_bytes == 9600
 
 
 def test_twilio_audio_converts_between_the_line_and_the_session():
