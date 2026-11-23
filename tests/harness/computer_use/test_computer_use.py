@@ -137,7 +137,7 @@ class TestComputerUse:
         agent = Agent(
             _scripted(
                 [{'type': 'screenshot'}, {'type': 'click', 'x': 10, 'y': 20}, {'type': 'type_text', 'text': 'hi'}],
-                [{'type': 'press_keys', 'keys': ['ctrl+s']}, {'type': 'wait', 'seconds': 0.01}],
+                [{'type': 'press_keys', 'keys': ['ctrl', 's']}, {'type': 'wait', 'seconds': 0.01}],
             ),
             name='computer',
             capabilities=[provider.capability(), ComputerUse(), *durability],
