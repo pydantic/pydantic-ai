@@ -578,8 +578,9 @@ selects painted cells in `PromptSurface` and its release copies them through
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
-A `MarkdownBlock` shows its streamed rows until its writer calls `end`, and renders its source
-again only after that: rendering a streaming part again per frame costs the whole part every frame.
+A `MarkdownBlock` shows its streamed rows until its writer calls `end`, and
+renders its source again only after that: rendering a streaming part again per
+frame costs the whole part every frame.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)` and pin the question text in their rows, not the
 transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
