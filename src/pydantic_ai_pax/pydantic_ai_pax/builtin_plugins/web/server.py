@@ -63,5 +63,8 @@ class WebServer:
         """Close every connection and wait for the server to finish."""
         self._server.should_exit = True
         self._server.force_exit = True
-        await self._task
-        self._socket.close()
+        try:
+            await self._task
+        finally:
+            # A cancelled server task raises here; the listening socket is still ours to close.
+            self._socket.close()
