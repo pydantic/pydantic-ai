@@ -549,9 +549,16 @@ current owners.
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
 
-Compile with [gh-aw v1.2.1](https://github.com/github/gh-aw/releases/tag/v1.2.1), which ships AWF v0.29.7.
-It is the first release that lets the review failure reporter read trusted pre-agent eligibility outputs
+Compile with [gh-aw v1.3.1](https://github.com/github/gh-aw/releases/tag/v1.3.1), which ships AWF v0.29.14.
+It is the first release that skips `Parse agent logs for step summary` when the engine step was skipped
+([gh-aw#78623](https://github.com/github/gh-aw/pull/78623)). A step that fails before the engine then stays the
+run's only failed step, instead of sitting behind a protected-capture error.
+The review failure reporter needs v1.2.1 or newer to read trusted pre-agent eligibility outputs
 after detection errors ([gh-aw#74939](https://github.com/github/gh-aw/pull/74939)).
+v1.3.1 grants `id-token: write` to every lock's `activation` and `conclusion` jobs, for gh-aw's admission steps
+([gh-aw#78818](https://github.com/github/gh-aw/pull/78818)). The grant does not depend on configuration.
+gh-aw emits admission steps only when `aw.json` sets `"admission": true` or a source sets `on.admission`.
+Neither is set here, so no step in these locks mints a token.
 `shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
 `shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.70.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
@@ -568,7 +575,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 - **After editing a workflow `*.md` source, recompile and commit the regenerated `*.lock.yml` in the same change** — a `*.md` edit without its recompiled lock is incomplete, and source and lock drift apart:
 
   ```
-  gh aw compile --action-mode action --action-tag v1.2.1
+  gh aw compile --action-mode action --action-tag v1.3.1
   ```
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
@@ -576,7 +583,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 gh-aw labels the issues it opens itself `agentic-workflows`: the `[aw] Detection Runs` tracker and the
 `agentics-maintenance.yml` activity report. Its issue cleanup operation closes only issues with that label.
-gh-aw v1.2.1 hardcodes that name and has no setting for it.
+gh-aw reads that name from `issue_label` in [`.github/workflows/aw.json`](https://github.com/github/gh-aw/blob/v1.3.1/pkg/workflow/repo_config.go). This repository has no `aw.json`, so the name stays `agentic-workflows`.
 The repository's own automation, such as the provider-health controller, uses `area:agentic-workflows`.
 
 ## OpenCode threat detection
@@ -597,7 +604,7 @@ The post-steps check the script out at `github.workflow_sha` and install OpenCod
   A run that reaches the script's deadline, two minutes before the step's 15, writes `reason=engine_timeout`, which concludes as `agent_failure`, and stops.
   Warn mode turns each of these three into a `warning` and a comment on the `[aw] Detection Runs` tracker.
 - Keep gh-aw's `threat-detect` install: its conclusion step runs `threat-detect conclude`.
-  gh-aw v1.2.1 also installs AWF, its container images and the Copilot CLI in the detection job. The detector uses none of them.
+  gh-aw v1.3.1 also installs AWF, its container images and the Copilot CLI in the detection job. The detector uses none of them.
 
 ## Weekly agent instructions audit
 
@@ -769,6 +776,11 @@ account alone opens no incident. Keep these outcomes local to their run:
   `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
   concurrency, so such an incident has no recovery signal. An exhausted plan still blocks
   the next run at its quota check.
+- A 403 `max_cache_misses_exceeded` from AWF's API proxy (runner kind `cache_miss_limit`).
+  `awf` starts the proxy with each run's containers and removes it when the run ends, so
+  its count of consecutive cache misses spans one run's root agent and sub-agents, and the
+  next run starts a fresh count. Z.AI never saw the refused request, so the host record
+  runs no Z.ai check for it.
 - A gate on a `pull_request`, `pull_request_review` or `pull_request_review_comment` event
   that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds secrets
   from these events on fork and Dependabot pull requests. Gates on other events, and the
