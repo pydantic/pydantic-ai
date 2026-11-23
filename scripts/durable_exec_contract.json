@@ -3753,6 +3753,17 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::_encode"
       ]
+    },
+    "_TokenCountingUnavailableError": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
     }
   },
   "pydantic_ai_slim/pydantic_ai/external_events.py": {
