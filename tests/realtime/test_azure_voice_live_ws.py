@@ -193,6 +193,7 @@ async def test_audio_in_server_vad_turn(
         supports_system_messages=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,
+        supports_appending_voice_instructions=False,
         # Voice Live negotiates WebRTC over its own control channel, not the GA signaling endpoints.
         supports_webrtc=False,
         # Inherited from the OpenAI realtime profile, which Azure delegates to wholesale: Voice Live
