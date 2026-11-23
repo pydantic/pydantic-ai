@@ -13,6 +13,11 @@ import pytest
 
 pytest_plugins = ['pytester']
 
+# Each test runs a session in this process that leaks on purpose, so what it leaks is the test's own garbage.
+# `run_session` collects it, but pytester's hook recorder lives until the test's teardown and can keep some of it
+# reachable past that collection: the teardown's collection must not fail the test on its `ResourceWarning` either.
+pytestmark = pytest.mark.filterwarnings('ignore::ResourceWarning')
+
 WORKER_LOOP = """
 import gc
 import threading
