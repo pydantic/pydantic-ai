@@ -1598,7 +1598,7 @@ one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place an
 tool or other output follows. The `grouped` style shows only names and counts, so it ignores
 `display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and
 writes still print their summary and diff, which ends the line.
-`/set` previews both styles when you pick one. The default is `detailed`, one line per call.
+`/set` previews the headers of both styles when you pick one, without result rows. The default is `detailed`, one line per call.
 
 ### Streaming
 
@@ -1707,7 +1707,8 @@ after the snapshot; those future lines are not included in its count.
 Read headers show the path, zero-based offset, and effective line limit (Coder
 default and maximum: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
-ripgrep and honor ignore rules. These displayed defaults describe Coder tools. Read and listing calls add no result row on success.
+ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
+Read and listing calls add no result row on success.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no

@@ -310,6 +310,8 @@ class StreamRenderer:
         )
         self._grep_output = GrepOutput(self._tool_output, lines=grep_lines, show_output=show_tool_output)
         self._group = ToolCallGroup(console, colors=color_system(console)) if tool_calls == 'grouped' else None
+        self._delegations: set[str] = set()
+        """Delegation calls in flight, whose outcome the task row already shows."""
         self.smooth_seconds = smooth_seconds
         self._thinking = False
         self._heading_printed = False
@@ -407,12 +409,16 @@ class StreamRenderer:
     def _render_tool_event(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
         if isinstance(event, FunctionToolResultEvent):
             self._render_result(event)
-        elif not isinstance(event, DelegationToolCallEvent):
+        elif isinstance(event, DelegationToolCallEvent):
+            self._delegations.add(event.part.tool_call_id)
+        else:
             self._render_call(event)
 
     def _render_result(self, event: FunctionToolResultEvent) -> None:
         """A grouped style counts calls only; otherwise a failure gets its row."""
-        if self._group is None and not self._grep_output.render(event):
+        delegated = event.part.tool_call_id in self._delegations
+        self._delegations.discard(event.part.tool_call_id)
+        if self._group is None and not delegated and not self._grep_output.render(event):
             self._tool_output.render_result(event)
         self._tool_output.discard_call(event.part.tool_call_id)
 

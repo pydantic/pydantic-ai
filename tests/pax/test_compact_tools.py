@@ -24,7 +24,7 @@ from pydantic_ai_pax.ui.rendering import theme
         (1, False, ['  ⎿ exit 1 · 100 lines']),
         # A background command keeps writing, so its row points at the log.
         (None, False, ['  ⎿ running in background · 100 lines · log /tmp/out']),
-        # A cut preview's tail is not the end of the output, so the row points at the log instead.
+        # Output the harness truncated points at the log.
         (0, True, ['  ⎿ exit 0 · 100 lines · log /tmp/out']),
         (1, True, ['  ⎿ exit 1 · 100 lines · log /tmp/out']),
     ],
