@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "9265"
+      - "10103"
       content-type:
       - application/json
       host:
@@ -139,6 +139,11 @@ interactions:
                     default: []
                     description: "Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."
                     items:
+                      enum:
+                      - ctrl
+                      - shift
+                      - alt
+                      - super
                       type: string
                     type: array
                 required:
@@ -175,6 +180,11 @@ interactions:
                     default: []
                     description: "Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."
                     items:
+                      enum:
+                      - ctrl
+                      - shift
+                      - alt
+                      - super
                       type: string
                     type: array
                 required:
@@ -192,7 +202,49 @@ interactions:
                   keys:
                     description: One key per entry, held together.
                     items:
-                      type: string
+                      anyOf:
+                      - enum:
+                        - ctrl
+                        - shift
+                        - alt
+                        - super
+                        - enter
+                        - escape
+                        - tab
+                        - backspace
+                        - delete
+                        - insert
+                        - home
+                        - end
+                        - pageup
+                        - pagedown
+                        - up
+                        - down
+                        - left
+                        - right
+                        - space
+                        - printscreen
+                        - pause
+                        - menu
+                        - capslock
+                        - numlock
+                        - scrolllock
+                        - f1
+                        - f2
+                        - f3
+                        - f4
+                        - f5
+                        - f6
+                        - f7
+                        - f8
+                        - f9
+                        - f10
+                        - f11
+                        - f12
+                        type: string
+                      - maxLength: 1
+                        minLength: 1
+                        type: string
                     minItems: 1
                     type: array
                   seconds:
@@ -244,6 +296,11 @@ interactions:
                     default: []
                     description: "Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."
                     items:
+                      enum:
+                      - ctrl
+                      - shift
+                      - alt
+                      - super
                       type: string
                     type: array
                 required:
@@ -296,7 +353,49 @@ interactions:
                   keys:
                     description: "One key per entry, pressed together: `[\"enter\"]`, `[\"ctrl\", \"a\"]`, `[\"super\", \"shift\", \"t\"]`."
                     items:
-                      type: string
+                      anyOf:
+                      - enum:
+                        - ctrl
+                        - shift
+                        - alt
+                        - super
+                        - enter
+                        - escape
+                        - tab
+                        - backspace
+                        - delete
+                        - insert
+                        - home
+                        - end
+                        - pageup
+                        - pagedown
+                        - up
+                        - down
+                        - left
+                        - right
+                        - space
+                        - printscreen
+                        - pause
+                        - menu
+                        - capslock
+                        - numlock
+                        - scrolllock
+                        - f1
+                        - f2
+                        - f3
+                        - f4
+                        - f5
+                        - f6
+                        - f7
+                        - f8
+                        - f9
+                        - f10
+                        - f11
+                        - f12
+                        type: string
+                      - maxLength: 1
+                        minLength: 1
+                        type: string
                     minItems: 1
                     type: array
                   repeat:
@@ -312,7 +411,7 @@ interactions:
                 additionalProperties: false
                 description: |-
                   A rectangle on the screenshot, from its top left corner to its bottom right one.
-
+                  
                   `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                 properties:
                   left:
@@ -387,9 +486,14 @@ interactions:
                     default: []
                     description: |-
                       Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-
+                      
                       `shift` scrolls sideways in some applications.
                     items:
+                      enum:
+                      - ctrl
+                      - shift
+                      - alt
+                      - super
                       type: string
                     type: array
                 required:
@@ -459,11 +563,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=87
+      - x-originResponse;dur=150
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7036dc69ffbed58b646ff47f7068c9e8-fb2cbb6471b11106-01
+      - 00-f871af97b9bb9f2a0d310b3b2d2dd211-484ed2da30b970fe-01
       transfer-encoding:
       - chunked
       vary:
@@ -472,36 +576,36 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAoVF1r1Wt7K72sDTTVE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":740,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
-
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChKvqopDGTHJyGPrHSAA4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":740,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01MiXSGxEWwUvdPkgwLRNWnE","name":"load_capability","input":{},"caller":{"type":"direct"}} }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_016GmGxWypNRjyaJbdUFMr8b","name":"load_capability","input":{},"caller":{"type":"direct"}}          }
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}              }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}         }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comput"}               }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"comput"}             }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er_use\"}"}             }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"er_use\"}"}       }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
-
+        data: {"type":"content_block_stop","index":0  }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":740,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":51,"output_tokens_details":{"thinking_tokens":0}}       }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":740,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":51,"output_tokens_details":{"thinking_tokens":0}}}
+        
         event: message_stop
-        data: {"type":"message_stop"            }
-
-  recorded_at: 2026-11-18T17:39:19.236723+00:00
+        data: {"type":"message_stop"         }
+        
+  recorded_at: 2026-11-23T13:21:06.657734+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -531,14 +635,14 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01MiXSGxEWwUvdPkgwLRNWnE
+          - id: toolu_016GmGxWypNRjyaJbdUFMr8b
             type: tool_use
             name: load_capability
             input:
               id: computer_use
         - role: user
           content:
-          - tool_use_id: toolu_01MiXSGxEWwUvdPkgwLRNWnE
+          - tool_use_id: toolu_016GmGxWypNRjyaJbdUFMr8b
             type: tool_result
             content:
             - text: "{\"message\":\"Capability 'computer_use' loaded. Its instructions, if any, follow.\"}"
@@ -604,11 +708,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=80
+      - x-originResponse;dur=75
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b55e75a06e368bb73e7725dba754afab-ea68e7f04ae857b3-01
+      - 00-9cd26afd03fafcaf1e636f8aa92c8b1e-37e6caf101483499-01
       transfer-encoding:
       - chunked
       vary:
@@ -617,54 +721,54 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAoVKVy7jPjejR6hfvuG","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":5371,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5371,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
-
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChKvqsMYKi4q7xBSzuig2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":5371,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":5371,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01HUHz19x2n4izyVVwq9nfP5","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01WsV5FJxrAyiReyVgWmr2iw","name":"screenshot","input":{},"toolset_name":"computer","caller":{"type":"direct"}}           }
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}    }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}            }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}             }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0              }
-
+        data: {"type":"content_block_stop","index":0  }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01XC4T5BRchXz8U1yNHC52RS","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}             }
-
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_014skTzzZDYSn2eTM3kEgdf2","name":"left_click","input":{},"toolset_name":"computer","caller":{"type":"direct"}}     }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}              }
-
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}         }
-
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"coordinate\":[100,200]}"}               }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1      }
-
+        data: {"type":"content_block_stop","index":1           }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_017XHKtFpYwcQFT65zXqvqKb","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}          }
-
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01WzYaknmFgmbCcdujyFy8nz","name":"type","input":{},"toolset_name":"computer","caller":{"type":"direct"}}         }
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""} }
-
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}  }
+        
         event: content_block_delta
         data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"hello\"}"}        }
-
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2              }
-
+        data: {"type":"content_block_stop","index":2             }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":5371,"cache_read_input_tokens":0,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}      }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":5371,"cache_read_input_tokens":0,"output_tokens":93,"output_tokens_details":{"thinking_tokens":0}}}
+        
         event: message_stop
-        data: {"type":"message_stop"      }
-
-  recorded_at: 2026-11-18T17:39:20.283656+00:00
+        data: {"type":"message_stop"  }
+        
+  recorded_at: 2026-11-23T13:21:08.172432+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -694,14 +798,14 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01MiXSGxEWwUvdPkgwLRNWnE
+          - id: toolu_016GmGxWypNRjyaJbdUFMr8b
             type: tool_use
             name: load_capability
             input:
               id: computer_use
         - role: user
           content:
-          - tool_use_id: toolu_01MiXSGxEWwUvdPkgwLRNWnE
+          - tool_use_id: toolu_016GmGxWypNRjyaJbdUFMr8b
             type: tool_result
             content:
             - text: "{\"message\":\"Capability 'computer_use' loaded. Its instructions, if any, follow.\"}"
@@ -716,12 +820,12 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01HUHz19x2n4izyVVwq9nfP5
+          - id: toolu_01WsV5FJxrAyiReyVgWmr2iw
             type: tool_use
             name: screenshot
             input: {}
             toolset_name: computer
-          - id: toolu_01XC4T5BRchXz8U1yNHC52RS
+          - id: toolu_014skTzzZDYSn2eTM3kEgdf2
             type: tool_use
             name: left_click
             input:
@@ -729,7 +833,7 @@ interactions:
               - 100
               - 200
             toolset_name: computer
-          - id: toolu_017XHKtFpYwcQFT65zXqvqKb
+          - id: toolu_01WzYaknmFgmbCcdujyFy8nz
             type: tool_use
             name: type
             input:
@@ -737,21 +841,21 @@ interactions:
             toolset_name: computer
         - role: user
           content:
-          - tool_use_id: toolu_01HUHz19x2n4izyVVwq9nfP5
+          - tool_use_id: toolu_01WsV5FJxrAyiReyVgWmr2iw
             type: tool_result
             content:
             - text: OK
               type: text
             is_error: false
             toolset_name: computer
-          - tool_use_id: toolu_01XC4T5BRchXz8U1yNHC52RS
+          - tool_use_id: toolu_014skTzzZDYSn2eTM3kEgdf2
             type: tool_result
             content:
             - text: OK
               type: text
             is_error: false
             toolset_name: computer
-          - tool_use_id: toolu_017XHKtFpYwcQFT65zXqvqKb
+          - tool_use_id: toolu_01WzYaknmFgmbCcdujyFy8nz
             type: tool_result
             content:
             - text: Ran 3 actions. Screenshot attached (1280x800).
@@ -823,11 +927,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=95
+      - x-originResponse;dur=90
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1dda4d9c167b5bf534fae28a797db253-b55b9aaedceaa605-01
+      - 00-a6396f5a29bc11778f08388bf76d4d91-62d147dc11613c97-01
       transfer-encoding:
       - chunked
       vary:
@@ -836,24 +940,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChAoVQ4KCDKQxXULtQVbg","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":3175,"cache_read_input_tokens":5060,"cache_creation":{"ephemeral_5m_input_tokens":3175,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
-
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChKvqyxuazdrHp6ehUV85","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":3175,"cache_read_input_tokens":5060,"cache_creation":{"ephemeral_5m_input_tokens":3175,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+        
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
-
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}    }
+        
         event: ping
         data: {"type": "ping"}
-
+        
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}    }
-
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}              }
+        
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
-
+        data: {"type":"content_block_stop","index":0      }
+        
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":3175,"cache_read_input_tokens":5060,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}              }
-
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":3175,"cache_read_input_tokens":5060,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}    }
+        
         event: message_stop
-        data: {"type":"message_stop"              }
-
-  recorded_at: 2026-11-18T17:39:21.660802+00:00
+        data: {"type":"message_stop"           }
+        
+  recorded_at: 2026-11-23T13:21:09.644653+00:00

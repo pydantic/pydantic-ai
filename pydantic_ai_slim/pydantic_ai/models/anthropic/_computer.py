@@ -7,6 +7,7 @@ instead, one per action, such as a `left_click` tool. This module calls each of 
 
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import accumulate
@@ -27,7 +28,7 @@ from ...computer_use import ComputerCallPart
 from ...messages import FinishReason, ModelResponsePart, ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
 from .. import ModelRequestParameters
-from .._computer_calls import UNFINISHED_COMPUTER_ARGS, block_computer_calls
+from .._computer_calls import UNFINISHED_COMPUTER_ARGS, block_computer_calls, x11_key
 
 COMPUTER_TOOL_BETAS: dict[AnthropicComputerToolVersion, str] = {
     'computer_20251124': 'computer-use-2025-11-24',
@@ -406,8 +407,17 @@ def _point(coordinate: list[int] | None) -> dict[str, int]:
     return {} if coordinate is None else {'x': coordinate[0], 'y': coordinate[1]}
 
 
+_COMBINATION = re.compile(r'(?<=.)\+(?=.)')
+"""A `+` between two characters joins keys, as in `ctrl+s`. A lone `+`, or the last one in `ctrl++`, is the plus key."""
+
+
+def _keys(chord: str) -> list[str]:
+    """Claude writes a key combination as xdotool does, such as `ctrl+shift+t`, with X11 key names."""
+    return [x11_key(key) for key in _COMBINATION.split(chord)]
+
+
 def _modifiers(text: str | None) -> list[str]:
-    return [text] if text else []
+    return _keys(text) if text else []
 
 
 def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
@@ -458,9 +468,9 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
         case _Key():
             # Claude writes keys in xdotool syntax: key combinations separated by spaces are pressed one after another.
             chords = member.text.split() or ['']
-            return [{'type': 'press_keys', 'keys': [chord], 'repeat': member.repeat} for chord in chords]
+            return [{'type': 'press_keys', 'keys': _keys(chord), 'repeat': member.repeat} for chord in chords]
         case _HoldKey():
-            return [{'type': 'hold_keys', 'keys': [member.text], 'seconds': member.duration}]
+            return [{'type': 'hold_keys', 'keys': _keys(member.text), 'seconds': member.duration}]
         case _Wait():
             return [{'type': 'wait', 'seconds': member.duration}]
         case _Press():
