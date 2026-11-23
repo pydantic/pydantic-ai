@@ -33,6 +33,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
     PrepareTools,
+    RawToolArgs,
     ValidatedToolArgs,
 )
 from pydantic_ai.computer_use import (
@@ -50,6 +51,7 @@ from pydantic_ai.computer_use import (
     PressKeys,
     TypeText,
 )
+from pydantic_ai.exceptions import SkipToolValidation
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -146,7 +148,7 @@ def _flagged(*actions: dict[str, object]) -> FunctionModel:
 class TestConfirmation:
     """A call the provider flags for a person's confirmation."""
 
-    async def test_it_waits_for_approval_before_it_runs(self) -> None:
+    async def test_it_waits_for_approval_and_its_result_says_it_was_confirmed(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
             _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
@@ -166,35 +168,37 @@ class TestConfirmation:
         )
         assert provider.actions == [TypeText(text='rm -rf x')]
         (tool_return,) = _returns(resumed.all_messages())
-        assert tool_return.metadata == {'performed': 1}
+        assert tool_return.metadata == {'performed': 1, 'confirmed': True}
 
-    async def test_it_asks_before_the_tool_hooks_run(self) -> None:
-        """So every result after the approval came from a call a person approved, which a provider is told."""
-        seen: list[bool] = []
+    async def test_a_hook_that_skips_validation_still_waits_for_approval(self) -> None:
+        """A hook can skip the tool's argument validation, but not the approval, which the tool itself asks for."""
+        provider = ScreenProvider()
         hooks = Hooks[object]()
 
-        @hooks.on.before_tool_execute
-        async def record(
-            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
-        ) -> ValidatedToolArgs:
-            seen.append(ctx.tool_call_approved)
-            return args
+        @hooks.on.before_tool_validate
+        async def skip(
+            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+        ) -> RawToolArgs:
+            raise SkipToolValidation({'actions': [TypeText(text='rm -rf x')]})
 
         agent = Agent(
             _flagged({'type': 'type_text', 'text': 'rm -rf x'}),
-            capabilities=[ScreenProvider().capability(), ComputerUse(), hooks],
+            capabilities=[provider.capability(), ComputerUse(), hooks],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
         assert isinstance(paused.output, DeferredToolRequests)
-        assert seen == []
-
         (call,) = paused.output.approvals
-        await agent.run(
+        assert paused.output.metadata == {call.tool_call_id: {'reason': 'It deletes files.'}}
+        assert provider.actions == []
+
+        resumed = await agent.run(
             message_history=paused.all_messages(),
             deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
         )
-        assert seen == [True]
+        assert provider.actions == [TypeText(text='rm -rf x')]
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.metadata == {'performed': 1, 'confirmed': True}
 
     async def test_a_denied_call_does_not_run(self) -> None:
         provider = ScreenProvider()
