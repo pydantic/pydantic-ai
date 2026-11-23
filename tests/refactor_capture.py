@@ -126,9 +126,10 @@ sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool nam
 recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
 test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), the trace and span ids of a W3C trace
 context, like the `traceparent` an MCP client or Prefect puts in a request body, object addresses (the decimal one a
-`unittest.mock` repr gives too), timestamps within a day of the capture (ones in the basic format of a SigV4
-`x-amz-date` header, an AG-UI event's milliseconds since the epoch, and ones in JSON a value holds as text, like an
-AG-UI message's `encryptedValue` or a web API response's event stream, too), history digests (which hash those
+`unittest.mock` repr gives, and the hex one anyio names a cancel scope by, too), timestamps within a day of the capture
+(ones in the basic format of a SigV4 `x-amz-date` header, an AG-UI event's milliseconds since the epoch, a naive
+datetime's `str()`, like the local time the `clai` agent's system prompt states, and ones in JSON a value holds as text,
+like an AG-UI message's `encryptedValue` or a web API response's event stream, too), history digests (which hash those
 timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
 random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`,
 `Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
@@ -137,7 +138,8 @@ in, which hashes the file the task function was compiled from, and the `custom_i
 step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
 parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
 `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
-them.
+them. So are the native tools the error for an unsupported one lists as supported, a set of classes, which hash by
+identity.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there are
 any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load the
@@ -250,6 +252,8 @@ GENERATED_VALUES = [
         r'\1-TRACE_ID-SPAN_ID-\2',
     ),
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
+    # anyio names a cancel scope by its address, in hex without `0x`.
+    (re.compile(r'(Cancelled via cancel scope )[0-9a-f]+'), r'\1ADDRESS'),
     # A `unittest.mock` repr gives the mock's `id()` in decimal.
     (re.compile(r"(<\w*Mock\b[^<>]* id=')\d+'"), r"\1ID'"),
     (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
@@ -290,11 +294,16 @@ PREFECT_OWN_PATHS = re.compile(r'/api/(?:logs/|admin/version|csrf-token)$')
 # The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with. A timestamp quoted
 # `\"` is in JSON a value holds as text, like an AG-UI message's `encryptedValue` or a web API response's event stream.
 ISO_DATETIME = re.compile(r'(\\?")(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}Z)\1')
+# A naive datetime's `str()`, like the local time the `clai` agent's system prompt states.
+DATETIME_STR = re.compile(r'(?<![\d-])\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{6})?(?![\d.])')
 # AG-UI stamps each event with the milliseconds since the epoch.
 EPOCH_MILLISECONDS = re.compile(r'"timestamp":(\d{13})(?![\d.])')
 # Cassette playback hands a response's headers back in a different order each run, and botocore copies them into an
 # error response's `ResponseMetadata`, which an error message renders with `repr`.
 BOTOCORE_ERROR_HEADERS = re.compile(r"'HTTPHeaders': \{([^{}]*)\}")
+# The native tools a model supports are a set of classes, which hash by identity, so the error that lists them for an
+# unsupported one lists them in a different order each run.
+SUPPORTED_NATIVE_TOOLS = re.compile(r'(not supported by this model\. Supported: \[)([^\[\]]*)\]')
 # Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
 SDK_MOCKS: list[tuple[str, str, tuple[str, ...]]] = [
     ('tests.models.test_anthropic', 'MockAnthropic', ('messages_create', 'messages_count_tokens')),
@@ -1275,31 +1284,38 @@ class RefactorCapture:
 
         @functools.wraps(original)
         async def recording_hook(capability: AbstractCapability[object], *args: object, **kwargs: object) -> object:
-            running = _RUNNING_TOOL_HOOKS.get()
-            if name in running:
-                return await original(capability, *args, **kwargs)
-            record: dict[str, object] = {
-                'kind': 'hook',
-                'node': self.node,
-                'target': method_target(type(capability), name),
-                # The run context is the run's, and the handler a function.
-                'kwargs': {
-                    key: normalized(f'{type(value).__name__}: {value}' if isinstance(value, BaseException) else value)
-                    for key, value in kwargs.items()
-                    if key not in ('ctx', 'handler')
-                },
-            }
-            self.records.append(record)
-            token = _RUNNING_TOOL_HOOKS.set(running | {name})
             try:
-                result = await original(capability, *args, **kwargs)
-            except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
-                raise
+                running = _RUNNING_TOOL_HOOKS.get()
+                if name in running:
+                    return await original(capability, *args, **kwargs)
+                record: dict[str, object] = {
+                    'kind': 'hook',
+                    'node': self.node,
+                    'target': method_target(type(capability), name),
+                    # The run context is the run's, and the handler a function.
+                    'kwargs': {
+                        key: normalized(
+                            f'{type(value).__name__}: {value}' if isinstance(value, BaseException) else value
+                        )
+                        for key, value in kwargs.items()
+                        if key not in ('ctx', 'handler')
+                    },
+                }
+                self.records.append(record)
+                token = _RUNNING_TOOL_HOOKS.set(running | {name})
+                try:
+                    result = await original(capability, *args, **kwargs)
+                except Exception as e:
+                    record['error'] = normalized(f'{type(e).__name__}: {e}')
+                    raise
+                finally:
+                    _RUNNING_TOOL_HOOKS.reset(token)
+                record['result'] = normalized(result)
+                return result
             finally:
-                _RUNNING_TOOL_HOOKS.reset(token)
-            record['result'] = normalized(result)
-            return result
+                # An `on_*_error` hook can raise the error it's handed, whose traceback holds this frame, so holding
+                # the error here would keep the run context, and its dependencies, in a cycle with it.
+                del args, kwargs
 
         self._monkeypatch.setattr(cls, name, recording_hook)
 
@@ -1547,6 +1563,9 @@ def normalized(value: object) -> object:
             timestamp = timestamp.replace(tzinfo=UTC)
         return f'{match[1]}NOW{match[1]}' if abs(timestamp - now) < timedelta(days=1) else match[0]
 
+    def generated_local_timestamp(match: re.Match[str]) -> str:
+        return 'NOW' if abs(datetime.fromisoformat(match[0]) - datetime.now()) < timedelta(days=1) else match[0]
+
     def generated_epoch_milliseconds(match: re.Match[str]) -> str:
         timestamp = datetime.fromtimestamp(int(match[1]) / 1000, UTC)
         return '"timestamp":"NOW"' if abs(timestamp - now) < timedelta(days=1) else match[0]
@@ -1556,8 +1575,10 @@ def normalized(value: object) -> object:
         return "'HTTPHeaders': {" + ', '.join(sorted(re.split(r"(?<='), (?=')", match[1]))) + '}'
 
     text = ISO_DATETIME.sub(generated_timestamp, to_json(value, fallback=repr, bytes_mode='base64').decode())
+    text = DATETIME_STR.sub(generated_local_timestamp, text)
     text = EPOCH_MILLISECONDS.sub(generated_epoch_milliseconds, text)
     text = BOTOCORE_ERROR_HEADERS.sub(sorted_headers, text)
+    text = SUPPORTED_NATIVE_TOOLS.sub(lambda match: f'{match[1]}{", ".join(sorted(match[2].split(", ")))}]', text)
     for pattern, replacement in GENERATED_VALUES:
         text = pattern.sub(replacement, text)
     return json.loads(text)

@@ -5,6 +5,7 @@ They test the capture tooling rather than model behavior, so no recording applie
 
 from __future__ import annotations
 
+import gc
 import importlib.util
 import json
 import os
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import warnings
+import weakref
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -27,7 +29,9 @@ import pydantic_ai
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime._core import Owed
 
@@ -2270,6 +2274,51 @@ async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_s
     assert [record['target'] for record in capture.records] == snapshot(['GET http://127.0.0.1:PORT/api/health'])
 
 
+async def test_capture_holds_no_error_a_tool_hook_raises(tmp_path: Path):
+    """The error a tool raises passes through the recorded `on_tool_execute_error` hook, whose frame its traceback
+    holds, so a frame that held the error would keep the run's dependencies in a cycle with it.
+
+    Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
+    """
+
+    class Deps:
+        pass
+
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('fail')])), deps_type=Deps)
+
+    @agent.tool_plain
+    def fail() -> str:
+        raise RuntimeError('tool failed')
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    gc.disable()
+    try:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        try:
+            await agent.run('hello', deps=deps, infer_name=False)
+        except RuntimeError:
+            pass
+        del deps
+        assert ref() is None
+    finally:
+        gc.enable()
+        capture.pytest_unconfigure()
+    assert [
+        str(record['target']).rsplit('.', 1)[-1] for record in capture.records if record['kind'] == 'hook'
+    ] == snapshot(
+        [
+            'wrap_tool_validate',
+            'before_tool_validate',
+            'after_tool_validate',
+            'wrap_tool_execute',
+            'before_tool_execute',
+            'on_tool_execute_error',
+        ]
+    )
+
+
 def test_capture_records_no_warning_while_no_test_runs(tmp_path: Path):
     """A warning raised outside a test, like one an import during collection raises, belongs to no test node."""
     capture = RefactorCapture(tmp_path)
@@ -2643,6 +2692,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'uuid': '12345678-1234-5678-1234-567812345678',
             'repr': object(),
             'mock_repr': Mock(name='mock.service_tier'),
+            'cancel_scope': 'Cancelled via cancel scope 11dc504b0; reason: deadline exceeded',
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
@@ -2659,6 +2709,8 @@ def test_normalized_replaces_values_that_change_between_runs():
             'echoed_step_id': {'task_id': '0a1b2c3d'},
             'amz_date': now.strftime('%Y%m%dT%H%M%SZ'),
             'recorded_amz_date': '20240101T000000Z',
+            'clai_prompt': f'The current date and time is {datetime.now()} -05.',
+            'recorded_clai_prompt': 'The current date and time is 2024-01-01 00:00:00 UTC.',
             'ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': int(now.timestamp() * 1000)},
             'recorded_ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 1704067200000},
             # An AG-UI message's `encryptedValue`, and a web API response's event stream, hold JSON as text.
@@ -2668,6 +2720,10 @@ def test_normalized_replaces_values_that_change_between_runs():
                 "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
                 "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
                 "'keep-alive'}, 'RetryAttempts': 0}}"
+            ),
+            'native_tools_error': (
+                "UserError: Native tool(s) ['ToolSearchTool'] not supported by this model. Supported: ['WebSearchTool', "
+                "'AdvisorTool', 'MemoryTool']. To use these tools ..."
             ),
             # The trace ID has the shape of a version 4 UUID without dashes.
             'mcp_meta': {'traceparent': '00-12345678123441238123123456789abc-0123456789abcdef-01', 'progressToken': 2},
@@ -2707,6 +2763,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'uuid': 'UUID',
             'repr': '<object object at 0x?>',
             'mock_repr': "<Mock name='mock.service_tier' id='ID'>",
+            'cancel_scope': 'Cancelled via cancel scope ADDRESS; reason: deadline exceeded',
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
@@ -2723,6 +2780,8 @@ def test_normalized_replaces_values_that_change_between_runs():
             'echoed_step_id': {'task_id': '0a1b2c3d'},
             'amz_date': 'NOW',
             'recorded_amz_date': '20240101T000000Z',
+            'clai_prompt': 'The current date and time is NOW -05.',
+            'recorded_clai_prompt': 'The current date and time is 2024-01-01 00:00:00 UTC.',
             'ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 'NOW'},
             'recorded_ag_ui_event': {'type': 'RUN_STARTED', 'timestamp': 1704067200000},
             'json_in_text': '{"timestamp": "NOW"}',
@@ -2731,6 +2790,10 @@ def test_normalized_replaces_values_that_change_between_runs():
                 "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
                 "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
                 "GMT'}, 'RetryAttempts': 0}}"
+            ),
+            'native_tools_error': (
+                "UserError: Native tool(s) ['ToolSearchTool'] not supported by this model. Supported: ['AdvisorTool', "
+                "'MemoryTool', 'WebSearchTool']. To use these tools ..."
             ),
             'mcp_meta': {'traceparent': '00-TRACE_ID-SPAN_ID-01', 'progressToken': 2},
             'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
