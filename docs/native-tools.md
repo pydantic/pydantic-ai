@@ -854,7 +854,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool, which models are trained to use. As with the [Memory Tool](#memory-tool), the provider doesn't run the calls: Pydantic AI runs each one with the agent's `computer` tool, found by its kind rather than its name, and sends the result back in the provider's format.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. The provider doesn't run the calls: the agent's `computer` tool does.
 
 Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both the `computer` tool and the `ComputerTool` for you. With `ComputerUse(native=False)`, the model gets `computer` as a regular function tool.
 
@@ -864,7 +864,7 @@ The native tool is sent only when the request has exactly one `computer` tool th
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | On GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock Mantle. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the pointer position. With an Azure client, the model gets the function tool; to send the native tool, add `ComputerTool` in the model's `profile=` argument, as [Models](harness/computer-use.md#models) shows. |
+| OpenAI Responses | ✅ | On the models listed under [OpenAI](models/openai.md#computer-use). |
 | Anthropic | ✅ | On Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock. See [Anthropic computer use](models/anthropic.md#computer-use). |
 | OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
 | OpenRouter | ❌ | The model gets the function tool. |

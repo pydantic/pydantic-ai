@@ -911,8 +911,7 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
-    * OpenAI Responses, on GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6, through OpenAI and Bedrock
-      Mantle
+    * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
     * Anthropic, on Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock
     """
 
