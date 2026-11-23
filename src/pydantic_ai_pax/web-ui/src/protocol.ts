@@ -343,7 +343,7 @@ export type ServerMessage =
       questions: Questions[]
       dialogs: Dialog[]
       theme: ThemeInfo
-      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      /** Each session runs in its own directory (`pax --web`), so a new one asks where. */
       follows_workspace: boolean
       tasks: TaskEntry[]
       /** Each running task's transcript so far, by task ID. */
@@ -460,7 +460,7 @@ export interface PluginRow {
   has_menu: boolean
   /** That menu is declared, so this page shows it; otherwise it opens in the terminal. */
   settings_menu: boolean
-  /** Whether this Pax process has a terminal for an undeclared menu to open in; `clai2 --web` has none. */
+  /** Whether this Pax process has a terminal for an undeclared menu to open in; `pax --web` has none. */
   terminal: boolean
   form: PluginForm | null
   /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */

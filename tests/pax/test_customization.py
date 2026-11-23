@@ -149,9 +149,7 @@ async def test_custom_agent_can_opt_in_with_the_former_name() -> None:
             return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'customization'})])
         return ModelResponse(parts=[TextPart('resumed')])
 
-    resumed = await create_agent().run(
-        'Read it again', model=FunctionModel(resume), message_history=result.all_messages()
-    )
+    resumed = await agent.run('Read it again', model=FunctionModel(resume), message_history=result.all_messages())
     assert tool_returns(resumed.new_messages()) == guide
 
 

@@ -244,7 +244,7 @@ function Detail({
   )
 }
 
-/** Where the plugin's own menu, for sign-ins, keys, and the like, opens: the terminal, which `clai2 --web` lacks. */
+/** Where the plugin's own menu, for sign-ins, keys, and the like, opens: the terminal, which `pax --web` lacks. */
 function MenuNote({ row }: { row: PluginRow }) {
   return (
     <p className="plugin-note">

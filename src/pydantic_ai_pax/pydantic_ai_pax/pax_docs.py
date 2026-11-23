@@ -40,6 +40,7 @@ Docs outside the package are copied into `pydantic_ai_pax/_docs/` by the wheel's
 _HARNESS_DOCS = (
     'ask_user',
     'boxd_sandbox',
+    'boxlite_sandbox',
     'code_mode',
     'coder',
     'compaction',
@@ -68,6 +69,7 @@ _HARNESS_DOCS = (
     'shell',
     'skills',
     'slack',
+    'smol_sandbox',
     'sprites_sandbox',
     'step_persistence',
     'sub_agents',
@@ -99,13 +101,15 @@ _DESCRIPTION = (
     'capabilities. Load to search or read the installed docs; do not assume plugin APIs exist.'
 )
 
-_HINT = (
-    'For questions about Pax itself (its commands, settings, models, sessions, plugins, or the harness '
-    'capabilities it runs on), look in its docs with search_pax_docs and read_pax_docs. '
-    'When asked to customize Pax itself (plugins, CLI UX/UI, commands, rendering, TUI menus, models or '
-    "providers), first call read_pax_docs with the path 'customization'. It documents supported APIs and "
-    'boundaries. Do not assume plugin APIs exist.'
-)
+
+def _hint(*, search: str, read: str) -> str:
+    return (
+        'For questions about Pax itself (its commands, settings, models, sessions, plugins, or the harness '
+        f'capabilities it runs on), look in its docs with {search} and {read}. '
+        'When asked to customize Pax itself (plugins, CLI UX/UI, commands, rendering, TUI menus, models or '
+        f"providers), first call {read} with the path 'customization'. It documents supported APIs and "
+        'boundaries. Do not assume plugin APIs exist.'
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -219,7 +223,18 @@ def _read_pax_docs(path: str = '') -> str:
 
 
 def _read_clai_docs(path: str = '') -> str:
-    """List the docs, read a document, or read a section by path."""
+    """Read Pax's docs: the list of docs, one doc, or one section of a doc.
+
+    The docs ship with the installed package: Pax's user reference, plugin contract, and
+    customization guide, and the READMEs of the harness capabilities it runs on. A long doc
+    returns an outline of section paths. A long section returns its own text (truncated if
+    needed), followed by an outline of any subsections.
+
+    Args:
+        path: Empty to list the docs. A doc id such as `reference` or `harness/coder` for that doc.
+            `doc#section` such as `reference#saved-api-keys` for one section with its subsections.
+            `search_clai_docs` returns section paths.
+    """
     return _read_docs(path, read='read_clai_docs', search='search_clai_docs')
 
 
@@ -285,7 +300,15 @@ def _search_pax_docs(query: str) -> str:
 
 
 def _search_clai_docs(query: str) -> str:
-    """Search the docs for the sections that best match the query."""
+    """Search Pax's docs and return the best matching sections, with a short snippet of each.
+
+    Matches words, and words that contain them, in the headings and text of every doc
+    `read_clai_docs` lists.
+    Read a result in full with `read_clai_docs(path)`.
+
+    Args:
+        query: Words to look for, such as `saved api keys` or `plugin settings menu`.
+    """
     return _search_docs(query, read='read_clai_docs')
 
 
@@ -344,7 +367,7 @@ class PaxDocs(Capability[None]):
             id=CAPABILITY_ID,
             description=_DESCRIPTION,
             defer_loading=True,
-            instructions=_HINT,
+            instructions=_hint(search='search_pax_docs', read='read_pax_docs'),
             tools=[Tool(_search_pax_docs, name='search_pax_docs'), Tool(_read_pax_docs, name='read_pax_docs')],
         )
 
@@ -357,6 +380,6 @@ class ClaiDocs(Capability[None]):
             id=LEGACY_CAPABILITY_ID,
             description=_DESCRIPTION,
             defer_loading=True,
-            instructions=_HINT.replace('_pax_docs', '_clai_docs'),
+            instructions=_hint(search='search_clai_docs', read='read_clai_docs'),
             tools=[Tool(_search_clai_docs, name='search_clai_docs'), Tool(_read_clai_docs, name='read_clai_docs')],
         )

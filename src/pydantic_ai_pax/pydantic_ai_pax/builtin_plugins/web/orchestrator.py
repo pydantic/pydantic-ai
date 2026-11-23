@@ -262,7 +262,7 @@ class Orchestrator:
                 self._unsaved = None
                 outcome, error = (
                     'failed',
-                    'Another Pax changed the orchestrator chat during this turn, so it was not kept.',
+                    'Another Pax process changed the orchestrator chat during this turn, so it was not kept.',
                 )
             except OSError as exc:
                 self._unsaved = messages

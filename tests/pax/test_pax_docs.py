@@ -64,7 +64,6 @@ def _call_docs_tool(
     expect_retry: bool = False,
 ) -> str:
     """Exercise every lookup through the public capability and real agent tool lifecycle."""
-
     docs = ClaiDocs() if '_clai_' in name else PaxDocs()
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -89,10 +88,20 @@ def _call_docs_tool(
 
 
 def test_legacy_tools_suggest_callable_names() -> None:
-    assert 'read_clai_docs(path)' in _call_docs_tool('read_clai_docs', {})
+    assert 'Read one with read_clai_docs(path), or find a section with search_clai_docs(query).' in _call_docs_tool(
+        'read_clai_docs', {'path': ''}
+    )
     assert 'Read a section with read_clai_docs(path).' in _call_docs_tool(
         'search_clai_docs', {'query': 'saved api keys'}
     )
+
+
+def test_legacy_tools_keep_the_full_descriptions() -> None:
+    for current, legacy in (
+        (pax_docs._read_pax_docs, pax_docs._read_clai_docs),  # pyright: ignore[reportPrivateUsage]
+        (pax_docs._search_pax_docs, pax_docs._search_clai_docs),  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert (current.__doc__ or '').replace('_pax_docs', '_clai_docs') == legacy.__doc__
 
 
 def read_docs(path: str = '', *, expect_retry: bool = False) -> str:

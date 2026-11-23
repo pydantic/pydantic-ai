@@ -14,7 +14,7 @@ import os
 import re
 import shlex
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
 from pydantic_ai_pax.ui.menus.menu_worker import full_terminal
@@ -78,6 +78,30 @@ class TerminalText:
             data, self._held = data[:cut], data[cut:]
         # The terminal turns a program's `\r\n` into `\r\r\n`; a stray escape byte is not text.
         return _LINE_END.sub(b'\n', _ESCAPE.sub(b'', data)).replace(b'\x1b', b'')
+
+
+@contextlib.contextmanager
+def ctrl_c_as_key(terminal: Terminal, interrupt: Callable[[], object]) -> Generator[None]:
+    """Read Ctrl-C as a key that calls `interrupt`, while a command that takes no input runs elsewhere.
+
+    The terminal stays in raw mode, so Ctrl-C never becomes SIGINT. Some SDK clients take SIGINT for
+    themselves: the Daytona SDK's socket.io client cancels every task and stops the loop. Other keys
+    are dropped, as the command reads none.
+    """
+    from prompt_toolkit.input.vt100 import raw_mode
+
+    loop = asyncio.get_running_loop()
+
+    def key() -> None:
+        if _INTERRUPT in os.read(terminal.input, 4096):
+            interrupt()
+
+    with raw_mode(terminal.input):
+        loop.add_reader(terminal.input, key)
+        try:
+            yield
+        finally:
+            loop.remove_reader(terminal.input)
 
 
 class PtyRun:

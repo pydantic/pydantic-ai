@@ -275,6 +275,7 @@ def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:
         web_.post('/api/orchestrator/interrupt')
         ended = orchestrator_until(socket, TurnEnded)[1]
     assert ended == TurnEnded(
-        outcome='failed', error='Another Pax changed the orchestrator chat during this turn, so it was not kept.'
+        outcome='failed',
+        error='Another Pax process changed the orchestrator chat during this turn, so it was not kept.',
     )
     assert web_.get('/api/orchestrator/state').json()['items'] == [], "the other Pax's new chat stands"

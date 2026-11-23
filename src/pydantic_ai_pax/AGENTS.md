@@ -71,7 +71,8 @@ they agree in the same PR.
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
   The one exception is a built-in that moves some conversations elsewhere, as
   `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
-  run's own history, the same history `get_workspace` resolves from.
+  run's own history, the same history `get_workspace` resolves from. Answer
+  `shell_line_workspace` from that history too, so `!` lines run where the runs do.
 - **Pax moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -523,7 +524,7 @@ Agent-readable docs are indexed by `pax_docs._PAX_DOCS`. Docs outside
 `pydantic_ai_pax/` ship through `pyproject.toml`'s wheel `force-include` and sdist
 `include`. The catalog and packaging guards in `tests/pax/test_pax_docs.py`
 reject new docs missing from either surface. If a new feature falls outside the
-existing discovery triggers, update `pax_docs._DESCRIPTION` and `_HINT`.
+existing discovery triggers, update `pax_docs._DESCRIPTION` and `_hint`.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
 it needs independently focused projects/sessions and two-line cards. Keep its

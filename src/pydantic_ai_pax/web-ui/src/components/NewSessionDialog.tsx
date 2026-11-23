@@ -336,7 +336,7 @@ export function NewSessionDialog({
                 spellCheck={false}
                 autoFocus
                 value={branch}
-                placeholder="Generated, as with clai2 --worktree"
+                placeholder="Generated, as with pax --worktree"
                 disabled={sending}
                 onChange={(event) => {
                   setBranch(event.target.value)

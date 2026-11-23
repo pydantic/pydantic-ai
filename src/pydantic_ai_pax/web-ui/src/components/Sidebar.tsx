@@ -113,7 +113,7 @@ const LABELS: Record<Exclude<Status, null>, string> = {
 /** A row's one glyph: a spinner while it runs here, a ring while another Pax runs it, else a dot or nothing. */
 function Glyph({ state, pid }: { state: Status; pid: number | null }) {
   if (state === null) return <span className="state" />
-  const label = state === 'busy' && pid !== null ? `Running in clai2 pid ${pid}` : LABELS[state]
+  const label = state === 'busy' && pid !== null ? `Running in Pax pid ${pid}` : LABELS[state]
   if (state === 'running' || state === 'queued') {
     return <span className={`spinner row-spinner ${state === 'queued' ? 'with-queue' : ''}`} role="img" aria-label={label} title={label} />
   }
@@ -241,7 +241,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return () => window.clearTimeout(timer)
   }, [load, version, query])
 
-  // Other CLAIs save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
+  // Other Pax processes save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
   useEffect(() => {
     if (unsaved) return
     const interval = window.setInterval(() => void load(), 15000)
