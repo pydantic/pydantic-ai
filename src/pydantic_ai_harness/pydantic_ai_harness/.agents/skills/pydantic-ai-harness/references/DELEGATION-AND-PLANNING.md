@@ -190,10 +190,12 @@ Gotchas:
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
   `count_tokens`, or an `openai-codex:` or `openai-chatgpt:` model) is started once more without it
-  (under a new run ID when recorded as a task). Under Temporal, a delegation to `self` runs in the
-  workflow, where an `openai-codex:` or `openai-chatgpt:` child's count fails as a `UserError` and is
-  not retried. A `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level
-  run, and a remote worker applies the announced limits as received.
+  (under a new run ID when recorded as a task). Under Temporal, when `self` is the only delegate, a
+  delegation to it runs in the workflow, where an `openai-codex:` or `openai-chatgpt:` child's count
+  fails as a `UserError` and is not retried
+  (https://github.com/pydantic/pydantic-ai/issues/14194). A `SubAgent.usage_limits` that sets the
+  flag itself is kept and fails like a top-level run, and a remote worker applies the announced
+  limits as received.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
