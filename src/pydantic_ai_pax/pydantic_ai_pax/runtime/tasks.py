@@ -39,6 +39,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
+from pydantic_ai_harness.coder import MAX_IMAGE_SIDE
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.sub_agents import (
@@ -76,7 +77,7 @@ def specialists() -> dict[str, SubAgent[object]]:
                 name=name,
                 description=description,
                 instructions=f'{description} Return evidence with paths and line numbers. Do not modify files.',
-                capabilities=[FileSystem(read_only=True), NON_STRICT_SCHEMAS],
+                capabilities=[FileSystem(read_only=True, max_image_side=MAX_IMAGE_SIDE), NON_STRICT_SCHEMAS],
             ),
             read_only=True,
         )

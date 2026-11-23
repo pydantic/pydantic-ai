@@ -200,7 +200,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/repl_state.py` | `ReplStates`, the harness `CodeModeReplStore` that keeps the session's own `run_code` REPL in `sessions.repl/<id>.bin` between prompts: hard-linked for forks, removed with the session; sub-agent runs keep theirs to the run |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
-| `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
+| `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, at most 1024 pixels on its longest side, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
 | `ui/rendering/theme.py` | Existing brand roles, fixed shades for a light terminal background, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
 | `ui/terminal_background.py` | asks the terminal for its background colour once at startup (OSC 11, ended by DA1), else reads `COLORFGBG`; drops a late reply when the editor opens |
 | `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
