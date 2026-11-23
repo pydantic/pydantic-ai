@@ -276,17 +276,10 @@ _KEYSYMS = {
     **{'insert': 'Insert', 'home': 'Home', 'end': 'End', 'pageup': 'Prior', 'pagedown': 'Next', 'up': 'Up'},
     **{'down': 'Down', 'left': 'Left', 'right': 'Right', 'space': 'space', 'printscreen': 'Print'},
     **{'pause': 'Pause', 'menu': 'Menu', **{f'f{n}': f'F{n}' for n in range(1, 13)}},
-    **{f'numpad{n}': f'KP_{n}' for n in range(10)},
-    **{'numpad_enter': 'KP_Enter', 'numpad_add': 'KP_Add', 'numpad_subtract': 'KP_Subtract'},
-    **{'numpad_multiply': 'KP_Multiply', 'numpad_divide': 'KP_Divide', 'numpad_decimal': 'KP_Decimal'},
-    **{'volumemute': 'XF86AudioMute', 'volumeup': 'XF86AudioRaiseVolume', 'volumedown': 'XF86AudioLowerVolume'},
-    **{'mediaplay': 'XF86AudioPlay', 'medianext': 'XF86AudioNext', 'mediaprev': 'XF86AudioPrev'},
     **{'ctrl': 'Control_L', 'shift': 'Shift_L', 'alt': 'Alt_L', 'super': 'Super_L'},
     **{'a': 'a', '7': '7', '`': 'grave'},
 }
-"""The key names the display takes, with a few unshifted characters, and the keysym a window gets for each.
-
-F13 to F24 are left out: a window gets `NoSymbol` for about one press of them in twenty, seen live."""
+"""The key names the display takes, with a few unshifted characters, and the keysym a window gets for each."""
 
 _LOCK_KEYS = {'capslock': 'Caps_Lock', 'numlock': 'Num_Lock', 'scrolllock': 'Scroll_Lock'}
 

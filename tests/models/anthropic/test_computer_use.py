@@ -132,8 +132,8 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert call.args_as_dict() == {
         'actions': [
             {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': ['shift']},
-            {'type': 'press_keys', 'keys': ['ctrl+a']},
-            {'type': 'press_keys', 'keys': ['BackSpace']},
+            {'type': 'press_keys', 'keys': ['ctrl', 'a']},
+            {'type': 'press_keys', 'keys': ['backspace']},
             {'type': 'hold_keys', 'keys': ['ctrl'], 'seconds': 1},
             {'type': 'type_text', 'text': 'never typed'},
         ]
@@ -639,8 +639,8 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ('right_click', {}, {'type': 'click', 'button': 'right', 'count': 1, 'modifiers': []}),
         (
             'triple_click',
-            {'coordinate': [1, 2], 'text': 'ctrl'},
-            {'type': 'click', 'x': 1, 'y': 2, 'button': 'left', 'count': 3, 'modifiers': ['ctrl']},
+            {'coordinate': [1, 2], 'text': 'ctrl+shift'},
+            {'type': 'click', 'x': 1, 'y': 2, 'button': 'left', 'count': 3, 'modifiers': ['ctrl', 'shift']},
         ),
         ('middle_click', {}, {'type': 'click', 'button': 'middle', 'count': 1, 'modifiers': []}),
         ('double_click', {}, {'type': 'click', 'button': 'left', 'count': 2, 'modifiers': []}),
@@ -674,14 +674,28 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 80, 'modifiers': []},
         ),
         ('type', {'text': 'hi'}, {'type': 'type_text', 'text': 'hi'}),
-        ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'press_keys', 'keys': ['ctrl+s'], 'repeat': 2}),
+        ('key', {'text': 'ctrl+s', 'repeat': 2}, {'type': 'press_keys', 'keys': ['ctrl', 's'], 'repeat': 2}),
         # xdotool syntax: key combinations separated by spaces are pressed one after another.
         (
             'key',
             {'text': 'ctrl+a BackSpace'},
             [
-                {'type': 'press_keys', 'keys': ['ctrl+a'], 'repeat': None},
-                {'type': 'press_keys', 'keys': ['BackSpace'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['ctrl', 'a'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['backspace'], 'repeat': None},
+            ],
+        ),
+        # X11 key names, as Claude sends them, in the tool's spelling. A `+` at the end of a combination is the plus
+        # key. A key the tool doesn't have, such as volume up, passes through for the tool to refuse.
+        (
+            'key',
+            {'text': 'super+space Page_Down KP_Add ctrl+plus ctrl++ XF86AudioRaiseVolume'},
+            [
+                {'type': 'press_keys', 'keys': ['super', 'space'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['pagedown'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['+'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['ctrl', '+'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['ctrl', '+'], 'repeat': None},
+                {'type': 'press_keys', 'keys': ['xf86audioraisevolume'], 'repeat': None},
             ],
         ),
         ('hold_key', {'text': 'shift', 'duration': 30}, {'type': 'hold_keys', 'keys': ['shift'], 'seconds': 30}),
@@ -830,7 +844,7 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
                     'actions': [
                         {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
                         {'type': 'type_text', 'text': 'hi'},
-                        {'type': 'press_keys', 'keys': ['Return']},
+                        {'type': 'press_keys', 'keys': ['enter']},
                     ]
                 },
             ),
