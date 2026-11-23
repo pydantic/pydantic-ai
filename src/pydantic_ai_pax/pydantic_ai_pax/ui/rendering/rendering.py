@@ -2,7 +2,6 @@
 
 import io
 import re
-from collections import deque
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
@@ -14,8 +13,7 @@ from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from termflow import Parser, Renderer
-from termflow.ansi import DIM_ON, UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
-from termflow.ansi.utils import ANSI_ESCAPE_RE
+from termflow.ansi import UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
 from termflow.parser.events import (
     CodeBlockEndEvent,
     CodeBlockLineEvent,
@@ -26,7 +24,7 @@ from termflow.parser.events import (
 from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
 from termflow.render.heading import _heading_codes  # pyright: ignore[reportPrivateUsage]
 from termflow.render.style import RenderFeatures, RenderStyle
-from termflow.stream import SmoothWriter, split_by_visible
+from termflow.stream import SmoothWriter
 from termflow.syntax import LANGUAGE_ALIASES
 
 from pydantic_ai import (
@@ -167,63 +165,13 @@ class LinkOutput(io.StringIO):
 
 
 class PartWriter(SmoothWriter):
-    """Types a streaming part out smoothly; a finished line or code block replaces its preview in one write."""
-
-    def __init__(
-        self, target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
-    ) -> None:
-        """Type into `target` at the given pace."""
-        super().__init__(
-            target,
-            tick_interval=tick_interval,
-            catch_up_seconds=catch_up_seconds,
-            min_chars_per_tick=min_chars_per_tick,
-        )
-        self._queued: deque[tuple[str, str]] = deque()
-        """Writes made whole by `commit`, each with the text typed after it, waiting behind `_pending`."""
-
-    def write(self, text: str) -> int:
-        """Queue `text` to be typed after everything already queued."""
-        if self._queued:
-            whole, typed = self._queued[-1]
-            self._queued[-1] = (whole, typed + text)
-            return len(text)
-        return super().write(text)
+    """Types a streaming part out smoothly; a finished code block replaces its preview in one write."""
 
     def commit(self, text: str) -> None:
-        """Queue `text` to appear in one write, once everything queued before it is typed."""
-        self._queued.append((text, ''))
-
-    def _remaining_units(self) -> int:
-        # A whole write takes one unit, so the drainer keeps running until it is out.
-        queued = sum(1 + len(ANSI_ESCAPE_RE.sub('', typed)) for _, typed in self._queued)
-        return super()._remaining_units() + queued
-
-    def _drain_units(self, n: int) -> None:
-        emitted: list[str] = []
-        while n > 0 and (self._pending or self._queued):
-            if self._pending:
-                emit, self._pending, used = split_by_visible(self._pending, n)
-                emitted.append(emit)
-                n -= used
-            else:
-                whole, self._pending = self._queued.popleft()
-                emitted.append(whole)
-                n -= 1
-        # The drainer asks only while units remain, so something is always emitted.
-        self._target.write(''.join(emitted))
+        """Write what is still being typed, then `text`, at once."""
+        self._flush_all()
+        self._target.write(text)
         self._target.flush()
-
-    def _flush_all(self) -> None:
-        """Write everything left at once, in order: Termflow's hook for when output must not wait."""
-        while self._queued:
-            whole, typed = self._queued.popleft()
-            self._pending += whole + typed
-        super()._flush_all()
-
-    def _discard_all(self) -> None:
-        super()._discard_all()
-        self._queued.clear()
 
 
 def thinking_heading(console: Console) -> str:
@@ -236,10 +184,9 @@ def thinking_heading(console: Console) -> str:
 class MarkdownPipeline:
     """Termflow's line parser and renderer, with code fences highlighted by Rich.
 
-    With `preview`, for output a `MarkdownBlock` shows, the unfinished line appears as it streams and
-    a code block's lines as they arrive. A finished line, or the closing fence, replaces that preview
-    with its proper rendering: the fence lexes the whole block, so multiline strings and comments
-    keep their state.
+    With `preview`, for output a `MarkdownBlock` shows, a code block's lines appear as they arrive.
+    The closing fence replaces them with the whole block lexed at once, so multiline strings and
+    comments keep their state.
     """
 
     def __init__(
@@ -271,8 +218,6 @@ class MarkdownPipeline:
         self._code_language = 'text'
         self._code_shown = False
         """Whether the open code block's lines are on screen as a preview."""
-        self._partial = 0
-        """How much of the unfinished line is on screen as a preview."""
         if continuation is not None:
             self._parser, self._code_language = deepcopy(continuation)
         self._continued_fence = continuation is not None and self._parser.state.is_in_code()
@@ -280,31 +225,6 @@ class MarkdownPipeline:
     def continuation(self) -> tuple[Parser, str]:
         """Snapshot parsing context before finishing this display segment."""
         return deepcopy(self._parser), self._code_language
-
-    def partial(self, line: str) -> None:
-        """Show the unfinished `line` as plain text until `line` renders it, outside code blocks and tables."""
-        if not self._partial and not self._previews(line):
-            return
-        if not self._partial:
-            self.output.write(PREVIEW + (DIM_ON if self.thinking else ''))
-        self.output.write(line[self._partial :])
-        self._partial = len(line)
-
-    def _previews(self, line: str) -> bool:
-        """Whether to start showing `line`; leading spaces wait for the text that says whether it is a table row.
-
-        A table renders only once it ends, so its rows, and text arriving while it is still open, are not shown early.
-        Nor is an opening fence, which its newline turns into the code block's rule, or text that may still become one.
-        """
-        stripped = line.lstrip()
-        state = self._parser.state
-        return (
-            self.preview
-            and bool(stripped)
-            and not any(held.startswith(stripped[: len(held)]) for held in ('|', '```', '~~~', '<pre>'))
-            and not state.is_in_code()
-            and not state.is_in_table()
-        )
 
     def line(self, line: str) -> None:
         """Render one complete source line."""
@@ -315,9 +235,6 @@ class MarkdownPipeline:
         self._render_events(self._parser.finalize())
 
     def _render_events(self, events: list[ParseEvent]) -> None:
-        if self._partial:
-            self._rendered.write(DROP)
-            self._partial = 0
         for event in events:
             if isinstance(event, (CodeBlockStartEvent, CodeBlockLineEvent, CodeBlockEndEvent)):
                 self._render_code(event)
@@ -637,9 +554,6 @@ class StreamRenderer:
         while '\n' in self._buffer:
             line, self._buffer = self._buffer.split('\n', 1)
             self._line(line)
-        if self._buffer:
-            assert self._markdown is not None
-            self._markdown.partial(self._buffer)
 
     def _line(self, line: str) -> None:
         assert self._markdown is not None

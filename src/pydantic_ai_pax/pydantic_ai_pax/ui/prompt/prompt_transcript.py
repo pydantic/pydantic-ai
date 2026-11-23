@@ -92,33 +92,16 @@ def _encode(text: Text) -> str:
     )
 
 
-def _moves_word(plain: str, *, space: int, width: int) -> bool:
-    """Whether the word after `space` moves to the next row; one wider than a row is split where it is, as Termflow does."""
-    end = plain.find(' ', space)
-    return visible_length(plain[space : len(plain) if end < 0 else end]) <= width
-
-
-def wrap(line: Text, *, width: int, words: bool = False) -> tuple[str, ...]:
-    """Split a styled line into rows of at most `width` cells, counting wide characters as two.
-
-    `words` breaks after the last space that fits, as Termflow wraps prose, so a previewed line keeps its
-    rows once it renders.
-    """
+def wrap(line: Text, *, width: int) -> tuple[str, ...]:
+    """Split a styled line into rows of at most `width` cells, counting wide characters as two."""
     text = _clean(line)
     offsets: list[int] = []
-    cells = start = 0
-    space = -1
-    """The index after the last space, where a row may break."""
+    cells = 0
     for index, char in enumerate(text.plain):
-        # `_clean` replaced control characters, so ASCII takes one cell; the streaming line wraps every frame.
-        size = 1 if char.isascii() else visible_length(char)
-        if words and char == ' ':
-            # A space past the width is cropped from the end of its row.
-            space = index + 1
-        elif cells and cells + size > width:
-            start = space if words and space > start and _moves_word(text.plain, space=space, width=width) else index
-            offsets.append(start)
-            cells = visible_length(text.plain[start:index])
+        size = visible_length(char)
+        if cells and cells + size > width:
+            offsets.append(index)
+            cells = 0
         cells += size
     rows: list[str] = []
     for piece in text.divide(offsets):
@@ -178,10 +161,9 @@ class _Line:
     `theme_name` is `None` for branding, which no theme recolours.
     """
 
-    def __init__(self, text: Text, *, theme_name: str | None, words: bool = False) -> None:
+    def __init__(self, text: Text, *, theme_name: str | None) -> None:
         self.text = text
         self.theme_name = theme_name
-        self.words = words
         self._rows: tuple[tuple[int, str], tuple[str, ...]] = ((0, ''), ())
 
     @classmethod
@@ -189,7 +171,6 @@ class _Line:
         line.__class__ = cls
         # Lines retained before themes were recorded were painted in the theme of the reload.
         vars(line).setdefault('theme_name', theme.name())
-        vars(line).setdefault('words', False)
         return line
 
     def _themed(self) -> Text:
@@ -202,7 +183,7 @@ class _Line:
     def rows(self, *, width: int) -> tuple[str, ...]:
         key = (width, theme.name())
         if self._rows[0] != key:
-            self._rows = (key, wrap(self._themed(), width=width, words=self.words))
+            self._rows = (key, wrap(self._themed(), width=width))
         return self._rows[1]
 
     def continued(self, *, width: int) -> tuple[bool, ...]:
@@ -297,7 +278,7 @@ class _Lines:
             return [*self.lines, *self.preview.all()]
         if not self.pending:
             return self.lines
-        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme, words=True)]
+        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme)]
 
 
 class Render(Protocol):
@@ -346,7 +327,7 @@ class MarkdownBlock(io.StringIO):
     @property
     def chars(self) -> int:
         """Retained source plus visible output, for the transcript memory limit."""
-        # A preview is left out: it lasts until its newline or fence, and its own limits bound it.
+        # A preview is left out: it lasts until its closing fence, and its own limits bound it.
         return len(self.source or '') + self._stream.chars + len(self._stream.pending)
 
     def write(self, text: str) -> int:

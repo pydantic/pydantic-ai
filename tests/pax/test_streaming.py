@@ -14,7 +14,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
-    TextPartDelta,
 )
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_ai_pax import StreamRenderer
@@ -250,55 +249,8 @@ def test_whole_markdown_repaint_processes_complete_source_lines() -> None:
     ]
 
 
-async def test_live_panel_shows_the_unfinished_line_then_renders_it_in_place() -> None:
-    """A one-line paragraph shows as it streams, wrapped as it will render, instead of all at once at its newline."""
-    surface = PromptSurface(output=io.StringIO(), size=lambda: (40, 24))
-    console = Console(file=surface, force_terminal=True, width=40, color_system='truecolor')
-    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
-
-    async def feed(text: str) -> list[str]:
-        await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=text)))
-        return [row.rstrip() for row in _rows(surface, width=40)]
-
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('First.\n\n')))
-    words = ' '.join(f'word{index}' for index in range(12))
-    assert await feed(words) == [
-        'First.',
-        '',
-        'word0 word1 word2 word3 word4 word5',
-        'word6 word7 word8 word9 word10 word11',
-        '',
-    ]
-    assert (await feed(' **bo'))[-2:] == ['**bo', '']
-    # The finished line replaces its preview: Termflow wraps it the same way, and the markup renders.
-    assert await feed('ld** done\n\n| a | b') == [
-        'First.',
-        '',
-        'word0 word1 word2 word3 word4 word5',
-        'word6 word7 word8 word9 word10 word11',
-        'bold done',
-        '',
-        # A table row would vanish into its table once complete, so it shows only then.
-        '',
-    ]
-    # Nor does the table's separator, or text after it before the table ends and renders above it.
-    rows = await feed(' |\n--- | ---\n| 1 | 2 |\nAfter')
-    assert rows[4:] == ['bold done', '', '']
-    await renderer.finish()
-    assert [row.rstrip() for row in _rows(surface, width=40)][6:] == [
-        '┌───┬───┐',
-        '│ a │ b │',
-        '├───┼───┤',
-        '│ 1 │ 2 │',
-        '└───┴───┘',
-        'After',
-        '',
-        '',
-    ]
-
-
-def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None:
-    """Retyping a finished line from its first character would blank the preview the user was reading."""
+def test_smoothing_types_a_preview_but_writes_its_replacement_at_once() -> None:
+    """Retyping a finished code block from its first character would blank the preview the user was reading."""
     writes: list[str] = []
 
     class ObservedOutput(io.StringIO):
@@ -306,26 +258,7 @@ def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None
             writes.append(text)
             return super().write(text)
 
-    class Ticks(PartWriter):
-        def tick(self) -> None:
-            """What one drain tick releases, without waiting on the drainer's timer."""
-            self._drain_units(3)
-
-        def stop_waiting(self) -> None:
-            """Termflow's hook for writing what is left at once."""
-            self._flush_all()
-
-    writer = Ticks(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
+    writer = PartWriter(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
     writer.write('preview')
-    writer.commit('the rendered line\n')
-    writer.write('next')
-    for _ in range(4):
-        writer.tick()
-    assert writes == ['pre', 'vie', 'wthe rendered line\nn', 'ext']
-    writes.clear()
-    writer.write('typed')
-    writer.commit('whole\n')
-    writer.write('after')
-    writer.tick()
-    writer.stop_waiting()
-    assert writes == ['typ', 'edwhole\nafter'], 'what is left goes out in one write, still in order'
+    writer.commit('the rendered block\n')
+    assert writes == ['preview', 'the rendered block\n'], 'what was still being typed goes first, then the block'

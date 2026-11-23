@@ -1602,17 +1602,16 @@ window if you previously saved a slower preference. This response-only setting
 accepts 0.1 to 5 seconds; thinking retains its separate 0.4-second window.
 Empty thinking parts show no heading. The CLI disables core's first-run
 observability banner.
-Cancellation discards queued output. In the interactive prompt, an unfinished line
-shows as plain text while it streams, and renders as Markdown (bold, code spans,
-links, list bullets) once its newline arrives. Table rows show once the table is complete.
+Cancellation discards queued output. Incomplete Markdown lines are still buffered
+until a newline or part end; smoothing does not remove that parsing delay.
 Thinking signatures without text cannot be shown. A supplied agent's existing
 stream handler is preserved. Custom renderer integrations must await `finish()`
 and use `await abort()` on cancellation.
 
 Response and thinking parts end with a blank separator line; responses have no
 repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
-before the tool's arguments finish streaming. Redirected output prints each
-line once it is complete.
+before the tool's arguments finish streaming. Incomplete lines within a text part
+still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
 Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
 without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
