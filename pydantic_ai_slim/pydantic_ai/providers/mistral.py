@@ -39,7 +39,7 @@ except ImportError as e:
 # OpenAI-style effort values these models reject, so they must keep ignoring `thinking`.
 _ADJUSTABLE_REASONING_MODELS = frozenset(
     {
-        'mistral-small-latest',
+        'mistral-small-latest',  # fact: mistral-small-reasoning-off
         'mistral-small-2603',
         'mistral-medium-latest',
         'mistral-medium',
@@ -47,14 +47,19 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
         'mistral-medium-3-5',
         'mistral-medium-3.5',
         'mistral-medium-2604',
-        'magistral-medium-latest',
+        'magistral-medium-latest',  # fact: magistral-medium-reasoning-off
         'magistral-small-latest',
     }
 )
 
 # Mistral Large 4 accepts `'low'`, `'medium'` and `'high'` and rejects `'none'`, so it can't turn reasoning off.
 # See https://docs.mistral.ai/capabilities/reasoning/.
-_LARGE_4_MODELS = frozenset({'mistral-large-4', 'mistral-large-4-0'})
+_LARGE_4_MODELS = frozenset(
+    {
+        'mistral-large-4',  # fact: mistral-large-4-reasoning-floor
+        'mistral-large-4-0',
+    }
+)
 _LARGE_4_REASONING_EFFORTS: frozenset[MistralReasoningEffort] = frozenset({'low', 'medium', 'high'})
 
 

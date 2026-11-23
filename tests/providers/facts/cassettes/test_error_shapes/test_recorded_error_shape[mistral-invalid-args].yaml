@@ -1,0 +1,61 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "188"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-small-latest
+        messages:
+        - content: hello
+          role: user
+        top_p: 1.0
+        max_tokens: 0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 400
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "232"
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a20759-8333-75e2-8207-5c72a6fd867c
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+    body:
+      type: json
+      content:
+        object: error
+        message: >-
+          prompt_logprobs must be True when max_tokens=0 (prefill-only request), got
+          request.prompt_logprobs=None
+        type: invalid_request_invalid_args
+        param: null
+        code: "3051"
+        raw_status_code: 400
+  recorded_at: 2026-11-23T07:40:36.604223+00:00

@@ -1,4 +1,6 @@
-"""The base-ref comparison that `scripts/check_complexity.py` and `scripts/check_test_waits.py` share.
+"""The base-ref comparison the ratchet checks in `scripts/` share.
+
+Its users are `scripts/check_complexity.py`, `scripts/check_test_waits.py` and `scripts/check_provider_facts.py`.
 
 A check reads each changed `.py` file under its roots on both sides of a change and compares what it measures, so
 a rule ratchets with no committed baseline: whatever the base already has is allowed, and the change may not add to

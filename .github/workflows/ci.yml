@@ -334,10 +334,10 @@ jobs:
         run: uv run pytest scripts/test_typecheck_changed.py
 
       # The `complexity` job runs these scripts with only the `lint` group installed, so their tests run here.
-      - name: Test the cognitive complexity and test waits checks
+      - name: Test the cognitive complexity, test waits and provider facts checks
         env:
           UV_NO_SYNC: "1"
-        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
+        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py scripts/test_check_provider_facts.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -610,6 +610,11 @@ jobs:
       - name: Check test waits against the base
         if: ${{ !cancelled() }}
         run: uv run --only-group lint scripts/check_test_waits.py --base HEAD^1 --format github
+
+      # Fails when a change adds a name to a registered provider fact set without a `# fact:` tag for its probe.
+      - name: Check provider facts against the base
+        if: ${{ !cancelled() }}
+        run: uv run --only-group lint scripts/check_provider_facts.py --base HEAD^1 --format github
 
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
