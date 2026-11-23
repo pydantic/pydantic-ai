@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from itertools import chain
-from typing import Annotated, Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, NoReturn, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
@@ -513,6 +513,41 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
         provider_error_code=str(error.code),
         in_stream=in_stream,
     )
+
+
+def _raise_context_window_exceeded_error(error: ModelHTTPError) -> NoReturn:
+    """Re-raise a rejected request as a context-window error when OpenRouter's metadata proves it is one.
+
+    OpenRouter reports an exceeded context window as a plain rejection, e.g. an HTTP 400, with the provider's
+    nested error hidden in `metadata.raw`; recover the category from that message. Any other error is re-raised
+    unchanged.
+    """
+    body = error.body
+    error_body = body.get('error', body) if is_str_dict(body) else None
+    metadata = error_body.get('metadata') if is_str_dict(error_body) else None
+    nested_message = _openrouter_metadata_raw_message(metadata if is_str_dict(metadata) else None)
+    if nested_message is None:
+        raise error
+
+    category = _model_errors.openai_compatible_category(
+        error.status_code, error.provider_error_code, error.provider_error_type, nested_message
+    )
+    if category is not ModelContextWindowExceededError:
+        raise error
+
+    cause = error.__cause__ if error.__cause__ is not None else error
+    raise ModelHTTPError.for_category(
+        ModelContextWindowExceededError,
+        status_code=error.status_code,
+        model_name=error.model_name,
+        body=error.body,
+        headers=error.headers,
+        suggested_model_id=error.suggested_model_id,
+        provider_error_code=error.provider_error_code,
+        provider_error_type=error.provider_error_type,
+        retry_after=error.retry_after,
+        in_stream=error.in_stream,
+    ) from cause
 
 
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
@@ -1226,32 +1261,7 @@ class OpenRouterModel(OpenAIChatModel):
                 raise
             if not isinstance(error, ModelHTTPError):
                 raise
-            body = error.body
-            error_body = body.get('error', body) if is_str_dict(body) else None
-            metadata = error_body.get('metadata') if is_str_dict(error_body) else None
-            nested_message = _openrouter_metadata_raw_message(metadata if is_str_dict(metadata) else None)
-            if nested_message is None:
-                raise
-
-            category = _model_errors.openai_compatible_category(
-                error.status_code, error.provider_error_code, error.provider_error_type, nested_message
-            )
-            if category is not ModelContextWindowExceededError:
-                raise
-
-            cause = error.__cause__ if error.__cause__ is not None else error
-            raise ModelHTTPError.for_category(
-                ModelContextWindowExceededError,
-                status_code=error.status_code,
-                model_name=error.model_name,
-                body=error.body,
-                headers=error.headers,
-                suggested_model_id=error.suggested_model_id,
-                provider_error_code=error.provider_error_code,
-                provider_error_type=error.provider_error_type,
-                retry_after=error.retry_after,
-                in_stream=error.in_stream,
-            ) from cause
+            _raise_context_window_exceeded_error(error)
 
     @override
     @asynccontextmanager
