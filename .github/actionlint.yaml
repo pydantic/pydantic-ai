@@ -1,0 +1,24 @@
+# actionlint (`.pre-commit-config.yaml`) validates every non-generated workflow: events, expressions, job graphs and
+# reusable-workflow calls (R25). It runs without shellcheck and pyflakes.
+#
+# Each row below silences one message in one file, and says why it is wrong there. A GitHub feature newer than the
+# pinned actionlint gets a row until actionlint learns it; delete the row when an upgrade stops reporting it.
+paths:
+  .github/workflows/agent-provider-health.yml:
+    ignore:
+      # `concurrency.queue` (`queue: max`) is documented GitHub syntax that actionlint v1.7.12 does not know.
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/pr-review-gates.yml:
+    ignore:
+      # As above.
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/weekly-maintainer-digest.yml:
+    ignore:
+      # `job.workflow_repository` and `job.workflow_sha` are documented `job` context properties that actionlint
+      # v1.7.12 does not know.
+      - 'property "workflow_repository" is not defined in object type'
+      - 'property "workflow_sha" is not defined in object type'
+  .github/workflows/clai2-bleeding.yml:
+    ignore:
+      # `npm-cache: "false"` is a quoted string, which the string input accepts; actionlint reads it as a bool.
+      - 'input "npm-cache" is typed as string by reusable workflow'
