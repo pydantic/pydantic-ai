@@ -333,10 +333,16 @@ def _convert_html(html: str) -> tuple[str, str]:
     except ValueError:
         # `int()` raises on a decimal character reference with more digits than
         # `sys.get_int_max_str_digits()`, in `bs4`'s text handling and in `html.unescape` for
-        # attribute values. Parse again with each one shortened to a reference with the same meaning.
-        # Only a page that raised takes this path, so on every other page a raw-text element like
-        # `<xmp>` still shows such a reference as written.
-        soup = _parse_html(_DECIMAL_CHARREF_RE.sub(_shorten_decimal_charref, html))
+        # attribute values. Parse again with each such reference shortened to one with the same
+        # value: drop its leading zeros, and of more than 7 significant digits keep 8, which stay
+        # above U+10FFFF and so read as U+FFFD. Only a page that raised takes this path, so on
+        # every other page a raw-text element like `<xmp>` still shows such a reference as written.
+        soup = _parse_html(
+            _DECIMAL_CHARREF_RE.sub(
+                lambda ref: ref[0] if _is_parsable_decimal(ref[1]) else '&#' + (ref[1].lstrip('0')[:8] or '0'),
+                html,
+            )
+        )
     converter = _MarkdownConverter(strip=['img'])
     _HTMLConversionEstimate(converter).check(soup)
     return _extract_title(html), converter.convert_soup(soup)
@@ -347,18 +353,6 @@ def _parse_html(html: str) -> BeautifulSoup:
     budget.feed(html)
     budget.close()
     return BeautifulSoup(html, 'html.parser')
-
-
-def _shorten_decimal_charref(match: re.Match[str]) -> str:
-    """Shorten a decimal character reference whose digits `int()` rejects to one that names the same character.
-
-    Past 7 significant digits the number is above U+10FFFF, which both parsers read as U+FFFD, as
-    the HTML spec does; 8 digits keep it there.
-    """
-    digits = match.group(1)
-    if _is_parsable_decimal(digits):
-        return match.group()
-    return '&#' + (digits.lstrip('0')[:8] or '0')
 
 
 # Depth, indent depth, indent width, and whether the node is inline, unformatted, and inside `<pre>`.

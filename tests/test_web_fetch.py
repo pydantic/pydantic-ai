@@ -1559,15 +1559,24 @@ class TestMarkdownConverter:
                 f'<a href="/x&#{_TOO_MANY_DIGITS};">x</a>', '[x](/x\N{REPLACEMENT CHARACTER})', id='attribute'
             ),
             pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)}65;</p>', 'A', id='leading-zeros'),
+            pytest.param(
+                f'<p>&#65;&#{_TOO_MANY_DIGITS};</p>', 'A\N{REPLACEMENT CHARACTER}', id='with-parsable-reference'
+            ),
             # A raw-text element shows its references as written, so it doesn't raise.
             pytest.param(f'<xmp>&#{_TOO_MANY_DIGITS};</xmp>', f'&#{_TOO_MANY_DIGITS};', id='raw-text-unchanged'),
+            # On a page that raised, every such reference is shortened before parsing again, raw text included.
+            pytest.param(
+                f'<p>&#{_TOO_MANY_DIGITS};</p><xmp>&#{_TOO_MANY_DIGITS};</xmp>',
+                '\N{REPLACEMENT CHARACTER}\n\n&#11111111;',
+                id='raw-text-on-page-that-raised',
+            ),
         ],
     )
     def test_too_long_decimal_character_references_convert(self, html: str, expected: str):
-        """A decimal character reference with more digits than `int()` parses names the character its number names.
+        """A decimal character reference too long for `int()` converts as its value does instead of raising.
 
-        `bs4` and `html.unescape` call `int()` on it, which raises past `sys.get_int_max_str_digits()`. With more than
-        7 significant digits the number is above U+10FFFF, which both parsers read as U+FFFD.
+        `bs4` and `html.unescape` call `int()` on it, which raises past `sys.get_int_max_str_digits()`. Leading zeros
+        don't change the value, and a value above U+10FFFF reads as U+FFFD.
         """
         assert _convert_html(html)[1] == expected
 
