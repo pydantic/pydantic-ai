@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import gc
 import importlib.util
 import textwrap
@@ -33,14 +34,26 @@ def on_worker_thread(close: bool) -> None:
 def run_session(pytester: pytest.Pytester, source: str) -> pytest.RunResult:
     pytester.makepyfile(test_session=WORKER_LOOP + textwrap.dedent(source))
     # The session inherits this suite's warning filters, under which a collected loop's `ResourceWarning` fails the
-    # test too: ignored here, so each outcome is the guard's own.
+    # test too: ignored here, so each outcome is the guard's own. It doesn't read the suite's `addopts`, so
+    # `pytest-randomly` is turned off here too, keeping the reports in the file's order.
     result = pytester.runpytest(
-        '-p', 'tests.leak_guards', '-p', 'no:cacheprovider', '-p', 'no:pretty', '-W', 'ignore::ResourceWarning'
+        '-p',
+        'tests.leak_guards',
+        '-p',
+        'no:cacheprovider',
+        '-p',
+        'no:pretty',
+        '-p',
+        'no:randomly',
+        '-W',
+        'ignore::ResourceWarning',
     )
     # The session runs in this process, so what its tests leak on purpose is this test's garbage: collected here, where
-    # the suite's filters would otherwise fail this test for it.
+    # the suite's filters would otherwise fail this test for it. So is the loop its `run_sync()` calls leave set on this
+    # thread, which would otherwise be dropped when this test's teardown sets another.
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', ResourceWarning)
+        asyncio.set_event_loop(None)
         gc.collect()
     return result
 

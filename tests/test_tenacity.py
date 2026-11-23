@@ -1088,3 +1088,4 @@ class TestConnectionPool:
             finally:
                 await client.aclose()
                 server.shutdown()
+                server.server_close()
