@@ -1390,6 +1390,141 @@ jobs:
           done
           exit "$status"
 
+  # Temporary: runs `test-changed-under-stress`'s command, five times per cell, on the test files each of three pull
+  # requests added or changed, at its merge commit, to show whether the job would have failed tests that later
+  # flaked: #11570 (IPython code mode), #10072 (`request_timeout`) and #10070 (run `timeout=`). Reverted together with
+  # the temporary push trigger before the pull request opens.
+  stress-proof:
+    name: stress proof at ${{ matrix.cell }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/test-suite-reliability'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: ${{ matrix.timeout-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: "11570"
+            sha: e36df129f4166e987ea92e972f7a761cf42b4c20
+            python-version: "3.15"
+            # Serial runs took 46 to 54 s each.
+            run-limit: 360
+            timeout-minutes: 40
+            files: >-
+              tests/harness/code_mode/test_code_mode.py tests/harness/code_mode/test_input_guardrail.py
+              tests/harness/ipython_code_mode/test_ipython_code_mode.py tests/harness/test_capability_combine.py
+              tests/harness/test_docs_parity.py tests/harness/test_history_append_only.py
+          # Forced locally, the #13860 `IPYTHONDIR` race reached a cell's result with ipykernel 6.29.0, which the
+          # lowest resolution installs, and not with 7.4.0, the locked one; it failed in `test on 3.14
+          # (lowest-versions, shard 2/2)`. `exclude-newer` is the merge time less the project's
+          # `exclude-newer = "7 days"`, so the lowest resolution is the one available at the merge.
+          - cell: 11570-lowest
+            sha: e36df129f4166e987ea92e972f7a761cf42b4c20
+            python-version: "3.14"
+            exclude-newer: "2026-10-20T21:05:46Z"
+            run-limit: 360
+            timeout-minutes: 40
+            files: >-
+              tests/harness/code_mode/test_code_mode.py tests/harness/code_mode/test_input_guardrail.py
+              tests/harness/ipython_code_mode/test_ipython_code_mode.py tests/harness/test_capability_combine.py
+              tests/harness/test_docs_parity.py tests/harness/test_history_append_only.py
+          - cell: "10072"
+            sha: 58c2588b9a807bb05878696582848f3acb2fd9ff
+            python-version: "3.15"
+            # Serial runs took 9 to 15 s each.
+            run-limit: 180
+            timeout-minutes: 20
+            files: >-
+              tests/models/test_model_settings_support.py tests/test_capability_spec.py tests/test_exceptions.py
+              tests/test_request_timeout.py
+          - cell: "10070"
+            sha: 209e15e1c2b87d0b40059940b1b15e96fce240fe
+            python-version: "3.15"
+            # Serial runs took 7 to 14 s each.
+            run-limit: 180
+            timeout-minutes: 20
+            files: >-
+              tests/harness/render/test_protocol.py tests/test_public_interface_contracts.py tests/test_run_timeout.py
+    env:
+      CI: true
+      # As in `test-changed-under-stress`. Its PostgreSQL settings are left out: only `tests/harness/absurd` and
+      # `tests/harness/pgtask` read them, and no cell runs a file there.
+      BLOCKBUSTER_ENABLED: false
+      TYPECHECK_EXAMPLES: false
+      # The merge commits' `filterwarnings` predate the `EncodingWarning` scoping and would fail on every warning.
+      PYTHONWARNDEFAULTENCODING: ""
+      CELL: ${{ matrix.cell }}
+      FILES: ${{ matrix.files }}
+      RUN_LIMIT: ${{ matrix.run-limit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.sha }}
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-suffix: stress-proof-${{ matrix.cell }}
+
+      # `--no-extra mcp-tasks`: the merge commits declare that extra in conflict with the `dev` group.
+      - if: ${{ !matrix.exclude-newer }}
+        run: uv sync --all-packages --all-extras --no-extra mcp-tasks
+
+      - if: ${{ matrix.exclude-newer }}
+        run: >-
+          uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+          --exclude-newer "$EXCLUDE_NEWER"
+        env:
+          UV_FROZEN: "0"
+          EXCLUDE_NEWER: ${{ matrix.exclude-newer }}
+
+      # The merge commits predate `pytest-randomly` in the `dev` group. Installing it into the environment, rather
+      # than with `uv run --with`, keeps the environment's own `pytest`: a `--with` overlay installs a `pytest` of
+      # its own, which can differ from the lowest resolution's.
+      - run: uv pip install --python .venv/bin/python pytest-randomly==5.1.0
+
+      - name: run the changed test files five times under stress
+        run: |
+          read -ra files <<< "$FILES"
+          cpus=$(nproc)
+          for _ in $(seq "$cpus"); do
+            while :; do :; done &
+          done
+          trap 'kill $(jobs -p)' EXIT
+          args=(-n "$((2 * cpus))" --dist=loadgroup --ignore=tests/durable_exec -m 'not temporal')
+          mkdir stress-proof
+          runs=5
+          failures=0
+          for run in $(seq "$runs"); do
+            seed=$(((RANDOM << 15) | RANDOM))
+            start=$SECONDS
+            if uv run --no-sync timeout --kill-after=30 "$RUN_LIMIT" pytest -p randomly --randomly-seed="$seed" \
+              --junit-xml="stress-proof/run-$run.xml" "${args[@]}" "${files[@]}"; then
+              outcome=passed
+            else
+              code=$?
+              failures=$((failures + 1))
+              outcome="failed with exit $code"
+              if (( code == 124 )); then
+                outcome="timed out after $RUN_LIMIT s"
+              fi
+            fi
+            echo "::notice::stress-proof $CELL run $run, seed $seed: $outcome in $((SECONDS - start)) s"
+          done
+          echo "::notice::stress-proof $CELL: $failures/$runs failed"
+          echo "stress-proof $CELL: $failures/$runs failed"
+          (( failures == 0 ))
+
+      - name: store the runs' JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-proof-${{ matrix.cell }}
+          path: stress-proof
+          if-no-files-found: ignore
+
   # The durable-execution suites pin their tests to xdist groups sharing a real local server --
   # one group per core Temporal test module, one shared harness Temporal group, one for DBOS, and
   # one for Prefect -- so inside the main matrix those groups dominate its critical path. Running
