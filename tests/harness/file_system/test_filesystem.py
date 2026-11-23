@@ -921,7 +921,30 @@ class TestReadFile:
         result = await _unhashed_toolset().read_file('huge.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == (
             f'[huge.png | image/png | {len(raw)} bytes]\n'
-            'Too large to view: 6000x5000 pixels is over the 25,000,000 that can be downscaled.\n'
+            'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
+    async def test_read_progressive_jpeg_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
+        # A progressive JPEG holds full-size coefficients even when decoded at a reduced scale.
+        output = BytesIO()
+        Image.new('L', (6000, 5000)).save(output, format='JPEG', progressive=True)
+        (tmp_path / 'photo.jpg').write_bytes(output.getvalue())
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.endswith(
+            'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
+    async def test_read_image_pillow_refuses_as_a_bomb_is_described(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 1000)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[big.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: over the 25,000,000-pixel limit for downscaling.\n'
         )
 
     async def test_read_large_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:

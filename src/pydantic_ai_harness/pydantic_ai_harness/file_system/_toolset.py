@@ -1006,11 +1006,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 downscale_image, raw, media_type, self._max_image_side, abandon_on_cancel=True
             )
             if isinstance(downscaled, TooLargeToDecode):
-                width, height = downscaled.size
-                return (
-                    f'{header}Too large to view: {width}x{height} pixels is over the {MAX_DECODE_PIXELS:,} '
-                    'that can be downscaled.\n'
-                )
+                size = '' if downscaled.size is None else f'{downscaled.size[0]}x{downscaled.size[1]} pixels is '
+                return f'{header}Too large to view: {size}over the {MAX_DECODE_PIXELS:,}-pixel limit for downscaling.\n'
             if downscaled is not None:
                 (width, height), (shown_width, shown_height) = downscaled.original, downscaled.shown
                 header += f'Shown downscaled from {width}x{height} to {shown_width}x{shown_height} pixels.\n'

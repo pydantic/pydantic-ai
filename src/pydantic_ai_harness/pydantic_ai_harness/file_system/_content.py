@@ -99,9 +99,10 @@ class DownscaledImage:
 
 @dataclass
 class TooLargeToDecode:
-    """An image over `MAX_DECODE_PIXELS` even at the scale it can be decoded at, with its size."""
+    """An image over `MAX_DECODE_PIXELS` even at the scale it can be decoded at."""
 
-    size: tuple[int, int]
+    size: tuple[int, int] | None
+    """Its size, or `None` when Pillow refused to open it as a decompression bomb."""
 
 
 def require_pillow() -> None:
@@ -127,7 +128,9 @@ def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledIm
             if max(image.size) <= max_side:
                 return None
             original = image.size
-            image.draft(None, (max_side, max_side))
+            # A progressive JPEG keeps full-size coefficients however small it decodes.
+            if not image.info.get('progressive'):
+                image.draft(None, (max_side, max_side))
             if image.width * image.height > MAX_DECODE_PIXELS:
                 return TooLargeToDecode(original)
             oriented = ImageOps.exif_transpose(image)
@@ -138,7 +141,9 @@ def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledIm
             oriented.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             output = BytesIO()
             oriented.save(output, format=image_format, quality=90)
-    except (OSError, SyntaxError, ValueError, EOFError, Image.DecompressionBombError):
+    except Image.DecompressionBombError:
+        return TooLargeToDecode(None)
+    except (OSError, SyntaxError, ValueError, EOFError):
         return None
     return DownscaledImage(data=output.getvalue(), original=original, shown=oriented.size)
 
