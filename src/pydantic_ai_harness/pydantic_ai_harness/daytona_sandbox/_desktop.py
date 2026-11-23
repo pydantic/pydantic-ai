@@ -105,9 +105,6 @@ _UNSUPPORTED_KEYS: frozenset[NamedKey] = frozenset({'printscreen', 'pause', 'scr
 """`ComputerUse` key names that Daytona refuses, with an error that doesn't prove nothing was pressed. They are refused
 before they're sent, because a sent key counts as possibly held until its release is confirmed."""
 
-_SUPPORTED_BUTTONS = frozenset({'left', 'right', 'middle'})
-"""The mouse buttons Daytona has; it refuses the side buttons."""
-
 _UNSHIFTED_KEY_FOR_SYMBOL = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
 """Each symbol typed with shift, mapped to the key it is on. Daytona's display has a US keyboard layout."""
 
@@ -156,13 +153,6 @@ async def _release_after_failure(
             f'{error}; releasing {" and ".join(held)} failed too, so {"it" if len(held) == 1 else "they"} '
             'may still be held'
         ) from error
-
-
-def _checked_button(button: str) -> str:
-    """`button`, refusing one Daytona's desktop doesn't have."""
-    if button not in _SUPPORTED_BUTTONS:
-        raise UnsupportedActionError(f"Daytona's desktop cannot press the mouse button {button!r}.")
-    return button
 
 
 def _daytona_key_names(keys: Sequence[str]) -> list[str]:
@@ -278,7 +268,6 @@ class DaytonaDisplayDriver:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 modifier_names = _daytona_key_names(modifiers)
                 x, y = await self._position_or_pointer(x, y)
-                button = _checked_button(button)
                 await _send_input(
                     partial(
                         mouse.click,
@@ -290,16 +279,15 @@ class DaytonaDisplayDriver:
                         request_timeout=REQUEST_TIMEOUT,
                     )
                 )
-            case MouseMove(x=x, y=y, modifiers=modifiers):
-                async with self._holding(_daytona_key_names(modifiers)):
-                    await _send_input(partial(mouse.move, x, y, request_timeout=REQUEST_TIMEOUT))
+            case MouseMove(x=x, y=y):
+                await _send_input(partial(mouse.move, x, y, request_timeout=REQUEST_TIMEOUT))
             case Drag(path=path, modifiers=modifiers):
                 async with self._holding(_daytona_key_names(modifiers)):
                     await self._drag(path)
             case MouseDown(button=button):
-                await _send_input(partial(mouse.down, button=_checked_button(button), request_timeout=REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.down, button=button, request_timeout=REQUEST_TIMEOUT))
             case MouseUp(button=button):
-                await _send_input(partial(mouse.up, button=_checked_button(button), request_timeout=REQUEST_TIMEOUT))
+                await _send_input(partial(mouse.up, button=button, request_timeout=REQUEST_TIMEOUT))
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 modifier_names = _daytona_key_names(modifiers)
                 await self._scroll(*await self._position_or_pointer(x, y), direction, amount, modifier_names)

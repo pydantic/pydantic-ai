@@ -80,11 +80,6 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         pytest.param(Click(), ['get_position', 'click 7 8 left clicks=1 modifiers=[]'], id='click-at-pointer'),
         pytest.param(MouseMove(x=5, y=6), ['move 5 6'], id='mouse_move'),
         pytest.param(
-            MouseMove(x=5, y=6, modifiers=('alt',)),
-            ['keydown alt', 'move 5 6', 'keyup alt'],
-            id='mouse_move-with-modifier',
-        ),
-        pytest.param(
             Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('ctrl',)),
             # Each leg is moved along in at least two steps, so a web page's drag-and-drop registers it.
             ['keydown ctrl', 'mousedown 1 1 left', 'move 1 1', 'move 2 2', 'move 2 2', 'move 3 3', 'move 4 3']
@@ -100,7 +95,9 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             id='scroll',
         ),
         pytest.param(
-            Scroll(direction='down'), ['get_position', 'scroll 7 8 down 3 modifiers=[]'], id='scroll-at-pointer'
+            Scroll(direction='down', amount=3),
+            ['get_position', 'scroll 7 8 down 3 modifiers=[]'],
+            id='scroll-at-pointer',
         ),
         pytest.param(
             Scroll(x=1, y=2, direction='down', amount=1_001),
@@ -154,8 +151,6 @@ async def test_each_action_maps_onto_daytona_calls(
         pytest.param(TypeText(text='done 😀'), 'cannot type characters beyond U\\+FFFF', id='emoji'),
         # Daytona refuses these itself (live, 2026-11-18): sent, they'd count as held until let go.
         pytest.param(HoldKeys(keys=('ctrl', 'printscreen'), seconds=1), "cannot press the key 'printscreen'", id='key'),
-        pytest.param(MouseDown(button='back'), "cannot press the mouse button 'back'", id='side-button-down'),
-        pytest.param(Click(x=1, y=2, button='forward'), "cannot press the mouse button 'forward'", id='side-button'),
         pytest.param(object(), 'cannot perform <object', id='unknown-action-type'),
     ],
 )
@@ -283,7 +278,7 @@ async def test_a_key_whose_hold_failed_is_let_go(fake_daytona: FakeDaytona, erro
     assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
 
 
-HOLDING_CTRL = MouseMove(x=1, y=1, modifiers=('ctrl',))
+HOLDING_CTRL = HoldKeys(keys=('ctrl',), seconds=1)
 
 
 @pytest.mark.parametrize(
@@ -314,7 +309,7 @@ async def test_a_failed_release_after_a_failed_action_says_what_may_still_be_hel
     async def unconfirmed(*args: object, **kwargs: object) -> None:
         raise DaytonaTimeoutError('request timeout')
 
-    sandbox.computer_use.mouse.move = failing
+    sandbox.computer_use.mouse.move = sandbox.computer_use.keyboard.down = failing
     sandbox.computer_use.mouse.up = sandbox.computer_use.keyboard.up = (
         unconfirmed if release == 'unconfirmed' else failing
     )
@@ -342,9 +337,9 @@ async def test_rejected_credentials_end_the_run_without_their_text_when_a_releas
         raise DaytonaInternalServerError('unexpected EOF', status_code=500)
 
     sandbox.computer_use.mouse.move = rejected
-    sandbox.computer_use.keyboard.up = failing
+    sandbox.computer_use.mouse.up = failing
     with pytest.raises(WorkspaceUnavailableError) as raised:
-        await full_display(backend).act(MouseMove(x=1, y=1, modifiers=('ctrl',)))
+        await full_display(backend).act(Drag(path=(Point(x=1, y=1), Point(x=2, y=2))))
     assert 'secret-value' not in str(raised.value)
 
 
@@ -371,10 +366,10 @@ async def test_input_daytona_did_not_confirm_ends_the_run(
 
     sandbox.computer_use.mouse.move = unconfirmed
     with pytest.raises(WorkspaceError) as raised:
-        await full_display(backend).act(MouseMove(x=1, y=1, modifiers=('ctrl',)))
+        await full_display(backend).act(MouseMove(x=1, y=1))
 
     assert isinstance(raised.value, WorkspaceUnavailableError) is ends_run
-    assert sandbox.desktop_calls == ['keydown ctrl', 'keyup ctrl']
+    assert sandbox.desktop_calls == []
 
 
 async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona, no_pauses: None) -> None:
