@@ -663,7 +663,9 @@ Options are `service_name` (default `pydantic-clai2`), `include_content` and
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+over `LOGFIRE_SEND_TO_LOGFIRE`. Traces carry CLAI's own version as
+`service.version`, which `LOGFIRE_SERVICE_VERSION` and `OTEL_SERVICE_VERSION` do
+not change. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
@@ -1181,7 +1183,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
-| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a cloud sandbox whose provider's proxy holds your GitHub token; see [Cloud sandboxes](docs/reference.md#cloud-sandboxes-sandbox) |
+| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; see [Sandboxes](docs/reference.md#sandboxes-sandbox) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -3034,7 +3036,9 @@ prompt the keyboard does:
   recently created instead of the most recently active, as the web sidebar does. As in `/resume`,
   a fork gets its own copy of the session's Monty state, and a deleted session's state is deleted
   with it. Like opening `/resume`, `listing` queues the newest untitled sessions for background
-  naming, which calls the naming model when `sessions.naming` is on. Renaming the current
+  naming, which calls the naming model when `sessions.naming` is on (the default). Without
+  `sessions.naming_model` or a saved `sessions.naming true`, only sessions held with the current model are named
+  or listed in a naming prompt. Renaming the current
   conversation fires `on_conversation_changed` at once, even while a turn runs, unlike background
   naming.
   `follows_workspace` says whether `/resume ID` moves the session into the directory it was saved
@@ -3590,8 +3594,8 @@ When the conversation or its title changed, every loaded plugin, the caller incl
 receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
 Resuming the conversation already held only shows its history again. An in-memory
 `Transcript` has nothing saved, so its `resume` raises `LookupError`.
-Local `!command` executions append a user message with the command, stdout, stderr, and
-completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
+`!command` executions, on this machine or in the conversation's `/sandbox` sandbox, append a user
+message with the command, stdout, stderr, and completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
 `!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
 the context reaches the model on the next prompt.
 

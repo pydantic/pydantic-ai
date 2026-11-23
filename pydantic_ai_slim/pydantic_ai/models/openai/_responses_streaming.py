@@ -47,6 +47,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    report_input_transformations,
     response_status_to_state,
 )
 from ._settings import OpenAIResponsesModelSettings, echoed_store
@@ -143,6 +144,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
+            }
+        if response.input_transformations:
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'input_transformations': report_input_transformations(response.input_transformations),
             }
         if (store := echoed_store(response, self._model_settings)) is not None:
             self.provider_details = {**(self.provider_details or {}), 'store': store}

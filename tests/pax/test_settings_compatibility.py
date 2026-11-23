@@ -462,16 +462,29 @@ def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fiel
         store.load()
 
 
-def test_session_naming_is_opt_in_and_keeps_saved_choices(tmp_path: Path) -> None:
-    """Naming costs a model request, so it is off unless a user turned it on, as older builds' rows may say."""
+def test_session_naming_keeps_saved_choices(tmp_path: Path) -> None:
+    """A user who turned naming on while it was opt-in keeps it on."""
     path = tmp_path / 'config.db'
-    store = SettingsStore(path)
-    assert store.load().session_namer is False
+    SettingsStore(path)  # creates the settings table an older build wrote the row into
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'true')")
-    assert SettingsStore(path).load().session_namer is True
-    store.reset('sessions.naming')
+    loaded = SettingsStore(path).load()
+    # Explicit, not the default: naming then covers every session, as it did while it was opt-in.
+    assert loaded.session_namer is True and 'session_namer' in loaded.model_fields_set
+    assert 'session_namer' not in SettingsStore(tmp_path / 'fresh.db').load().model_fields_set
+
+
+def test_session_naming_is_on_by_default_unless_turned_off(tmp_path: Path) -> None:
+    """Naming is on again by default (#13748 had made it opt-in); a saved `false` still turns it off."""
+    assert Settings().session_namer is True
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    assert store.load().session_namer is True
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("INSERT INTO settings VALUES ('sessions.naming', 'false')")
     assert SettingsStore(path).load().session_namer is False
+    store.reset('sessions.naming')
+    assert SettingsStore(path).load().session_namer is True
 
 
 @pytest.mark.parametrize('value_json', ['false', 'true'])

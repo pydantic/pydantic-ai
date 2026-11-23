@@ -256,8 +256,8 @@ your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with
 ### Run a shell command: `!`
 
 Start a line with `!` to run it as a shell command, without asking the model. The command and
-its output are saved, so the model sees them on your next prompt. Use `!!` for
-interactive programs, such as `!!python`, to give them the whole terminal.
+its output are saved, so the model sees them on your next prompt. In a `/sandbox` conversation it runs in
+the sandbox. Use `!!` for interactive programs, such as `!!python`, to give them the whole terminal.
 
 ![Running git log and the project's CLI with !](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/shell.png)
 
@@ -284,9 +284,9 @@ it back in the editor so you can change it. Rewinding does not undo changes to f
 ### Pick up where you left off: `/resume`
 
 Every conversation is saved. `/resume` opens a browser with your projects on the left
-and their sessions on the right. Each session is titled from its first prompt;
-`/set sessions.naming true` has a model name them in the background instead, using your
-current model or a smaller `sessions.naming_model`. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
+and their sessions on the right. CLAI names sessions in the background so you can find
+them, using your current model or a smaller `sessions.naming_model`; `/set sessions.naming false`
+keeps the titles taken from each session's first prompt. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
 <kbd>a</kbd> archives a session you are done with, hiding it without deleting anything, and <kbd>h</kbd> shows archived ones.
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/resume.png)
@@ -319,7 +319,7 @@ opens live, even while others run: each works in its own folder, with its own qu
 prompts and running turn, and a dot shows which ones are running or waiting for you.
 Esc stops only the session you are looking at. A session left idle for an hour
 closes; it stays saved, so click it to pick it up again. See
-[Several sessions in the web UI](docs/reference.md#several-sessions-in-the-web-ui).
+[Several sessions in the web UI](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#several-sessions-in-the-web-ui).
 
 ### Usage, cost, and `/compact`
 

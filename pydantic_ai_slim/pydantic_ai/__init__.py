@@ -17,7 +17,7 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, Capability, CapabilityFunc
+from .capabilities import AgentCapability, AgentInstructions, Capability, CapabilityFunc, SourcedInstruction
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -513,6 +513,9 @@ __all__: tuple[str, ...] = (
     'AgentCapability',
     'Capability',
     'CapabilityFunc',
+    # instructions
+    'AgentInstructions',
+    'SourcedInstruction',
     # output
     'ToolOutput',
     'NativeOutput',

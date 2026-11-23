@@ -50,15 +50,15 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
-| `/sandbox [e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a cloud sandbox; no argument says where this one runs. See [Cloud sandboxes](#cloud-sandboxes-sandbox) |
+| `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
 | `/SKILL-NAME [ARGS]` | Send an Agent Skill as your next prompt |
-| `!COMMAND` | Run a shell command; the command and output are saved for the next prompt |
-| `!!COMMAND` | Give an interactive program the whole terminal; only its exit status is saved |
+| `!COMMAND` | Run a shell command, in the sandbox in a `/sandbox` conversation; the command and output are saved for the next prompt |
+| `!!COMMAND` | Give an interactive program the whole terminal, on this machine only; only its exit status is saved |
 
 Plugins add their own commands, such as `/notion login` or `/google_workspace`. `/help` lists them.
 
@@ -110,7 +110,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
-| `sessions.naming` | `false` | Name saved sessions in the background using a model, at extra cost. |
+| `sessions.naming` | `true` | Name saved sessions in the background using a model, at extra cost. By default only sessions held with the current model are named; once saved, even as true, every session from any workspace is. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
@@ -1540,6 +1540,25 @@ status are saved. On Windows, the command shares CLAI's console in the same way.
 Without `!!`, a full-screen program on Windows cannot draw, because its output
 is a pipe.
 
+#### In a sandbox
+
+In a [`/sandbox`](#sandboxes-sandbox) conversation, a `!` line runs in the sandbox, where the
+agent's commands run, not on this machine:
+
+```text
+> !git status
+$ git status
+Runs in the Daytona sandbox; command and output saved for the next prompt
+...
+Done (0.8s)
+```
+
+It runs with the sandbox's shell in the sandbox's copy of the checkout, with the keys the agent got there
+with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
+input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, CLAI says so; the line
+never runs on this machine instead. `!!` needs this terminal, so in a sandbox CLAI refuses it and saves
+nothing. The command, output, and status are saved for the next prompt as on this machine.
+
 A bare `!` or `!!` is sent to the agent as an ordinary prompt. Queued `!` lines
 run in order with other queued input. `/help` lists the syntax.
 
@@ -1608,6 +1627,13 @@ mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the
 The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
+
+Markdown tables keep their words whole where they can. A table too wide for the terminal
+wraps its cells only between words, and every column is at least as wide as its longest word.
+When those words cannot sit side by side, each row is shown as its own block of
+`Header: value` lines, with a rule between rows; only a word wider than the terminal is
+split. Resizing lays the table out again for the new width. `TERMFLOW_MAX_TABLE_WIDTH`,
+if set, caps both layouts.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
@@ -2588,7 +2614,7 @@ a new session; `--session-id` then names it. `--continue` works with `-p` and
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
-or execute pending tools. Background naming, when turned on, may make a separate,
+or execute pending tools. Background naming, unless turned off, may make a separate,
 tool-free model request. Your current model, working directory, credentials, and
 approved plugins remain in effect. The saved model name is shown for reference.
 
@@ -2715,9 +2741,9 @@ later turns in Claude Code or Codex are not merged into it.
 
 #### Background names
 
-A saved session immediately gets a fallback title from its first prompt. With
-`sessions.naming` on, a single background worker can replace it with a short
-title, subtitle, and up to four topic tags. The browser refreshes names while
+A saved session immediately gets a fallback title from its first prompt. A
+single background worker can replace it with a short title, subtitle, and up to
+four topic tags. The browser refreshes names while
 idle without moving selection.
 
 The worker uses up to 2,400 characters of recent user/assistant text, plus the
@@ -2731,19 +2757,28 @@ in `Fix renderer (2)`. It refreshes generated names after 16 content
 revisions; revisions, unlike message offsets, survive compaction. This is a
 bounded current summary, not a lossless incremental transcript archive. Opening
 the browser backfills up to ten eligible sessions. Queue length, request count,
-output size, and a 60-second deadline bound the work. Exiting cancels and joins
-the worker.
+output size, and a 60-second deadline bound the work. Each naming request asks
+for no reasoning, or the least the model accepts, and at most 4,096 output
+tokens, so a reasoning model has room to answer. Exiting cancels and joins the
+worker.
 
 ```text
-/set sessions.naming true
+/set sessions.naming false
 /set sessions.naming_model openai:gpt-5-mini
 /set sessions.naming_model null
 ```
 
-Naming is off by default, so no model request is made without your opt-in, and
-sessions keep their fallback titles. Once on, it uses the current model unless
+Naming is on by default. Turn it off to make no naming requests, and sessions
+keep their fallback titles. It uses the current model unless
 `sessions.naming_model` names a smaller one. It sends conversation excerpts to
-that model's provider and incurs additional usage. It has no tools and does not
+that model's provider and incurs additional usage. While naming is on only by
+default, it names only sessions held with the current model, and lists only
+their titles: a session held with another model, such as a local one or another
+model of the same provider, or imported from another agent, keeps its fallback
+title, and neither its text nor its title is sent. Switching models therefore leaves older sessions unnamed.
+Saving `sessions.naming true`, or choosing `sessions.naming_model`, names every
+untitled or stale session, from any workspace, sending it and its siblings'
+titles to the naming model. It has no tools and does not
 inherit coding plugins. Missing credentials, timeouts, invalid output, or stale
 results leave the existing name usable and do not interrupt foreground work.
 `/usage` and the browser preview show persisted naming token counts separately;
@@ -2956,12 +2991,16 @@ A worktree separates working files, not permissions. CLAI's default tools can
 still access files outside it. Creation runs before the agent starts and emits
 no agent telemetry spans.
 
-### Cloud sandboxes: `/sandbox`
+### Sandboxes: `/sandbox`
 
-Run `/sandbox PROVIDER` (`e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`, `sprites`, or `kubernetes`) in a new
-conversation, before its first prompt. CLAI copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new cloud sandbox, and every command and file edit of the conversation runs
-there. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+<span id="cloud-sandboxes-sandbox"></span>
+
+Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`, `opensandbox`, `modal`, `render`,
+`sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
+microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
+The others are cloud sandboxes. CLAI copies this checkout (the branch, its unpushed commits, and
+uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
+there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If CLAI stops
@@ -2974,6 +3013,8 @@ Without a `gh` login, the sandbox has no GitHub access, and its copy has no `ori
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
+| `local smol` | `pydantic-ai-pax[local]` on macOS (Apple silicon) and Linux; on Windows, `smolvm` on `PATH` | none | in the VM | anything run in the VM |
+| `local boxlite` | `pydantic-ai-pax[local]` on macOS (Apple silicon) and Linux, with Python 3.14 or older; not on Windows | none | in the VM | anything run in the VM |
 | `e2b` | `pydantic-ai-pax[e2b]` | `E2B_API_KEY` | E2B's proxy, in the sandbox's network rules | anyone with an API key for your E2B team; use a team of your own |
 | `boxd` | `pydantic-ai-pax[boxd]` | `BOXD_API_KEY` | boxd's proxy, in a private secret made for the machine | a command in the sandbox, as below |
 | `daytona` | `pydantic-ai-pax[daytona]` | `DAYTONA_API_KEY` | Daytona's proxy, in a secret of your Daytona organization made for the sandbox | anyone in your Daytona organization who can create sandboxes can name the secret and have the proxy send the token |
@@ -3013,14 +3054,33 @@ sandbox answers without a token.
 `/sandbox delete` deletes with the sandbox. A sandbox deleted outside CLAI, in Daytona's dashboard or CLI
 or by Daytona's auto-delete, leaves its secret behind: delete it on Daytona's Secrets page.
 
-**In the sandbox** (`modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
+**In the sandbox** (`local smol`, `local boxlite`, `modal`, `render`, `sprites`, `kubernetes`): these have no proxy that can add it, so
 CLAI saves the token in the sandbox's home folder for `git` and `gh`. Anything run there, the agent
 included, can read it, and it goes when the sandbox does. A `kubernetes` sandbox is a pod CLAI claims from
 your [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool, on the cluster `kubectl`'s current
 context names, and reaches through `kubectl port-forward`. Its pod runs commands but takes no file
 uploads, so the token travels base64-encoded inside a command to the pod.
 
-How long a sandbox lasts differs. An `e2b` sandbox that times out is paused, and Daytona stops an idle
+`local smol` and `local boxlite` run a microVM on this machine, with its own kernel and filesystem; neither needs an
+account or key. Nothing of this machine is mounted into it, but it has network access, from this machine's network,
+so it can reach your local network too. Both run the `python:3.13` image, which the engine downloads the first time.
+
+`local boxlite` runs a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM in CLAI's process, on macOS
+(Apple silicon) and Linux, where it needs read and write access to `/dev/kvm`; BoxLite has no Windows build. One
+process at a time can use BoxLite's home directory (`~/.boxlite`), so a second CLAI session opening a `local boxlite`
+sandbox fails until the first exits.
+
+`local smol` runs a [SmolVM](https://github.com/smol-machines/smolvm) microVM, on macOS (Apple silicon), Linux, and
+Windows. On macOS and Linux the `local` extra installs smolmachines, which runs the VM in
+CLAI's process; Linux needs read and write access to `/dev/kvm`. On Windows, which smolmachines has no
+build for, unzip the `windows-x86_64` [smolvm release](https://github.com/smol-machines/smolvm/releases)
+into a folder on `PATH`, with the Windows Hypervisor Platform turned on; CLAI then drives `smolvm` itself,
+which macOS and Linux do too when the extra is not installed. That way of running it has not been tested on a
+Windows host yet.
+
+How long a sandbox lasts differs. A `local smol` or `local boxlite` VM keeps its files until `/sandbox delete`; it stops when CLAI
+does, and starts again when the conversation is reopened. Where CLAI drives the `smolvm` CLI, closing a session
+stops its VM, so a command another CLAI session is running there fails; run it again. An `e2b` sandbox that times out is paused, and Daytona stops an idle
 one; both keep their files, so delete them when you are done. A `modal` or `render` sandbox ends after
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
@@ -3448,7 +3508,9 @@ instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
-than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
+than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry CLAI's
+own version as `service.version`; `LOGFIRE_SERVICE_VERSION` and
+`OTEL_SERVICE_VERSION` do not change it. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
