@@ -3,12 +3,12 @@
 from termflow.live import Region, Widget
 
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
-from pydantic_ai_pax.ui.rendering import theme
 
 _Position = tuple[int, int]
 """A row: the item's id and the row within it."""
 
 SCROLLED_HINT = ' ↓ more below · PgDn '
+"""Shown in a rule under the transcript while scrolled back, so it covers no transcript text."""
 
 
 class TranscriptView(Widget):
@@ -127,9 +127,6 @@ class TranscriptView(Widget):
         ) + ((False,) if after is None else ())
 
     def draw(self, region: Region, focused: bool) -> None:
-        """Paint into `region`, with a hint while scrolled away from the newest output."""
+        """Paint into `region`; `PromptSurface` shows `SCROLLED_HINT` while scrolled away from the newest output."""
         for y, row in enumerate(self.window(width=max(1, region.width), height=region.height)):
             region.ansi(0, y, row)
-        if self.anchor is not None and region.height > 0:
-            hint = SCROLLED_HINT[: region.width]
-            region.ansi(region.width - len(hint), region.height - 1, f'{theme.sgr(theme.MUTED)}\x1b[7m{hint}\x1b[0m')

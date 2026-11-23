@@ -20,6 +20,12 @@ from pydantic_ai_pax.ui.rendering.recolor import recolor
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
 _OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')
+PREVIEW, DROP = '\ufdd2', '\ufdd3'
+"""Marks in a Markdown part's stream: what follows `PREVIEW` shows until `DROP` removes it.
+
+Model text cannot forge them: `terminal_text` escapes these noncharacters.
+"""
+_MARKS = re.compile(f'([{PREVIEW}{DROP}])')
 _CONSOLE = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor')
 """Only decodes recorded styling into segments; it never writes to a terminal."""
 
@@ -189,7 +195,11 @@ class _Line:
 
 
 class _Lines:
-    """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one."""
+    """An unbounded ANSI stream decoded into styled lines, keeping an unfinished one.
+
+    What follows `PREVIEW` goes to `preview`, shown after the lines until `DROP` discards it. A preview
+    has the same limits as its stream but prunes only itself, so it never evicts the lines it follows.
+    """
 
     def __init__(self, *, max_chars: int = 4_000_000, max_lines: int = 10_000) -> None:
         self.max_chars, self.max_lines = max_chars, max_lines
@@ -200,18 +210,35 @@ class _Lines:
         self.pending_theme = theme.painted_in()
         """The theme the unfinished line started in, which its completion keeps."""
         self._decoder = TranscriptDecoder()
+        self.preview: _Lines | None = None
 
     @classmethod
     def rebind(cls, stream: '_Lines') -> '_Lines':
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
         vars(stream).setdefault('pending_theme', theme.name())
+        if (preview := vars(stream).setdefault('preview', None)) is not None:
+            cls.rebind(preview)
         for line in stream.lines:
             _Line.rebind(line)
         return stream
 
     def write(self, text: str) -> None:
         self.revision += 1
+        for part in _MARKS.split(text):
+            if part == PREVIEW:
+                # The preview goes on from the unfinished line, as a reasoning heading's text does.
+                self.preview = _Lines(max_chars=self.max_chars, max_lines=self.max_lines)
+                self.preview.pending, self.preview.pending_theme = self.pending, self.pending_theme
+                self.preview._decoder.style = self._decoder.style
+            elif part == DROP:
+                self.preview = None
+            elif self.preview is None:
+                self._write(part)
+            else:
+                self.preview._write(part)
+
+    def _write(self, text: str) -> None:
         started = self.pending_theme if self.pending else theme.painted_in()
         self.pending = _OSC.sub(replay_osc, self.pending + text)
         *done, self.pending = self.pending.split('\n')
@@ -221,9 +248,23 @@ class _Lines:
             self.chars += len(decoded)
             started = theme.painted_in()
         self.pending_theme = started
+        self._prune()
+
+    def _prune(self) -> None:
         self.pending = self.pending[-self.max_chars :]
         while len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars:
             self.chars -= len(self.lines.pop(0).text)
+
+    def keep_preview(self) -> None:
+        """Make a shown preview part of the stream, as nothing will replace it now."""
+        if (preview := self.preview) is not None:
+            self.preview = None
+            self.revision += 1
+            self.lines += preview.lines
+            self.chars += preview.chars
+            # The preview went on from the unfinished line, so its own unfinished line includes it.
+            self.pending, self.pending_theme, self._decoder = preview.pending, preview.pending_theme, preview._decoder
+            self._prune()
 
     def tail(self) -> Text:
         decoder = TranscriptDecoder()
@@ -233,7 +274,11 @@ class _Lines:
         return decoder.decode_line(complete if escape < 0 else complete[:escape])
 
     def all(self) -> list[_Line]:
-        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme)] if self.pending else self.lines
+        if self.preview is not None:
+            return [*self.lines, *self.preview.all()]
+        if not self.pending:
+            return self.lines
+        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme)]
 
 
 class Render(Protocol):
@@ -291,6 +336,7 @@ class MarkdownBlock(io.StringIO):
     @property
     def chars(self) -> int:
         """Retained source plus visible output, for the transcript memory limit."""
+        # A preview is left out: it lasts until its closing fence, and its own limits bound it.
         return len(self.source or '') + self._stream.chars + len(self._stream.pending)
 
     def write(self, text: str) -> int:
@@ -313,6 +359,11 @@ class MarkdownBlock(io.StringIO):
         """Keep only what was shown, as an aborted stream never rendered the rest of its source."""
         self.source = None
         self._changed()
+
+    def abort(self) -> None:
+        """Freeze a cancelled part, keeping its preview: nothing will replace it now."""
+        self._stream.keep_preview()
+        self.freeze()
 
     def _lines(self, *, width: int) -> list[_Line]:
         key = (width, theme.name())
