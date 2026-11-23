@@ -156,6 +156,16 @@ def test_coder_members_and_parameters() -> None:
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
 
 
+def test_coder_max_image_side_none_sends_images_at_full_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without Pillow, only the default downscaling needs it.
+    monkeypatch.setitem(sys.modules, 'PIL', None)
+    with pytest.raises(ImportError, match='needs Pillow'):
+        Coder()
+    coder = Coder(max_image_side=None)
+    files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
+    assert files.max_image_side is None
+
+
 def test_bound_tool_outputs_sharing_an_id_raise_instead_of_merging() -> None:
     limits = next(item for item in Coder().capabilities if isinstance(item, ToolOutputLimits))
     with pytest.raises(UserError, match="'coder_tool_output_limits' is used by multiple capabilities"):
