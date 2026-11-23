@@ -674,7 +674,8 @@ jobs:
       - run: uvx tinicly docs --check
 
       # The pinned action's curl download reads this config; keep retries scoped to setup.
-      - name: Configure Lychee download retries
+      - &lychee-download-retries
+        name: Configure Lychee download retries
         run: |
           mkdir -p "$RUNNER_TEMP/lychee-curl"
           cat > "$RUNNER_TEMP/lychee-curl/.curlrc" <<'EOF'
@@ -688,7 +689,8 @@ jobs:
       # Check that links between doc pages resolve, including their `#anchor` fragments. Runs
       # `--offline` so only local files are checked: external hosts are swept weekly by
       # link-check.yml instead, where being down doesn't block a PR.
-      - name: Check doc links and heading anchors
+      - &lychee-local-links
+        name: Check doc links and heading anchors
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         env:
           CURL_HOME: ${{ runner.temp }}/lychee-curl
@@ -765,6 +767,10 @@ jobs:
           extra_args: --all-files --verbose
         env:
           SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity,test-waits
+
+      # `docs-assets` skips this route, so an instruction-only change checks its links here.
+      - *lychee-download-retries
+      - *lychee-local-links
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})

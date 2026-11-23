@@ -667,6 +667,15 @@ def test_docs_checks_cover_harness_readmes():
         assert test_path in command
 
 
+def test_content_checks_run_the_link_check():
+    jobs = _workflow()['jobs']
+    content_steps = JOB_STEPS_ADAPTER.validate_python(jobs['content-checks'])['steps']
+    docs_steps = JOB_STEPS_ADAPTER.validate_python(jobs['docs-assets'])['steps']
+    link_checks = [step for step in docs_steps if str(step.get('uses')).startswith('lycheeverse/lychee-action@')]
+    assert len(link_checks) == 1
+    assert link_checks[0] in content_steps
+
+
 def test_aggregate_requires_the_selected_lightweight_job():
     jobs = _workflow()['jobs']
     content_checks = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['content-checks'])

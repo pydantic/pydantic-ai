@@ -1,6 +1,6 @@
-# Configuration for the docs link check, shared by the PR gate in ci.yml (`docs-assets`,
-# run with `--offline` so only local files are checked) and the scheduled external-link
-# sweep in link-check.yml.
+# Configuration for the docs link check, shared by the PR gate in ci.yml (`docs-assets` and
+# `content-checks`, run with `--offline` so only local files are checked) and the scheduled
+# external-link sweep in link-check.yml.
 # Tuned to avoid false positives from sites that block bots or rate-limit, so the issue
 # the scheduled sweep opens only lists genuinely broken links.
 
