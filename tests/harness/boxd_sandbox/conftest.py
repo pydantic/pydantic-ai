@@ -19,7 +19,14 @@ _HAS_BOXD = importlib.util.find_spec('boxd') is not None
 collect_ignore = (
     []
     if _HAS_BOXD
-    else ['test_backend.py', 'test_boxd_live.py', 'test_boxd_sandbox.py', 'test_conformance.py', 'test_live_sweep.py']
+    else [
+        'test_backend.py',
+        'test_boxd_desktop.py',
+        'test_boxd_live.py',
+        'test_boxd_sandbox.py',
+        'test_conformance.py',
+        'test_live_sweep.py',
+    ]
 )
 
 # Live machines are deleted by the tests that create them, and `_sweep_live_machines` deletes what their
