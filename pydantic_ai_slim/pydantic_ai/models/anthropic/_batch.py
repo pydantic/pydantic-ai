@@ -20,6 +20,7 @@ from anthropic.types.beta.messages import (
     BetaMessageBatch,
     BetaMessageBatchSucceededResult,
 )
+from anthropic.types.beta.messages.batch_create_params import Request
 from pydantic import TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -39,6 +40,7 @@ from .._batch_codec import (
     shared_group,
     unrun_error,
 )
+from .._decode_errors import check_json_response, map_decode_errors
 from ..batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 from ._errors import ERROR_TYPE_STATUS_CODES, api_error
 from ._native_tools import open_turn_has_code_execution
@@ -124,29 +126,28 @@ async def batch_create(model: AnthropicModel, requests: Sequence[EncodedBatchReq
         raise UserError(
             f'Anthropic Message Batches need `custom_id`s of 1 to 64 letters, digits, `_` or `-`, not {invalid[0]!r}.'
         )
-    batch = (
-        await _batch_client(model)
-        .with_options(max_retries=0)
-        .beta.messages.batches.create(
-            requests=[
-                # The body is this provider's own `batch_encode` output.
-                {
-                    'custom_id': request.custom_id,
-                    'params': cast(MessageCreateParamsNonStreaming, json.loads(request.body)),
-                }
-                for request in requests
-            ],
-            betas=_GROUP_ADAPTER.validate_json(group)['betas'] or OMIT,
-            extra_headers={'User-Agent': get_user_agent()},
+    batch_requests: list[Request] = [
+        # The body is this provider's own `batch_encode` output.
+        {'custom_id': request.custom_id, 'params': cast(MessageCreateParamsNonStreaming, json.loads(request.body))}
+        for request in requests
+    ]
+    betas = _GROUP_ADAPTER.validate_json(group)['betas'] or OMIT
+    with map_decode_errors(model.model_name):
+        batch = (
+            await _batch_client(model)
+            .with_options(max_retries=0)
+            .beta.messages.batches.create(
+                requests=batch_requests, betas=betas, extra_headers={'User-Agent': get_user_agent()}
+            )
         )
-    )
     return _to_batch(model, batch, group)
 
 
 async def batch_status(model: AnthropicModel, batch: Batch) -> Batch:
     check_allow_model_requests()
     _validate_batch_group(model, batch.group, collecting=True)
-    message_batch = await _batch_client(model).beta.messages.batches.retrieve(batch.id)
+    with map_decode_errors(model.model_name):
+        message_batch = await _batch_client(model).beta.messages.batches.retrieve(batch.id)
     return _to_batch(model, message_batch, batch.group)
 
 
@@ -155,7 +156,11 @@ async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult
     require_ended(batch)
     _validate_batch_group(model, batch.group, collecting=True)
     results: list[BatchResult] = []
-    async for item in await _batch_client(model).beta.messages.batches.results(batch.id):
+    # `results` reads the `results_url` of the batch it retrieves first, which `anthropic` returns as the body's text
+    # when its content type isn't JSON.
+    with map_decode_errors(model.model_name, AttributeError):
+        batch_items = await _batch_client(model).beta.messages.batches.results(batch.id)
+    async for item in batch_items:
         result = item.result
         body = result.model_dump_json() if result.type in ('succeeded', 'errored') else None
         results.append(BatchResult(custom_id=item.custom_id, status=result.type, body=body))
@@ -165,7 +170,8 @@ async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult
 async def batch_cancel(model: AnthropicModel, batch: Batch) -> Batch:
     check_allow_model_requests()
     _validate_batch_group(model, batch.group, collecting=True)
-    message_batch = await _batch_client(model).beta.messages.batches.cancel(batch.id)
+    with map_decode_errors(model.model_name):
+        message_batch = await _batch_client(model).beta.messages.batches.cancel(batch.id)
     return _to_batch(model, message_batch, batch.group)
 
 
@@ -201,7 +207,7 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
 
 
 def _to_batch(model: AnthropicModel, batch: BetaMessageBatch, group: str) -> Batch:
-    counts = batch.request_counts
+    counts = check_json_response(model.model_name, batch).request_counts
     return Batch(
         id=batch.id,
         model_name=model.model_name,
