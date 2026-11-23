@@ -58,7 +58,7 @@ def _run_bump(
     close_run = next(
         step['run']
         for step in job['steps']
-        if step.get('name') == 'Close the superseded pin bump pull requests' and 'run' in step
+        if step.get('name') == 'Close the superseded pin bump pull requests and auto-merge this one' and 'run' in step
     )
     snapshot = snapshot_version or pinned
     definition = tmp_path / DEFINITION.rsplit('/', maxsplit=1)[-1]
@@ -116,6 +116,7 @@ case "$*" in
   "pr list --state open --head gh-aw-engine-pin-"*) printf '%s' "$GH_CURRENT_PR" ;;
   "pr list --state open --app pydantic-docs "*) printf '%s' "$GH_PIN_PRS" ;;
   "pr close "*) ;;
+  "pr merge "*) ;;
   "pr list "*) if [[ -n "$GH_EXISTING_TITLE" ]]; then printf '%s\\n' "$GH_EXISTING_TITLE"; fi ;;
   "api repos/fixture/repository/git/ref/heads/main --jq .object.sha") printf 'base-sha\\n' ;;
   *"/contents/src/pydantic_ai_harness/gh-aw/pydantic.md?ref=base-sha"*) cat "$GH_SNAPSHOT" ;;
@@ -345,6 +346,7 @@ def test_open_pin_bump_closes_the_app_pin_bumps_for_lower_versions(tmp_path: Pat
         'pr close 40 --comment Superseded by #45, which bumps the pin to `0.55.0`.',
         'pr close 41 --comment Superseded by #45, which bumps the pin to `0.55.0`.',
     ]
+    assert calls[-1] == 'pr merge 45 --auto --squash'
 
 
 def test_no_open_pin_bump_for_the_release_closes_nothing(tmp_path: Path):
@@ -354,4 +356,4 @@ def test_no_open_pin_bump_for_the_release_closes_nothing(tmp_path: Path):
 
     assert process.returncode == 0, process.stderr
     assert any(call.startswith('pr list --state open --head gh-aw-engine-pin-0.55.0 ') for call in calls)
-    assert not any(call.startswith(('pr list --state open --app ', 'pr close ')) for call in calls)
+    assert not any(call.startswith(('pr list --state open --app ', 'pr close ', 'pr merge ')) for call in calls)

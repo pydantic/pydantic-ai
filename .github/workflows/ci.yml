@@ -2584,9 +2584,9 @@ jobs:
   # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
-  # nothing: when the harness release just cut is not the release the definition names, it opens
-  # that pull request for a maintainer to merge when the released version is newer than the pin,
-  # and closes the pin bumps it opened for earlier releases.
+  # nothing: when the released version is newer than the pin, it opens that pull request, closes
+  # the pin bumps it opened for earlier releases, and turns on auto-merge. The merge queue then
+  # merges the bump once `check` passes, with no maintainer review.
   #
   # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
   # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would arrive
@@ -2730,7 +2730,7 @@ jobs:
           cat > "${RUNNER_TEMP}/pin-bump.md" <<EOF
           \`engine.version\` in \`${definition}\` is the \`pydantic-ai-harness\` release that generated gh-aw workflows install. This bumps it from \`${PINNED}\` to \`${RELEASED}\`, which the [\`${GITHUB_REF_NAME}\` release run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) that opened this pull request just published.
 
-          Consumers compile the definition from the default branch, so merging this ships the new pin on their next recompile. CI's \`gh_aw_engine_version.py --published\` check confirms PyPI serves \`${RELEASED}\`.
+          Consumers compile the definition from the default branch, so merging this ships the new pin on their next recompile. CI's \`gh_aw_engine_version.py --published\` check confirms PyPI serves \`${RELEASED}\`. Auto-merge is on: the merge queue merges this once \`check\` passes.
           EOF
 
           gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" --title "${title}" \
@@ -2738,7 +2738,7 @@ jobs:
 
       # A step of its own so that a rerun still reaches it: the step above stops once the pull
       # request it would open exists.
-      - name: Close the superseded pin bump pull requests
+      - name: Close the superseded pin bump pull requests and auto-merge this one
         if: steps.guard.outputs.bump == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -2773,3 +2773,6 @@ jobs:
           for number in $superseded; do
             gh pr close "$number" --comment "Superseded by #${current}, which bumps the pin to \`${RELEASED}\`."
           done
+          # `check` is the ruleset's only required check, and it needs the `quality` job's
+          # `--published` lint, so the queue merges no pin PyPI does not serve.
+          gh pr merge "$current" --auto --squash
