@@ -375,7 +375,8 @@ def check_stream_contract(node: pytest.Item, violations: dict[ViolationKey, str]
         details = '\n'.join(f'{stream} [{code}] {detail}' for (stream, code, _), detail in unknown.items())
         pytest.fail(
             f'{details}\nThe events this test streamed break the contract in `tests/stream_contract.py`. Fix the '
-            'stream; if this test streams such a shape on purpose, add '
+            'stream. If an adapter causes it on `main` and an issue tracks the fix, add a `KNOWN` entry in '
+            '`tests/stream_contract.py`; if this test streams such a shape on purpose, add '
             '@pytest.mark.breaks_stream_contract(reason=...)',
             pytrace=False,
         )

@@ -134,7 +134,9 @@ async def assert_rechunked_streams_match(
     differing = [key for key in recorded if rechunked[key] != recorded[key]]
     assert not differing, (
         f'{len(differing)} of {len(recorded)} re-chunkings build something else than the recording, first '
-        f'{differing[0]}:\n  re-chunked: {rechunked[differing[0]]}\n  recorded:   {recorded[differing[0]]}'
+        f'{differing[0]}:\n  re-chunked: {rechunked[differing[0]]}\n  recorded:   {recorded[differing[0]]}\n'
+        'Fix the adapter; if it builds this on `main` and an issue tracks the fix, add each re-chunking to the '
+        "`_KNOWN` table the driver's module passes as `known`"
     )
 
 

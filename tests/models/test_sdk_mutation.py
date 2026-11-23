@@ -319,7 +319,13 @@ async def test_mutated_response_is_read_or_rejected(
         outcome = await _outcome(case, driver, entry_point, recording, places)
         if (problem := _problem((name, entry_point), recording, places, outcome)) is not None:
             problems.append(problem)  # pragma: no cover
-    assert not problems, '\n'.join(problems)
+    assert not problems, '\n'.join(
+        [
+            *problems,
+            'Fix the adapter; if it crashes this way on `main` and an issue tracks the fix, add a `KNOWN` entry in '
+            '`tests/models/sdk_mutation.py`',
+        ]
+    )
 
 
 @pytest.mark.xdist_group(name='sdk_mutation')
@@ -334,4 +340,5 @@ async def test_known_crashes_name_generated_mutations(allow_model_requests: None
                     for _, places in await sampled.mutations(name, driver, case, entry_point)
                 }
     driven = {name for name, _, _ in _driven()}
-    assert {key for key in KNOWN if key[0] in driven} <= generated
+    stale = {key for key in KNOWN if key[0] in driven} - generated
+    assert not stale, f'`KNOWN` entries {stale} name no mutation the recordings produce: remove them'

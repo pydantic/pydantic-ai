@@ -979,7 +979,8 @@ def check_replay_fidelity(node: pytest.Item, cassette: Cassette) -> None:
         )
         pytest.fail(
             f'{details}\nA field the next request drops makes the provider reject the conversation or lose what the '
-            "field carried, and a cache write the next request doesn't read is paid for nothing. Fix the adapter; if "
+            "field carried, and a cache write the next request doesn't read is paid for nothing. Fix the adapter. If "
+            'the provider never needs the field back, fix its entry in `ECHO_FIELDS` in `tests/replay_fidelity.py`; if '
             "this test's conversation does this on purpose, add @pytest.mark.drops_replay_field(reason=...) to the test",
             pytrace=False,
         )
