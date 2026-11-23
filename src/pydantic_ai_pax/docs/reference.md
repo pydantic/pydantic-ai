@@ -1576,7 +1576,7 @@ running or its output was cut. A call of any tool that fails or is refused gets 
 the first line of the reason; a file change you refuse says `refused` and why, and a call whose
 arguments did not validate says `invalid arguments`. When calls run in parallel, a row that
 does not sit under its own header ends with the command or call it belongs to. A row too wide
-for the terminal is clipped at its end. Other shell
+for the terminal is clipped at its end; a log path after it wraps instead, so it stays whole. Other shell
 output and grep results stay out of the terminal; the model still receives full tool results.
 Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
@@ -1689,7 +1689,7 @@ Full output remains in the log; display formatting does not alter model results.
 Shell output defaults to the first 20 logical lines per command. Change it with
 `/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
 to the next prompt. After the command returns, its result row counts the lines in the
-log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown`,
+log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown · log PATH`,
 including an unterminated final line. When the preview is cut, by this limit
 or by the capability's 16 KB event preview cap, the row shows the log path, where the full
 output remains. Background commands can keep writing

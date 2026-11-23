@@ -3134,7 +3134,7 @@ the terminal width, then any result row, then a blank line. Tool names are pink;
 and bullet markers are muted grey. Successful file writes and edits show their
 diffs even with `display.tool_output` off. A finished shell command always adds one result row
 (`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call
-of any tool a renderer does not claim gets a red row with the reason. Other shell output and grep
+whose result a renderer does not claim gets a red row with the reason. Other shell output and grep
 results are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
