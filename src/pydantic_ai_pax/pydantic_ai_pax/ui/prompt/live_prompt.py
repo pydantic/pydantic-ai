@@ -618,7 +618,7 @@ class LivePrompt:
         head, glyph, reset = '─ Working ', self.spinner().frame(self.clock()), '\x1b[0m'
         # Esc, unlike Ctrl-C, never counts toward the double press that quits.
         candidates = [[format_duration(self.interrupts.elapsed), 'Esc to interrupt']]
-        # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
+        # Queue and steer hints only matter once there is something to send.
         if self.queued_messages or self.buffer.text.strip():
             keys = ['Enter to queue', f'{"Ctrl+Enter" if self.ctrl_enter_steers else "Alt+Enter"} to steer']
             candidates = [[*candidates[0], *keys], [candidates[0][0], *keys], keys]
