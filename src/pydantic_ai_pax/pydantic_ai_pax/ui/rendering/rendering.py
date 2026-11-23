@@ -96,7 +96,11 @@ _URL_START, _URL_END = '\ufdd0', '\ufdd1'
 Model text cannot forge them: `terminal_text` escapes these noncharacters, and the
 HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
 """
-_MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
+_MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*)({_URL_END})?')
+"""A marked URL, or an unclosed mark and the rest of the text, which `_link` leaves as it is.
+
+Matching an unclosed mark to the end at once keeps a later mark from starting another attempt that reads to the end.
+"""
 
 
 class MarkdownRenderer(Renderer):
@@ -128,6 +132,8 @@ class MarkdownRenderer(Renderer):
 
     def _link(self, match: re.Match[str]) -> str:
         url = match[1]
+        if match[2] is None:
+            return match[0]
         if '\x1b' in url:  # Other formatting split the URL; leave it as Termflow styled it.
             return url
         # Reset only the foreground so surrounding bold and thinking dim continue after the link.

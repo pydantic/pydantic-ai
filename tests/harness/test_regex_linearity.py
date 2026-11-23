@@ -1,8 +1,8 @@
-"""Every regular expression `pydantic_ai_harness` ships scans repeated adversarial input in linear time.
+"""Every regular expression the harness and pax ship scans repeated adversarial input at a steady cost per character.
 
 `re` backtracks, so a pattern whose match attempts re-read the same input, from each offset of a run or once per
 way of splitting it, takes quadratic or exponential time on input built to provoke it. A harness pattern often runs
-on text the model or a tool produced, and it runs on the event loop.
+on text the model or a tool produced, and it runs on the event loop. So does a pax pattern.
 
 The patterns are found in the package source, so a new one is checked without being listed here: every call to a
 `re` function is read, and its pattern is worked out from the literals, f-strings, `'|'.join(...)` calls,
@@ -10,6 +10,12 @@ The patterns are found in the package source, so a new one is checked without be
 matches only itself, so the pattern around it is what can backtrack. Each call whose pattern only exists at
 runtime says where its pattern comes from in `RUNTIME_PATTERNS`, and the built-in tables those calls compile are
 checked through `PATTERN_TABLES`.
+
+Each pattern is run the way its calls run it. `re.match` and `re.fullmatch` try one match from the start.
+`re.search` tries each offset until one matches, so it re-reads a run from each offset only where every attempt in
+the run fails; an alternative that matches where the others fail ends the search there. Every other call goes on from
+each match it finds. A compiled pattern bound to a module-level name runs the way the methods called on that name do, in any
+scanned module, the most expensive of them; any other use of the name, or none, counts as going on.
 
 Each pattern is then scanned by `tests/harness/_regex_steps.py`, which counts the steps `re`'s backtracking takes
 rather than timing it. `linearity_failure` says what it asserts, on inputs built from each pattern's own literals and
@@ -26,19 +32,26 @@ import re
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
 
-import pydantic_ai_harness
 from pydantic_ai_harness.artifact_scanning import DEFAULT_ARTIFACT_PATTERNS
 from pydantic_ai_harness.guardrails.detectors import DEFAULT_PII_PATTERNS, DEFAULT_SECRET_PATTERNS
 from pydantic_ai_harness.require_verification import DEFAULT_EDIT_COMMANDS, DEFAULT_VERIFICATION_COMMANDS
 
-from ._regex_steps import Shape, StepCounter, linearity_failure, shape
+from .._source_roots import REPO_ROOT, shipped_packages
+from ._regex_steps import Mode, Shape, StepCounter, linearity_failure, shape
 
-_PACKAGE = Path(pydantic_ai_harness.__file__).parent
+_PACKAGES = [
+    REPO_ROOT / package.path
+    for package in shipped_packages()
+    if package.name in ('pydantic_ai_harness', 'pydantic_ai_pax')
+]
+_ONE_MATCH: dict[str, Mode] = {'search': 'search', 'match': 'match', 'fullmatch': 'fullmatch'}
+"""The `re` functions and methods that look for one match, by name."""
+_COST: dict[Mode, int] = {'match': 0, 'fullmatch': 1, 'search': 2, 'scan': 3}
+"""How much of the input each mode can re-read: `fullmatch` reads on past an end `match` accepts."""
 _FLAGS_ARGUMENT = {
     'compile': 1,
     'search': 2,
@@ -69,26 +82,42 @@ PATTERN_TABLES: dict[str, dict[str, tuple[str, int]]] = {
 compiles, with the flags the package compiles them with."""
 
 RUNTIME_PATTERNS: dict[str, tuple[str, ...]] = {
-    'artifact_scanning/_scanner.py::ArtifactScanner.__post_init__': (
+    'pydantic_ai_harness/artifact_scanning/_scanner.py::ArtifactScanner.__post_init__': (
         'a `DEFAULT_ARTIFACT_PATTERNS` entry',
         "the user's `extra_patterns`",
     ),
-    'browser_use/_toolset.py::BrowserUseToolset.__init__': ('an alternation of escaped secret placeholders',),
-    'file_system/_toolset.py::FileSystemToolset._search_files': ("the model's search pattern",),
-    'guardrails/detectors.py::_compile': (
+    'pydantic_ai_harness/browser_use/_toolset.py::BrowserUseToolset.__init__': (
+        'an alternation of escaped secret placeholders',
+    ),
+    'pydantic_ai_harness/file_system/_toolset.py::FileSystemToolset._search_files': ("the model's search pattern",),
+    'pydantic_ai_harness/guardrails/detectors.py::_compile': (
         "a `DEFAULT_SECRET_PATTERNS` or `DEFAULT_PII_PATTERNS` entry, or the user's `extra`",
     ),
-    'permissions/_capability.py::Permissions.__post_init__': ("the user's `ask_commands`",),
-    'playwright/_toolset.py::_without_endpoint_credentials': (
+    'pydantic_ai_harness/permissions/_capability.py::Permissions.__post_init__': ("the user's `ask_commands`",),
+    'pydantic_ai_harness/playwright/_toolset.py::_without_endpoint_credentials': (
         'an alternation of the escaped `cdp_url` credential values',
     ),
-    'require_verification/_capability.py::RequireVerification.__post_init__': (
+    'pydantic_ai_harness/require_verification/_capability.py::RequireVerification.__post_init__': (
         "a `DEFAULT_VERIFICATION_COMMANDS` entry, or the user's `verification_commands`",
         "a `DEFAULT_EDIT_COMMANDS` entry, or the user's `edit_commands`",
     ),
+    'pydantic_ai_pax/builtin_plugins/sandbox/__init__.py::_ConversationSandbox.request_env': (
+        '`KEY_NAME`, imported from `pydantic_ai_pax/models/profiles.py`',
+    ),
+    'pydantic_ai_pax/config/api_keys.py::normalize_name': (
+        '`KEY_NAME`, imported from `pydantic_ai_pax/models/profiles.py`',
+    ),
 }
-"""Calls whose pattern only exists at runtime, keyed by `<file>::<function>`: where each call's pattern comes from, in
-source order. A built-in table they compile is checked through `PATTERN_TABLES`; a caller's own pattern can't be."""
+"""Calls whose pattern the scan can't work out, keyed by `<file>::<function>`: where each call's pattern comes from, in
+source order. A built-in table they compile is checked through `PATTERN_TABLES`; a caller's own pattern can't be, and
+the scan doesn't follow an import."""
+
+CHECKER_LIMITS: dict[str, str] = {
+    'pydantic_ai_pax/ui/rendering/command_syntax.py::_HEREDOC': (
+        'its backreference repeats the optional quote, and `StepCounter` runs no backreference'
+    ),
+}
+"""Patterns `StepCounter` can't run, by label, each an expected failure with the reason."""
 
 
 @dataclass(frozen=True)
@@ -138,6 +167,25 @@ def _bindings(scope: ast.AST) -> dict[str, _Binding]:
         if isinstance(node, ast.comprehension) and isinstance(node.target, ast.Name):
             bindings[node.target.id] = _ElementOf(node.iter)
             pending.extend([node.iter, *node.ifs])
+            continue
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            name = node.target.id
+            bindings[name] = None if name in bindings else _ElementOf(node.iter)
+            pending.extend([node.iter, *node.body, *node.orelse])
+            continue
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(targets := node.targets[0], ast.Tuple)
+            and isinstance(node.value, ast.Tuple)
+            and len(targets.elts) == len(node.value.elts)
+        ):
+            for target, value in zip(targets.elts, node.value.elts):
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = None if target.id in bindings else value
+                else:
+                    pending.append(target)
+            pending.append(node.value)
             continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             bindings[node.id] = None
@@ -272,6 +320,8 @@ class CallSite:
     """`<file>::<qualified name>`: the function the call is in, or the name a module-level call is assigned to."""
     patterns: list[tuple[str, int]] | None
     """The patterns and flags the call can compile, or `None` if they only exist at runtime."""
+    mode: Mode = 'scan'
+    """How the call, or the methods called on the compiled pattern it binds, run the pattern."""
 
 
 def _argument(call: ast.Call, position: int, keyword: str) -> ast.expr | None:
@@ -285,15 +335,40 @@ def _patterns(call: ast.Call, function: str, scopes: list[dict[str, _Binding]]) 
     flags = _argument(call, _FLAGS_ARGUMENT[function], 'flags')
     assert pattern is not None
     try:
-        patterns = _strings(_fold(pattern, scopes))
+        if isinstance(pattern, ast.Constant) and isinstance(pattern.value, bytes):
+            # A bytes pattern runs on bytes as its latin-1 decoding runs, with ASCII classes, on the decoded text.
+            patterns, text_flag = [pattern.value.decode('latin-1')], re.ASCII
+        else:
+            patterns, text_flag = _strings(_fold(pattern, scopes)), 0
         flag_values = [0] if flags is None else _ints(_fold(flags, scopes))
     except _Unresolved:
         return None
-    return [(text, flag) for text in patterns for flag in flag_values]
+    return [(text, flag | text_flag) for text in patterns for flag in flag_values]
 
 
-def _call_sites_in(relative: str, tree: ast.Module) -> Iterator[CallSite]:
-    """Every call to a `re` function that takes a pattern, in one module."""
+def _modes_of_names(trees: list[ast.Module]) -> dict[str, Mode]:
+    """How each name runs the pattern it holds: through its `search`, `match` or `fullmatch` method, or any other way."""
+    calls = {id(node.func) for tree in trees for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    methods = {
+        id(node.value): node
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+    }
+    modes: dict[str, Mode] = {}
+    for tree in trees:
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
+                continue
+            method = methods.get(id(node))
+            used = _ONE_MATCH.get(method.attr, 'scan') if method is not None and id(method) in calls else 'scan'
+            previous = modes.get(node.id, used)
+            modes[node.id] = previous if _COST[previous] >= _COST[used] else used
+    return modes
+
+
+def _call_sites_in(relative: str, tree: ast.Module, modes: dict[str, Mode]) -> Iterator[CallSite]:
+    """Every call to a `re` function that takes a pattern, in one module; `modes` is `_modes_of_names`'s."""
 
     def visit(node: ast.AST, qualname: str, scopes: list[dict[str, _Binding]]) -> Iterator[CallSite]:
         for child in ast.iter_child_nodes(node):
@@ -309,7 +384,16 @@ def _call_sites_in(relative: str, tree: ast.Module) -> Iterator[CallSite]:
                 and child.func.value.id == 're'
                 and child.func.attr in _FLAGS_ARGUMENT
             ):
-                yield CallSite(f'{relative}::{qualname}', _patterns(child, child.func.attr, scopes))
+                function = child.func.attr
+                mode = _ONE_MATCH.get(function, 'scan')
+                if (
+                    function == 'compile'
+                    and isinstance(node, ast.Assign)
+                    and node.value is child
+                    and [target.id for target in node.targets if isinstance(target, ast.Name)] == [qualname]
+                ):
+                    mode = modes.get(qualname, 'scan')
+                yield CallSite(f'{relative}::{qualname}', _patterns(child, function, scopes), mode)
             assigned = (
                 child.targets[0].id
                 if isinstance(child, ast.Assign) and len(child.targets) == 1 and isinstance(child.targets[0], ast.Name)
@@ -345,33 +429,56 @@ def _hidden_re_uses(tree: ast.Module) -> list[str]:
 
 
 _SOURCES = {
-    path.relative_to(_PACKAGE).as_posix(): path.read_text(encoding='utf-8') for path in sorted(_PACKAGE.rglob('*.py'))
+    path.relative_to(package.parent).as_posix(): path.read_text(encoding='utf-8')
+    for package in _PACKAGES
+    for path in sorted(package.rglob('*.py'))
 }
 # Parsed at collection, once: a module that never names `re` or `regex` can't call either, so it isn't parsed.
 _MODULES = [
     (relative, ast.parse(source)) for relative, source in _SOURCES.items() if re.search(r'\b(?:re|regex)\b', source)
 ]
-_CALL_SITES = [site for relative, tree in _MODULES for site in _call_sites_in(relative, tree)]
+_MODES = _modes_of_names([tree for _, tree in _MODULES])
+_CALL_SITES = [site for relative, tree in _MODULES for site in _call_sites_in(relative, tree, _MODES)]
 
 
-def _checked_patterns() -> dict[str, tuple[str, int]]:
-    checked: dict[str, tuple[str, int]] = {}
+def _checked_patterns() -> dict[str, tuple[str, int, Mode]]:
+    checked: dict[str, tuple[str, int, Mode]] = {}
     seen: Counter[str] = Counter()
     for site in _CALL_SITES:
-        for pattern in site.patterns or ():
+        for pattern, flags in site.patterns or ():
             seen[site.location] += 1
-            checked[f'{site.location}#{seen[site.location]}' if seen[site.location] > 1 else site.location] = pattern
+            label = f'{site.location}#{seen[site.location]}' if seen[site.location] > 1 else site.location
+            checked[label] = (pattern, flags, site.mode)
     for table_name, table in PATTERN_TABLES.items():
-        checked.update({f'{table_name}[{name!r}]': pattern for name, pattern in table.items()})
-    unique: dict[tuple[str, int], str] = {}
-    for label, pattern in checked.items():
-        unique.setdefault(pattern, label)
-    return {label: pattern for pattern, label in unique.items()}
+        checked.update({f'{table_name}[{name!r}]': (*pattern, 'scan') for name, pattern in table.items()})
+    # A pattern several calls run is checked once, in the most expensive of their modes.
+    unique: dict[tuple[str, int], tuple[str, Mode]] = {}
+    for label, (pattern, flags, mode) in checked.items():
+        first = unique.setdefault((pattern, flags), (label, mode))
+        if _COST[mode] > _COST[first[1]]:
+            unique[pattern, flags] = (first[0], mode)
+    return {label: (pattern, flags, mode) for (pattern, flags), (label, mode) in unique.items()}
 
 
-@pytest.mark.parametrize(('pattern', 'flags'), [pytest.param(*p, id=label) for label, p in _checked_patterns().items()])
-def test_scanning_is_linear(pattern: str, flags: int):
-    assert linearity_failure(pattern, flags) is None
+@pytest.mark.parametrize(
+    ('pattern', 'flags', 'mode'),
+    [
+        pytest.param(
+            *p,
+            id=label,
+            marks=[pytest.mark.xfail(raises=NotImplementedError, strict=True, reason=CHECKER_LIMITS[label])]
+            if label in CHECKER_LIMITS
+            else [],
+        )
+        for label, p in _checked_patterns().items()
+    ],
+)
+def test_scanning_is_linear(pattern: str, flags: int, mode: Mode):
+    assert linearity_failure(pattern, flags, mode) is None
+
+
+def test_every_checker_limit_is_a_checked_pattern():
+    assert CHECKER_LIMITS.keys() <= _checked_patterns().keys()
 
 
 def test_every_runtime_pattern_says_where_it_comes_from():
@@ -433,7 +540,7 @@ def f(pattern, table, names):
         ),
         pytest.param(
             'import re\ndef f(command):\n    ps = [r"^a", r"^b"]\n    return any(re.match(p, command) for p in ps)\n',
-            [CallSite('m.py::f', [('^a', 0), ('^b', 0)])],
+            [CallSite('m.py::f', [('^a', 0), ('^b', 0)], 'match')],
             id='comprehension-over-local-list',
         ),
         pytest.param(
@@ -446,11 +553,42 @@ def f(pattern, table, names):
             [CallSite('m.py::_A', [('a(?!b)', 0)]), CallSite('m.py::_B', [('a(?!b)|c', re.IGNORECASE)])],
             id='compiled-pattern',
         ),
-        pytest.param(_UNRESOLVED_SOURCE, [CallSite('m.py::f', None)] * 11, id='runtime-patterns'),
+        pytest.param(
+            "import re\n_A = re.compile('a+')\n_B = re.compile('b+')\n_C = re.compile('c+')\n_D = re.compile('d+')\n"
+            "_E = re.compile('e+')\n"
+            'def f(s):\n    return _A.match(s), _B.fullmatch(s), _B.match(s), _C.match(s), _C.sub("", s), [_D]'
+            ', _E.search(s), _E.match(s), re.search("x+", s)\n',
+            [
+                CallSite('m.py::_A', [('a+', 0)], 'match'),
+                CallSite('m.py::_B', [('b+', 0)], 'fullmatch'),
+                CallSite('m.py::_C', [('c+', 0)], 'scan'),
+                CallSite('m.py::_D', [('d+', 0)], 'scan'),
+                CallSite('m.py::_E', [('e+', 0)], 'search'),
+                CallSite('m.py::f', [('x+', 0)], 'search'),
+            ],
+            id='compiled-pattern-mode-from-its-methods',
+        ),
+        pytest.param(
+            "import re\nA, B = 'a', 'b'\ndef f(s):\n    for p in ('x', 'y'):\n        re.match(p, s)\n"
+            "    re.compile(f'{A}{B}')\n",
+            [CallSite('m.py::f', [('x', 0), ('y', 0)], 'match'), CallSite('m.py::f', [('ab', 0)])],
+            id='loop-over-a-literal-and-unpacked-names',
+        ),
+        pytest.param(
+            "import re\n_A = re.compile(rb'\\x1b\\w+')\n",
+            [CallSite('m.py::_A', [('\\x1b\\w+', re.ASCII)])],
+            id='bytes-pattern',
+        ),
+        pytest.param(
+            _UNRESOLVED_SOURCE,
+            [CallSite('m.py::f', None), CallSite('m.py::f', None, 'search'), *[CallSite('m.py::f', None)] * 9],
+            id='runtime-patterns',
+        ),
     ],
 )
 def test_the_call_site_scan(source: str, sites: list[CallSite]):
-    assert list(_call_sites_in('m.py', ast.parse(source))) == sites
+    tree = ast.parse(source)
+    assert list(_call_sites_in('m.py', tree, _modes_of_names([tree]))) == sites
 
 
 def test_the_hidden_use_scan():
@@ -470,21 +608,40 @@ def test_the_hidden_use_scan():
 @pytest.mark.parametrize(
     ('pattern', 'failure'),
     [
-        pytest.param(r'\w+@', snapshot("'0' * 36: over 1332 steps"), id='restart-in-a-run'),
+        pytest.param(r'\w+@', snapshot("'0' * 24: over 900 steps"), id='restart-in-a-run'),
         pytest.param(
             r'\bkey-[\w-]+\.',
-            snapshot("'key-' * 6, 12, 24: [242, 914, 3554] steps"),
+            snapshot("'key-' * 12, 24, 48: [914, 3554, 14018] steps"),
             id='restart-at-each-word-in-a-run',
         ),
-        pytest.param(r'<.*?>', snapshot("'<' * 76: over 4928 steps"), id='lazy-to-a-missing-end'),
-        pytest.param(r'\s*\s*x', snapshot("'\\t' * 19: over 1600 steps"), id='adjacent-repeats'),
-        pytest.param(r'(a+)+b', snapshot("'a' * 18: over 1140 steps"), id='nested-repeats'),
-        pytest.param(r'(?:a|a){0,20}b', snapshot("'a' * 37: over 13376 steps"), id='bounded-alternation'),
+        pytest.param(r'<.*?>', snapshot("'<' * 96: over 6208 steps"), id='lazy-to-a-missing-end'),
+        pytest.param(r'\s*\s*x', snapshot("'\\t' * 24: over 2000 steps"), id='adjacent-repeats'),
+        pytest.param(r'(a+)+b', snapshot("'a' * 24: over 1500 steps"), id='nested-repeats'),
+        pytest.param(r'(?:a|a){0,20}b', snapshot("'a' * 48: over 17248 steps"), id='bounded-alternation'),
+        pytest.param(r'\d+(?:\.\d+)+|\d', snapshot("'0' * 96: over 12416 steps"), id='restart-after-each-match'),
     ],
 )
 def test_a_super_linear_pattern_fails(pattern: str, failure: str):
     """The check catches each way a backtracking pattern goes super-linear, with step counts that show it."""
     assert linearity_failure(pattern, 0) == failure
+
+
+@pytest.mark.parametrize(
+    ('pattern', 'mode'),
+    [
+        pytest.param(r'\$\'(?:[^\'\\]|\\.)*\'|\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.', 'scan', id='matches-spanning-units'),
+        pytest.param(r'\d+(?:\.\d+)+|\d', 'search', id='search-ended-by-a-later-alternative'),
+    ],
+)
+def test_a_linear_pattern_passes(pattern: str, mode: Mode):
+    """Linear patterns that pass only because the check runs them as `re` does.
+
+    A match can span two units (`$'` then `$'`), so each repeat count is a multiple of 12, and the scans at all three
+    sizes end the same way. A search for a dotted version or one digit reads a digit run once: the one-digit
+    alternative then matches at the run's start and ends the search, where `re.finditer` reads the run again from every
+    offset.
+    """
+    assert linearity_failure(pattern, 0, mode) is None
 
 
 @pytest.mark.parametrize(

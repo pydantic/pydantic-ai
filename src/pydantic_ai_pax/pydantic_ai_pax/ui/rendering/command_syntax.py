@@ -58,10 +58,16 @@ _INLINE_FLAGS = {'python': 'c', 'javascript': 'ep', 'ruby': 'e', 'perl': 'eE', '
 """The flags whose argument is code, by language: `python -c`, `node -e`, `psql -c`, `bash -c`."""
 
 _HEREDOC = re.compile(r'(?<!<)<<(-?)[ \t]*\\?([\'"]?)([A-Za-z_]\w*)\2')
-_LITERAL = re.compile(r'\$\'(?:[^\'\\]|\\.)*\'|\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.|(?<![^\s;&|(])#[^\n]*\n')
-"""Closed quotes, escaped characters, and whole comment lines, in which `<<` is text."""
+_QUOTED = re.compile(r'\$\'(?:[^\'\\]|\\.)*\'|\'[^\']*\'|"(?:[^"\\]|\\.)*"|\\.')
+"""Closed quotes and escaped characters, in which `<<` is text."""
+_LITERAL = re.compile(rf'{_QUOTED.pattern}|(?<![^\s;&|(])#(?:[^\n]*\n|(?P<unclosed>.*))')
+"""`_QUOTED`, and comments: a whole line, or one the text ends in (`unclosed`), in which `<<` is text.
+
+An unclosed comment is matched to the end at once, so a later `#` cannot start another attempt that reads to the end.
+"""
 _OPEN_QUOTE_OR_COMMENT = re.compile(r'[\'"]|(?<![^\s;&|(])#')
-_VERSION = re.compile(r'[\d.]+$')
+# The lookbehind starts an attempt only at the run's first character, so a run that fails `$` is read once.
+_VERSION = re.compile(r'(?<![\d.])[\d.]+$')
 """A version suffix on a command name: `python3.12`, `sqlite3`."""
 _SEPARATOR = re.compile(r'[;&|(){}`]|\$\(')
 _TARGET = re.compile(r'(?:>{1,2}|\btee(?:[ \t]+-\w+)*)[ \t]*([^\s<>;&|]+)')
@@ -138,7 +144,9 @@ def _opened_heredocs(line: str, *, shell: str, start: int) -> Iterator[tuple[str
 
 def _opens_heredoc(before: str) -> bool:
     """Whether a `<<` after `before`, the Bash run so far, is an operator: not in quotes, a comment, or `$((1<<n))`."""
-    code = _LITERAL.sub('', before)
+    code = _LITERAL.sub(
+        lambda match: '' if match['unclosed'] is None else '#' + _QUOTED.sub('', match['unclosed']), before
+    )
     return not _OPEN_QUOTE_OR_COMMENT.search(code) and code.count('((') <= code.count('))')
 
 

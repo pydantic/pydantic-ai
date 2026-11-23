@@ -28,7 +28,8 @@ _ESCAPE = re.compile(
 )
 """Control and colour sequences, which a captured transcript cannot draw."""
 _MAX_ESCAPE = 4096
-_LINE_END = re.compile(rb'\r+\n')
+# The lookbehind starts an attempt only at a run's first `\r`, so a run with no `\n` after it is read once.
+_LINE_END = re.compile(rb'(?<!\r)\r+\n')
 _INTERRUPT = b'\x03'
 _DRAIN_GRACE = 0.1
 

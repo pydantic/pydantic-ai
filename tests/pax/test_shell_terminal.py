@@ -273,6 +273,7 @@ def test_terminal_text_holds_split_sequences() -> None:
     assert text.feed(b'\r\nb\x1b]0;title\x07c\x1bPdata\x1b\\d\x1b=e') == b'\nbcde'
     assert text.feed(b'f\x1b') == b'f'
     assert text.feed(b'', final=True) == b''
+    assert text.feed(b'g\r\rh\r\r\n') == b'g\r\rh\n'
     assert text.feed(b'\x1b[' + b'1' * 5000) == b'[' + b'1' * 5000  # Too long to be a sequence.
 
 

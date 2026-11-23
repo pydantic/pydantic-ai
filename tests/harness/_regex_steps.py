@@ -21,7 +21,7 @@ import sys
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import NamedTuple, TypeGuard
+from typing import Literal, NamedTuple, TypeGuard
 
 _parser = importlib.import_module('re._parser')
 _compiler = importlib.import_module('re._compiler')
@@ -35,6 +35,11 @@ Continuation = Callable[[int], bool]
 """What to match after a node, given the position the node ended at; `True` once the whole pattern matched."""
 Matcher = Callable[[int, Continuation], bool]
 """Match a node at a position, handing the end of each way it matches to the continuation, in `re`'s order."""
+
+
+Mode = Literal['scan', 'search', 'match', 'fullmatch']
+"""How a call runs a pattern: from every offset, as `re.finditer` and `re.sub` do; from each offset until one
+matches, as `re.search` does; or once from the start, as `re.match` and `re.fullmatch` do."""
 
 
 class Node(NamedTuple):
@@ -149,7 +154,7 @@ def _recursion_limit(limit: int) -> Generator[None]:
 
 
 class StepCounter:
-    """Scan text with a pattern the way `re.finditer` does, counting the steps the backtracking takes."""
+    """Run a pattern over text the way `re` does, counting the steps its matcher takes."""
 
     def __init__(self, pattern: str, flags: int = 0) -> None:
         nodes, pattern_flags = parse(pattern, flags)
@@ -158,12 +163,15 @@ class StepCounter:
         self._budget = 0
         self._match = self._sequence(nodes, pattern_flags)
 
-    def scan(self, text: str, budget: int) -> Scan:
-        """Find every match in `text`; raise `StepBudgetExceeded` once the scan takes more than `budget` steps."""
+    def scan(self, text: str, budget: int, mode: Mode = 'scan') -> Scan:
+        """Find every match in `text` that `mode` finds; raise `StepBudgetExceeded` past `budget` steps."""
         self._text, self._steps, self._budget = text, 0, budget
         spans: list[tuple[int, int]] = []
         position, after_empty_match = 0, False
         with _recursion_limit(50 * len(text) + 1_000):
+            if mode != 'scan':
+                span = self._search(0, False) if mode == 'search' else self._attempt(0, full=mode == 'fullmatch')
+                return Scan([] if span is None else [span], self._steps)
             while (span := self._search(position, after_empty_match)) is not None:
                 spans.append(span)
                 position, after_empty_match = span[1], span[0] == span[1]
@@ -172,18 +180,21 @@ class StepCounter:
     def _search(self, position: int, after_empty_match: bool) -> tuple[int, int] | None:
         """The first match at or after `position`; right after an empty match, not another empty one there."""
         for start in range(position, len(self._text) + 1):
-            ends: list[int] = []
-            must_advance = after_empty_match and start == position
-
-            def accept(end: int, start: int = start, must_advance: bool = must_advance) -> bool:
-                if must_advance and end == start:
-                    return False
-                ends.append(end)
-                return True
-
-            if self._match(start, accept):
-                return start, ends[0]
+            if (span := self._attempt(start, must_advance=after_empty_match and start == position)) is not None:
+                return span
         return None
+
+    def _attempt(self, start: int, *, must_advance: bool = False, full: bool = False) -> tuple[int, int] | None:
+        """The match starting at `start`, if any: non-empty when `must_advance`, ending at the text's end when `full`."""
+        ends: list[int] = []
+
+        def accept(end: int) -> bool:
+            if (must_advance and end == start) or (full and end != len(self._text)):
+                return False
+            ends.append(end)
+            return True
+
+        return (start, ends[0]) if self._match(start, accept) else None
 
     def _step(self) -> None:
         self._steps += 1
@@ -439,14 +450,14 @@ def shape(pattern: str, flags: int) -> Shape:
     return Shape(sorted(walk.units), reach, unbounded, walk.nodes)
 
 
-def linearity_failure(pattern: str, flags: int) -> str | None:
+def linearity_failure(pattern: str, flags: int, mode: Mode = 'scan') -> str | None:
     """How scanning repeated adversarial input with `pattern` fails to stay linear, or `None` if it stays linear.
 
     Each pump unit is repeated into an input long enough to read past every bounded part of a match attempt, then
-    followed by `!`, which few patterns accept, so the last attempts fail. Each scan must find what `re.finditer`
-    finds, and stay within `4 * nodes * (reach + 1)` steps per character: a linear scan tries each node about once
-    per character an attempt reads. A pattern without an unbounded repeat reads at most `reach` characters per
-    attempt, so that one scan is enough. One with an unbounded repeat is also scanned at twice and four times that
+    followed by `!`, which few patterns accept, so the last attempts fail. `mode` is how the pattern's calls run it.
+    Each scan must find what `re` finds in that mode, and stay within `4 * nodes * (reach + 1)` steps per
+    character: a linear scan tries each node about once per character an attempt reads. A pattern without an
+    unbounded repeat reads at most `reach` characters per attempt, so that one scan is enough. One with an unbounded repeat is also scanned at twice and four times that
     length, and must add no more than `_GROWTH_LIMIT` times as many steps for the second doubling as for the first.
     """
     counter = StepCounter(pattern, flags)
@@ -454,18 +465,24 @@ def linearity_failure(pattern: str, flags: int) -> str | None:
     pattern_shape = shape(pattern, flags)
     sizes = (1, 2, 4) if pattern_shape.unbounded else (1,)
     for unit in pattern_shape.units:
-        repeats = max(4, -(-(pattern_shape.reach + 16) // len(unit)))
+        # A multiple of 12, so a match spanning two, three or four units ends the same way at all three sizes.
+        repeats = 12 * -(-max(4, -(-(pattern_shape.reach + 16) // len(unit))) // 12)
         steps: list[int] = []
         for size in sizes:
             text = unit * repeats * size + '!'
             budget = len(text) * 4 * pattern_shape.nodes * (pattern_shape.reach + 1)
             try:
-                scan = counter.scan(text, budget)
+                scan = counter.scan(text, budget, mode)
             except StepBudgetExceeded:
                 return f'{unit!r} * {repeats * size}: over {budget} steps'
-            assert scan.spans == [m.span() for m in compiled.finditer(text)], (
-                f'`StepCounter` disagrees with `re` on {text!r}'
-            )
+            if mode == 'scan':
+                expected = [m.span() for m in compiled.finditer(text)]
+            else:
+                found = {'search': compiled.search, 'match': compiled.match, 'fullmatch': compiled.fullmatch}[mode](
+                    text
+                )
+                expected = [found.span()] if found else []
+            assert scan.spans == expected, f'`StepCounter` disagrees with `re` on {text!r}'
             steps.append(scan.steps)
         if pattern_shape.unbounded and steps[2] - steps[1] > _GROWTH_LIMIT * (steps[1] - steps[0]):
             return f'{unit!r} * {repeats}, {2 * repeats}, {4 * repeats}: {steps} steps'

@@ -12,7 +12,7 @@ from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta,
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import LinkOutput
+from pydantic_ai_pax.ui.rendering.rendering import LinkOutput, MarkdownPipeline
 
 URL = 'https://github.com/pydantic/pydantic-ai-harness/pull/1006'
 OPEN = f'\x1b]8;;{URL}\x1b\\'
@@ -93,6 +93,16 @@ async def test_entities_cannot_forge_a_link_to_another_scheme(marker: str) -> No
     await renderer.finish()
     assert '\x1b]8;;' not in output.getvalue()
     assert 'file:///etc/passwd' in Text.from_ansi(output.getvalue()).plain
+
+
+def test_an_unclosed_url_mark_stays_as_it_was() -> None:
+    """Model text cannot carry a URL mark, so only the renderer's own marks are paired; an unclosed one is kept."""
+    output = io.StringIO()
+    pipeline = MarkdownPipeline(output=output, console=Console(width=120), thinking=False, hyperlinks=True)
+    pipeline.line(f'See {URL} \ufdd0then')
+    pipeline.finish()
+    assert OPEN in output.getvalue()
+    assert '\ufdd0then' in output.getvalue()
 
 
 async def test_heading_colour_continues_after_a_bare_url() -> None:
