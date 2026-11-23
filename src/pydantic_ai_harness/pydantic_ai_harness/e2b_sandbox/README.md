@@ -139,7 +139,7 @@ A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Googl
 
 - When `sandbox_timeout` runs out, a run that is still going fails. Set it longer than your longest task.
 - The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
-- The desktop keeps `printscreen` for itself, so the window in front never gets it.
+- The Print key opens XFCE's screenshot dialog instead of reaching the app.
 
 ## Clean up
 
@@ -289,7 +289,7 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 | `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). It can't be set from an [agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/). |
 | `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
-| `desktop` | Give the sandbox a screen for [`ComputerUse`](../computer_use/): `True` for 1280x800, or a `(width, height)`. The size applies when the screen first starts. Without a `template`, a new sandbox uses E2B's `desktop` template. A sandbox you created with E2B's Desktop SDK shows its windows on another display, so the agent can't see them. Default: `False`. |
+| `desktop` | Give the sandbox a screen for [`ComputerUse`](../computer_use/): `True` for 1280x800, or a `(width, height)`. The size applies when the screen first starts. Without a `template`, a new sandbox uses E2B's `desktop` template. Default: `False`. |
 
 `template`, `allow_internet_access` and `network` only shape a new sandbox. The other options also apply when you reattach, and `destroy` uses `client`.
 

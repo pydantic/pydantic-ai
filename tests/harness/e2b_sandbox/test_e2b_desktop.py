@@ -19,7 +19,7 @@ from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_e2b import FakeE2B
 
 
@@ -48,7 +48,7 @@ async def test_a_shell_command_finds_the_desktop_running(fake_e2b: FakeE2B, disp
 
 
 async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    await screen(E2BSandboxBackend(desktop=(1440, 900))).display_size()
+    await full_display(E2BSandboxBackend(desktop=(1440, 900))).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
@@ -68,13 +68,13 @@ async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs
         match=r"^Could not start the display in E2B sandbox sbx-1: the display needs Xvfb, and there's no apt-get to "
         r'install them with$',
     ):
-        await screen(E2BSandboxBackend(desktop=True)).display_size()
+        await full_display(E2BSandboxBackend(desktop=True)).display_size()
 
 
 async def test_a_desktop_sandbox_reattaches_with_its_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     ref = WorkspaceRef(provider='e2b', id='sbx-desktop')
 
-    await screen(E2BSandbox(desktop=(1440, 900)).backend(ref)).display_size()
+    await full_display(E2BSandbox(desktop=(1440, 900)).backend(ref)).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
@@ -134,7 +134,7 @@ async def _start_script(fake_e2b: FakeE2B) -> str:
         return ('  Width: 1280\n  Height: 800\n' if 'xwininfo' in command else ''), '', 0
 
     fake_e2b.responder = respond
-    await screen(E2BSandboxBackend(desktop=True)).display_size()
+    await full_display(E2BSandboxBackend(desktop=True)).display_size()
     (start,) = scripts
     assert 'Xvfb' in start
     return start

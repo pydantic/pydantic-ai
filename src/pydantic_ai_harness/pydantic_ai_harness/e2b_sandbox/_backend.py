@@ -52,7 +52,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -64,7 +64,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, start_x_server, wait_until_ready, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, start_display_script, wait_until_ready_script, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
@@ -136,13 +136,13 @@ _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 
 _XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
 
-_XFCE_SHOWS = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
+_XFCE_IS_VISIBLE = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
 """A command that succeeds when XFCE's desktop window is visible on `DISPLAY`."""
 
-_START_DESKTOP = start_x_server(_XVFB_LOG, desktop=False) + (
-    f'if command -v startxfce4 >/dev/null && ! {_XFCE_SHOWS}; then '
+_START_DESKTOP = start_display_script(_XVFB_LOG, with_desktop=False) + (
+    f'if command -v startxfce4 >/dev/null && ! {_XFCE_IS_VISIBLE}; then '
     f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
-    + wait_until_ready(_XFCE_SHOWS, '$!', 'the XFCE desktop', _XFCE_LOG)
+    + wait_until_ready_script(_XFCE_IS_VISIBLE, '$!', 'the XFCE desktop', _XFCE_LOG)
     + 'fi'
 )
 """Start an X display of the size `$1`, such as `1280x800`, unless one runs, then start the XFCE desktop.
@@ -349,21 +349,14 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
         if desktop and template is None:
             self._template = _DESKTOP_TEMPLATE
-        self._desktop_size = desktop_size(desktop)
-        if self._desktop_size:
-            # Commands get `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
-            self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
-        self._display = (
-            None
-            if self._desktop_size is None
-            else x11_display(
-                self._run_argv,
-                self._desktop_size,
-                _START_DESKTOP,
-                lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
-                started=self._recheck_setsid,
-            )
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
+            start_script=_START_DESKTOP,
         )
+        if self._display:
+            self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 
@@ -722,11 +715,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if self._display is not None:
             await self._display.start()
         return await self._run_argv(argv, env=env or {}, timeout=timeout)
-
-    def _recheck_setsid(self) -> None:
-        """Forget a "no setsid" answer, since the display's start installs `setsid`."""
-        if self._setsid is False:
-            self._setsid = None
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         """Run `argv` without starting the display first. The display's own commands run this way."""
