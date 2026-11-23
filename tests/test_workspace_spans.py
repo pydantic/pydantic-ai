@@ -155,24 +155,34 @@ async def test_shell_filesystem_commands_are_traced_without_their_text(tmp_path:
         (['sleep', '5'], {'timeout': 0.01}, WorkspaceTimeoutError),
         # Only file lookups treat a missing file as an answer: a command that never started is a failure.
         (['true'], {'cwd': 'missing'}, FileNotFoundError),
+        # A cancellation is an error too, as it was under OTel's own span helper.
+        (['sleep', '5'], {}, None),
     ],
 )
 async def test_a_failed_run_is_an_error(
-    tmp_path: Path, command: list[str], options: dict[str, Any], error: type[Exception]
+    tmp_path: Path, command: list[str], options: dict[str, Any], error: type[Exception] | None
 ) -> None:
     instrumentation, exporter = instrumented(include_content=False)
     agent = Agent(TestModel(call_tools=['fail']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
 
     @agent.tool
     async def fail(ctx: RunContext[Any]) -> str:
-        with pytest.raises(error):
-            await ctx.workspace.run(command, **options)
+        if error is None:
+            with anyio.CancelScope() as scope:
+                scope.cancel()
+                await ctx.workspace.run(command, **options)
+        else:
+            with pytest.raises(error):
+                await ctx.workspace.run(command, **options)
         return 'failed'
 
     await agent.run('go')
 
     [span] = [span for span in exporter.get_finished_spans() if span.name == 'workspace run']
     assert span.status.status_code.name == 'ERROR'
+    [event] = [event for event in span.events if event.name == 'exception']
+    assert str((event.attributes or {})['exception.type']).endswith((error or anyio.get_cancelled_exc_class()).__name__)
+    assert 'exception.message' not in (event.attributes or {})
 
 
 async def test_nothing_is_traced_without_instrumentation_or_outside_the_run(tmp_path: Path) -> None:
