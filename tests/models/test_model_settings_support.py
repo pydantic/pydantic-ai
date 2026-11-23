@@ -874,6 +874,21 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
     assert warned == unsupported & WARNED_SETTINGS
 
 
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id, marks=case.marks)
+        for case in CASES
+        if case.id in {'CerebrasModel', 'OpenRouterModel', 'SnowflakeModel', 'ZaiModel'}
+    ],
+)
+async def test_extra_body_none_sends_the_same_request(case: Case, allow_model_requests: None):
+    """`extra_body=None` means no extra body on the models whose converters merge their own fields into it."""
+    baseline = (await case.probe({})).payload
+    assert baseline is not None
+    assert (await case.probe({'extra_body': None})).payload == baseline
+
+
 def test_hand_maintained_fields_are_the_only_unprobed_ones():
     """Every field is either probed above or explicitly hand-maintained — none silently unchecked."""
     assert set(SUPPORTED_BY_LISTS) == set(PROBE_VALUES) | HAND_MAINTAINED | ATTEMPT_COUNTED
