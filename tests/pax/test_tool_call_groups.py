@@ -319,6 +319,7 @@ async def test_detailed_remains_the_default() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
     await feed(renderer, 'shell shell')
+    await renderer.finish()
     assert output.getvalue() == '● shell\n\n● shell\n\n'
 
 
