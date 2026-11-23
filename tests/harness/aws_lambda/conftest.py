@@ -14,7 +14,7 @@ reproduces the two behaviours this capability depends on:
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +25,9 @@ pytest.importorskip('aws_durable_execution_sdk_python')
 from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
 from aws_durable_execution_sdk_python.exceptions import CallbackError, SuspendExecution
 from aws_durable_execution_sdk_python.serdes import deserialize as _deserialize, serialize as _serialize
+
+from pydantic_ai_harness.aws_lambda import _bridge  # pyright: ignore[reportPrivateUsage]
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 # The SDK's helpers are generic over an unbound TypeVar when no SerDes is supplied.
 deserialize: Callable[..., Any] = _deserialize
@@ -164,3 +167,19 @@ class FakeDurableContext:
     @property
     def failed(self) -> list[Operation]:
         return [operation for operation in self.operations if operation.status == 'failed']
+
+
+@pytest.fixture(autouse=True)
+def agent_loop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Give each test its own agent loop, and retire it when the test ends.
+
+    The module's loop serves every invocation of a warm execution environment, so it would otherwise outlive the test
+    whose step first ran on a thread other than the main one, which `tests/leak_guards.py` then fails for it.
+    """
+    loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(_bridge, '_agent_loop', loops)
+    yield
+    loop, thread = loops._loop, loops._thread  # pyright: ignore[reportPrivateUsage]
+    if loop is not None and thread is not None:
+        loops.retire(loop, None)
+        thread.join(timeout=READINESS_WAIT_TIMEOUT)
