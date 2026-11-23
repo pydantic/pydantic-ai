@@ -617,10 +617,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     ) -> ToolReturn:
         made = _the_call(ctx)
         call = made[1] if made else None
-        if call is not None and call.confirmation is not None and not ctx.tool_call_approved:
+        confirmation = call.confirmation if call is not None else None
+        if confirmation is not None and not ctx.tool_call_approved:
             # The provider asked for a person to approve this action before it runs. This is checked here, in the
             # tool, so no hook can skip it.
-            raise ApprovalRequired(metadata={'reason': call.confirmation})
+            raise ApprovalRequired(metadata={'reason': confirmation})
         acts = not all(isinstance(action, _LookingAction) for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
@@ -635,7 +636,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             changed=call is not None and call.actions != actions,
             held=list(run.held),
             keeps_held=keeps_held,
-            confirmed=call is not None and call.confirmation is not None and ctx.tool_call_approved,
+            # Past the check above, a flagged call is an approved one.
+            confirmed=confirmation is not None,
         )
         stray = list(run.stray)
         # A call that never reports back, such as an interrupted one, may leave these pressed until the run ends. The
