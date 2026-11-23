@@ -288,7 +288,9 @@ async def read_file(ctx: RunContext, path: str) -> str:
 @agent.tool
 async def ask_reviewer(ctx: RunContext, request: str) -> str:
     """Ask a reviewer to check files in this workspace."""
-    review = await reviewer.run(request, workspace=ReadOnlyWorkspace(ctx.workspace), usage=ctx.usage)
+    review = await reviewer.run(
+        request, workspace=ReadOnlyWorkspace(ctx.workspace), usage=ctx.usage, usage_limits=ctx.usage_limits
+    )
     return review.output
 
 

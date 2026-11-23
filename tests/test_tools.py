@@ -1,12 +1,13 @@
+import inspect
 import json
 import logging
 import re
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, assert_never, cast, get_args
 
 import pydantic_core
 import pytest
@@ -63,12 +64,15 @@ from pydantic_ai.tools import (
     ToolApproved,
     ToolDefinition,
     ToolDenied,
+    ToolFuncEither,
 )
+from pydantic_ai.toolsets import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
+from .manifests import Exempt, assert_classified
 
 
 def test_tool_no_ctx():
@@ -2223,6 +2227,189 @@ def test_function_toolset_defaults_apply_to_tool(added_with: Literal['constructo
     assert tool_def.sequential is True
     assert tool_def.defer_loading is True
     assert tool_def.include_return_schema is True
+
+
+@dataclass(frozen=True)
+class ToolsetDefault:
+    """A `FunctionToolset.__init__` parameter that sets a value on the tools the toolset lists."""
+
+    toolset: Callable[[Sequence[Tool[None] | ToolFuncEither[None, ...]]], FunctionToolset[None]]
+    """Builds the toolset with the parameter set away from its own default."""
+    listed: object
+    """What `read` returns for a tool the toolset lists."""
+    read: Callable[[FunctionToolset[None], ToolsetTool[None]], object]
+    reason: str
+
+
+@dataclass(frozen=True)
+class SchemaDefault(ToolsetDefault):
+    """A parameter for building a function's schema, which a `Tool` instance already has."""
+
+    tool_instance_listed: object
+    """What `read` returns for a `Tool` instance, which keeps the schema it was built with."""
+
+
+class MarkedToolJsonSchema(GenerateToolJsonSchema):
+    def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
+        return {**super().typed_dict_schema(schema), 'x-marked': True}
+
+
+FUNCTION_TOOLSET_PARAMETERS: dict[str, ToolsetDefault | Exempt] = {
+    'tools': Exempt('the tools themselves'),
+    'id': Exempt("the toolset's identity, not a value on its tools"),
+    'instructions': Exempt("the toolset's instructions, not a value on its tools"),
+    'max_retries': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, max_retries=7),
+        7,
+        lambda _, tool: tool.max_retries,
+        'applies to every tool that sets none',
+    ),
+    'timeout': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, timeout=3.0),
+        3.0,
+        # `call_tool` applies the listed definition's timeout, and the toolset's when it has none.
+        lambda toolset, tool: tool.tool_def.timeout if tool.tool_def.timeout is not None else toolset.timeout,
+        'applies, when the tool is called, to every tool that sets none',
+    ),
+    'durable': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, durable=False),
+        False,
+        lambda _, tool: tool.tool_def.durable,
+        'applies to every tool that leaves it unset',
+    ),
+    'strict': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, strict=True),
+        True,
+        lambda _, tool: tool.tool_def.strict,
+        'applies to every tool that leaves it unset',
+    ),
+    'sequential': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, sequential=True),
+        True,
+        lambda _, tool: tool.tool_def.sequential,
+        'a toolset `True` applies to every tool',
+    ),
+    'requires_approval': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, requires_approval=True),
+        'unapproved',
+        lambda _, tool: tool.tool_def.kind,
+        'a toolset `True` applies to every tool',
+    ),
+    'metadata': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, metadata={'source': 'toolset'}),
+        {'source': 'toolset'},
+        lambda _, tool: tool.tool_def.metadata,
+        "merged into every tool's own",
+    ),
+    'defer_loading': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, defer_loading=True),
+        True,
+        lambda _, tool: tool.tool_def.defer_loading,
+        'a toolset `True` applies to every tool',
+    ),
+    'include_return_schema': ToolsetDefault(
+        lambda tools: FunctionToolset(tools, include_return_schema=True),
+        True,
+        lambda _, tool: tool.tool_def.include_return_schema,
+        'applies to every tool that leaves it unset',
+    ),
+    'docstring_format': SchemaDefault(
+        lambda tools: FunctionToolset(tools, docstring_format='google'),
+        None,
+        lambda _, tool: tool.tool_def.parameters_json_schema['properties']['x'].get('description'),
+        'applies to functions; a `Tool` keeps the schema it was built with',
+        tool_instance_listed='The first number.',
+    ),
+    'require_parameter_descriptions': SchemaDefault(
+        lambda tools: FunctionToolset(tools, require_parameter_descriptions=True),
+        'Missing parameter descriptions for y',
+        lambda _, tool: tool.tool_def.parameters_json_schema['properties']['y'].get('description'),
+        'applies to functions; a `Tool` keeps the schema it was built with',
+        tool_instance_listed=None,
+    ),
+    'schema_generator': SchemaDefault(
+        lambda tools: FunctionToolset(tools, schema_generator=MarkedToolJsonSchema),
+        True,
+        lambda _, tool: tool.tool_def.parameters_json_schema.get('x-marked'),
+        'applies to functions; a `Tool` keeps the schema it was built with',
+        tool_instance_listed=None,
+    ),
+}
+"""How each `FunctionToolset.__init__` parameter reaches the tools the toolset lists, as `docs/toolsets.md` says."""
+
+InputPath = Literal['constructor_function', 'constructor_tool', 'add_tool', 'add_function', 'tool', 'tool_plain']
+
+
+def test_every_function_toolset_parameter_is_classified():
+    """A new `FunctionToolset.__init__` parameter fails until `FUNCTION_TOOLSET_PARAMETERS` says how it reaches tools.
+
+    Not a VCR test: it checks a table against a signature.
+    """
+    assert_classified(
+        [name for name in inspect.signature(FunctionToolset.__init__).parameters if name != 'self'],
+        FUNCTION_TOOLSET_PARAMETERS,
+        complete_walk=True,
+        table_name='FUNCTION_TOOLSET_PARAMETERS',
+    )
+
+
+@pytest.mark.parametrize('path', get_args(InputPath))
+@pytest.mark.parametrize(
+    'name', [name for name, entry in FUNCTION_TOOLSET_PARAMETERS.items() if isinstance(entry, ToolsetDefault)]
+)
+async def test_function_toolset_default_reaches_every_input_path(name: str, path: InputPath):
+    """A toolset default reaches a tool however the tool joins the toolset, as #12378 and #12572 fixed for `Tool`s.
+
+    Not a VCR test: it pins what `get_tools` lists for each tool; each provider's tests pin how these fields reach
+    the wire.
+    """
+    entry = FUNCTION_TOOLSET_PARAMETERS[name]
+    assert isinstance(entry, ToolsetDefault)
+
+    def plain(x: int, y: int) -> str:  # pragma: no cover
+        """Add two numbers.
+
+        :param x: The first number.
+        """
+        return str(x + y)
+
+    def with_ctx(ctx: RunContext[None], x: int, y: int) -> str:  # pragma: no cover
+        """Add two numbers.
+
+        :param x: The first number.
+        """
+        return str(x + y)
+
+    try:
+        match path:
+            case 'constructor_function':
+                toolset = entry.toolset([plain])
+            case 'constructor_tool':
+                toolset = entry.toolset([Tool(plain)])
+            case 'add_tool':
+                toolset = entry.toolset([])
+                toolset.add_tool(Tool(plain))
+            case 'add_function':
+                toolset = entry.toolset([])
+                toolset.add_function(plain)
+            case 'tool':
+                toolset = entry.toolset([])
+                toolset.tool(with_ctx)
+            case 'tool_plain':
+                toolset = entry.toolset([])
+                toolset.tool_plain(plain)
+            case _:
+                assert_never(path)
+    except UserError as error:
+        # `require_parameter_descriptions` refuses a function when it's added; the last line names the parameter.
+        listed = str(error).splitlines()[-1].strip()
+    else:
+        (tool,) = (await toolset.get_tools(RunContext(deps=None, model=TestModel(), usage=RunUsage()))).values()
+        listed = entry.read(toolset, tool)
+
+    tool_instance = path in ('constructor_tool', 'add_tool')
+    expected = entry.tool_instance_listed if isinstance(entry, SchemaDefault) and tool_instance else entry.listed
+    assert listed == expected
 
 
 def test_function_toolset_sequential_defer_loading_true_overrides_tool_false():

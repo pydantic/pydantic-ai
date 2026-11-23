@@ -26,7 +26,7 @@ If you want to hand off control to another agent completely, without coming back
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
-You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
+You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run. Pass [`ctx.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] to its `usage_limits` along with it, or limits of its own: without them, the delegate checks that shared usage against the default limits, a [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] of 50, instead of the parent run's.
 
 [Cancellation](agent.md#cancellation-and-sub-agents) is run-scoped: a delegate agent cancelling itself surfaces to the parent as a failed tool return rather than cancelling the parent, and a shared [`CancellationToken`][pydantic_ai.CancellationToken] cancels a whole tree of runs at once.
 
@@ -54,8 +54,9 @@ async def joke_factory(ctx: RunContext, count: int) -> list[str]:
     r = await joke_generation_agent.run(  # (4)!
         f'Please generate {count} jokes.',
         usage=ctx.usage,  # (5)!
+        usage_limits=ctx.usage_limits,  # (6)!
     )
-    return r.output  # (6)!
+    return r.output  # (7)!
 
 
 result = joke_selection_agent.run_sync(
@@ -81,7 +82,8 @@ RunUsage(
 3. The "delegate" agent, which is called from within a tool of the parent agent.
 4. Call the delegate agent from within a tool of the parent agent.
 5. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
-6. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
+6. Pass the parent run's usage limits too, so the delegate's requests are checked against the `request_limit` and `total_tokens_limit` the parent run was given.
+7. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
 
@@ -153,6 +155,7 @@ async def joke_factory(ctx: RunContext[ClientAndKey], count: int) -> list[str]:
         f'Please generate {count} jokes.',
         deps=ctx.deps,  # (3)!
         usage=ctx.usage,
+        usage_limits=ctx.usage_limits,
     )
     return r.output
 

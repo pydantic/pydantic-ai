@@ -15,9 +15,12 @@ researcher = Agent('openai:gpt-5.2', name='researcher_agent', output_type=str)
 
 @parent.tool
 async def research(ctx: RunContext, topic: str) -> str:
-    result = await researcher.run(f'Research: {topic}', usage=ctx.usage)
+    result = await researcher.run(f'Research: {topic}', usage=ctx.usage, usage_limits=ctx.usage_limits)
     return result.output
 ```
+
+Pass `usage_limits=ctx.usage_limits` along with `usage=ctx.usage`, or limits of its own: a delegate that shares the
+parent's usage without them checks it against the default `request_limit` of 50, not the parent run's limits.
 
 Delegating tools and output functions must be `async def` and use `await delegate.run(...)`; never call
 `run_sync()` or `run_stream_sync()` inside them. The parent may still use `run_sync()` at the application boundary.

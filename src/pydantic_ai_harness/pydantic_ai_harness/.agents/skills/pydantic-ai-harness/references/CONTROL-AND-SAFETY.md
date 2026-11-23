@@ -1051,7 +1051,8 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
   limit add `WrapUpAtLimits`: its answer still goes through `verify`, and a rejection there raises
   `UsageLimitExceeded` since no request is left for the retry.
 - Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
-  inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
+  inside `verify` works: pass `usage=ctx.usage` and `usage_limits=ctx.usage_limits` to its `run()` and give it
+  evidence, not just the answer.
 - Output functions run before the check and can run again after a rejection, so keep them idempotent.
 - Without `verify`, `Goal` only adds the goal instructions. `headless=False` drops the
   nobody-is-available text for interactive runs; a `verify` is still enforced. To let an interactive

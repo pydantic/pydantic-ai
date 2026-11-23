@@ -19,7 +19,7 @@ import anyio
 import pytest
 from _pytest.mark import ParameterSet
 
-from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, Toolset
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
@@ -27,7 +27,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .. import capability_cases as core
 from ..append_only import ToolCall, build_capabilities, discover_capabilities, drain_events, skip_unless_installed
@@ -136,7 +136,12 @@ def _capabilities(
 
 
 async def _run_calls(
-    case: CapabilityCase, directory: Path, *, prefixed: bool = False, usage_limits: UsageLimits | None = None
+    case: CapabilityCase,
+    directory: Path,
+    *,
+    prefixed: bool = False,
+    usage: RunUsage | None = None,
+    usage_limits: UsageLimits | None = None,
 ) -> AgentRunResult[str]:
     """A run that makes the case's calls one per response, against what its calls build in `directory`."""
     if case.requires is not None:
@@ -150,13 +155,17 @@ async def _run_calls(
     model = _one_call_per_response(case.calls.made, 'p_' if prefixed else '')
     # Streamed, so a tool that emits a capability event has a handler to deliver it to.
     return await Agent(model, capabilities=capabilities).run(
-        'go', event_stream_handler=drain_events, usage_limits=usage_limits
+        'go', event_stream_handler=drain_events, usage=usage, usage_limits=usage_limits
     )
 
 
 async def _tool_results(case: CapabilityCase, directory: Path, *, prefixed: bool) -> list[tuple[str, str, object]]:
     """How each call ended, and what it returned or the retry it asked for, as `_comparable` writes it."""
-    result = await _run_calls(case, directory, prefixed=prefixed)
+    return _returns(await _run_calls(case, directory, prefixed=prefixed), directory)
+
+
+def _returns(result: AgentRunResult[str], directory: Path) -> list[tuple[str, str, object]]:
+    """How each call of a run in `directory` ended, and what it returned or the retry it asked for."""
     return [
         (
             part.tool_call_id,
@@ -181,10 +190,12 @@ async def test_tools_behave_the_same_under_a_prefix(name: str, tmp_path: Path) -
 
 async def _usage_breaks(case: CapabilityCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """How `case`'s calls break `forwards_usage`, run unlimited, then with a `request_limit` one below the requests
-    that sent, counting every request a model receives, a nested run's included."""
+    that sent, counting every request a model receives, a nested run's included, then with the run's usage already
+    past the default `request_limit` under a limit that leaves room."""
     recorder = RequestRecorder()
     patch_models(monkeypatch, recorder)
-    used = (await _run_calls(case, tmp_path / 'unlimited')).usage.requests
+    unlimited = await _run_calls(case, tmp_path / 'unlimited')
+    used = unlimited.usage.requests
     sent = len(recorder.requests)
     breaks = [] if used == sent else [f'{sent} requests reached a model, but `usage.requests` is {used}']
     recorder.requests.clear()
@@ -201,6 +212,22 @@ async def _usage_breaks(case: CapabilityCase, tmp_path: Path, monkeypatch: pytes
             )
     if len(recorder.requests) > limit:
         breaks.append(f'with `request_limit={limit}`, {len(recorder.requests)} requests reached a model')
+    # A nested run that shares the run's usage but not its limits checks the shared count against the default
+    # `request_limit` of 50, which the clauses above can't tell from the run's own: the run's next request
+    # stops at the same count either way (#11853, #11962). A capability may report the nested run's error to the
+    # model instead of raising it, as `DynamicWorkflow` does to its script, so the calls must also return the same.
+    seeded = tmp_path / 'seeded'
+    try:
+        result = await _run_calls(
+            case, seeded, usage=RunUsage(requests=50), usage_limits=UsageLimits(request_limit=1000)
+        )
+    except UsageLimitExceeded as error:
+        breaks.append(f'with 50 requests counted and `request_limit=1000`: {str(error).partition(".")[0]}')
+    else:
+        if (returned := _returns(result, seeded)) != (expected := _returns(unlimited, tmp_path / 'unlimited')):
+            breaks.append(
+                f'with 50 requests counted and `request_limit=1000`, the calls returned {returned}, not {expected}'
+            )
     return breaks
 
 
@@ -227,6 +254,43 @@ async def test_a_nested_run_that_drops_its_usage_breaks_forwards_usage(
         'with `request_limit=2`, 3 requests reached a model, but `usage.requests` is 2',
         'with `request_limit=2`, 3 requests reached a model',
     ]
+
+
+async def test_a_nested_run_that_drops_its_limits_breaks_forwards_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool whose own run shares `usage=ctx.usage` without `usage_limits`, as `SubAgents` and `DynamicWorkflow`
+    did before #11853 and #11962, breaks only the clause that starts the run's usage past the default limit."""
+
+    async def ask(ctx: RunContext[None]) -> str:
+        return (await Agent(TestModel()).run('nested', usage=ctx.usage)).output
+
+    case = CapabilityCase(
+        Anonymous('built only here'), calls=Calls((('ask', {}),), lambda _: Toolset(FunctionToolset[None]([ask])))
+    )
+    assert await _usage_breaks(case, tmp_path, monkeypatch) == [
+        'with 50 requests counted and `request_limit=1000`: The next request would exceed the request_limit of 50',
+    ]
+
+
+async def test_a_nested_run_whose_limit_error_is_returned_breaks_forwards_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same run, from a tool that returns the nested run's `UsageLimitExceeded` to the model, as `DynamicWorkflow`
+    returns a sub-agent's error to its script, breaks the same clause through what the call returns."""
+
+    async def ask(ctx: RunContext[None]) -> str:
+        try:
+            return (await Agent(TestModel()).run('nested', usage=ctx.usage)).output
+        except UsageLimitExceeded as error:
+            return str(error)
+
+    case = CapabilityCase(
+        Anonymous('built only here'), calls=Calls((('ask', {}),), lambda _: Toolset(FunctionToolset[None]([ask])))
+    )
+    (only,) = await _usage_breaks(case, tmp_path, monkeypatch)
+    assert only.startswith('with 50 requests counted and `request_limit=1000`, the calls returned ')
+    assert 'The next request would exceed the request_limit of 50' in only
 
 
 def _prepare(name: str, case: CapabilityCase, monkeypatch: pytest.MonkeyPatch) -> None:

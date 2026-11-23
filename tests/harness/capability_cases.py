@@ -233,6 +233,14 @@ def _kubernetes_sandbox() -> KubernetesSandbox:
     return KubernetesSandbox(warm_pool='python-pool')
 
 
+def _dynamic_workflow(_: Path) -> AbstractCapability[None]:
+    # Imported here, so collecting the suites never imports `pydantic_monty`. The test has already skipped when it
+    # isn't installed (the case's `requires`).
+    from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+
+    return DynamicWorkflow[None](agents=[Agent(TestModel(), name='alpha')])
+
+
 def _ipython_code_mode() -> AbstractCapability[None]:
     # Imported here, so collecting the suites never imports `jupyter_client`. The test has already skipped
     # when it isn't installed (the case's `requires`).
@@ -523,7 +531,11 @@ CASES: dict[str, CapabilityCase] = {
                 SubAgents[None](agents=[SubAgent(Agent(TestModel(), name='beta'))]),
             ),
             _check_sub_agents,
-        )
+        ),
+        calls=Calls(
+            (('delegate_task', {'agent_name': 'alpha', 'task': 'q'}),),
+            lambda _: SubAgents[None](agents=[SubAgent(Agent(TestModel(), name='alpha'))]),
+        ),
     ),
     'Advisor': CapabilityCase(
         Combines(
@@ -674,6 +686,8 @@ CASES: dict[str, CapabilityCase] = {
     'DynamicWorkflow': CapabilityCase(
         Anonymous('one per workflow definition'),
         build=Unbuildable('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
+        requires='pydantic_monty',
+        calls=Calls((('run_workflow', {'code': "await alpha(task='q')"}),), _dynamic_workflow),
     ),
     'FallbackCompaction': CapabilityCase(
         Anonymous('drives a fallback chain; several independent chains compose'),

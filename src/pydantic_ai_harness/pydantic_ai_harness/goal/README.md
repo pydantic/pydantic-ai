@@ -77,7 +77,7 @@ judge = Agent(
 
 async def verify(ctx: RunContext[str], output: object) -> str | None:
     prompt = f'Goal: {GOAL}\n\nChangelog:\n{ctx.deps}\n\nAnswer:\n{output}'
-    result = await judge.run(prompt, usage=ctx.usage)
+    result = await judge.run(prompt, usage=ctx.usage, usage_limits=ctx.usage_limits)
     if result.output.complete:
         return None
     return result.output.gap or 'The judge found the goal unmet.'
@@ -95,7 +95,7 @@ print(result.output)
 #> ...
 ```
 
-Passing `usage=ctx.usage` adds the judge's requests and tokens to the run's usage, so the run's `UsageLimits` account for them (from the next request, under [durable execution](#durable-execution)). Every judge call adds cost and latency, and its verdict can vary between calls; each rejection also spends one of the output retries. Prefer a deterministic check wherever one exists, and reserve the judge for what only a model can assess. To steer the run while it works, rather than only checking its final answer, see [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/).
+Passing `usage=ctx.usage` adds the judge's requests and tokens to the run's usage, so the run's `UsageLimits` account for them (from the next request, under [durable execution](#durable-execution)). Passing `usage_limits=ctx.usage_limits` along with it checks the judge's own requests against those limits too; without it, the judge checks the shared usage against the default limits, a `request_limit` of 50. Every judge call adds cost and latency, and its verdict can vary between calls; each rejection also spends one of the output retries. Prefer a deterministic check wherever one exists, and reserve the judge for what only a model can assess. To steer the run while it works, rather than only checking its final answer, see [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/).
 
 ## Bound continuation
 
