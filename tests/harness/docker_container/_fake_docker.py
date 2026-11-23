@@ -34,8 +34,7 @@ run)
         --name) name=$2; shift ;;
         --workdir) workdir=$2; shift ;;
         --label) label=$2; shift ;;
-        --network) network=$2; shift ;;
-        --entrypoint | --memory | --pids-limit | --tmpfs) shift ;;
+        --entrypoint | --network | --memory | --pids-limit | --tmpfs) shift ;;
         --fake-hang) [ -e "$bin/hung" ] || { touch "$bin/hung"; sleep 30; } ;;
         --fake-hang-late) hang_late=1 ;;
         esac
@@ -54,7 +53,6 @@ run)
     fi
     mkdir -p "$workdir" && printf '%s' "$workdir" > "$state/$name" || exit 1
     [ "$label" != ai.pydantic.workspace=true ] || touch "$state/$name.labeled"
-    printf '%s' "${network:-bridge}" > "$state/$name.network"
     if [ "$2" = unstartable-image ]; then
         echo 'docker: Error response from daemon: port is already allocated.' >&2
         exit 125
@@ -68,7 +66,6 @@ inspect)
     for name; do :; done
     [ -f "$state/$name" ] || { echo "Error: No such container: $name" >&2; exit 1; }
     [ "$name" != uninspectable ] || { echo 'permission denied while trying to connect to the daemon' >&2; exit 1; }
-    case $* in *NetworkMode*) cat "$state/$name.network" 2> /dev/null || echo bridge; exit ;; esac
     if [ -f "$state/$name.labeled" ]; then label=true; else label='<no value>'; fi
     if [ -f "$state/$name.running" ]; then running=true; else running=false; fi
     echo "$label $running"
@@ -293,12 +290,11 @@ class FakeDocker:
     def containers(self) -> list[str]:
         return sorted(path.name for path in (self.bin_dir / 'containers').glob('*') if not path.suffix)
 
-    def add_container(self, name: str, working_dir: Path, *, labeled: bool = True, network: str = 'bridge') -> None:
-        """Add a stopped container on `network`; `labeled=False` makes it one `DockerContainer` didn't create."""
+    def add_container(self, name: str, working_dir: Path, *, labeled: bool = True) -> None:
+        """Add a stopped container; `labeled=False` makes it one `DockerContainer` didn't create."""
         state = self.bin_dir / 'containers'
         state.mkdir(exist_ok=True)
         (state / name).write_text(str(working_dir))
-        (state / f'{name}.network').write_text(network)
         if labeled:
             (state / f'{name}.labeled').touch()
 
