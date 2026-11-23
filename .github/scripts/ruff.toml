@@ -1,5 +1,5 @@
 # The gate scripts start every command through `_commands.py`, so their tests can replay what the real command
-# printed (R45), and read every OpenCode answer through `parse_answer`, so every runner accepts the same answers (R53).
+# printed, and read every OpenCode answer through `parse_answer`, so every runner accepts the same answers.
 # The bans live here, not in the root `banned-api`, because library and test code outside this directory starts
 # processes on purpose.
 extend = "../../pyproject.toml"

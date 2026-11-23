@@ -1,4 +1,4 @@
-"""Every CI agent runner's classes of provider failure, and the provider errors in each (R53).
+"""Every CI agent runner's classes of provider failure, and the provider errors in each.
 
 The OpenCode chain in `douwebot_opencode_run.py` reads OpenCode's error type, and the gh-aw shim reads Z.AI's error
 code. Both decide by `ErrorClass` whether a run can move to another provider or account.

@@ -1,4 +1,4 @@
-"""Audit `main` after the fact, and report what the audit finds to one rolling issue (R47).
+"""Audit `main` after the fact, and report what the audit finds to one rolling issue.
 
 The audit compares the live `main` ruleset with `.github/rulesets/main.json`, checks each pull request merged in the
 window for a green `check`, the one context the ruleset requires, and for green review contexts, which it does not
@@ -202,11 +202,19 @@ def publish(body: str) -> None:
         _gh('issue', 'create', '--repo', REPO, '--title', ISSUE_TITLE, '--body', body)
 
 
+def _utc(value: str) -> datetime:
+    """Parse an ISO 8601 time with its UTC offset, such as `2026-11-23T06:00:00Z`, as UTC."""
+    moment = datetime.fromisoformat(value)
+    if moment.tzinfo is None:
+        raise argparse.ArgumentTypeError(f'{value} has no UTC offset')
+    return moment.astimezone(UTC)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Print the audit's report, and with `--publish` add it to the rolling issue."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--until', type=datetime.fromisoformat, default=datetime.now(UTC))
-    parser.add_argument('--since', type=datetime.fromisoformat)
+    parser.add_argument('--until', type=_utc, default=datetime.now(UTC))
+    parser.add_argument('--since', type=_utc)
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args(argv)
     until: datetime = args.until

@@ -227,7 +227,7 @@ def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_pr
     # `BaseLoader` keeps the `on` key a string; the default loader reads it as `True`.
     workflow = _Workflow.model_validate(yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader))
 
-    # Deny-form: an exact trigger set pins every trigger, an invalid one included (R25).
+    # Deny-form: an exact trigger set pins every trigger, an invalid one included.
     assert not set(workflow.on) & {'pull_request_target', 'workflow_run'}
     assert workflow.on['pull_request'].paths is None
     assert {'opened', 'synchronize', 'reopened', 'labeled', 'unlabeled', 'edited'} <= set(
@@ -245,7 +245,8 @@ def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
     workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     # GitHub blocks `pull_request_target` here, and a dispatch would let any branch run with write access.
     assert not set(workflow.on) & {'pull_request_target', 'workflow_dispatch'}
-    # A `workflow_run` trigger naming no workflow never fires.
+    # Each workflow named here wakes a job that can write statuses, and a name that matches no workflow never fires.
+    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events']
     names = {
         yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader).get('name')
         for path in WORKFLOW.parent.glob('*.yml')
@@ -271,11 +272,16 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
     )
     assert not set(observer.on) & {'pull_request_target', 'workflow_run'}
     assert observer.on['pull_request'].paths is None
-    assert {'opened', 'synchronize', 'reopened', 'labeled', 'unlabeled', 'edited'} <= set(
-        observer.on['pull_request'].types
-    )
-    assert {'submitted', 'edited', 'dismissed'} <= set(observer.on['pull_request_review'].types)
-    assert {'created', 'edited', 'deleted'} <= set(observer.on['pull_request_review_comment'].types)
+    assert set(observer.on['pull_request'].types) == {
+        'opened',
+        'synchronize',
+        'reopened',
+        'labeled',
+        'unlabeled',
+        'edited',
+    }
+    assert observer.on['pull_request_review'].types == ['submitted', 'edited', 'dismissed']
+    assert observer.on['pull_request_review_comment'].types == ['created', 'edited', 'deleted']
     for job in observer.jobs.values():
         assert not job.permissions
         assert all(not step.uses for step in job.steps)

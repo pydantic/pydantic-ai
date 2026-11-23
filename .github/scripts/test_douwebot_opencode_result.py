@@ -98,6 +98,12 @@ def test_every_runner_reads_a_corpus_answer_alike(tmp_path: Path, layout: _Answe
             parse_answer(model, stream)
 
 
+def test_no_runner_rejects_a_layout_a_real_answer_had() -> None:
+    """A layout `source` saw in a real answer stays accepted, so a stricter reader cannot drop it."""
+    assert [layout.id for layout in _CORPUS if layout.observed and not layout.accepted] == []
+    assert any(layout.observed for layout in _CORPUS)
+
+
 def test_braces_and_escapes_inside_json_strings_stay_in_the_answer(tmp_path: Path) -> None:
     """Braces and escaped quotes inside JSON strings, and a string that ends with an escaped backslash."""
     result = json.dumps(

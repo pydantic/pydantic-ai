@@ -48,7 +48,7 @@ repos:
     rev: v1.23.1
     hooks:
       - id: zizmor
-  # Validates workflow events, expressions and job graphs, which zizmor and `check-yaml` do not (R25).
+  # Validates workflow events, expressions and job graphs, which zizmor and `check-yaml` do not.
   # `.github/actionlint.yaml` holds its reasoned exceptions. It runs without shellcheck and pyflakes.
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12

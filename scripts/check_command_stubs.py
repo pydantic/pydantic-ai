@@ -1,7 +1,7 @@
 """Fail when a change adds hand-written command output to a gate test under `.github/scripts`.
 
 A gate test that builds a `CompletedProcess` with literal output tests the gate against what its author believed a
-command prints. `gh`, `git` and `griffecli` printed something else in shipped defects (R45), for example
+command prints. `gh`, `git` and `griffecli` printed something else in shipped defects, for example
 https://github.com/pydantic/pydantic-ai/pull/10963. Record the real output through `.github/scripts/_commands.py` and
 replay it with `_command_fixtures.Replay` instead.
 

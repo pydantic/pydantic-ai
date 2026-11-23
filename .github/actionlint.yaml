@@ -1,5 +1,5 @@
 # actionlint (`.pre-commit-config.yaml`) validates every non-generated workflow: events, expressions, job graphs and
-# reusable-workflow calls (R25). It runs without shellcheck and pyflakes.
+# reusable-workflow calls. It runs without shellcheck and pyflakes.
 #
 # Each row below silences one message in one file, and says why it is wrong there. A GitHub feature newer than the
 # pinned actionlint gets a row until actionlint learns it; delete the row when an upgrade stops reporting it.
