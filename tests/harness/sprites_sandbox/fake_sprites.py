@@ -20,7 +20,9 @@ same host directory. An exec in a missing `dir` fails as the live Sprite's does.
 Deletion follows the SDK: `destroy_sprite` (and `AsyncSprite.delete()`) returns once the API accepts
 the request, after which `get_sprite` raises `NotFoundError` and an exec handshake with the deleted
 Sprite fails with HTTP 404 (`websockets.exceptions.InvalidStatus`, which the SDK parses into an
-`APIError`).
+`APIError`). Deleting a Sprite also ends the commands running in it. The fake kills them, so they report
+247 rather than an exit of their own: a live one need not report 137 either, so the backend can't rely on
+any exit status to tell that its Sprite is gone.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import os
 import signal
 import subprocess
 import threading
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import IO
@@ -71,6 +74,8 @@ class FakeExecSocket:
         self.attached = False
         self._frames: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._loop = loop
+        # /v1/sprites/{name}/exec
+        self.sprite = unquote(urlsplit(url).path.split('/')[3])
         argv, cwd = self.query['cmd'], self.query.get('dir', [str(sprite_transport.root)])[0]
         if not Path(cwd).is_dir():
             # Like the live Sprite (2026-09-28): a missing `dir` fails the exec with status 1 and a
@@ -107,7 +112,7 @@ class FakeExecSocket:
         else:
             exit_code = code if self.sprite_transport.exit_override is None else self.sprite_transport.exit_override
             if self.sprite_transport.delete_on_exit:
-                self.sprite_transport.names.discard(unquote(urlsplit(self.query_url).path.split('/')[3]))
+                self.sprite_transport.names.discard(self.sprite)
             self._send(bytes([_EXIT, exit_code % 256]))
 
     def _pump(self, source: IO[bytes]) -> None:
@@ -260,6 +265,10 @@ class SpriteTransport:
         if name not in self.names:
             raise NotFoundError(f"Resource not found for destroy sprite '{name}'")
         self.names.discard(name)
+        for socket in self.execs:
+            if socket.sprite == name and socket.process.poll() is None:
+                with suppress(ProcessLookupError):
+                    os.killpg(socket.process.pid, signal.SIGKILL)
 
     async def close(self, client: AsyncSpritesClient) -> None:
         self.close_calls += 1

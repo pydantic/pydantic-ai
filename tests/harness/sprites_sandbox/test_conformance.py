@@ -26,7 +26,7 @@ def _attach(ref: WorkspaceRef) -> WorkspaceBackend:
     return SpritesSandboxBackend(ref=ref)
 
 
-async def _delete(backend: WorkspaceBackend) -> None:  # pragma: no cover - live tier only
+async def _delete(backend: WorkspaceBackend) -> None:
     assert isinstance(backend, SpritesSandboxBackend)
     sprite = await backend.get_sandbox()
     await sprite.delete()
@@ -58,6 +58,11 @@ class TestFakeSpritesSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
         return _attach
+
+    @pytest.fixture
+    def destructive_backend(self, transport: SpriteTransport) -> Callable[[], WorkspaceBackend]:
+        del transport
+        return SpritesSandboxBackend
 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
