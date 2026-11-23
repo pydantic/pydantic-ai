@@ -1543,6 +1543,16 @@ async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClie
             await client.aclose()
 
 
+@pytest.fixture
+def pytester(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> pytest.Pytester:
+    """`pytester`, whose sessions keep `pytest-randomly` off as this suite's `addopts` does.
+
+    A `pytester` session reads none of this suite's configuration, and `pytester` unsets `PYTEST_ADDOPTS`.
+    """
+    monkeypatch.setenv('PYTEST_ADDOPTS', '-p no:randomly')
+    return pytester
+
+
 try:
     from huggingface_hub.inference._providers._common import (
         _fetch_inference_provider_mapping as _hf_provider_mapping_func,  # pyright: ignore[reportPrivateUsage]
