@@ -39,6 +39,7 @@ boxd = ["pydantic-ai-pax[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{
 daytona = ["pydantic-ai-pax[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 e2b = ["pydantic-ai-pax[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 kubernetes = ["pydantic-ai-pax[kubernetes]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+local = ["pydantic-ai-pax[local]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 modal = ["pydantic-ai-pax[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 opensandbox = ["pydantic-ai-pax[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 render = ["pydantic-ai-pax[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

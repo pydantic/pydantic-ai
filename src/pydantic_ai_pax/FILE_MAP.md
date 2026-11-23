@@ -39,6 +39,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/menus/rewind.py` | double-Esc rewind picker over `runtime/rewind.py`'s points, and durable history replacement before draft restoration |
 | `ui/rendering/welcome.py` | `print_welcome`: the banner, version, worktree notice, hints, and project-settings report a fresh launch and `/clear` show |
 | `ui/rendering/rendering.py` | streaming Markdown and thinking |
+| `ui/rendering/markdown_table.py` | `table_lines`: Markdown tables as Termflow draws them when they fit, else columns no narrower than their longest word, else one `Header: value` block per row |
 | `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
@@ -98,7 +99,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `commands.py` | `Command` (with `menu`, the settings menu its bare form opens), the registry (`Commands.get`), completion, and the `pax config`/`pax plugins` subcommands, which refuse a change that could let the agent do more (`refuse_widening`) |
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
-| `ui/rendering/status.py` | the footer `Status` fields, ordered visibility with position-independent styles, main-assistant text age and history restoration, `StatusSegment` plugin fragments as one group, and the `StatusLine` row painter |
+| `ui/rendering/status.py` | the footer `Status` fields, ordered visibility with position-independent styles, main-assistant text age and history restoration, `StatusSegment` plugin fragments as one group, fitting the row to the terminal width (`FIT_STEPS`), and the `StatusLine` row painter |
 | `ui/rendering/duration.py` | `format_duration`, human-readable elapsed labels (at most three units, days without seconds, known local start date from 30 days) without changing lifecycle clocks |
 | `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`), Alt+Enter (Ctrl+Enter on Windows) steering, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by; `PromptInbox`, the queue of a session no editor reads for; `input_kind` and `can_steer`, the one rule for which input steers |
@@ -152,7 +153,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/session_workspace.py` | `pax --web` only: `SessionWorkspace` moves one live session into another directory between turns (`Session.workspace`, which plugins read as `host.workspace`, that directory's project settings, every plugin but `web` and the other process-scoped ones loaded again with `SessionPlugins.restart`), without changing the process's working directory, for `/resume ID` (`Sessions.relocate`) and `/workspace DIRECTORY`; `workspace_directory` validates a path. The terminal never moves: keep it gated on `pax --web` |
 | `builtin_plugins/sandbox/__init__.py` | the built-in `sandbox` plugin: `/sandbox`, a new conversation's `ConversationWorkspace` in a provider's sandbox, recorded in the history by an exchange `/sandbox` saves and found again from its `workspace_ref` and kept until `/sandbox delete`, the user's `gh` login as a `GitHubCredential`, and the `request_env` tool, which asks for a key with the `/keys` picker and keeps it for this CLAI session, and the workspace wrapper that adds it to each command, which `!` lines run in too |
 | `builtin_plugins/sandbox/seed.py` | `snapshot` of the checkout (branch, unpushed commits, uncommitted files) and `seed`, which recreates it in a sandbox, with git's credential helper reading `GH_TOKEN`, or the token file `/sandbox` writes for an in-sandbox provider |
-| `builtin_plugins/sandbox/providers/__init__.py` | `PROVIDERS`, the providers `/sandbox` offers: E2B, boxd, Daytona and OpenSandbox keep the GitHub token in their proxy, Modal, Render, Sprites and Kubernetes in the sandbox |
+| `builtin_plugins/sandbox/providers/__init__.py` | `PROVIDERS`, the providers `/sandbox` offers: E2B, boxd, Daytona and OpenSandbox keep the GitHub token in their proxy, SmolVM (`local smol`), BoxLite (`local boxlite`), Modal, Render, Sprites and Kubernetes in the sandbox |
 | `builtin_plugins/sandbox/providers/base.py` | the `SandboxProvider` protocol, `GitHubCredential` and its header values, `GITHUB_HOSTS`, `SANDBOX_ENV`, `saved_key`, and `give_github_login`, which `/sandbox` runs to write the token and `gh`'s login into the sandbox's home for a provider without a proxy |
 | `builtin_plugins/sandbox/providers/e2b.py` | `E2BProvider`: the token in the sandbox's `network` rules, which set GitHub's `Authorization` header |
 | `builtin_plugins/sandbox/providers/boxd.py` | `BoxdProvider`: the token in a private boxd secret made for each machine and deleted with it, whose stand-in the machine spec keeps as `GH_TOKEN` |
@@ -161,6 +162,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `builtin_plugins/sandbox/providers/modal.py` | `ModalProvider`: Modal's own login, 24-hour sandboxes, the token written in by `give_github_login` |
 | `builtin_plugins/sandbox/providers/render.py` | `RenderProvider`: keys from `/keys`, 24-hour sandboxes, the token written in by `give_github_login` |
 | `builtin_plugins/sandbox/providers/sprites.py` | `SpritesProvider`: the token from `/keys`, the GitHub token written in by `give_github_login` |
+| `builtin_plugins/sandbox/providers/local.py` | `SmolProvider` (`/sandbox local smol`): a SmolVM VM through harness `SmolSandboxBackend` where smolmachines is installed, else the `smolvm` CLI (Windows), and on close a `sync`, or a stop of the CLI's VM; `BoxLiteProvider` (`/sandbox local boxlite`): a BoxLite box through harness `BoxLiteSandboxBackend`; refs of provider `local-smol` and `local-boxlite`, and the token written in by `give_github_login` |
 | `builtin_plugins/sandbox/providers/kubernetes.py` | `KubernetesProvider`: an agent-sandbox warm pool from `/keys`, claims with no time limit, the token written in by `give_github_login` through sandboxd commands |
 | `builtin_plugins/workspaces/__init__.py` | the opt-in built-in `workspaces` plugin: `/workspaces list\|create\|destroy` and its declared settings menu over the kinds (`WorkspacesSource`, with add and remove actions) |
 | `builtin_plugins/workspaces/kinds.py` | the plugin's settings: `WorkspacesSettings`, named kinds, each a backend's options (`WorktreeKind` for `local-worktree`) |
@@ -199,7 +201,8 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/rendering/theme.py` | Existing brand roles, fixed shades for a light terminal background, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/terminal_background.py` | asks the terminal for its background colour once at startup (OSC 11, ended by DA1), else reads `COLORFGBG`; drops a late reply when the editor opens |
 | `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |

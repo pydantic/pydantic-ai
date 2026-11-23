@@ -556,6 +556,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         'pydantic_ai_harness/_monty_exec.py',
         ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
     ),
+    # `/sandbox local smol` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or `/sandbox local smol`, or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
@@ -668,6 +671,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # Under `coverage run`, the tracer takes coverage's own data lock when a call enters a measured file, on every such
+    # call with the C tracer. Another measured thread may hold it, but only for a dict lookup or insert.
+    ('threading.Lock.acquire', 'coverage/collector.py', 'lock_data'),
     # A session, and a plugin host built outside the shell, work in the current directory unless given one.
     ('os.getcwd', 'pydantic_ai_pax/runtime/session.py', '__init__'),
     ('os.getcwd', 'pydantic_ai_pax/plugins/__init__.py', 'workspace'),
@@ -742,6 +748,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
 )
 
 

@@ -1590,12 +1590,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         except ValidationError as exc:
             self.console.print(
                 f'Invalid saved model settings for {model}. Fix or reset them with /model settings {model}.',
-                style=theme.ERROR,
+                style=theme.color(theme.ERROR),
                 markup=False,
             )
             for error in exc.errors(include_input=False, include_url=False):
                 location = '.'.join(str(part) for part in error['loc'])
-                self.console.print(f'{location}: {error["msg"]}', style=theme.ERROR, markup=False)
+                self.console.print(f'{location}: {error["msg"]}', style=theme.color(theme.ERROR), markup=False)
             self.console.print()
             return TurnEnd(text=start.text, outcome='failed', error=exc)
         if headless:
