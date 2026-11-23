@@ -105,6 +105,7 @@ For the `zoom` and `cursor_position` actions, also implement
   start to miss detail.
 - On Claude, a screenshot over the model's image size limit fails the request or makes clicks miss; see
   [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
+- A drag must finish within one run, approvals included: when a run ends, held mouse buttons are released.
 
 ## API reference
 
