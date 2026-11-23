@@ -1,0 +1,56 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 83b1b94c-7585-4cea-9e5e-c74129b659e3
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "172"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is 2+2? Answer with the number only.
+        system: []
+        inferenceConfig:
+          maxTokens: 16
+          temperature: 0.2
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "340"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 612
+        output:
+          message:
+            content:
+            - text: "4"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 20
+          outputTokens: 5
+          serverToolUsage: {}
+          totalTokens: 25
+  recorded_at: 2026-11-04T00:35:45.720562+00:00
