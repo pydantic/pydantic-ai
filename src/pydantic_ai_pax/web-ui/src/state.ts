@@ -107,21 +107,21 @@ export interface State {
   watched: string[]
   /** The watched sessions' chats, by conversation ID; one that was just shown has none until its snapshot comes. */
   chats: Record<string, Chat>
-  /** The sessions live in this CLAI, by conversation ID, with what each is doing. */
+  /** The sessions live in this Pax, by conversation ID, with what each is doing. */
   live: Record<string, LiveEntry>
   /** What open settings menus ask, oldest first; they belong to the page, not to one session. */
   dialogs: Dialog[]
   sessionsVersion: number
   /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
   pluginsVersion: number
-  /** Bumped after every command, or edit of a command's menu, which may have changed CLAI's settings. */
+  /** Bumped after every command, or edit of a command's menu, which may have changed Pax's settings. */
   settingsVersion: number
   theme: ThemeInfo | null
   /** Whether each session runs in its own directory, so a new one asks where. */
   followsWorkspace: boolean
-  /** The CLAI this page talks to, by version; `null` until it connects. */
+  /** The Pax this page talks to, by version; `null` until it connects. */
   version: string | null
-  /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
+  /** `/update` installing a newer Pax, until the install ends or the new build is back. */
   update: UpdateInfo | null
   /** The versions the last `/update` this page followed went from and to, once the new build is back. */
   updated: { from: string; to: string } | null
@@ -332,12 +332,12 @@ function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: Not
 /** Show a snapshot: its session's chat starts over from it, and it carries the page-wide state too. */
 function applySnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
-  // A CLAI that `/update` restarted comes back as a new version, whose bundle the page loaded again for: say so once.
+  // A Pax that `/update` restarted comes back as a new version, whose bundle the page loaded again for: say so once.
   const updated = state.version === null && message.version === reloadedFor
   const notice: NoticeEntry = {
     id: nextId('notice'),
     kind: 'notice',
-    text: `Updated CLAI to ${message.version}.`,
+    text: `Updated Pax to ${message.version}.`,
     level: 'info',
     command: null,
     usage: null,
@@ -452,7 +452,7 @@ export function reduce(state: State, action: Action): State {
       // The orchestrator chat keeps its own state, with `reduceOrchestrator`.
       return state
     default: {
-      // An older CLAI names no session: its messages are the shown one's.
+      // An older Pax names no session: its messages are the shown one's.
       const id = action.session ?? state.shown
       const chat = id === null ? undefined : state.chats[id]
       // Messages still on their way about a session the page never showed have no chat to change.

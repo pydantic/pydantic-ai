@@ -1,6 +1,6 @@
 """A scripted `demo:tour` model for the README screenshots: canned turns, no network, no spend.
 
-`capture.sh` copies this file into a throwaway CLAI configuration as a drop-in plugin, so every
+`capture.sh` copies this file into a throwaway Pax configuration as a drop-in plugin, so every
 built-in plugin still loads and every tool call in a screenshot really runs. Each turn picks a
 scene by a keyword in the prompt and streams one step per model request.
 """

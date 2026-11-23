@@ -59,7 +59,10 @@ _EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
     ),
     ({'type': 'mouse_down', 'button': 'right'}, MouseDown(button='right')),
     ({'type': 'mouse_up'}, MouseUp()),
-    ({'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20}, Scroll(direction='down', x=10, y=20)),
+    (
+        {'type': 'scroll', 'direction': 'down', 'amount': 3, 'x': 10, 'y': 20},
+        Scroll(direction='down', amount=3, x=10, y=20),
+    ),
     ({'type': 'type_text', 'text': 'hello'}, TypeText(text='hello')),
     ({'type': 'press_keys', 'keys': ['CTRL', 'Enter', 'T']}, PressKeys(keys=('ctrl', 'enter', 't'))),
     ({'type': 'hold_keys', 'keys': ['Escape'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),

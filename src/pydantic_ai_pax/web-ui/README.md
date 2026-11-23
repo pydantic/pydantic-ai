@@ -1,4 +1,4 @@
-# CLAI 2 web UI development
+# Pax web UI development
 
 The Python server serves the bundle in
 `../pydantic_ai_pax/builtin_plugins/web/static`. Node is a build dependency.
@@ -24,7 +24,7 @@ git restore ../pydantic_ai_pax/builtin_plugins/web/static
 
 CI builds the bundle from source for the browser tests, the packages, and
 releases, and fails a pull request that commits it alongside other changes.
-After a web UI change lands on `main`, the `CLAI 2 web bundle` workflow
+After a web UI change lands on `main`, the `Pax web bundle` workflow
 commits the rebuilt bundle through a pull request of its own, so installs from
 a Git ref or commit archive get a working web UI without Node.
 

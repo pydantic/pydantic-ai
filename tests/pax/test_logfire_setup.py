@@ -181,7 +181,7 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(set_up: SetUp) ->
         'Send traces to which project?',
         (Option(value='0', label='pydantic/clai2'), Option(value='1', label='mike/my-stuff')),
     )
-    assert project.description == 'CLAI creates a write token for this project and saves it in /keys.'
+    assert project.description == 'Pax creates a write token for this project and saves it in /keys.'
     assert load_keys()['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_write'
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')

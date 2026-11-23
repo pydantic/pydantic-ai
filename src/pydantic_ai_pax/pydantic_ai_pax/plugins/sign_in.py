@@ -183,7 +183,7 @@ async def wait_for_sign_in(method: Signing, dialogs: Dialogs | None = None) -> b
         title=f'Signing in to {method.service}',
         description=(
             f'Finish signing in to {method.service} in your browser.\n\n'
-            f'Esc cancels; CLAI keeps working without {method.service}.'
+            f'Esc cancels; Pax keeps working without {method.service}.'
         ),
         task=lambda show: method.sign_in(show=show),
     )
