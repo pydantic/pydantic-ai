@@ -398,8 +398,10 @@ class Checker:
             if isinstance(event, RealtimeSessionErrorEvent) and 'Failed to parse' in event.message
         ]
         self._parse_errors += len(errors)
-        # Each damaged frame the client read explains one parse error.
-        unexplained = min(len(errors), self._parse_errors - self.sim.truth.fault_frames_read)
+        # Each frame the client read unparsable or cut off explains one parse error (an id-less terminal, or an unknown
+        # frame, parses).
+        faults = self.sim.truth.faults_read
+        unexplained = min(len(errors), self._parse_errors - faults['unparsable'] - faults['truncated'])
         self.report(
             'simulator.malformed_frame',
             [(error, {}) for error in errors[len(errors) - unexplained :]] if unexplained > 0 else [],

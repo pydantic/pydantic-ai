@@ -213,7 +213,25 @@ def test_parse_error_no_damaged_frame_explains_is_the_simulators() -> None:
         sim.speak()
         sim.corrupt_next_frame('unparsable')
         sim.finish()
-        assert sim.truth.fault_frames_read == 1
+        assert sim.truth.faults_read == {'unparsable': 1}
+        sim.events.append(
+            RealtimeSessionErrorEvent(message='Failed to parse OpenAI realtime event: x', recoverable=True)
+        )
+        with pytest.raises(
+            InvariantViolation, match=r'\[simulator\.malformed_frame\] Failed to parse OpenAI realtime event: x'
+        ):
+            sim.check()
+
+
+def test_a_damaged_frame_that_parses_excuses_no_parse_error() -> None:
+    """An unknown frame, or a terminal without its id, still parses: a parse error after one is the simulator's own."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.send_text()
+        sim.corrupt_next_frame('unknown_type')
+        sim.corrupt_next_frame('id_less_terminal')
+        sim.speak()
+        sim.finish()
+        assert sim.truth.faults_read == {'unknown_type': 1, 'id_less_terminal': 1}
         sim.events.append(
             RealtimeSessionErrorEvent(message='Failed to parse OpenAI realtime event: x', recoverable=True)
         )

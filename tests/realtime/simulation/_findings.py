@@ -586,7 +586,7 @@ SDK_PARSE_FAILURE_ENDS_THE_SESSION = Finding(
     evidence='simulated',
     codes=frozenset({'api.unexpected_error'}),
     providers=GEMINI,
-    matches=lambda sim, violation: sim.truth.fault_frames_read > 0,
+    matches=lambda sim, violation: sum(sim.truth.faults_read.values()) > 0,
 )
 
 

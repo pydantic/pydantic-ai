@@ -153,7 +153,7 @@ class FakeGeminiSession:
                 raise ConnectionClosed(Close(1006, 'simulated drop'), None)
             self.inbox.popleft()
             if isinstance(item, _Damaged):
-                self.server.truth.fault_frames_read += 1
+                self.server.truth.faults_read[item.fault] += 1
                 item.raise_as_the_sdk_does()
             assert isinstance(item, gt.LiveServerMessage)
             self.server.on_client_read(self, item)
@@ -531,6 +531,8 @@ class GeminiServer:
             fault = self.faults.take('truncated')
         else:
             fault = None
+        if fault is not None and (response := tags.get('response')):
+            self.truth.faulted.add(response)
         session.socket.emit(message if fault is None else _Damaged(fault))
 
     def _start_response(self, session: _ServerSession, *, answers: list[str]) -> TruthResponse:

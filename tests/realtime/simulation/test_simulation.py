@@ -120,14 +120,14 @@ def reproduce(finding_id: str, sim: Simulation, scenario: Callable[[Any], object
         scenario(s)
 
 
-def on_every_provider(*, requires: str | None = None, exempt: Mapping[str, str] = {}) -> pytest.MarkDecorator:
+def on_every_provider(*, requires: str | None = None, exempt: Mapping[str, str] | None = None) -> pytest.MarkDecorator:
     """Run a scenario on every simulated provider, passing it `simulation`: a factory for a fresh one.
 
     A provider sits the scenario out only with a reason: its model's profile lacks the capability `requires` names,
     so the session refuses what the scenario does, or `exempt` maps it to why it can't reach the scenario.
     """
-    assert exempt.keys() <= PROVIDERS.keys(), f'not simulated providers: {sorted(exempt.keys() - PROVIDERS.keys())}'
-    reasons = dict(exempt)
+    reasons = dict(exempt or {})
+    assert reasons.keys() <= PROVIDERS.keys(), f'not simulated providers: {sorted(reasons.keys() - PROVIDERS.keys())}'
     for provider, (_, simulation) in PROVIDERS.items():
         if requires is not None and provider not in reasons:
             sim = simulation()
@@ -3375,7 +3375,7 @@ def test_a_tool_call_whose_terminal_arrives_damaged_is_answered(dialect: Dialect
 
     sim = OpenAISimulation(openai=OpenAIOptions(dialect=dialect))
     run_clean(sim, scenario)
-    assert sim.truth.fault_frames_read == 1
+    assert sim.truth.faults_read == {fault: 1}
 
 
 @pytest.mark.parametrize('ending', ['report_usage', 'user_says'])
@@ -3403,7 +3403,7 @@ def test_elevenlabs_agents_damaged_frame_still_ends_the_voiced_reply(ending: str
 
     sim = ElevenLabsAgentsSimulation()
     run_clean(sim, scenario)
-    assert sim.truth.fault_frames_read == 1
+    assert sim.truth.faults_read == {'unparsable': 1}
 
 
 def test_elevenlabs_agents_agent_response_without_its_id_still_completes_the_reply() -> None:
@@ -3422,7 +3422,7 @@ def test_elevenlabs_agents_agent_response_without_its_id_still_completes_the_rep
 
     sim = ElevenLabsAgentsSimulation()
     run_clean(sim, scenario)
-    assert sim.truth.fault_frames_read == 1
+    assert sim.truth.faults_read == {'id_less_terminal': 1}
 
 
 @known('SIM-44')
@@ -3498,7 +3498,7 @@ def test_a_frame_the_connection_cant_read_mid_reply_costs_only_that_frame(
 
     sim = simulation()
     run_clean(sim, scenario)
-    assert sim.truth.fault_frames_read == 1
+    assert sim.truth.faults_read == {fault: 1}
 
 
 def test_gemini_redial_without_a_handle_replays_the_typed_turns() -> None:

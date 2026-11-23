@@ -178,10 +178,10 @@ class FakeWebSocket:
             frame = json.loads(item)
         except ValueError:
             # A frame cut off in transit: the client reads text it can't parse, and nothing it says.
-            truth.fault_frames_read += 1
+            truth.faults_read['truncated'] += 1
         else:
-            if 'fault' in frame.get('_simulation', {}):
-                truth.fault_frames_read += 1
+            if (fault := frame.get('_simulation', {}).get('fault')) is not None:
+                truth.faults_read[fault] += 1
             self.received.append(frame)
             self.network.server.on_client_read(self, frame)
         return item.encode() if decode is False else item

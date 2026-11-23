@@ -458,6 +458,7 @@ class ElevenLabsAgentsServer:
 
     def ping(self) -> None:
         self._emit({'type': 'ping', 'ping_event': {'event_id': self._next_event, 'ping_ms': 50}})
+        self._next_event += 1
 
     def arm(self, fault: FrameFault) -> None:
         """Damage the next frame `fault` applies to; an unknown frame goes out at once."""
@@ -465,7 +466,6 @@ class ElevenLabsAgentsServer:
             self.faults.pending.append(fault)
         elif (socket := self.socket) is not None and socket.alive:
             self._emit(fault_tag({'type': 'simulation_unknown_event'}, fault))
-        self._next_event += 1
 
 
 class ElevenLabsAgentsSimulation(Simulation):
