@@ -1,0 +1,116 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "170"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: nvidia/nemotron-3.5-lightning
+        stream: false
+        messages:
+        - role: user
+          content: What is 17 * 23? Reply with the number only.
+        reasoning_effort: medium
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1795403007-MJPZlfB18BTambtFq3bb
+        object: chat.completion
+        created: 1795403007
+        model: nvidia/nemotron-3.5-lightning
+        provider: ModelRun
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: "391"
+            refusal: null
+            reasoning: |-
+              Here's a thinking process:
+
+              1.  **Analyze User Input:** User asks "What is 17 * 23? Reply with the number only."
+              2.  **Identify Task:** Calculate the product of 17 and 23.
+              3.  **Perform Calculation:**
+                 - 17 * 23
+                 - Break it down: 17 * 20 = 340, 17 * 3 = 51, 340 + 51 = 391
+                 - Or: 23 * 10 = 230, 23 * 7 = 161, 230 + 161 = 391
+                 - Or standard multiplication: 17 * 23 = 391
+              4.  **Check Constraint:** "Reply with the number only." So I just output "391".
+              5.  **Formulate Output:** Just the number 391. No extra text.
+            reasoning_details:
+            - type: reasoning.text
+              text: |-
+                Here's a thinking process:
+
+                1.  **Analyze User Input:** User asks "What is 17 * 23? Reply with the number only."
+                2.  **Identify Task:** Calculate the product of 17 and 23.
+                3.  **Perform Calculation:**
+                   - 17 * 23
+                   - Break it down: 17 * 20 = 340, 17 * 3 = 51, 340 + 51 = 391
+                   - Or: 23 * 10 = 230, 23 * 7 = 161, 230 + 161 = 391
+                   - Or standard multiplication: 17 * 23 = 391
+                4.  **Check Constraint:** "Reply with the number only." So I just output "391".
+                5.  **Formulate Output:** Just the number 391. No extra text.
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 32
+          completion_tokens: 230
+          total_tokens: 262
+          cost: 0.00004824
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00004824
+            upstream_inference_prompt_cost: 2.24e-6
+            upstream_inference_completions_cost: 0.000046
+          completion_tokens_details:
+            reasoning_tokens: 226
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-23T03:03:27.627591+00:00
