@@ -282,7 +282,9 @@ async def bridge(
                 # caller never heard: drop them first, so they don't count as played.
                 marks.discard_pending()
                 await websocket.send_json({'event': 'clear', 'streamSid': stream_sid})
-                if isinstance(event, RealtimeInputSpeechStartEvent):
+                if isinstance(
+                    event, RealtimeInputSpeechStartEvent
+                ) and session.profile.get('supports_interruption'):
                     await session.interrupt(played_bytes=played)
 
     async with anyio.create_task_group() as tg:

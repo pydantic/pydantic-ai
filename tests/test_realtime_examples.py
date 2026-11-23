@@ -503,6 +503,31 @@ def test_twilio_bridge_clears_twilio_when_the_model_interrupts_itself(
     assert not any(isinstance(content, (TruncateOutput, CancelResponse)) for content in connection.sent)
 
 
+def test_twilio_bridge_clears_without_interrupting_a_model_that_cant_be(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """A model that reports the caller talking but whose profile has no interruption still gets Twilio's buffer
+    cleared, and is not interrupted, which it would refuse."""
+    client = _twilio_client(monkeypatch)
+    monkeypatch.setattr(
+        realtime_twilio, 'MODEL', OpenAIRealtimeModel('gpt-realtime', profile={'supports_interruption': False})
+    )
+    connection = TwilioCallConnection()
+    _connect_to(mocker, connection)
+    _answer(client, 'CA1')
+
+    with client.websocket_connect('/media-stream') as twilio:
+        twilio.send_json({'event': 'connected', 'protocol': 'Call', 'version': '1.0.0'})
+        twilio.send_json(_start('CA1'))
+        assert [twilio.receive_json()['event'] for _ in range(4)] == ['media', 'mark', 'media', 'mark']
+        twilio.send_json(_caller_audio())
+        assert twilio.receive_json() == {'event': 'clear', 'streamSid': STREAM_SID}
+        twilio.send_json({'event': 'stop', 'streamSid': STREAM_SID})
+        assert _until_closed(twilio) == []
+
+    assert not any(isinstance(content, (TruncateOutput, CancelResponse)) for content in connection.sent)
+
+
 def test_twilio_marks_echoed_by_clear_are_not_played():
     """`clear` makes Twilio echo every pending mark, for audio the caller never heard."""
     marks = realtime_twilio.PlaybackMarks()
