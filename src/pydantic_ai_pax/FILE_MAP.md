@@ -39,6 +39,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/menus/rewind.py` | double-Esc rewind picker over `runtime/rewind.py`'s points, and durable history replacement before draft restoration |
 | `ui/rendering/welcome.py` | `print_welcome`: the banner, version, worktree notice, hints, and project-settings report a fresh launch and `/clear` show |
 | `ui/rendering/rendering.py` | streaming Markdown and thinking |
+| `ui/rendering/markdown_table.py` | `table_lines`: Markdown tables as Termflow draws them when they fit, else columns no narrower than their longest word, else one `Header: value` block per row |
 | `ui/rendering/command_syntax.py` | shell command highlighting: pure, table-driven detection of heredoc and `-c`/`-e` code languages, lexed with `theme.syntax_theme()`, dimmed, without underlines |
 | `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
 | `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
@@ -98,7 +99,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `commands.py` | `Command` (with `menu`, the settings menu its bare form opens), the registry (`Commands.get`), completion, and the `pax config`/`pax plugins` subcommands, which refuse a change that could let the agent do more (`refuse_widening`) |
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
-| `ui/rendering/status.py` | the footer `Status` fields, ordered visibility with position-independent styles, main-assistant text age and history restoration, `StatusSegment` plugin fragments as one group, and the `StatusLine` row painter |
+| `ui/rendering/status.py` | the footer `Status` fields, ordered visibility with position-independent styles, main-assistant text age and history restoration, `StatusSegment` plugin fragments as one group, fitting the row to the terminal width (`FIT_STEPS`), and the `StatusLine` row painter |
 | `ui/rendering/duration.py` | `format_duration`, human-readable elapsed labels (at most three units, days without seconds, known local start date from 30 days) without changing lifecycle clocks |
 | `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`), Alt+Enter (Ctrl+Enter on Windows) steering, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by; `PromptInbox`, the queue of a session no editor reads for; `input_kind` and `can_steer`, the one rule for which input steers |
@@ -200,7 +201,8 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/rendering/theme.py` | Existing brand roles, fixed shades for a light terminal background, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/terminal_background.py` | asks the terminal for its background colour once at startup (OSC 11, ended by DA1), else reads `COLORFGBG`; drops a late reply when the editor opens |
 | `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |

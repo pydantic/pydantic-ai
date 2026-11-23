@@ -31,6 +31,7 @@ from pydantic_ai_pax import DEFAULT_PLUGINS
 from pydantic_ai_pax.builtin_plugins import logfire as logfire_plugin
 from pydantic_ai_pax.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
 from pydantic_ai_pax.builtin_plugins.logfire_destination import logfire_dir
+from pydantic_ai_pax.cli.self_update import installed
 from pydantic_ai_pax.commands import Commands
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.api_keys import save_key
@@ -68,6 +69,7 @@ class Recorder:
         local: bool,
         send_to_logfire: Literal[False, 'if-token-present'],
         service_name: str,
+        service_version: str,
         console: Literal[False],
         inspect_arguments: bool,
         config_dir: Path,
@@ -96,6 +98,7 @@ class Recorder:
             local=local,
             send_to_logfire=False,
             service_name=service_name,
+            service_version=service_version,
             console=console,
             inspect_arguments=inspect_arguments,
             config_dir=config_dir,
@@ -298,6 +301,8 @@ async def test_content_settings(recorder: Recorder, content: bool) -> None:
     assert ('plain answer' in serialized) == content
     assert base64.b64encode(b'image bytes').decode() not in serialized
     assert spans[0].resource.attributes['service.name'] == 'custom-clai'
+    # Pax's own version, not the commit of the repository it was launched in.
+    assert spans[0].resource.attributes['service.version'] == installed().label
     assert recorder.options[0]['send_to_logfire'] is False
 
 

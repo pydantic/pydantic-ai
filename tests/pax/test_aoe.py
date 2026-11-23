@@ -683,11 +683,11 @@ async def test_stop_tolerates_a_removed_directory(
 
 
 def test_commands_that_cannot_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = aoe.run_command('true')
+    assert result is not None and result.returncode == 0
     assert aoe.run_command('/nonexistent/aoe-binary') is None
     monkeypatch.setattr(aoe, '_COMMAND_TIMEOUT', 0.01)
     assert aoe.run_command('sleep', '1') is None
-    result = aoe.run_command('true')
-    assert result is not None and result.returncode == 0
 
 
 def test_state_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -370,7 +370,7 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
             release['b'].set()
             second = fleet.runtimes[b.id]
             await until(fleet.live, lambda: calls['b'] == 2 and second.idle)
-    assert 'Turn cancelled' in fleet.outputs['a'].getvalue()
+    assert 'Interrupted. Type what to do instead.' in fleet.outputs['a'].getvalue()
     assert 'a answered' not in fleet.outputs['a'].getvalue()
     assert fleet.outputs['b'].getvalue().count('b answered') == 2
     assert not fleet.live.listing()

@@ -103,7 +103,7 @@ async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
         assert 'Retained history may include partial progress' in output.getvalue()
         assert 'Turn not saved' not in output.getvalue()
     elif mode == 'cancel':
-        assert 'Turn cancelled' in output.getvalue()
+        assert 'Interrupted. Type what to do instead.' in output.getvalue()
     elif mode == 'interrupt':
         assert 'Input cleared' in output.getvalue()
 
@@ -158,7 +158,7 @@ async def test_double_interrupt_during_a_background_report_turn_exits(
     earlier.status, earlier.outcome = 'finished', 'cancelled'
     shell.tasks.owner.records.update({report.id: report, earlier.id: earlier})
     assert await shell.run() == 'exit'
-    assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
+    assert 'Interrupted. Type what to do instead.' in output.getvalue()
     # The interrupt stops only children this turn started; one an earlier turn left cancelled stays resumable.
     assert not earlier.user_stopped
 

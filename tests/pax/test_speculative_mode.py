@@ -916,12 +916,14 @@ class TestSandboxCallDisplay:
             '\u25cf run_code code="text = await read_file(path=\\"a.py\\")\\\u2026',
         )
         assert headers[1:] == [
-            "\u25cf read_file 'a.py' offset=0 limit=2000 lines",
-            "\u25cf read_file 'b.py' offset=0 limit=2000 lines",
-            "\u25cf read_file 'missing.py' offset=0 limit=2000 lines",
+            '\u25cf read_file a.py',
+            '\u25cf read_file b.py',
+            '\u25cf read_file missing.py',
             '\u25cf flaky',
             '\u25cf broken',
         ]
+        # Each retried call gets a failure row under its own header.
+        assert len([line for line in output.getvalue().splitlines() if line.startswith('  \u23bf ')]) == 2
 
     async def test_launch_evicted_while_running_is_not_held(self) -> None:
         show = ShowSandboxCalls[None]()

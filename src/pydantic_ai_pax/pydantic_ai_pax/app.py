@@ -55,6 +55,7 @@ from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 from pydantic_ai_pax.ui.telemetry_log import telemetry_log
+from pydantic_ai_pax.ui.terminal_background import terminal_background
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -219,6 +220,8 @@ async def chat(
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
     use_stock_defaults = builtin_plugins is STOCK_PLUGINS
+    # Before the banner, the first output painted in the theme's colours.
+    background = _terminal_background(console)
     shell = _create_home_shell(
         agent,
         deps=deps,
@@ -233,6 +236,7 @@ async def chat(
         load_plugins=load_plugins,
         settings_for=settings_for,
         worktree=worktree,
+        background=background,
     )
     fresh = False
     warming: Thread | None = None
@@ -263,6 +267,7 @@ async def chat(
                 with theme.use(
                     lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
                     output=console.file if console.is_terminal else None,
+                    background=background,
                 ):
                     try:
                         # Sessions the web UI opens run beside this one, from the start: plugins may open some.
@@ -328,6 +333,11 @@ async def chat(
                 raise relaunch
 
 
+def _terminal_background(console: Console) -> str | None:
+    """The terminal's background, asked only when `console` is that terminal, as `theme.use(output=...)` is gated."""
+    return terminal_background() if console.is_terminal else None
+
+
 def _create_home_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -343,9 +353,13 @@ def _create_home_shell(
     load_plugins: bool,
     settings_for: Callable[[ProjectSettings], Settings] | None,
     worktree: Worktree | None,
+    background: str | None,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Build the session Pax starts with, under the launch banner."""
-    with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
+    """Build the session Pax starts with, under the launch banner, in colours for the terminal's `background`."""
+    with (
+        theme.use(lambda: settings.theme if settings is not None else 'default', background=background),
+        transcript.capture(console),
+    ):
         project = project or ProjectSettings()
         print_welcome(project, console, worktree=worktree)
         return create_shell(
