@@ -107,7 +107,7 @@ class MarkdownRenderer(Renderer):
     """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
 
     _enclosing = ''
-    """Codes that restore the style a link interrupts, for headings Termflow styles around the inline text."""
+    """Codes that restore the style a link or code span interrupts, for headings Termflow styles around the text."""
 
     def render(self, event: ParseEvent) -> None:
         """Render one event, remembering a heading's style for links inside it."""
@@ -130,8 +130,10 @@ class MarkdownRenderer(Renderer):
 
         formatted = _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
         if theme.current() is None and theme.light_background() is not None:
-            # Termflow dims inline code, which leaves black text near 3:1 on white; paint it muted instead.
-            formatted = _CODE_SPAN_SGR_RE.sub(lambda code: f'{theme.sgr(theme.MUTED)}{code[1]}\x1b[39m', formatted)
+            # Termflow dims inline code, which leaves black text near 3:1 on white; paint it muted instead,
+            # then restore a heading's colour, as after a link.
+            muted = theme.sgr(theme.MUTED)
+            formatted = _CODE_SPAN_SGR_RE.sub(lambda code: f'{muted}{code[1]}\x1b[39m{self._enclosing}', formatted)
         return formatted
 
     def _link(self, match: re.Match[str]) -> str:
