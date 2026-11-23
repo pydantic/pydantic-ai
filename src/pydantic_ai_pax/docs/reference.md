@@ -1651,12 +1651,13 @@ rows that each link to all of it.
 
 Fenced code uses the fence's language for syntax highlighting. In the interactive
 prompt each code line shows as it arrives, highlighted on its own, so a line inside
-a multiline string or comment can be coloured as code for a moment. When the closing
-fence arrives, or the text part ends if the fence is unfinished, the whole block is
-highlighted again in place, so multiline strings and comments end up correctly
-coloured. Redirected output prints the block once, at that point. Unlabelled and Markdown fences
-stay literal, including indentation and blank lines; unknown languages use plain
-text. Long code lines wrap to the terminal width. Response and reasoning code
+a multiline string or comment can be coloured as code for a moment. When the
+closing fence arrives, or the text part ends if the fence is unfinished, the whole
+block is highlighted again in place, so multiline strings and comments end up
+correctly coloured. Everywhere else, such as `-p`, redirected output or a resumed
+session's history, the block prints once, at that point. Unlabelled and Markdown
+fences stay literal, including indentation and blank lines; unknown languages use
+plain text. Long code lines wrap to the terminal width. Response and reasoning code
 blocks use the terminal foreground and ANSI syntax colours, rather than pale
 text intended for a dark background. Bundled themes supply their own ANSI colours.
 
