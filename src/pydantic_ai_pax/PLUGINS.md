@@ -663,7 +663,9 @@ Options are `service_name` (default `pydantic-clai2`), `include_content` and
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+over `LOGFIRE_SEND_TO_LOGFIRE`. Traces carry CLAI's own version as
+`service.version`, which `LOGFIRE_SERVICE_VERSION` and `OTEL_SERVICE_VERSION` do
+not change. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and

@@ -15,7 +15,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
-    TextPartDelta,
 )
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_ai_pax import StreamRenderer
@@ -30,7 +29,6 @@ from pydantic_ai_pax.ui.rendering.rendering import (
     thinking_heading,
 )
 from tests._timeouts import READINESS_WAIT_TIMEOUT
-from tests.conftest import no_leaked_tasks
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -164,61 +162,6 @@ async def test_part_end_writes_queued_text_at_once(
     assert len(counts) <= 2
 
 
-async def test_part_end_with_a_replaced_preview_queued_returns_promptly_and_writes_everything() -> None:
-    """A finished line queued behind its preview must not keep the part from ending."""
-    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
-    console = Console(file=surface, force_terminal=True, width=80, color_system='truecolor')
-    renderer = StreamRenderer(console, stop_loading=lambda: None)
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-        await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('a long unfinished line ')))
-        await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta('with **bold** text\nmore')))
-        await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
-    assert [row.rstrip() for row in _rows(surface, width=80)][:2] == [
-        'a long unfinished line with bold text',
-        'more',
-    ]
-
-
-async def test_a_failed_write_at_part_end_is_not_written_again() -> None:
-    class FailsOnce(io.StringIO):
-        failed = False
-
-        def flush(self) -> None:
-            if not self.failed and self.getvalue():
-                self.failed = True
-                raise OSError('terminal closed')
-
-    output = FailsOnce()
-    with no_leaked_tasks():
-        renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
-        await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='once\n')))
-        with pytest.raises(OSError, match='terminal closed'):
-            await renderer.finish()
-        await asyncio.sleep(0)  # the cancelled drainer ends on its next step
-    assert output.getvalue().count('once') == 1
-
-
-async def test_a_part_whose_typing_already_failed_ends_with_that_error() -> None:
-    failed = asyncio.Event()
-    tries: list[str] = []
-
-    class Fails(io.StringIO):
-        def write(self, text: str) -> int:
-            tries.append(text)
-            failed.set()
-            raise OSError('terminal closed')
-
-    output = Fails()
-    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 100 + '\n')))
-    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-        await failed.wait()  # the drainer's first tick fails
-    await asyncio.sleep(0)  # and its task finishes with that error
-    with pytest.raises(OSError, match='terminal closed'):
-        await renderer.finish()
-    assert len(tries) == 1
-
-
 async def test_abort_discards_pending_output() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
@@ -342,55 +285,8 @@ def test_whole_markdown_repaint_processes_complete_source_lines() -> None:
     ]
 
 
-async def test_live_panel_shows_the_unfinished_line_then_renders_it_in_place() -> None:
-    """A one-line paragraph shows as it streams, wrapped as it will render, instead of all at once at its newline."""
-    surface = PromptSurface(output=io.StringIO(), size=lambda: (40, 24))
-    console = Console(file=surface, force_terminal=True, width=40, color_system='truecolor')
-    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
-
-    async def feed(text: str) -> list[str]:
-        await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=text)))
-        return [row.rstrip() for row in _rows(surface, width=40)]
-
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('First.\n\n')))
-    words = ' '.join(f'word{index}' for index in range(12))
-    assert await feed(words) == [
-        'First.',
-        '',
-        'word0 word1 word2 word3 word4 word5',
-        'word6 word7 word8 word9 word10 word11',
-        '',
-    ]
-    assert (await feed(' **bo'))[-2:] == ['**bo', '']
-    # The finished line replaces its preview: Termflow wraps it the same way, and the markup renders.
-    assert await feed('ld** done\n\n| a | b') == [
-        'First.',
-        '',
-        'word0 word1 word2 word3 word4 word5',
-        'word6 word7 word8 word9 word10 word11',
-        'bold done',
-        '',
-        # A table row would vanish into its table once complete, so it shows only then.
-        '',
-    ]
-    # Nor does the table's separator, or text after it before the table ends and renders above it.
-    rows = await feed(' |\n--- | ---\n| 1 | 2 |\nAfter')
-    assert rows[4:] == ['bold done', '', '']
-    await renderer.finish()
-    assert [row.rstrip() for row in _rows(surface, width=40)][6:] == [
-        '┌───┬───┐',
-        '│ a │ b │',
-        '├───┼───┤',
-        '│ 1 │ 2 │',
-        '└───┴───┘',
-        'After',
-        '',
-        '',
-    ]
-
-
-def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None:
-    """Retyping a finished line from its first character would blank the preview the user was reading."""
+def test_smoothing_types_a_preview_but_writes_its_replacement_at_once() -> None:
+    """Retyping a finished code block from its first character would blank the preview the user was reading."""
     writes: list[str] = []
 
     class ObservedOutput(io.StringIO):
@@ -398,26 +294,7 @@ def test_smoothing_types_previews_but_writes_their_replacement_at_once() -> None
             writes.append(text)
             return super().write(text)
 
-    class Ticks(PartWriter):
-        def tick(self) -> None:
-            """What one drain tick releases, without waiting on the drainer's timer."""
-            self._drain_units(3)
-
-        def stop_waiting(self) -> None:
-            """Termflow's hook for writing what is left at once."""
-            self._flush_all()
-
-    writer = Ticks(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
+    writer = PartWriter(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
     writer.write('preview')
-    writer.commit('the rendered line\n')
-    writer.write('next')
-    for _ in range(4):
-        writer.tick()
-    assert writes == ['pre', 'vie', 'wthe rendered line\nn', 'ext']
-    writes.clear()
-    writer.write('typed')
-    writer.commit('whole\n')
-    writer.write('after')
-    writer.tick()
-    writer.stop_waiting()
-    assert writes == ['typ', 'edwhole\nafter'], 'what is left goes out in one write, still in order'
+    writer.commit('the rendered block\n')
+    assert writes == ['preview', 'the rendered block\n'], 'what was still being typed goes first, then the block'

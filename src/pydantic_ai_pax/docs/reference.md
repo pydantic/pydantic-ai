@@ -1603,17 +1603,16 @@ window if you previously saved a slower preference. This response-only setting
 accepts 0.1 to 5 seconds; thinking retains its separate 0.4-second window.
 Empty thinking parts show no heading. The CLI disables core's first-run
 observability banner.
-Cancellation discards queued output. In the interactive prompt, an unfinished line
-shows as plain text while it streams, and renders as Markdown (bold, code spans,
-links, list bullets) once its newline arrives. Table rows show once the table is complete.
+Cancellation discards queued output. Incomplete Markdown lines are still buffered
+until a newline or part end; smoothing does not remove that parsing delay.
 Thinking signatures without text cannot be shown. A supplied agent's existing
 stream handler is preserved. Custom renderer integrations must await `finish()`
 and use `await abort()` on cancellation.
 
 Response and thinking parts end with a blank separator line; responses have no
 repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
-before the tool's arguments finish streaming. Redirected output prints each
-line once it is complete.
+before the tool's arguments finish streaming. Incomplete lines within a text part
+still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
 Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
 without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
@@ -1629,6 +1628,13 @@ mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the
 The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
+
+Markdown tables keep their words whole where they can. A table too wide for the terminal
+wraps its cells only between words, and every column is at least as wide as its longest word.
+When those words cannot sit side by side, each row is shown as its own block of
+`Header: value` lines, with a rule between rows; only a word wider than the terminal is
+split. Resizing lays the table out again for the new width. `TERMFLOW_MAX_TABLE_WIDTH`,
+if set, caps both layouts.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
@@ -3505,7 +3511,9 @@ instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
-than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
+than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry CLAI's
+own version as `service.version`; `LOGFIRE_SERVICE_VERSION` and
+`OTEL_SERVICE_VERSION` do not change it. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
