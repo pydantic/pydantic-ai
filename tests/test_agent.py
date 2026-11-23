@@ -5114,6 +5114,11 @@ def test_unknown_tool_per_tool_retries_exceeded():
 
 @pytest.mark.parametrize('external', [pytest.param(True, id='external'), pytest.param(False, id='requires_approval')])
 def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
+    """A deferred tool call cut off by the token limit raises `IncompleteToolCall`, as a function tool call does.
+
+    `FunctionModel` scripts the cut-off response: what's under test is how the agent graph handles it,
+    not how a provider reports a `'length'` finish reason.
+    """
     requests = 0
 
     def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
