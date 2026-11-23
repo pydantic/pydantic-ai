@@ -15,6 +15,7 @@ from pydantic_ai.messages import PartStartEvent, RetryInfo, TextPart, ToolCallPa
 from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_pax import StreamRenderer
+from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
 
@@ -472,6 +473,28 @@ async def test_a_failed_or_refused_call_is_marked_under_its_header(
     text = Text.from_ansi(output.getvalue())
     assert text.plain.rstrip('\n') == f'● deploy\n  ⎿ {reason}'
     assert _color(console, text, reason) == console.get_style(theme.ERROR).color
+
+
+async def test_a_failed_delegation_is_left_to_its_task_row() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    call = ToolCallPart('delegate_task', {}, tool_call_id='t')
+    await renderer.on_stream_event(DelegationToolCallEvent(call))
+    part = ToolReturnPart('delegate_task', "Sub-agent 'x' failed", tool_call_id='t', outcome='retried')
+    await renderer.on_stream_event(FunctionToolResultEvent(part=part))
+    assert output.getvalue() == ''
+
+
+@pytest.mark.parametrize(('exit_code', 'color'), [(0, theme.MUTED), (1, theme.ERROR)])
+async def test_a_shell_result_row_is_red_only_when_the_command_fails(exit_code: int, color: str) -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+    )
+    await renderer.on_stream_event(_finished('m', exit_code=exit_code, line_count=2))
+    assert _color(console, Text.from_ansi(output.getvalue()), f'exit {exit_code}') == console.get_style(color).color
 
 
 async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() -> None:
