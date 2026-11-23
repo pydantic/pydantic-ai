@@ -28,7 +28,6 @@ Usage:
 from __future__ import annotations
 
 import ast
-import io
 import re
 import sys
 import tokenize
@@ -37,7 +36,20 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from _ratchet import Change, Options, escape, merge_head, parse_args, read_changes, worse_than_both
+from _ratchet import (
+    Change,
+    Escape,
+    Options,
+    added_escapes,
+    added_findings,
+    escape,
+    escapes,
+    merge_head,
+    parse_args,
+    read_changes,
+    report_escapes,
+    worse_than_both,
+)
 
 GUIDE = 'tests/AGENTS.md#test-cost'
 ROOTS = ('tests',)
@@ -91,16 +103,9 @@ class _Finding:
 
 
 @dataclass
-class _Escape:
-    line: int
-    reason: str
-    text: str
-
-
-@dataclass
 class _Scan:
     findings: dict[Rule, list[_Finding]] = field(default_factory=dict[Rule, list[_Finding]])
-    escapes: list[_Escape] = field(default_factory=list[_Escape])
+    escapes: list[Escape] = field(default_factory=list[Escape])
 
 
 @dataclass
@@ -379,31 +384,19 @@ def _handed_on(scope: ast.AST) -> Iterator[ast.Name]:
             yield from (n for n in ast.walk(value) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load))
 
 
-def _escapes(source: str) -> list[_Escape]:
-    found: list[_Escape] = []
-    for token in tokenize.generate_tokens(io.StringIO(source).readline):
-        marker = _REAL_WAIT.match(token.string) if token.type == tokenize.COMMENT else None
-        if marker:
-            alone = not token.line[: token.start[1]].strip()
-            # A comment alone on its line marks the next line.
-            line = token.start[0] + 1 if alone else token.start[0]
-            found.append(_Escape(line, marker['reason'].strip(), token.line.strip()))
-    return found
-
-
 def _scan(source: str | None, path: str) -> _Scan:
     if source is None:
         return _Scan()
     try:
         tree = ast.parse(source)
-        escapes = _escapes(source)
+        marked = escapes(source, _REAL_WAIT)
     except (SyntaxError, tokenize.TokenError):
         return _Scan()
     findings = _Finder(tree, source.splitlines(), path).run()
-    escaped = {e.line for e in escapes}
+    escaped = {e.line for e in marked}
     for rule in _ESCAPABLE & findings.keys():
         findings[rule] = [f for f in findings[rule] if f.line not in escaped]
-    return _Scan({rule: found for rule, found in findings.items() if found}, escapes)
+    return _Scan({rule: found for rule, found in findings.items() if found}, marked)
 
 
 def _texts(findings: list[_Finding]) -> Counter[str]:
@@ -413,40 +406,12 @@ def _texts(findings: list[_Finding]) -> Counter[str]:
 def _rule_growth(
     path: str, rule: Rule, found: list[_Finding], was: list[_Finding], moves: Counter[str]
 ) -> _Growth | None:
-    """How far a change raised `rule`'s count in a file, less the findings that moved in from another file.
-
-    `moves` holds the findings, by text, that the change removed from the other changed files; each one this file
-    gained is taken out of it.
-    """
-    fresh = _texts(found) - _texts(was)
-    added: list[_Finding] = []
-    moved = 0
-    for f in found:
-        if not fresh[f.text]:
-            continue
-        fresh[f.text] -= 1
-        if moves[f.text]:
-            moves[f.text] -= 1
-            moved += 1
-        else:
-            added.append(f)
-    if len(found) - len(was) - moved <= 0:
-        return None
-    return _Growth(path, rule, len(was), len(found), added)
+    """How far a change raised `rule`'s count in a file, less the findings that moved in from another file."""
+    added = added_findings(found, was, moves, key=lambda f: f.text, moved_key=lambda f: f.text)
+    return None if added is None else _Growth(path, rule, len(was), len(found), added)
 
 
-def _added_escapes(path: str, old: _Scan, new: _Scan) -> list[tuple[str, _Escape]]:
-    before = Counter(e.text for e in old.escapes)
-    added: list[tuple[str, _Escape]] = []
-    for e in new.escapes:
-        if before[e.text]:
-            before[e.text] -= 1
-        else:
-            added.append((path, e))
-    return added
-
-
-def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, _Escape]]]:
+def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, Escape]]]:
     """Each rule a change raised the count of in a file, and each `# real-wait` comment it added."""
     scans = [(c, _scan(c.old_source, c.old_path or ''), _scan(c.new_source, c.new_path or '')) for c in changes]
     # Only a wait may move, so a probe or constant removed from one file does not excuse one added to another.
@@ -455,15 +420,15 @@ def _growth(changes: list[Change]) -> tuple[list[_Growth], list[tuple[str, _Esca
         for rule in _ESCAPABLE & old.findings.keys():
             moves[rule].update(_texts(old.findings[rule]) - _texts(new.findings.get(rule, [])))
     growth: list[_Growth] = []
-    escapes: list[tuple[str, _Escape]] = []
+    added: list[tuple[str, Escape]] = []
     for change, old, new in scans:
         path = change.new_path or ''
-        escapes += _added_escapes(path, old, new)
+        added += added_escapes(path, old.escapes, new.escapes)
         for rule, found in new.findings.items():
             grown = _rule_growth(path, rule, found, old.findings.get(rule, []), moves.get(rule, Counter()))
             if grown:
                 growth.append(grown)
-    return growth, escapes
+    return growth, added
 
 
 def _print_growth(g: _Growth, github: bool) -> None:
@@ -484,29 +449,26 @@ def _print_advice(rules: set[Rule]) -> None:
     print(f'See {GUIDE}.')
 
 
-def _report_escapes(escapes: list[tuple[str, _Escape]], github: bool) -> bool:
-    """Print each `# real-wait` comment the change added; return whether one gives no reason."""
-    for path, e in escapes:
-        level, message = ('warning', f'real wait: {e.reason}') if e.reason else ('error', 'give the real wait a reason')
-        print(f'{path}:{e.line}: {message}, see {GUIDE}')
-        if github:
-            print(f'::{level} file={escape(path, prop=True)},line={e.line},title=real-wait::{escape(message)}')
-    return any(not e.reason for _, e in escapes)
-
-
-def _check(options: Options) -> tuple[list[_Growth], list[tuple[str, _Escape]]]:
+def _check(options: Options) -> tuple[list[_Growth], list[tuple[str, Escape]]]:
     return _growth(read_changes(options, ROOTS))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the check and return the exit code."""
     options = parse_args(argv, 'Check the real-clock waits a change adds to the tests.')
-    growth, escapes = _check(options)
+    growth, added = _check(options)
     theirs = merge_head() if options.staged else None
     if theirs:
         their_growth, _ = _check(replace(options, base=theirs))
         growth = worse_than_both(growth, their_growth, key=lambda g: (g.path, g.rule), before=lambda g: g.old)
-    unexplained = _report_escapes(escapes, options.github)
+    unexplained = report_escapes(
+        added,
+        label='real wait',
+        missing='give the real wait a reason',
+        title='real-wait',
+        guide=GUIDE,
+        github=options.github,
+    )
     for g in growth:
         _print_growth(g, options.github)
     if growth:

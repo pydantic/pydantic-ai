@@ -1,8 +1,7 @@
 """Confine a path under a root, with every symlink followed.
 
-Components that read or write under a root check where a path really leads here, instead of each comparing a
-`realpath` with a prefix of its own. `tests/harness/test_rooted_components.py` holds each such component to the
-symlink cases, and `scripts/check_confine.py` fails on a new hand-written check.
+A component that reads or writes under a root checks where a path really leads with `confine`.
+`tests/harness/test_rooted_components.py` holds each such component to the same symlink cases.
 """
 
 from __future__ import annotations as _annotations

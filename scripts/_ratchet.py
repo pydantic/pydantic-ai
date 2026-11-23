@@ -9,7 +9,11 @@ files included, with `REF`, for CI.
 from __future__ import annotations
 
 import argparse
+import io
+import re
 import subprocess
+import tokenize
+from collections import Counter
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,6 +128,82 @@ def worse_than_both(
     return [
         max(finding, by_key[key(finding)], key=lambda f: before(f) or 0) for finding in ours if key(finding) in by_key
     ]
+
+
+def added_findings(
+    found: Sequence[T], was: Sequence[T], moves: Counter[str], key: Callable[[T], str], moved_key: Callable[[T], str]
+) -> list[T] | None:
+    """The findings a change added to one file, or `None` when the change did not raise the file's count.
+
+    `key` pairs a finding across the two sides of the file. `moves` counts, by `moved_key`, the findings the change
+    removed from the other changed files; each one this file gained is taken out of it and not counted.
+    """
+    fresh = Counter(map(key, found)) - Counter(map(key, was))
+    added: list[T] = []
+    moved = 0
+    for finding in found:
+        if not fresh[key(finding)]:
+            continue
+        fresh[key(finding)] -= 1
+        if moves[moved_key(finding)]:
+            moves[moved_key(finding)] -= 1
+            moved += 1
+        else:
+            added.append(finding)
+    if len(found) - len(was) - moved <= 0:
+        return None
+    return added
+
+
+@dataclass
+class Escape:
+    """A comment that leaves the finding on its line out of a rule's count."""
+
+    line: int
+    """The line it marks: its own, or the next one when the comment stands alone on its line."""
+    reason: str
+    text: str
+    """Its source line, stripped, which pairs it across the two sides of a change."""
+
+
+def escapes(source: str, marker: re.Pattern[str]) -> list[Escape]:
+    """The comments in `source` that `marker` matches; its `reason` group is the reason each gives.
+
+    Raises `tokenize.TokenError` on source that does not tokenize.
+    """
+    found: list[Escape] = []
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        match = marker.match(token.string) if token.type == tokenize.COMMENT else None
+        if match:
+            alone = not token.line[: token.start[1]].strip()
+            found.append(
+                Escape(token.start[0] + 1 if alone else token.start[0], match['reason'].strip(), token.line.strip())
+            )
+    return found
+
+
+def added_escapes(path: str, old: Sequence[Escape], new: Sequence[Escape]) -> list[tuple[str, Escape]]:
+    """The escapes `new` has that `old` does not, paired by text."""
+    before = Counter(e.text for e in old)
+    added: list[tuple[str, Escape]] = []
+    for e in new:
+        if before[e.text]:
+            before[e.text] -= 1
+        else:
+            added.append((path, e))
+    return added
+
+
+def report_escapes(
+    added: Sequence[tuple[str, Escape]], *, label: str, missing: str, title: str, guide: str, github: bool
+) -> bool:
+    """Print each escape a change added, as `<label>: <reason>`, or `missing` without one; return whether one lacks a reason."""
+    for path, e in added:
+        level, message = ('warning', f'{label}: {e.reason}') if e.reason else ('error', missing)
+        print(f'{path}:{e.line}: {message}, see {guide}')
+        if github:
+            print(f'::{level} file={escape(path, prop=True)},line={e.line},title={title}::{escape(message)}')
+    return any(not e.reason for _, e in added)
 
 
 def escape(value: str, prop: bool = False) -> str:

@@ -130,6 +130,16 @@ def test_a_check_moved_between_files_is_not_counted(repo: Path, capsys: pytest.C
     assert _staged(repo, capsys, f'{_HARNESS}/moved.py', _DEBT) == (0, '')
 
 
+def test_a_function_moved_with_a_new_check_counts(repo: Path, capsys: pytest.CaptureFixture[str]):
+    _write(repo, f'{_HARNESS}/store.py', 'X = 1\n')
+    changed = _DEBT.replace("real.startswith(root + '/')", 'path.resolve().is_relative_to(root)')
+
+    code, out = _staged(repo, capsys, f'{_HARNESS}/moved.py', changed)
+
+    assert code == 1
+    assert f'{_HARNESS}/moved.py: hand-written confine checks 0 -> 1' in out
+
+
 def test_code_outside_the_library_roots_is_not_checked(repo: Path, capsys: pytest.CaptureFixture[str]):
     assert _staged(repo, capsys, 'tests/test_other.py', _NEW_CHECK) == (0, '')
 
