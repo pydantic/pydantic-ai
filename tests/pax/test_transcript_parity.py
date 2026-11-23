@@ -88,11 +88,14 @@ COMPARED: dict[str, Compared] = {
     ),
     'by_user': Compared("whether a `run_code` cell is shown as the user's own"),
     'images': Compared("the prompt's images"),
-    'exit_code': Compared('whether the `shell` card shows its command as failed'),
     'run_id': Compared('the run Edit and Retry rewind to'),
 }
 KNOWN_LIVE_ONLY: dict[str, LiveOnly] = {
     'output': LiveOnly("a shell command's printout as it ran; the saved result holds what the model got back"),
+    'exit_code': LiveOnly(
+        "a `shell` command's exit code; the saved history keeps it only inside the result's text, which another tool"
+        ' named `shell` can imitate'
+    ),
     'calls': LiveOnly("the tools a `run_code` cell called from its sandbox; the saved history holds the cell's result"),
     'diffs': LiveOnly(
         'the saved history holds no file content from before a write, so a reload cannot rebuild its diff',
