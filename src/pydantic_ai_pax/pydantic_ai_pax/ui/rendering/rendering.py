@@ -582,6 +582,7 @@ class StreamRenderer:
                     continuation=continuation,
                 ),
                 width=self.console.width,
+                streaming=True,
             )
             if isinstance(surface, PromptSurface)
             else None

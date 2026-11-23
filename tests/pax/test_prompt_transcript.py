@@ -247,17 +247,17 @@ def test_colour_reset_does_not_close_a_hyperlink_across_lines() -> None:
     assert text.get_style_at_offset(console, -1).link is None
 
 
-def _block(buffer: TranscriptBuffer, *, width: int = 40) -> MarkdownBlock:
+def _block(buffer: TranscriptBuffer, *, width: int = 40, streaming: bool = False) -> MarkdownBlock:
     def render(*, source: str, width: int) -> str:
         return f'rendered at {width}: {source}\n'
 
-    return buffer.markdown(render=render, width=width, changed=lambda: None)
+    return buffer.markdown(render=render, width=width, changed=lambda: None, streaming=streaming)
 
 
 def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
     buffer = TranscriptBuffer()
     buffer.write('tool header')
-    block = _block(buffer)
+    block = _block(buffer, streaming=True)
     assert buffer.ids() == range(0, 3)
     block.extend('**hi**')
     block.write('streamed\npartial')
@@ -440,7 +440,6 @@ def test_markdown_repaint_respects_configured_character_and_line_limits(repaint:
     block = transcript.markdown(render=render, width=40, changed=lambda: None)
     block.extend('x')
     block.write('ok\n')
-    block.end()
     assert plain(transcript, width=40) == ['ok', '']
     with theme.use(lambda: 'github_light' if repaint == 'theme' else 'default'):
         assert plain(transcript, width=20 if repaint == 'width' else 40) == ['three', '']

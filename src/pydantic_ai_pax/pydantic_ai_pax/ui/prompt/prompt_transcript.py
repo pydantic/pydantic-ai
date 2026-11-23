@@ -296,16 +296,23 @@ class MarkdownBlock(io.StringIO):
     """
 
     def __init__(
-        self, *, render: Render, width: int, changed: Callable[[], None], max_chars: int, max_lines: int
+        self,
+        *,
+        render: Render,
+        width: int,
+        changed: Callable[[], None],
+        max_chars: int,
+        max_lines: int,
+        streaming: bool = False,
     ) -> None:
-        """Start empty; `changed` asks the panel for a frame."""
+        """Start empty; `changed` asks the panel for a frame, and `streaming` is for a part still arriving."""
         super().__init__()
         self.source: str | None = ''
         self._render = render
         self._key = (width, theme.name())
         self._stream = _Lines(max_chars=max_chars, max_lines=max_lines)
         self._changed = changed
-        self.streaming = True
+        self.streaming = streaming
         """Until `end`, the stream's own rows show at every width, wrapped again if it changed."""
         self._resized_while_streaming = False
         """Shown at another width or theme while streaming. Code fences take the console's width when they
@@ -511,7 +518,9 @@ class TranscriptBuffer:
         prefix, self._pending = self._pending[:cutoff], self._pending[cutoff:]
         self._decoder.decode_line(prefix)
 
-    def markdown(self, *, render: Render, width: int, changed: Callable[[], None]) -> MarkdownBlock:
+    def markdown(
+        self, *, render: Render, width: int, changed: Callable[[], None], streaming: bool = False
+    ) -> MarkdownBlock:
         """Start a Markdown part on its own row, after any unfinished line."""
         if self._pending:
             self.write('\n')
@@ -527,7 +536,12 @@ class TranscriptBuffer:
             changed()
 
         block = MarkdownBlock(
-            render=render, width=width, changed=updated, max_chars=self.max_chars, max_lines=self.max_lines
+            render=render,
+            width=width,
+            changed=updated,
+            max_chars=self.max_chars,
+            max_lines=self.max_lines,
+            streaming=streaming,
         )
         self._append(block)
         return block

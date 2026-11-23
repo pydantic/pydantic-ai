@@ -427,7 +427,7 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
 
     screen = Screen(width=40)
     screen.surface.paint(ROWS)
-    block = screen.surface.markdown(render=render, width=40)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
     block.extend('**bold**')
     block.write('streamed bold\n')
     screen.surface.refresh()
@@ -457,7 +457,7 @@ def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> N
 
     screen = Screen(width=40)
     screen.surface.paint(ROWS)
-    block = screen.surface.markdown(render=render, width=40)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
     block.extend('one')
     block.write('one ')
     screen.terminal.resize(width=10, height=24)
@@ -541,9 +541,9 @@ def test_transcript_scrolls_rows_within_one_wrapped_item_and_skips_empty_parts()
         assert (source, width) == ('', 4)
         return ''
 
-    buffer.markdown(render=render, width=1, changed=lambda: None).end()
+    buffer.markdown(render=render, width=1, changed=lambda: None)
     buffer.write('abcdefghijklmnopqrstuvwxyz\n')
-    buffer.markdown(render=render, width=1, changed=lambda: None).end()
+    buffer.markdown(render=render, width=1, changed=lambda: None)
     assert view.window(width=4, height=3) == ['uvwx', 'yz', '']
     view.scroll(3)
     assert view.window(width=4, height=3) == ['ijkl', 'mnop', 'qrst']
@@ -768,7 +768,6 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
     screen.surface.paint(ROWS)
     block = screen.surface.markdown(render=render, width=40)
     block.extend(url)
-    block.end()
     screen.surface.paint(ROWS)
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
@@ -783,7 +782,7 @@ def test_a_click_before_the_next_paint_reads_rows_that_have_since_shrunk() -> No
 
     screen = Screen(width=20, height=12)
     screen.surface.paint(ROWS)
-    block = screen.surface.markdown(render=render, width=40)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
     block.extend('one')
     block.write('a\nb\nc\nhttps://x.dev\n')
     screen.terminal.resize(width=30, height=12)

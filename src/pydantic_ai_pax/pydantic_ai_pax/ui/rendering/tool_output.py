@@ -79,7 +79,6 @@ def print_shell_header(console: Console, command: str) -> None:
         block = surface.markdown(render=render, width=console.width)
         block.extend(command)
         block.write(render(source=command, width=console.width))
-        block.end()
         return
     _print_shell_header(console, command)
 
