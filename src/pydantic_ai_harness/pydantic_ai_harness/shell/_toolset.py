@@ -26,7 +26,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutEr
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job, past_secrets, secret_spans
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, LOST, Job, past_secrets, secret_spans
 from pydantic_ai_harness.shell._limits import (
     file_limit_status,
     limited_script,
@@ -51,6 +51,8 @@ _OUTPUT_BYTES_PER_CHAR = 4
 
 _COMMAND_ID = re.compile(r'[0-9a-f]{32}')
 """A background command's ID: the name of its job directory."""
+
+_LOST_STATUS = f'[status: lost; {LOST}]'
 
 _POSIX_JOB_HINT = '(e.g.\n`tail` in a later shell call) and stop the process with `kill` and the\nreturned PID.'
 """How the `shell` description says to read a job's log and stop it; on a `'windows'` workspace it is replaced."""
@@ -579,12 +581,15 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             return f'[Error: unknown command ID {command_id!r}]'
 
         running, exit_code = await job.status()
+        lost = False
+        if running and not await job.alive():
+            # The wrapper publishes its exit code before it exits, so only a status read after finding it gone is final.
+            running, exit_code = await job.status()
+            lost = running
         stdout, stderr = await self._read_bg_output(job)
 
-        parts = [
-            _labelled(stdout, stderr, empty='(no output yet)'),
-            f'[status: {"running" if running else "finished"}]',
-        ]
+        status = _LOST_STATUS if lost else f'[status: {"running" if running else "finished"}]'
+        parts = [_labelled(stdout, stderr, empty='(no output yet)'), status]
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
         return '\n'.join(parts)
@@ -605,16 +610,19 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             return f'[Error: unknown command ID {command_id!r}]'
 
         running, exit_code = await job.status()
+        killed = False
         if running or job.pgid is not None:
             # The wrapper can publish a finished status while children still occupy its group.
             with anyio.CancelScope(shield=True):
-                await job.kill()
+                killed = await job.kill()
                 # A group that ignored SIGTERM is killed with SIGKILL, which its wrapper cannot
                 # outlive to publish a status: the command is stopped, with no exit code to report.
-                _, exit_code = await job.status()
+                running, exit_code = await job.status()
+        # Nothing was left to stop, and it went without publishing an exit code.
+        lost = running and not killed
 
         stdout, stderr = await self._read_bg_output(job)
-        parts = [_labelled(stdout, stderr, empty='(no output)'), '[stopped]']
+        parts = [_labelled(stdout, stderr, empty='(no output)'), _LOST_STATUS if lost else '[stopped]']
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
         try:
