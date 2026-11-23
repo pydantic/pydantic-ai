@@ -5,6 +5,7 @@ import io
 import json
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 
@@ -138,22 +139,24 @@ async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
     assert harness.loader.status_segments() == []
 
 
-async def test_startup_scans_the_plugins_folder_once_per_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_startup_reads_the_declarations_once_per_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Startup reads the declarations to order them, then once per plugin it loads, not for every lookup."""
     harness = Harness(tmp_path)
     for name in ('alpha', 'beta', 'gamma'):
         harness.write(name)
-    scans = 0
-    discover = ProcessPlugins._discover  # pyright: ignore[reportPrivateUsage]
+    reads = 0
+    declared = ProcessPlugins.declared
 
-    def counted(self: ProcessPlugins[None], console: Console) -> dict[str, Path]:
-        nonlocal scans
-        scans += 1
-        return discover(self, console)
+    def counted(
+        self: ProcessPlugins[None], project: Mapping[str, PluginSettings], *, console: Console
+    ) -> dict[str, PluginSettings]:
+        nonlocal reads
+        reads += 1
+        return declared(self, project, console=console)
 
-    monkeypatch.setattr(ProcessPlugins, '_discover', counted)
+    monkeypatch.setattr(ProcessPlugins, 'declared', counted)
     await harness.loader.load_all()
-    assert scans == 4
+    assert reads == 4
     await harness.loader.close('eof')
 
 
