@@ -1,4 +1,4 @@
-"""What the live sessions of one CLAI process share."""
+"""What the live sessions of one Pax process share."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class ClaiProcess(Generic[DepsT]):
-    """The services a CLAI process holds once for every session it runs.
+    """The services a Pax process holds once for every session it runs.
 
     Each `SessionRuntime` is built over the process it belongs to and joins its `live` sessions. The
     terminal runs one; `pax --web` opens more.

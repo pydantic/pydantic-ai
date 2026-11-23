@@ -8,7 +8,7 @@ import webbrowser
 def open_browser(url: str) -> bool:
     """Open `url` like `webbrowser.open`, but discard the output of a command-line opener.
 
-    `$BROWSER` and `xdg-open` run as plain commands that share CLAI's terminal, so whatever they print
+    `$BROWSER` and `xdg-open` run as plain commands that share Pax's terminal, so whatever they print
     lands on top of the display: VS Code's remote `$BROWSER` helper, for one, is a Node script that prints
     deprecation warnings. Those commands run here with their streams sent to `os.devnull`; every other
     browser (macOS, Windows, and the GUI browsers `webbrowser` drives itself) opens through

@@ -63,7 +63,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(monkeypa
         ]
     )
     assert shown.opened == ['list', 'text', 'list', 'choice', 'list', 'choice', 'list']
-    assert 'CLAI does not read SLACK_USER_TOKEN from the environment.' in app.output.getvalue()
+    assert 'Pax does not read SLACK_USER_TOKEN from the environment.' in app.output.getvalue()
     assert load_keys()['SLACK_USER_TOKEN'].get_secret_value() == 'xoxp-new'
     assert load_codex_credentials(account='slack') == '{"token":{"name":"SLACK_USER_TOKEN"}}'
     assert app.saved() == {'auth': 'key', 'client_id': None, 'read_only': False, 'include_instructions': False}
@@ -348,7 +348,7 @@ async def test_closing_the_menu_mid_save_waits_for_the_save(monkeypatch: pytest.
 
     def slow_save(*, name: str, value: str, replace: bool = True) -> str:
         saving.set()
-        release.wait(5)  # Like another CLAI session holding the /keys lock.
+        release.wait(5)  # Like another Pax session holding the /keys lock.
         order.append('saved')
         return save_key(name=name, value=value, replace=replace)
 

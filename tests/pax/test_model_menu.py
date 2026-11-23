@@ -559,7 +559,7 @@ async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, mo
             'typesafe:jev-latest',
             'typesafe_sdk',
             [
-                'Cannot use typesafe:jev-latest: the `typesafe` extra is not installed in the Python CLAI2 runs on',
+                'Cannot use typesafe:jev-latest: the `typesafe` extra is not installed in the Python Pax runs on',
                 'pip install "pydantic-ai-slim[typesafe]"',
                 'uv run --package pydantic-ai-pax --extra typesafe pax',
             ],
@@ -568,7 +568,7 @@ async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, mo
         pytest.param(
             'groq:llama-3.3-70b-versatile',
             'groq',
-            ['Cannot use groq:llama-3.3-70b-versatile with the Python CLAI2 runs on', 'pydantic-ai-slim[groq]'],
+            ['Cannot use groq:llama-3.3-70b-versatile with the Python Pax runs on', 'pydantic-ai-slim[groq]'],
             id='slim-extra',
         ),
     ],

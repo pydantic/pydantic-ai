@@ -1,6 +1,6 @@
 ## This check
 
-Review the UI adapter boundary in both directions, and CLAI 2's local web UI as its own boundary.
+Review the UI adapter boundary in both directions, and Pax's local web UI as its own boundary.
 
 ### UI adapters: every trust or disclosure decision is a named flag with a secure default
 
@@ -14,7 +14,7 @@ The user opts in to trusting client input or disclosing server state, never out.
 
 **The chokepoint rule.** Inbound sanitization belongs in `UIAdapter.sanitize_messages`, not in one adapter. Flag validation added to only one adapter or outside `sanitize_messages`: the other adapter stays exposed.
 
-### CLAI 2 local web UI
+### Pax local web UI
 
 The per-launch token grants the local user control of that launch. Do not require UI-adapter flags or `sanitize_messages` here. Check that untrusted Markdown, model output, tool output and plugin content are sanitized before rendering, and that external links use safe opener and referrer behavior. Check that the token never reaches another origin, a log or another session. Require exact Host and token checks, and exact Origin and token checks for WebSockets. Check that session watch, input, queued events and reconnect state stay scoped to their session.
 

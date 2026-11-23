@@ -268,7 +268,7 @@ class MarkTimedOutSpans(AbstractCapability[object]):
     A cut-off request also has no finish reason, and no usage when the provider reports it only at
     the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
     failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
-    Each hook runs inside the span pydantic-ai opens for it. Under the CLAI 2 engine, a cut-off run
+    Each hook runs inside the span pydantic-ai opens for it. Under the Pax engine, a cut-off run
     reaches `wrap_run` as the `RunTimeLimitExceeded` that `agent.WorkflowPolicy.on_run_error` raises
     in place of the cancellation, which records an error but no `error.type`.
     """
@@ -679,7 +679,7 @@ def time_budget_notice() -> str | None:
 
 
 # gh-aw's `safeoutputs` MCP server: the shim's Claude Code tool-name prefix, then the
-# `<server>_` prefix `load_mcp_toolsets` gives it in the CLAI 2 engine. Tools on it are
+# `<server>_` prefix `load_mcp_toolsets` gives it in the Pax engine. Tools on it are
 # named by their safe-output type through `_safe_output_type`, never by prefixed name.
 SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 
@@ -688,7 +688,7 @@ SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 # the deadline and never submitted.
 CI_REVIEW_RESERVE_SAFE_OUTPUTS = frozenset({'submit_pull_request_review', 'create_pull_request_review_comment'})
 
-# The shell tool of the CLAI 2 engine's `Coder`, which runs foreground commands for `MAX_FOREGROUND_WAIT` by default.
+# The shell tool of the Pax engine's `Coder`, which runs foreground commands for `MAX_FOREGROUND_WAIT` by default.
 CODER_SHELL_TOOL = 'shell'
 
 
@@ -945,7 +945,7 @@ async def compact_history(
     ctx: RunContext[object], messages: list[ModelMessage], *, preserve_prompt: bool = False
 ) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
-    # CLAI supplies the workflow task as the first user message. Keep that exact
+    # Pax supplies the workflow task as the first user message. Keep that exact
     # contract outside the summary, including when summarisation fails.
     if preserve_prompt and messages and isinstance(messages[0], ModelRequest):
         if any(isinstance(part, UserPromptPart) for part in messages[0].parts):
@@ -1185,7 +1185,7 @@ def source_digest() -> str:
 
     The sources name the code that ran. A commit SHA from the run's environment does not: a
     workflow can run the shim from a different checkout than the one that triggered it.
-    `stage-gh-aw-agent.sh` passes the staged copy's digest to the CLAI 2 engine.
+    `stage-gh-aw-agent.sh` passes the staged copy's digest to the Pax engine.
     """
     digest = hashlib.sha256()
     for source in sorted(pathlib.Path(__file__).parent.glob('*.py')):
