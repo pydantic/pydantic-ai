@@ -918,9 +918,9 @@ class ComputerTool(AbstractNativeTool):
     display_size: tuple[int, int]
     """The `(width, height)` of the screenshots the model sees.
 
-    `ComputerUse` fills it in from the latest screenshot, or from the display before the first one. Anthropic's tool
-    definition sends it to the model (the `computer_toolset_20260801` version has no size field). Gemini uses it to turn
-    its 0-999 positions into pixels.
+    `ComputerUse` fills it in from the latest screenshot, or from the display before the first one. Anthropic's
+    `computer_20250124` and `computer_20251124` tools send it to the model as the display size;
+    `computer_toolset_20260801` has no size field.
     """
 
     kind: str = 'computer'
