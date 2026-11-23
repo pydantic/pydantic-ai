@@ -91,7 +91,7 @@ class VercelEffortCase:
 
 
 VERCEL_EFFORT_CASES = [
-    # Vercel lists Hy3's efforts as `none`, `low` and `high`, so the unified levels go to the nearest of those.
+    # Vercel lists Hy3's efforts as `none`, `low` and `high`, so a unified level goes to the lowest of those at or above it.
     VercelEffortCase('hy3-on', 'tencent/hy3', True, snapshot({'reasoning_effort': 'high'})),
     VercelEffortCase('hy3-medium', 'tencent/hy3', 'medium', snapshot({'reasoning_effort': 'high'})),
     VercelEffortCase('hy3-low', 'tencent/hy3', 'low', snapshot({'reasoning_effort': 'low'})),

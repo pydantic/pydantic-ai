@@ -76,8 +76,8 @@ open-weight thinking families' models.
 
 Vercel's docs don't say what it does with an effort a model doesn't list, and ask for "a value supported by the
 model's catalog entry" (https://vercel.com/docs/ai-gateway/models-and-providers/reasoning), so `thinking` resolves to
-the nearest listed effort. A family model missing here, such as the Ling models, which list only an on/off toggle,
-gets no `reasoning_effort` at all.
+the lowest listed effort at or above the requested level, else the highest. A family model missing here, such as
+the Ling models, which list only an on/off toggle, gets no `reasoning_effort` at all.
 """
 
 
