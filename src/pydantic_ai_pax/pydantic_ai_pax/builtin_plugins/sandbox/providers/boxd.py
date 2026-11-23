@@ -1,7 +1,8 @@
 """`/sandbox boxd`: boxd's proxy swaps a stand-in in the machine's `GH_TOKEN` for the user's GitHub token.
 
 boxd's proxy reads only secrets, so each machine gets one of its own, made just before it and deleted after
-it: the user's (`private-unattached`, which no other org member can see or use), bound to `GITHUB_HOSTS`.
+it: the user's (`private-unattached`, which no other org member can see or use), bound to `GITHUB_HOSTS` and
+swapped into request headers only, so a command can't post the real token in a request body.
 The machine has a variable of the secret's name holding the stand-in, and `create` copies it into `GH_TOKEN`
 in the machine's spec, so `gh` and git's credential helper send it after a reopen too.
 """
@@ -69,7 +70,9 @@ class BoxdProvider:
             if github is not None:
                 # boxd refuses a spec naming a secret that does not exist yet, so the secret comes first.
                 secret = f'{SECRET_PREFIX}{uuid.uuid4().hex.upper()}'
-                await client.secrets.set(secret, github.token, scope=_SCOPE, domains=list(GITHUB_HOSTS))
+                await client.secrets.set(
+                    secret, github.token, scope=_SCOPE, domains=list(GITHUB_HOSTS), replace_in=['headers']
+                )
             backend = self._backend(client, secrets=None if secret is None else [secret])
             machine = await backend.get_sandbox()
             if github is not None and secret is not None:

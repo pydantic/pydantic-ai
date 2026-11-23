@@ -93,7 +93,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
-| `display.theme` | `default` | Keep CLAI colours, or select a bundled Termflow palette with /theme. |
+| `display.theme` | `default` | Keep CLAI colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
 | `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
@@ -1201,7 +1201,7 @@ response has omitted usage information.
 ```text
 Follow-up: Add tests for the change
 Command: /usage
-─ Working ⠋ ────────────────────────────────────
+─ Working ⠋ 12s · Esc to interrupt ─────────────
 /
 /resume Browse or restore a saved session; claude or codex imports theirs
 /set Change settings; no arguments opens menu
@@ -1215,10 +1215,14 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+While a turn or command runs, the rule above the draft shows how long it has run
+and that Esc interrupts it; with a draft or a queued message it also shows the
+queue and steer keys, which keep their place first on a narrow terminal.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
-accent colour, with the prompt text in bold. This keeps your prompts apart from
-answers. Steering messages, commands entered during a turn, and prompts restored by
-`/resume` look the same.
+accent colour, with the prompt text in bold and every row after its first (wrapped or
+its own line) indented under the text. This keeps your prompts apart from answers.
+Steering messages, commands entered during a turn, and prompts restored by `/resume`
+look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
@@ -1239,8 +1243,9 @@ a Termflow live transcript panel on the alternate screen, for the rest of the se
 there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
-changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+changing the draft. While scrolled back, `↓ more below · PgDn` shows in the rule
+below the draft, covering no transcript text. New output leaves a scrolled view in
+place; returning to the bottom or submitting follows new output again. Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
@@ -1564,11 +1569,19 @@ run in order with other queued input. `/help` lists the syntax.
 
 ### How tool calls look
 
-Tool calls show a single-line summary followed by a blank line by default.
+Tool calls show a single-line summary by default, then any result row, then a blank line.
 Tool and argument names are pink; argument values and bullet markers are muted grey.
 Successful file writes and edits also show their diffs, even with `display.tool_output` off.
-Shell output, exit details and log paths, and grep results stay out of the terminal;
-the model still receives full tool results. Long summaries are clipped to the terminal width.
+A finished shell command always adds one result row under its header, such as
+`⎿ exit 0 · 23 lines`, or `⎿ running in background · log PATH` for a background command.
+A nonzero exit is red. The row shows the path of the command's log when the command keeps
+running or its output was cut. A call of any tool that fails or is refused gets a red row with
+the first line of the reason; a file change you refuse says `refused` and why, and a call whose
+arguments did not validate says `invalid arguments`. When calls run in parallel, a row that
+does not sit under its own header ends with the command or call it belongs to. A row too wide
+for the terminal is clipped at its end; a log path after it wraps instead, so it stays whole. Other shell
+output and grep results stay out of the terminal; the model still receives full tool results.
+Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
@@ -1577,8 +1590,10 @@ default. Plugin-provided rendering, including interactive questions, is unchange
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
 tool or other output follows. The `grouped` style shows only names and counts, so it ignores
-`display.tool_output` and `display.tool_arg_chars`. File edits and writes still print their summary and diff,
-which ends the line. `/set` previews both styles when you pick one. The default is `detailed`, one line per call.
+`display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and
+writes still print their summary and diff, which ends the line.
+`/set` previews the headers of both styles when you pick one, without result rows.
+The default is `detailed`, one line per call.
 
 ### Streaming
 
@@ -1593,7 +1608,8 @@ Streaming uses the defaults from [Code Puppy's smoothing adapters](https://githu
 - Both writers feed the live transcript panel. Output paints at up to 60 frames
   per second; changed cells do not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
-  written directly. Parts drain before the next heading, tool status, or prompt.
+  written directly. When a part ends, the text still queued is written at once,
+  so the next heading, tool status, or prompt does not wait for it to be typed.
 
 `/set display.smooth_seconds 0.5` restores the Code Puppy response catch-up
 window if you previously saved a slower preference. This response-only setting
@@ -1622,9 +1638,17 @@ of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is r
 as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
 mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
-The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell
+command output and result rows.
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
+
+Markdown tables keep their words whole where they can. A table too wide for the terminal
+wraps its cells only between words, and every column is at least as wide as its longest word.
+When those words cannot sit side by side, each row is shown as its own block of
+`Header: value` lines, with a rule between rows; only a word wider than the terminal is
+split. Resizing lays the table out again for the new width. `TERMFLOW_MAX_TABLE_WIDTH`,
+if set, caps both layouts.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
@@ -1640,12 +1664,15 @@ rows that each link to all of it.
 
 ### Code highlighting
 
-Fenced code uses the fence's language for syntax highlighting. CLAI renders a
-block when its closing fence arrives, or when the text part ends if the fence
-is unfinished. This keeps multiline strings and comments correctly colored.
-Prose outside fences still streams line by line. Unlabelled and Markdown fences
-stay literal, including indentation and blank lines; unknown languages use plain
-text. Long code lines wrap to the terminal width. Response and reasoning code
+Fenced code uses the fence's language for syntax highlighting. In the interactive
+prompt each code line shows as it arrives, highlighted on its own, so a line inside
+a multiline string or comment can be coloured as code for a moment. When the
+closing fence arrives, or the text part ends if the fence is unfinished, the whole
+block is highlighted again in place, so multiline strings and comments end up
+correctly coloured. Everywhere else, such as `-p`, redirected output or a resumed
+session's history, the block prints once, at that point. Unlabelled and Markdown
+fences stay literal, including indentation and blank lines; unknown languages use
+plain text. Long code lines wrap to the terminal width. Response and reasoning code
 blocks use the terminal foreground and ANSI syntax colours, rather than pale
 text intended for a dark background. Bundled themes supply their own ANSI colours.
 
@@ -1676,16 +1703,18 @@ Full output remains in the log; display formatting does not alter model results.
 
 Shell output defaults to the first 20 logical lines per command. Change it with
 `/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
-to the next prompt. After the command returns, `Truncated N lines` reports omitted
-lines from the log snapshot at that time, including an unterminated final line.
-The capability's 16 KB event preview cap can shorten the preview further. Full
-output remains in the displayed log path. Background commands can keep writing
+to the next prompt. After the command returns, its result row counts the lines in the
+log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown · log PATH`,
+including an unterminated final line. When the preview is cut, by this limit
+or by the capability's 16 KB event preview cap, the row shows the log path, where the full
+output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
 Read headers show the path, zero-based offset, and effective line limit (Coder
 default and maximum: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
 ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
+Read and listing calls add no result row on success.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no
@@ -1737,7 +1766,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to fit; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1750,6 +1779,13 @@ Every field is independently selectable and reorderable:
 
 Reordering preserves each field's colours and conditional visibility. Plugin
 fragments move and hide together through `plugins`, not as individual fields.
+
+When the row is wider than the terminal, `workspace` shortens to its last folder
+(`…/jsonrc`), then fields are hidden, least important first, until it fits:
+`assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
+`plugins`, the `context` labels, then `model`. `activity` and the context figure
+always stay. The row is cut at the edge rather than wrapped if it still does not fit.
+
 To set the list directly, keep the JSON in one quoted argument:
 
 ```text
@@ -1813,12 +1849,14 @@ terminal grows. Resizing repaints the panel at the new size and preserves the
 draft and scroll position. It never erases terminal scrollback.
 
 Assistant text and thinking retain their Markdown source and render again when
-the width or theme changes. Tool and command output rewrap at the new width,
-and a `/theme` change repaints their colours role by role: muted text, errors,
-diff lines, and code take the new palette's shades. Colours no theme assigns
-keep their original values, and so does the CLAI logo. Full-screen menus
-temporarily leave the panel and detach its keyboard reader. Output arriving during a menu stays in the transcript and appears when
-the menu closes. Inline questions borrow the panel. The transcript includes
+the width or theme changes. A reply still streaming keeps its streamed rows,
+wrapped to the new width, and renders again once it ends. Tool and command
+output rewrap at the new width, and a `/theme` change repaints their colours
+role by role: muted text, errors, diff lines, and code take the new palette's
+shades. Colours no theme assigns keep their original values, and so does the
+CLAI logo. Full-screen menus temporarily leave the panel and detach its
+keyboard reader. Output arriving during a menu stays in the transcript and
+appears when the menu closes. Inline questions borrow the panel. The transcript includes
 startup and plugin lifecycle notices and is carried across shell reloads.
 It retains up to 10,000 items and four million characters, plus a bounded partial
 line. Old output is dropped at those limits; oversized Markdown parts keep their
@@ -1857,7 +1895,12 @@ searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
-terminal palette untouched. The default preview has no forced background.
+terminal palette untouched. On a light terminal background, `default` uses darker
+shades of its colours that reach WCAG AA contrast (4.5:1) on white, cream and light grey, and shows diffs
+on pale green and red lines. CLAI finds the background at startup by asking the
+terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark one.
+It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
+during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
 All other choices come from Termflow's bundled registry, including
@@ -3076,10 +3119,9 @@ one; both keep their files, so delete them when you are done. A `modal` or `rend
 24 hours, with its files and any unpushed work, and a Modal sandbox cannot be paused. A Sprite has no
 time limit and sleeps while idle. An `opensandbox` sandbox or a `kubernetes` claim has no time limit.
 
-With `boxd`, a command in the sandbox can still learn the token. boxd puts the real token
-anywhere in a request to GitHub, the body included, so a command can save it in a GitHub file or
-issue and read it back ([boxd's docs](https://docs.boxd.sh/guides/env-secrets.md)). `e2b` only
-adds the token as a request header, so this can't happen there.
+With `boxd`, the real token goes only into request headers to GitHub, which `gh` and `git`
+use, not into a URL or body, so a command can't save it in a GitHub file or issue and read it back
+([boxd's docs](https://docs.boxd.sh/guides/env-secrets#host-bound-secrets)).
 
 A server started in a `boxd` machine is also public: boxd gives every machine an HTTPS address
 that forwards to ports such as 8000 and 3000, and has no setting to turn it off or require a
@@ -3499,7 +3541,9 @@ instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
-than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
+than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry CLAI's
+own version as `service.version`; `LOGFIRE_SERVICE_VERSION` and
+`OTEL_SERVICE_VERSION` do not change it. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
