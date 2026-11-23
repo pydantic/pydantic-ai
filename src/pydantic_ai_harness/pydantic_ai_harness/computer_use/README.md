@@ -71,7 +71,7 @@ Every other model gets `computer` as a regular function tool.
 | Setting | Default | What it does |
 |---|---|---|
 | `settle_seconds` | `2` | How long, at most, to wait for the screen to stop changing after the actions run. `0` takes the screenshot at once. |
-| `native` | `True` | If the model's provider has its own computer use tool, the model gets that tool instead: `ComputerUse` adds a `ComputerTool` and runs its calls on the screen. `False` gives every model the `computer` function tool with all its actions. On GPT, that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
+| `native` | `True` | If the model's provider has its own computer use tool, the model gets that tool instead: `ComputerUse` adds a `ComputerTool` and runs its calls on the screen. `False` gives every model the `computer` function tool with all its actions. |
 
 Every request sends all the earlier screenshots again, so `ComputerUse` turns on
 [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/) to make that cheaper. To turn caching off, set `cache=False` in the model
