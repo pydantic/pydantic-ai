@@ -73,6 +73,14 @@ a browser on first run when none is found locally:
 pip/uv-add "pydantic-ai-harness[browser-use]"
 ```
 
+!!! warning "Conflict with the `coder` extra and Pax"
+    Every `browser-use` release this extra allows pins a Pillow version affected by
+    [GHSA-g4qv-2jxx-769h](https://github.com/advisories/GHSA-g4qv-2jxx-769h). The `coder` extra and
+    `pydantic-ai-pax` require Pillow 13.0.0 or later, so install `browser-use` in a separate environment.
+    An unpinned `pydantic-ai-harness[coder,browser-use]` does not fail: it resolves to an earlier harness
+    release and an affected Pillow version.
+    [#14266](https://github.com/pydantic/pydantic-ai/issues/14266) tracks restoring the combination.
+
 Then pass `BrowserUse` to an `Agent` via the `capabilities` parameter, with a
 model for the sub-agent:
 

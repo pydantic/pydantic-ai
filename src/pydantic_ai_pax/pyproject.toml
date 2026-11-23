@@ -69,7 +69,7 @@ dependencies = [
     "keyring>=25.6",
     # Encrypts saved credentials with the one key kept in keyring, so a session prompts for keychain access once.
     "cryptography>=42",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
     "logfire[httpx]>=4.31.0",
     # Required for HTTPX2ClientInstrumentor, including when the observability HTTPX option is off.
