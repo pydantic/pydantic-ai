@@ -2811,6 +2811,40 @@ _RATE_LIMITED_RESPONSE = {
 }
 
 
+@pytest.mark.parametrize(
+    ('base_url', 'output_config'),
+    [
+        # The AWF api-proxy the engine points the agent step at, in front of Z.AI.
+        pytest.param('http://host.docker.internal:10001', {'effort': 'low'}, id='zai-through-awf'),
+        pytest.param('https://api.anthropic.com', None, id='anthropic'),
+        pytest.param(None, None, id='sdk-default'),
+    ],
+)
+def test_build_model_requests_low_effort_only_from_zai(
+    monkeypatch: pytest.MonkeyPatch, base_url: str | None, output_config: dict[str, str] | None
+):
+    """Z.AI gets its low effort and no `thinking`, which it would run at its default `max`; Anthropic gets neither."""
+    bodies: list[dict[str, object]] = []
+
+    def _handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport
+    monkeypatch.setattr(shim, 'rate_limit_retry_transport', lambda: transport(httpx2.MockTransport(_handle)))
+    if base_url is None:
+        monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
+    else:
+        monkeypatch.setenv('ANTHROPIC_BASE_URL', base_url)
+    monkeypatch.setenv('ANTHROPIC_MODEL', 'glm-5.4')
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    assert asyncio.run(Agent(model).run('hi')).output == 'ok'
+    [body] = bodies
+    assert body['model'] == 'glm-5.4'
+    assert body.get('output_config') == output_config
+    assert 'thinking' not in body
+
+
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
     """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
 
