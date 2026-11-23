@@ -34,7 +34,8 @@ AGENT_PATH_KEY = 'agent_path'
 """The key of a child call's metadata in `delegated_requests()` naming the delegates it was made under, outermost first."""
 
 
-# This module's adapters are built on first use, not at import: their schemas cover every message type.
+# Built on first use, not at import. Unlike `_STORED`, their schemas hold no registered capability part types, so
+# when they are built doesn't change what they accept.
 @cache
 def _requests_adapter() -> TypeAdapter[DeferredToolRequests]:
     return TypeAdapter(DeferredToolRequests)
@@ -103,7 +104,7 @@ class InMemoryDeferredStateStore:
 
 @dataclass(frozen=True)
 class _StoredState:
-    """What a `DeferredStateStore` keeps for a stopped delegation, serialized with `_stored_adapter()`."""
+    """What a `DeferredStateStore` keeps for a stopped delegation, serialized with `_STORED`."""
 
     agent_name: str
     task: str
@@ -112,9 +113,7 @@ class _StoredState:
     messages: list[ModelMessage]
 
 
-@cache
-def _stored_adapter() -> TypeAdapter[_StoredState]:
-    return TypeAdapter(_StoredState)
+_STORED: TypeAdapter[_StoredState] = TypeAdapter(_StoredState)
 
 
 @dataclass(frozen=True)
@@ -141,7 +140,7 @@ async def deferral_metadata(
     """
     state_id = secrets.token_urlsafe(16)
     stored = _StoredState(agent_name, task, tool_call_id, requests, list(messages))
-    await store.save(state_id, _stored_adapter().dump_json(stored))
+    await store.save(state_id, _STORED.dump_json(stored))
     return {
         STATE_KEY: {
             'state_id': state_id,
@@ -365,7 +364,7 @@ def _resumed(
     task: str,
     tool_call_id: str | None,
 ) -> ResumedState:
-    stored = _stored_adapter().validate_json(blob)
+    stored = _STORED.validate_json(blob)
     if (stored.agent_name, stored.task, stored.tool_call_id) != (agent_name, task, tool_call_id):
         raise UserError('The sub-agent state named in `deferred_tool_results` was saved for another delegation.')
     try:

@@ -12,7 +12,6 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapp
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
@@ -260,18 +259,13 @@ def _unregister(stacks: dict[_KeyT, list[_ItemT]], key: _KeyT, item: _ItemT) -> 
         del stacks[key]
 
 
-@cache
-def _adapter() -> TypeAdapter[DelegationTask]:
-    # Built on first use, not at import: the schema covers every message type.
-    return TypeAdapter(DelegationTask)
-
-
+_ADAPTER = TypeAdapter(DelegationTask)
 _SAFE_ID = re.compile(r'[0-9a-f]{32}\Z')
 
 
 async def _read(path: anyio.Path) -> DelegationTask:
     """A saved task, checked to have the identity its file name gives it."""
-    record = _adapter().validate_json(await path.read_bytes(), context=STORED_HISTORY_CONTEXT)
+    record = _ADAPTER.validate_json(await path.read_bytes(), context=STORED_HISTORY_CONTEXT)
     if not _SAFE_ID.fullmatch(record.id) or not _SAFE_ID.fullmatch(record.run_id) or path.name != f'{record.id}.json':
         raise ValueError(f'Invalid saved task identity in {path.name!r}')
     return record
@@ -495,7 +489,7 @@ class DelegationTasks:
             if record.status == 'running':
                 await self._settle_interrupted(record)
             else:
-                self._history_on_disk[record.id] = (directory / f'{record.id}.json', _adapter().dump_json(record))
+                self._history_on_disk[record.id] = (directory / f'{record.id}.json', _ADAPTER.dump_json(record))
             self.records[record.id] = record
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
@@ -603,7 +597,7 @@ class DelegationTasks:
                 if (saved := self._saved_history(record)) is not None:
                     record.messages = (await _read(anyio.Path(saved))).messages
                 self._history_on_disk.pop(record.id, None)
-                await temporary.write_bytes(_adapter().dump_json(record))
+                await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
 
     @contextmanager
@@ -619,7 +613,7 @@ class DelegationTasks:
         """Keep a settled, saved task's history in its file only."""
         if self.directory is not None and record.status == 'finished':
             record.messages = []
-            self._history_on_disk[record.id] = (self.directory / f'{record.id}.json', _adapter().dump_json(record))
+            self._history_on_disk[record.id] = (self.directory / f'{record.id}.json', _ADAPTER.dump_json(record))
 
     async def restore(self, record: DelegationTask) -> bool:
         """Add a finished task made elsewhere, such as one imported from another agent's session.
@@ -922,7 +916,7 @@ class DelegationTasks:
         """
         record = self.records[task_id]
         if (path := self._saved_history(record)) is not None:
-            return _adapter().validate_json(path.read_bytes(), context=STORED_HISTORY_CONTEXT).messages
+            return _ADAPTER.validate_json(path.read_bytes(), context=STORED_HISTORY_CONTEXT).messages
         return copy.deepcopy(record.messages)
 
     def _saved_history(self, record: DelegationTask) -> Path | None:
@@ -936,7 +930,7 @@ class DelegationTasks:
     def _unchanged_since_saved(self, record: DelegationTask) -> bool:
         """Whether `record`'s history is in its saved file only and the rest of it is as saved there."""
         saved = None if record.messages else self._history_on_disk.get(record.id)
-        return saved is not None and _adapter().dump_json(record) == saved[1]
+        return saved is not None and _ADAPTER.dump_json(record) == saved[1]
 
     async def allow_resume(self, task_id: str) -> None:
         """Explicit user authorization to resume a stopped, resumable child."""
