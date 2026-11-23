@@ -27,6 +27,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -277,7 +278,10 @@ async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_th
     console = Console(file=surface, force_terminal=True, width=120, color_system='truecolor')
     renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
     words = ' '.join(f'word{index}' for index in range(30))
-    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=words)))
+    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=f'{words}\n')))
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        while 'word29' not in ''.join(streaming := _rows(surface, width=40)):
+            await asyncio.sleep(0)
     await renderer.finish()
     wide = _rows(surface, width=120)
     assert wide[0].startswith('Thinking word0')
@@ -289,6 +293,7 @@ async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_th
     replay.write(render_markdown(source=words, width=40, thinking=True, colors='truecolor'))
     rendered = [Text.from_ansi(row).plain for row in replay.frame(width=40, height=50).rows]
     assert narrow[: len(rendered) - 1] == rendered[:-1], 'the ended part renders again'
+    assert [len(row) for row in streaming[:3]] == [40] * 3, 'a live part cuts its streamed rows at 40 instead'
 
     def heading() -> str:
         """The heading's SGR as this console emits it, whatever Rich cached for the style."""
