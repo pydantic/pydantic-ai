@@ -19,7 +19,6 @@ draws it out of that property's histories, and a strict expected failure on a ha
 from __future__ import annotations as _annotations
 
 import asyncio
-import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
@@ -796,8 +795,8 @@ def _redacted_histories(draw: st.DrawFn) -> tuple[list[ModelMessage], set[str]]:
 
 
 async def _sent_previous_response_id(history: list[ModelMessage]) -> JsonValue:
-    """The `previous_response_id` the request OpenAI Responses sends for `history` carries, set to continue stored
-    responses where it can."""
+    """The `previous_response_id` that OpenAI Responses sends for `history` when `openai_previous_response_id='auto'`
+    continues stored responses."""
     cell = next(cell for cell in _REQUEST_CELLS if cell.id == 'OpenAIResponsesModel.request')
     transport = cell.case.transport
     assert isinstance(transport, Httpx2Transport)
@@ -806,7 +805,7 @@ async def _sent_previous_response_id(history: list[ModelMessage]) -> JsonValue:
         assert isinstance(model, Model)
         settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto'}
         assert await _send(model, cell, history, settings) is None
-    body: JsonValue = json.loads(refusal.bodies[-1])
+    body: JsonValue = pydantic_core.from_json(refusal.bodies[-1])
     return body.get('previous_response_id') if isinstance(body, dict) else None
 
 
