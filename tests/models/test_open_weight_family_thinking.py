@@ -1,4 +1,4 @@
-"""Thinking requests for the open-weight families the family map resolves on OpenAI-compatible gateways.
+"""Requests for the open-weight thinking families on the OpenAI-compatible gateways that resolve their profiles.
 
 Not VCR tests: there are no recordings for these gateways, and the claims are about the request the code builds,
 which cassette matching doesn't check. A `MockTransport` serves synthetic responses, and `request_capture` records
@@ -11,9 +11,9 @@ from dataclasses import dataclass
 
 import httpx2
 import pytest
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
@@ -23,18 +23,22 @@ with try_import() as imports_successful:
     from openai.types.chat import ChatCompletionMessage
 
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.providers.together import TogetherProvider
 
     from .mock_openai import completion_message
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
+BASE_URL = 'https://gateway.example/v1'
+
 
 def gateway_client(request_capture: RequestCapture) -> httpx2.AsyncClient:
     """A client that answers each request with a text response, and records it in `request_capture`."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        message = ChatCompletionMessage(content='hello', role='assistant')
+        message = ChatCompletionMessage(content='{"text": "hello"}', role='assistant')
         return httpx2.Response(200, json=completion_message(message).model_dump(mode='json'))
 
     return httpx2.AsyncClient(
@@ -75,3 +79,43 @@ async def test_open_weight_family_thinking_wire_shape(
 
     body = request_capture.body('/chat/completions')
     assert {key: value for key, value in body.items() if key == 'reasoning_effort'} == case.expected
+
+
+class Answer(BaseModel):
+    text: str
+
+
+@pytest.mark.parametrize('provider_name', ['openai-compatible', 'litellm'])
+async def test_open_weight_family_native_output(
+    allow_model_requests: None, request_capture: RequestCapture, provider_name: str
+):
+    """The family profile keeps the OpenAI-compatible default under it, so `NativeOutput` still sends a JSON schema."""
+    async with gateway_client(request_capture) as client:
+        provider = (
+            OpenAICompatibleProvider('gateway', base_url=BASE_URL, api_key='test', http_client=client)
+            if provider_name == 'openai-compatible'
+            else LiteLLMProvider(api_base=BASE_URL, api_key='test', http_client=client)
+        )
+        model = OpenAIChatModel('nvidia/nemotron-3-super-120b-a12b', provider=provider)
+        result = await Agent(model, output_type=NativeOutput(Answer)).run('hello', model_settings={'thinking': True})
+
+    assert result.output == Answer(text='hello')
+    body = request_capture.body('/chat/completions')
+    assert {key: body[key] for key in ('reasoning_effort', 'response_format')} == snapshot(
+        {
+            'reasoning_effort': 'medium',
+            'response_format': {
+                'type': 'json_schema',
+                'json_schema': {
+                    'name': 'Answer',
+                    'schema': {
+                        'properties': {'text': {'type': 'string'}},
+                        'required': ['text'],
+                        'type': 'object',
+                        'additionalProperties': False,
+                    },
+                    'strict': True,
+                },
+            },
+        }
+    )

@@ -4812,6 +4812,7 @@ def test_minimax_unmatched(model_name: str):
             {'supports_thinking': True, 'thinking_enabled_by_default': True},
         ),
         (tencent_model_profile, 'hy3', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
+        (tencent_model_profile, 'hy4-flash', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
         (inclusionai_model_profile, 'ling-3.1-flash', {'supports_thinking': True, 'thinking_enabled_by_default': True}),
         (
             inclusionai_model_profile,
@@ -4820,11 +4821,13 @@ def test_minimax_unmatched(model_name: str):
         ),
         # Thinks when asked to.
         (nvidia_model_profile, 'nemotron-3.5-lightning', {'supports_thinking': True}),
+        (nvidia_model_profile, 'nemotron-lightning-3.5-30b-a3b', {'supports_thinking': True}),
         (nvidia_model_profile, 'NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', {'supports_thinking': True}),
         (xiaomi_model_profile, 'mimo-v2.6-pro', {'supports_thinking': True}),
         (xiaomi_model_profile, 'MiMo-V2.5', {'supports_thinking': True}),
         # Always thinks.
         (stepfun_model_profile, 'step-5-preview', {'supports_thinking': True, 'thinking_always_enabled': True}),
+        (stepfun_model_profile, 'step-3.7-flash', {'supports_thinking': True, 'thinking_always_enabled': True}),
     ],
 )
 def test_open_weight_family_thinking(family_profile: ModelProfileFunc, model_name: str, expected: dict[str, Any]):
@@ -4853,6 +4856,126 @@ def test_open_weight_family_thinking(family_profile: ModelProfileFunc, model_nam
 )
 def test_open_weight_family_unmatched(family_profile: ModelProfileFunc, model_name: str):
     assert family_profile(model_name) is None
+
+
+_HYBRID_THINKING = {'supports_thinking': True, 'thinking_enabled_by_default': True}
+_OPT_IN_THINKING = {'supports_thinking': True}
+_ALWAYS_THINKING = {'supports_thinking': True, 'thinking_always_enabled': True}
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking'),
+    [
+        ('nvidia/nemotron-3-super-120b-a12b', _HYBRID_THINKING),
+        ('nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', _OPT_IN_THINKING),
+        ('thinkingmachines/inkling', _HYBRID_THINKING),
+        ('xiaomi/mimo-v2.6-pro', _OPT_IN_THINKING),
+        ('XiaomiMiMo/MiMo-V2.5', _OPT_IN_THINKING),
+        ('stepfun/step-5-preview', _ALWAYS_THINKING),
+        ('stepfun-ai/Step-3.7-Flash', _ALWAYS_THINKING),
+        ('tencent/hy3', _HYBRID_THINKING),
+        ('inclusionAI/Ling-3.1-flash', _HYBRID_THINKING),
+    ],
+)
+def test_openai_compatible_open_weight_family(model_name: str, thinking: dict[str, bool]):
+    """The open-weight families keep the OpenAI-compatible default, pinned for `nvidia/nemotron-mini-4b-instruct` in
+    `test_openai_compatible_vendor_family`, and add only their thinking flags. `LiteLLMProvider` shares the resolution.
+    """
+    default = _normalize(OpenAICompatibleProvider.model_profile('nvidia/nemotron-mini-4b-instruct'))
+    profile = OpenAICompatibleProvider.model_profile(model_name)
+    assert _normalize(profile) == default | thinking
+    assert LiteLLMProvider.model_profile(model_name) == profile
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking'),
+    [
+        ('nemotron-3-super', _HYBRID_THINKING),
+        ('nemotron-3-ultra:cloud', _HYBRID_THINKING),
+        ('nemotron-3.5-lightning', _OPT_IN_THINKING),
+        ('mimo-v2.6-pro:cloud', _OPT_IN_THINKING),
+    ],
+)
+def test_ollama_open_weight_family(model_name: str, thinking: dict[str, bool]):
+    """Ollama's Nemotron and MiMo models add only their thinking flags to the profile `nemotron-mini` keeps."""
+    default = OllamaProvider.model_profile('nemotron-mini')
+    assert _normalize(default) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert _normalize(OllamaProvider.model_profile(model_name)) == _normalize(default) | thinking
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking'),
+    [
+        ('nvidia/nemotron-3-ultra-550b-a55b', _HYBRID_THINKING),
+        ('nvidia/nemotron-3.5-lightning-free', _OPT_IN_THINKING),
+        ('thinkingmachines/inkling-small', _HYBRID_THINKING),
+        ('xiaomi/mimo-v2.6-flash', _OPT_IN_THINKING),
+        ('stepfun/step-3.7-flash', _ALWAYS_THINKING),
+        ('tencent/hy4', _HYBRID_THINKING),
+        ('inclusionai/ling-3.0-flash', _HYBRID_THINKING),
+    ],
+)
+def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool]):
+    """Vercel's open-weight family slugs add only their thinking flags to the profile `tencent/hy-mt2-pro` keeps."""
+    default = VercelProvider.model_profile('tencent/hy-mt2-pro')
+    assert _normalize(default) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+    )
+    assert _normalize(VercelProvider.model_profile(model_name)) == _normalize(default) | thinking
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name', ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3.5-super-vl-120b-a12b']
+)
+def test_crusoe_nemotron(model_name: str):
+    """Crusoe's Nemotron 3.5 models add only their thinking flags to the profile Nemotron 3 Nano Omni keeps, which is
+    outside the published ids the family profile describes."""
+    default = CrusoeProvider.model_profile('nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B')
+    assert _normalize(default) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+    assert _normalize(CrusoeProvider.model_profile(model_name)) == _normalize(default) | _OPT_IN_THINKING
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'thinking'),
+    [
+        ('accounts/fireworks/models/nvidia-nemotron-3-super-120b-a12b-fp8', _HYBRID_THINKING),
+        ('accounts/fireworks/models/nemotron-3-ultra-bf16', _HYBRID_THINKING),
+        ('accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b', _OPT_IN_THINKING),
+        ('accounts/fireworks/models/nvidia-nemotron-3p5-super-vl-120b-a12b-bf16', _OPT_IN_THINKING),
+        ('accounts/fireworks/models/inkling-small', _HYBRID_THINKING),
+        ('accounts/fireworks/models/mimo-v2p6-pro-rl', _OPT_IN_THINKING),
+        ('accounts/fireworks/models/step-5-preview-fp8', _ALWAYS_THINKING),
+        ('accounts/fireworks/models/step-3p7-flash-nvfp4', _ALWAYS_THINKING),
+        ('accounts/fireworks/models/ling-3-flash', _HYBRID_THINKING),
+    ],
+)
+def test_fireworks_open_weight_family(model_name: str, thinking: dict[str, bool]):
+    """Fireworks' open-weight family models, with `p` read as a version dot, add only their thinking flags to the
+    profile an unprofiled model gets, pinned in `test_fireworks_unprofiled`."""
+    default = _normalize(FireworksProvider.model_profile('accounts/fireworks/models/minimax-m3'))
+    assert _normalize(FireworksProvider.model_profile(model_name)) == default | thinking
 
 
 def _forcing_allowed_while_thinking(provider_name: _RouteProvider, model_name: str) -> bool:

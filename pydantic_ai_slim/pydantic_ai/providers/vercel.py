@@ -14,9 +14,15 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_cloud_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
@@ -56,11 +62,17 @@ class VercelProvider(_OpenAISDKProvider):
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
             'groq': groq_model_profile,
+            'inclusionai': inclusionai_model_profile,
             'mistral': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'nvidia': nvidia_model_profile,
             'openai': openai_model_profile,
+            'stepfun': stepfun_model_profile,
+            'tencent': tencent_model_profile,
+            'thinkingmachines': thinkingmachines_model_profile,
             'vertex': google_cloud_model_profile,
             'xai': grok_model_profile,
+            'xiaomi': xiaomi_model_profile,
             'zai': _glm_5_3_schema_profile,
         }
 

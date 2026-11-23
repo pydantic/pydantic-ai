@@ -12,6 +12,7 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
@@ -54,6 +55,7 @@ class CrusoeProvider(_OpenAISDKProvider):
             'google': google_model_profile,
             'openai': harmony_model_profile,  # used for gpt-oss models on Crusoe
             'moonshotai': moonshotai_model_profile,
+            'nvidia': nvidia_model_profile,
             'zai': zai_model_profile,
             # Crusoe serves GLM-5.3 as `zai-org/GLM-5.3`; earlier GLM releases were `zai/GLM-5.x`.
             'zai-org': zai_model_profile,
