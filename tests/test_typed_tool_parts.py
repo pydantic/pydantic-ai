@@ -7,7 +7,7 @@ import sys
 import textwrap
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import Any, ClassVar, Generic, Literal, NotRequired, TypeVar, assert_type
+from typing import Any, ClassVar, Generic, Literal, NotRequired, TypeVar
 
 import pytest
 from pydantic import TypeAdapter
@@ -211,21 +211,6 @@ def test_a_kind_can_declare_the_shape_of_its_metadata() -> None:
     # The metadata shape is part of the kind, like its argument and content shapes.
     with pytest.raises(UserError, match=r"Tool kind 'test\.with-metadata' is already defined as "):
         ToolKind('test', 'with-metadata', content=LookupResult, metadata=LookupResult)
-
-
-def test_a_typed_return_part_may_leave_out_the_metadata_type_its_kind_declares() -> None:
-    kind = ToolKind('test', 'untyped-metadata', content=LookupResult, metadata=LookupMetadata)
-
-    class UntypedMetadataReturnPart(ToolReturnPart[LookupResult], kind=kind):
-        pass
-
-    request = ModelRequest(
-        parts=[ToolReturnPart('lookup', {'in_stock': True}, metadata={'warehouse': 'north'}, tool_kind=kind.id)]
-    )
-    part = request.parts[0]
-    assert isinstance(part, UntypedMetadataReturnPart)
-    assert_type(part.typed_metadata, Any | None)
-    assert part.typed_metadata == {'warehouse': 'north'}
 
 
 def test_metadata_that_does_not_fit_does_not_stop_promotion() -> None:
@@ -492,6 +477,14 @@ def test_the_parameterized_base_must_match_the_kind() -> None:
     ):
 
         class WrongMetadataReturnPart(ToolReturnPart[LookupResult, ImageResult], kind=metadata_kind):  # pyright: ignore[reportUnusedClass,reportGeneralTypeIssues,reportArgumentType]
+            pass
+
+    with pytest.raises(
+        UserError,
+        match=r"NoMetadataReturnPart parameterizes ToolReturnPart with Any, but its kind 'test\.with-metadata' declares `metadata=LookupMetadata`",
+    ):
+
+        class NoMetadataReturnPart(ToolReturnPart[LookupResult], kind=metadata_kind):  # pyright: ignore[reportUnusedClass]
             pass
 
     class AnyCallPart(ToolCallPart[Any], kind=ToolKind('test', 'any-shape')):

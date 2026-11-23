@@ -1,7 +1,7 @@
 """Deprecated: bounded background conversation naming, independent of foreground agent execution.
 
 Session naming is application policy (a resume-picker prompt, queue bounds, and a failure
-policy), so CLAI now owns its own copy. This module is kept unchanged for existing imports
+policy), so Pax now owns its own copy. This module is kept unchanged for existing imports
 and emits a `HarnessDeprecationWarning`; it will be removed in a future release.
 """
 

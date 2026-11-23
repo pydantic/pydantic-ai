@@ -98,10 +98,12 @@ For the `zoom` and `cursor_position` actions, also implement
 - Every request sends all the earlier screenshots again. They are the main cost, which `ComputerUse` lowers by turning
   on prompt caching, and a long run can reach a provider's image limit: Claude refuses a request with more than 100
   images on its models with a 200k-token context.
-- A 1280x800 screen suits every model. A larger one costs more tokens per screenshot, and below about 1024x768 models
-  start to miss detail.
+- A 1280x800 screen suits every model. A larger one costs more tokens per screenshot.
 - On Claude, a screenshot over the model's image size limit fails the request or makes clicks miss; see
   [Anthropic](../models/anthropic.md#computer-use).
+- If the screen changes size, a call that gives positions is refused until the model takes a new screenshot.
+- When one `computer` call in a model response fails, the response's later `computer` calls don't run, and the model
+  is told so.
 - A drag must finish within one run, approvals included: when a run ends, held mouse buttons are released.
 
 ## API reference

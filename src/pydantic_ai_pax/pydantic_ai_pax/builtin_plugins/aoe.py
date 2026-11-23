@@ -1,6 +1,6 @@
 """Opt-in Agent of Empires (AoE) status, session, and title integration.
 
-AoE launches CLAI as a custom agent in a tmux session and reads a non-built-in agent's state from
+AoE launches Pax as a custom agent in a tmux session and reads a non-built-in agent's state from
 `/tmp/aoe-hooks-<euid>/<instance>/status`. This plugin writes that file the way AoE's own hooks do,
 publishes the conversation ID beside it, remembers which conversation the AoE session holds so a
 restarted pane picks it up again, and, when its `titles` setting is on, pushes the conversation
@@ -50,7 +50,7 @@ _SESSION_ID = re.compile(r'[A-Za-z0-9_.][A-Za-z0-9_.-]{0,255}')
 """AoE's `is_valid_session_id`."""
 _AGENT_SESSION = re.compile(r'aoe_(?!term_).*_([A-Za-z0-9_-]{1,8})')
 """The tmux session AoE starts an agent in: `aoe_<title>_<first 8 characters of the instance ID>`."""
-_CLAI2 = frozenset({'pax', 'pydantic-ai-pax', 'clai2', 'pydantic-clai2'})
+_PAX_COMMANDS = frozenset({'pax', 'pydantic-ai-pax', 'clai2', 'pydantic-clai2'})
 _RUNNING_REFRESH = 60.0
 """AoE ignores a `running` status older than 15 minutes, so a long run rewrites it well before that."""
 _LOOKUP_ATTEMPTS = 20
@@ -69,7 +69,7 @@ class AoeSettings(BaseModel):
         default=False,
         description=(
             "Rename the AoE session after the conversation title. With AoE's `session.tie_workdir_to_name`, "
-            'a rename can move an AoE-managed worktree out from under CLAI2.'
+            'a rename can move an AoE-managed worktree out from under Pax.'
         ),
     )
 
@@ -145,7 +145,7 @@ def _hidden_instance_id(pane: str, session_name: str) -> str | None:
 
 
 def nested(pane_pid: int) -> bool:
-    """Whether another CLAI is an ancestor of this process within the pane, so that one reports instead."""
+    """Whether another Pax is an ancestor of this process within the pane, so that one reports instead."""
     listing = _output('ps', '-A', '-o', 'pid=,ppid=,args=')
     if listing is None:
         return False
@@ -157,14 +157,14 @@ def nested(pane_pid: int) -> bool:
     pid = os.getpid()
     while pid != pane_pid and pid in processes:
         pid = processes[pid][0]
-        if pid in processes and _is_clai2(processes[pid][1]):
+        if pid in processes and _is_pax(processes[pid][1]):
             return True
     return False
 
 
-def _is_clai2(args: str) -> bool:
+def _is_pax(args: str) -> bool:
     tokens = args.split()
-    return any(Path(token).name in _CLAI2 for token in tokens[:2]) or tokens[1:3] in (
+    return any(Path(token).name in _PAX_COMMANDS for token in tokens[:2]) or tokens[1:3] in (
         ['-m', 'pydantic_ai_pax'],
         ['-m', 'pydantic_clai2'],
     )
@@ -368,7 +368,7 @@ class _Reporter:
         self.hooks = hooks
         self.mappings = mappings
         self.aoe = aoe
-        self.worker = asyncio.create_task(self.publish(), name='clai2-aoe')
+        self.worker = asyncio.create_task(self.publish(), name='pax-aoe')
 
     async def publish(self) -> None:
         """Write whatever changed, one write at a time, until the plugin unloads."""
@@ -467,7 +467,7 @@ class AoePlugin(Plugin[AoeSettings]):
     def __init__(self, host: PluginHost[None], settings: AoeSettings) -> None:
         super().__init__(host, settings)
         self.pane = os.environ.get('TMUX_PANE')
-        # Headless runs have no terminal, and AoE only starts CLAI in a tmux pane on a POSIX system.
+        # Headless runs have no terminal, and AoE only starts Pax in a tmux pane on a POSIX system.
         candidate = sys.platform != 'win32' and bool(os.environ.get('TMUX')) and bool(self.pane)
         self.reporter = _Reporter(host=host) if candidate and host.console.is_terminal else None
         if self.reporter is not None:
