@@ -7,7 +7,7 @@ import gc
 import os
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -128,14 +128,15 @@ async def test_a_capability_can_use_each_users_client_from_deps(fake_e2b: FakeE2
     assert fake_e2b.clients == ['a', 'b']
 
 
-def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
-    """An `e2b.E2B` annotation must not erase the whole schema entry."""
+def test_agent_spec_schema_publishes_every_field_but_the_client_and_network() -> None:
+    """`from_spec` lists its fields by hand, so each new field must be added there too. `network` is code-only."""
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
     assert sorted(definitions['spec_params_E2BSandbox']['properties']) == [
         'allow_internet_access',
         'authority',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'idle_timeout',
@@ -144,6 +145,9 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'template',
         'working_dir',
     ]
+    published = set(definitions['spec_params_E2BSandbox']['properties'])
+    # Fields set outside `__init__`, such as the `_authority_ceiling` every capability has, aren't spec fields.
+    assert published == {field.name for field in fields(E2BSandbox) if field.init} - {'client', 'network'}
 
 
 def test_from_spec_forwards_the_spec_fields() -> None:
@@ -156,6 +160,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'idle_timeout': 60,
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
+        'desktop': (1280, 800),
     }
     assert E2BSandbox[None].from_spec(**spec_fields) == E2BSandbox[None](**spec_fields)
 
