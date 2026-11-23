@@ -776,7 +776,7 @@ def _openrouter_settings_to_openai_settings(
     # would drop the keys on the next request.
     model_settings = model_settings.copy()
     configured = model_settings.get('extra_body')
-    extra_body: dict[str, Any] = {} if configured is None else dict(cast(dict[str, Any], configured))
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models

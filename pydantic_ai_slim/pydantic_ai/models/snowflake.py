@@ -335,7 +335,7 @@ def _snowflake_settings_to_openai_settings(
     # model's own `settings` by identity, so popping in place would drop the keys on the next request.
     settings = model_settings.copy()
     configured = settings.get('extra_body')
-    extra_body: dict[str, Any] = {} if configured is None else dict(cast(dict[str, Any], configured))
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     # Fall back to unified thinking when snowflake_reasoning is not set
     if 'snowflake_reasoning' not in settings and profile.get('snowflake_supports_reasoning', False):

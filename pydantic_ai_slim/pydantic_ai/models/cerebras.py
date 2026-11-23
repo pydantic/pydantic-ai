@@ -163,7 +163,7 @@ def _cerebras_settings_to_openai_settings(
     # model's own `settings` by identity, so popping in place would drop the keys on the next request.
     settings = model_settings.copy()
     configured = settings.get('extra_body')
-    extra_body: dict[str, Any] = {} if configured is None else dict(cast(dict[str, Any], configured))
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     disable_reasoning = settings.pop('cerebras_disable_reasoning', None)  # TODO(v3): remove cerebras_disable_reasoning
     if disable_reasoning is not None:
