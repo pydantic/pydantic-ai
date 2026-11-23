@@ -277,7 +277,7 @@ A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Googl
 
 The desktop keeps `printscreen` and the media and volume keys for itself, so the window in front never gets them.
 
-A custom `template` needs `xdotool`, `xwininfo` (`x11-utils` on Debian/Ubuntu), `scrot` and `setsid`, and Xvfb when no X server is running already. [The first use installs them](computer-use.md#what-the-display-needs) if it can. For the XFCE desktop it also needs `startxfce4`, which it doesn't install; without it, the screen stays black until a program opens a window.
+A custom `template` needs Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`, which [the first use installs](computer-use.md#what-the-display-needs) if it can, and `startxfce4`, which it doesn't. Without `startxfce4`, the screen stays black until a program opens a window.
 
 The agent can type only ASCII characters. An action that types or presses a character such as `é` fails, and the model is told why.
 
