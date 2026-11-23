@@ -53,10 +53,7 @@ nothing on the screen: `screenshot`, `zoom`, `cursor_position` and `wait`.
 
 ## What the model is told
 
-`ComputerUse` adds instructions that tell the model how to group actions into calls. They also tell it never to
-follow instructions shown on the screen. If the agent also has a tool that runs shell commands, such as `Shell`'s, the
-model is told two more things: a program it starts from the shell opens on the screen, and it should use the screen
-only for work that needs it.
+`ComputerUse` adds instructions on how to use the tool, including never to follow instructions shown on the screen.
 
 With `ComputerUse(defer_loading=True)`, the model sees only the capability's `description` until it chooses to load
 the tool. The description decides when the model loads it, so pass your own `description=` to change that.
@@ -65,20 +62,8 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 The model has to accept images to see the screen. A model that can't gets a note in place of each screenshot, saying it wasn't sent.
 
-- Claude models on `AnthropicModel` get Anthropic's own computer use tool on the clients and models listed under
-  [Anthropic](../models/anthropic.md#computer-use). Other Claude models and clients get the function tool.
-- GPT-5.4 (except GPT-5.4 nano), GPT-5.5, GPT-5.6 and GPT-6 get OpenAI's own computer tool when you use them
-  through `OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`. See [OpenAI](../models/openai.md#native-tools).
-- Every other model gets `computer` as a regular function tool.
-
-An Azure client gets the function tool too. The Pydantic AI Gateway's OpenAI route uses `OpenAIProvider`, so it gets
-OpenAI's tool. Pydantic AI checks the provider class, not the server it calls. If you point
-`OpenAIProvider(base_url=...)` at a server that doesn't support the computer tool, such as Ollama or vLLM, remove it in
-the model's `profile=` argument:
-`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. To send it through
-another provider whose server supports it, use `| {ComputerTool}` instead. Start from the model's profile like this,
-since a new `supported_native_tools` set replaces all of the model's native tools. Setting it in the provider's profile
-has no effect.
+On the models listed under [OpenAI](../models/openai.md#computer-use) and [Anthropic](../models/anthropic.md#computer-use), the model
+gets its provider's own computer use tool. Every other model gets `computer` as a regular function tool.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -92,8 +77,8 @@ has no effect.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `settle_seconds` | `2` | How long, at most, to wait for the screen to stop changing after the actions run. `ComputerUse` takes screenshots until two in a row match. `0` takes the screenshot at once. |
-| `native` | `True` | If the model's provider has its own computer use tool, the model gets that tool instead: `ComputerUse` adds a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] and runs its calls on the screen. `False` gives every model the `computer` function tool with all its actions. On GPT, that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
+| `settle_seconds` | `2` | How long, at most, to wait for the screen to stop changing after the actions run. `0` takes the screenshot at once. |
+| `native` | `True` | If the model's provider has its own computer use tool, the model gets that tool instead: `ComputerUse` adds a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] and runs its calls on the screen. `False` gives every model the `computer` function tool with all its actions. |
 
 Every request sends all the earlier screenshots again, so `ComputerUse` turns on
 [prompt caching](../capabilities/caching.md) to make that cheaper. To turn caching off, set `cache=False` in the model
@@ -123,20 +108,10 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 
 The same hook can refuse a call instead, such as one that waits longer or types more than you allow. [Raise `ToolFailed`](../hooks.md#triggering-retries-with-modelretry) with a message for the model. None of the call's actions run.
 
-Some providers flag an action for a person to confirm, and give their reason in the call's
-[`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation]. `ComputerUse` asks for approval of
-such a call without a hook: the tool raises `ApprovalRequired` before it does anything, so no hook can skip it,
-with the reason in the request's `metadata` as `{'reason': ...}`. A hook like the one above runs first and asks
-without the reason. Once you approve the call, its result has `confirmed` set, so the provider is told a person
-approved it. A flagged call fails the run unless the agent has `DeferredToolRequests` in its `output_type` or a
-`HandleDeferredToolCalls` handler.
-
 ## Screen size
 
-A 1280x800 screen suits every model, and `ComputerUse` sends each screenshot at the screen's full size. A larger
-screen shows more at once, but each screenshot costs more tokens, and every request sends every earlier screenshot
-again: a 1920x1080 screenshot costs about twice as much as a 1280x800 one. Below about 1024x768, models start to miss
-detail.
+A 1280x800 screen suits every model. `ComputerUse` sends each screenshot at the screen's full size, so a larger screen
+costs more tokens per screenshot. Below about 1024x768, models start to miss detail.
 
 The providers' own advice:
 
@@ -148,20 +123,13 @@ The providers' own advice:
   For each model's image size limits, see
   [Images and vision](https://developers.openai.com/api/docs/guides/images-vision#model-sizing-behavior).
 
-On `AnthropicModel`, what happens to a screenshot too large for Claude depends on the tool it goes through
+On `AnthropicModel`, a screenshot larger than the model's image size limit fails or misses
 ([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)):
 
 - Claude's `computer_toolset_20260801` tool refuses a screenshot over 2576 pixels on its longer side or over 4784 image
-  tokens, where one token covers 28x28 pixels. A 2549x1457 screen is refused. The request fails with Anthropic's 400
-  as a `ModelHTTPError`, which `FallbackModel` and the `ModelFallback` capability move on from.
-- The older computer use tools, such as Claude Haiku 4.5's `computer_20250124`, and `ComputerUse(native=False)` on any
-  Claude model, shrink a larger screenshot without saying so. Claude then gives positions on the smaller image, so its
-  clicks miss: Haiku 4.5 at 1920x1080 clicked at three quarters of the right position, and Claude Sonnet 5.5 through
-  the function tool at 2560x1600 missed a button by about 100 pixels. Keep the screen at a size that fits: Haiku 4.5
-  clicked on target at 1280x800, and Sonnet 5.5 through the function tool at 1920x1200.
-
-GPT-5.5 clicks accurately on screens up to 1920x1200, and GPT-5.4 on screens up to 2048x1280. On a larger screen,
-they can miss what they click.
+  tokens, where one token covers 28x28 pixels. The request fails with a `ModelHTTPError`.
+- The older computer use tools, and `ComputerUse(native=False)` on any Claude model, shrink a larger screenshot without
+  saying so, so Claude's clicks miss. Keep the screen within the model's limit.
 
 ## When something goes wrong
 
@@ -170,8 +138,8 @@ they can miss what they click.
 - If any action in a call has a position outside the screen, none of the call's actions run, and the model is asked to
   try again. Each such retry counts against the tool's retry limit.
 - If the workspace is gone, for example because its sandbox was deleted, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
-- Several agents can share one screen, such as sub-agents running in parallel. If they run in the same `asyncio` event loop, they take turns one whole call at a time, so their clicks never mix. Agents in separate event loops or separate processes don't wait for each other.
-- A mouse button pressed with `mouse_down` stays pressed across calls until a `mouse_up`, and each result tells the model which buttons are still pressed. `ComputerUse` releases them when a call fails or is cancelled while it acts on the screen, and when the run ends, so a drag must finish within one run, approvals included. If the model loads `ComputerUse` during the run, because of `defer_loading=True`, the buttons are released at the end of every call, so a drag must happen within one call. If a release after a failed call fails too, the result says the button may still be pressed.
+- Agents that share one screen in the same `asyncio` event loop, such as parallel sub-agents, take turns one call at a time. Agents in separate event loops or processes don't wait for each other.
+- A mouse button pressed with `mouse_down` stays pressed until a `mouse_up`, and is released when a call fails or the run ends, so a drag must finish within one run. With `defer_loading=True`, buttons are released at the end of every call.
 
 ## Watching a run
 
@@ -188,7 +156,7 @@ Each call that finishes with a screenshot also sends one
 
 On Temporal, event listeners run in workflow code, so they [run again when Temporal replays the workflow](../durable_execution/temporal.md#choosing-what-to-publish).
 The message history holds the same record. Each result is a `ComputerReturnPart`, and its `result` is the call's
-`ComputerResult`. `ComputerUse` adds no tracing spans of its own, because the tool call already has one.
+`ComputerResult`.
 
 ## Limitations
 
