@@ -53,7 +53,7 @@ from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 from pydantic_ai_pax.ui.telemetry_log import telemetry_log
-from pydantic_ai_pax.ui.terminal_background import drain_late_reply, terminal_background
+from pydantic_ai_pax.ui.terminal_background import terminal_background
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -262,8 +262,6 @@ async def chat(
                         async with create_task_group() as workers, shell.process.live.serving():
                             workers.start_soon(shell.process.namer.run)
                             try:
-                                if console.is_terminal:  # Asked only then, as `_terminal_background` is.
-                                    drain_late_reply()
                                 with transcript.capture(console):
                                     await _start_session(
                                         shell,
