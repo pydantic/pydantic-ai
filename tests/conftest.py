@@ -671,6 +671,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # Under `coverage run`, the tracer takes coverage's own data lock when a call enters a measured file, on every such
+    # call with the C tracer. Another measured thread may hold it, but only for a dict lookup.
+    ('threading.Lock.acquire', 'coverage/collector.py', 'lock_data'),
     # A session, and a plugin host built outside the shell, work in the current directory unless given one.
     ('os.getcwd', 'pydantic_ai_pax/runtime/session.py', '__init__'),
     ('os.getcwd', 'pydantic_ai_pax/plugins/__init__.py', 'workspace'),
