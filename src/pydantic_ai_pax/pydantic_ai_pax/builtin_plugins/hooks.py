@@ -289,8 +289,8 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
             headline = f'{event} hook failed'
             message = f'{headline}: {shown}: {done.stderr}'
         span.set_status(StatusCode.ERROR, message if content else headline)
-        # Mid-tool, the warning sits under the call's header, whose blank line then follows it.
         self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
+        self.host.console.print()
 
 
 @dataclass

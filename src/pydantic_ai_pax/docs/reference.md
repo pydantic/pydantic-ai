@@ -1594,7 +1594,8 @@ one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place an
 tool or other output follows. The `grouped` style shows only names and counts, so it ignores
 `display.tool_output` and `display.tool_arg_chars` and prints no result rows. File edits and
 writes still print their summary and diff, which ends the line.
-`/set` previews the headers of both styles when you pick one, without result rows. The default is `detailed`, one line per call.
+`/set` previews the headers of both styles when you pick one, without result rows.
+The default is `detailed`, one line per call.
 
 ### Streaming
 

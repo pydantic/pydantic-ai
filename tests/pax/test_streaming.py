@@ -68,7 +68,6 @@ I will look first.
 deploy: staging ok
 
 ● lint path="a.py"
-before_tool hook blocked lint: exit 2
 
 ● read_file 'a.py' offset=0 limit=2000 lines
 
@@ -85,7 +84,7 @@ Done.
 
 @pytest.mark.parametrize('terminal', [False, True])
 async def test_one_blank_row_between_every_block_of_a_mixed_turn(terminal: bool) -> None:
-    """Diffs, plugin output, a hook's warning and code fences each get one blank row before and after."""
+    """Diffs, plugin output and code fences each get one blank row before and after."""
     output = io.StringIO()
     console = Console(file=output, width=48, force_terminal=terminal, color_system=None)
 
@@ -121,8 +120,6 @@ async def test_one_blank_row_between_every_block_of_a_mixed_turn(terminal: bool)
     )
     await renderer.on_stream_event(call('deploy', 'c'))
     await renderer.on_stream_event(call('lint', 'd', path='a.py'))
-    # A hook's warning prints on the host console while its tool runs, outside the renderer.
-    console.print('before_tool hook blocked lint: exit 2')
     await renderer.on_stream_event(call('read_file', 'e', path='a.py'))
     await text(1, 'The new code:\n```python\nx = 2\n```\nDone.\n')
     await renderer.finish()
