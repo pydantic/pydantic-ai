@@ -1897,6 +1897,28 @@ async def test_openai_responses_stable_instructions_stay_top_level_with_server_s
     assert [item for request in requests for item in request['input'] if item.get('role') == 'system'] == []
 
 
+@pytest.mark.parametrize('instructions', ['Support policies.', 'Billing policies.'], ids=['same-agent', 'handoff'])
+async def test_openai_responses_explicit_id_with_history_resends_it(allow_model_requests: None, instructions: str):
+    """A response from a full-history request stores its instructions in its input but has no history digest, so an
+    explicit id passed with that history resends the history, and the model sees only the current instructions."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    first = await Agent(model, instructions='Support policies.').run('Where is order 1234?')
+    response_id = first.response.provider_response_id
+    assert response_id is not None
+
+    await Agent(model, instructions=instructions).run(
+        'And order 5678?',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=response_id),
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[1]
+    assert request.get('previous_response_id') is None
+    assert request['instructions'] == instructions
+    assert [item.get('role') for item in request['input']] == ['user', 'assistant', 'user']
+
+
 async def test_openai_chat_cache_instructions_with_cache_point(allow_model_requests: None):
     """Both breakpoints are sent; OpenAI writes the last four, so the instruction one is dropped first."""
     mock_client = MockOpenAI.create_mock(chat_completion())
@@ -2545,6 +2567,45 @@ async def test_openai_responses_stable_instructions_as_input_e2e(
         assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
     else:
         assert second.usage.cache_read_tokens == 0
+
+
+@pytest.mark.vcr
+async def test_openai_responses_explicit_id_with_history_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """An explicit id passed with the history of a default GPT-6.2 run resends that history once, then continues from
+    the new response. Those requests keep the instructions in the top-level field, which isn't cached."""
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, instructions=_STABLE_PREFIX)
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.')
+    first_id = first.response.provider_response_id
+    assert first_id is not None
+    second = await agent.run(
+        'Which aisle holds entry 0101? Reply with just the number.',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=first_id),
+    )
+    second_id = second.response.provider_response_id
+    assert second_id is not None
+    third = await agent.run(
+        'Which shelf holds entry 0101? Reply with just the number.',
+        message_history=second.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=second_id),
+    )
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert bodies[0]['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
+    assert 'previous_response_id' not in bodies[1]
+    assert bodies[1]['instructions'] == _STABLE_PREFIX
+    assert [item.get('role') for item in bodies[1]['input']] == ['user', 'assistant', 'user']
+    assert bodies[2]['previous_response_id'] == second_id
+    assert bodies[2]['instructions'] == _STABLE_PREFIX
+    assert [item.get('role') for item in bodies[2]['input']] == ['user']
+    assert first.usage.cache_write_tokens > 0
+    assert (second.usage.cache_read_tokens, third.usage.cache_read_tokens) == (0, 0)
 
 
 # ===== Prompt cache diagnostics =====
