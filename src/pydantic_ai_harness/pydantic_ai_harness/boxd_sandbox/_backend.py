@@ -59,7 +59,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
-    SupportsKnownWorkingDir,
     SupportsRealpath,
     WorkspaceBackend,
     WorkspaceError,
@@ -393,9 +392,7 @@ class _Output:
         return self.stdout.decode(errors='replace'), self.stderr.decode(errors='replace')
 
 
-class BoxdSandboxBackend(
-    WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir, SupportsFilesystem, SupportsRealpath
-):
+class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
     """A [boxd](https://boxd.sh) machine as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside an isolated boxd microVM, and file operations use boxd's file API as the same
@@ -486,11 +483,6 @@ class BoxdSandboxBackend(
         # operation in flight ends.
         self._close_after_operation = False
         self._operations = 0
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

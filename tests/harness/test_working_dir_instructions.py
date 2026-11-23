@@ -15,22 +15,15 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import InstructionDeltaPart, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, SupportsKnownWorkingDir, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 
-class LazyBackend(LocalWorkspaceBackend, SupportsKnownWorkingDir):
+class LazyBackend(LocalWorkspaceBackend):
     """A local directory that, like a sandbox, has no ref until an operation starts it."""
 
-    def __init__(self, working_dir: Path, *, configured: bool) -> None:
-        super().__init__(working_dir)
-        self._configured = str(working_dir.resolve()) if configured else None
-        self.started = False
-
-    @property
-    def known_working_dir(self) -> str | None:
-        return self._configured
+    started = False
 
     @property
     def ref(self) -> WorkspaceRef | None:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -98,17 +91,10 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         await Agent(model, capabilities=[Shell()]).run('go', workspace=LocalWorkspaceBackend(tmp_path / 'gone'))
         assert 'Shell commands start in the working directory;' in _instructions(model, tmp_path)
 
-    async def test_a_configured_sandbox_is_named_without_starting_it(self, tmp_path: Path) -> None:
-        model = TestModel(call_tools=[])
-        backend = LazyBackend(tmp_path, configured=True)
-        await Agent(model, capabilities=[Shell(), FileSystem()]).run('go', workspace=backend)
-        assert '`<dir>`' in _instructions(model, tmp_path)
-        assert not backend.started
-
     async def test_an_unstarted_sandbox_is_named_after_its_first_tool_call(self, tmp_path: Path) -> None:
         """Until a tool starts the sandbox, the lines don't name it; then the path is appended, not rewritten."""
         (tmp_path / 'a.txt').write_text('a')
-        backend = LazyBackend(tmp_path, configured=False)
+        backend = LazyBackend(tmp_path)
         first: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

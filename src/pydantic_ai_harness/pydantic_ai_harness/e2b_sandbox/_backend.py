@@ -40,7 +40,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
-    SupportsKnownWorkingDir,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -209,7 +208,7 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
     return message
 
 
-class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir, SupportsFilesystem):
+class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside an E2B microVM, not on the host.
@@ -412,11 +411,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorking
                 self._working_dir_pending = False
         await anyio.lowlevel.checkpoint_if_cancelled()
         return sandbox
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

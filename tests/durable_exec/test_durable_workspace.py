@@ -192,7 +192,6 @@ async def test_working_dir_and_resolve_answer_locally_after_ensure() -> None:
     result = await agent.run('go')
 
     assert await result.workspace.working_dir() == '/workspace'
-    assert result.workspace.known_working_dir == '/workspace'
     assert await result.workspace.resolve('a/b') == '/workspace/a/b'
     assert await result.workspace.resolve('/abs/../x') == '/x'
     assert _workspace_units(durability) == ['ensure']

@@ -45,7 +45,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
-    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -384,7 +383,7 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir):
+class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
     """A local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
@@ -454,11 +453,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWor
         self._box: _Box | None = None
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

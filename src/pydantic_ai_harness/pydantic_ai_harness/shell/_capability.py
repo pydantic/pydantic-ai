@@ -177,7 +177,6 @@ class Shell(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
         """Where commands start, naming the directory when `nameable_working_dir` can."""
-
         carries = ' A `cd` in one command carries over to later commands.' if self.persist_cwd else ''
 
         async def instructions(ctx: RunContext[AgentDepsT]) -> str:

@@ -30,7 +30,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
-    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -82,7 +81,7 @@ def check_sandbox_timeout(value: int) -> None:
 _ASYNCIO_ONLY = 'Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.'
 
 
-class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir, SupportsFilesystem):
+class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """A [Render sandbox](https://render.com/docs/sandboxes) as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Building one does no I/O. Built without a ref, the first operation creates a sandbox; built with one,
@@ -131,11 +130,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWork
         self._resolved_working_dir: str | None = None
         # A sandbox this backend created still needs its `working_dir` made, even if readiness is retried.
         self._working_dir_pending = False
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

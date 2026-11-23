@@ -25,7 +25,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
-    SupportsKnownWorkingDir,
     SupportsRealpath,
     WorkspaceBackend,
     WorkspaceError,
@@ -412,9 +411,7 @@ class _DaytonaProcess:
         await self._remove_output_files()
 
 
-class DaytonaSandboxBackend(
-    WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir, SupportsFilesystem, SupportsRealpath
-):
+class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
     """A [Daytona](https://www.daytona.io) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside a Daytona sandbox, so the host is never exposed.
@@ -493,11 +490,6 @@ class DaytonaSandboxBackend(
         # operation in flight ends.
         self._close_after_operation = False
         self._operations = 0
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

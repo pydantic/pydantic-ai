@@ -15,7 +15,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     SupportsCommands,
-    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -96,7 +95,7 @@ def _remaining(timeout: float | None, started: float) -> float | None:
     return remaining
 
 
-class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir):
+class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     """Run commands on a remote host with the system's OpenSSH `ssh` client.
 
     Authentication, host keys, ports and jump hosts come from your SSH configuration (`~/.ssh/config`)
@@ -148,14 +147,6 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorki
         self._ref = WorkspaceRef(
             provider='ssh', id=destination if self._working_dir is None else f'{destination}:{self._working_dir}'
         )
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        # A relative `working_dir` starts in the login directory, which only the host knows.
-        if self._resolved_working_dir is None and self._working_dir is not None and posixpath.isabs(self._working_dir):
-            return self._working_dir
-        return self._resolved_working_dir
 
     @property
     def ref(self) -> WorkspaceRef:

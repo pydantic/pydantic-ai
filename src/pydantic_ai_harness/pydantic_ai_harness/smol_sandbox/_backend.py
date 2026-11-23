@@ -39,7 +39,6 @@ import anyio
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
-    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -214,7 +213,7 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir):
+class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     """A local [smolvm](https://github.com/smol-machines/smolvm) microVM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
@@ -274,11 +273,6 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkin
         self._sandbox: smol.AsyncMachine | None = None
         self._acquisition: asyncio.Task[smol.Machine] | None = None
         self._resolved_working_dir: str | None = None
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

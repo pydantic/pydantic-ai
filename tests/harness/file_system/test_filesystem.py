@@ -39,7 +39,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
-    SupportsKnownWorkingDir,
     UnavailableWorkspace,
     Workspace,
     WorkspaceBackend,
@@ -104,21 +103,6 @@ class CountingWorkspace(LocalWorkspaceBackend):
     async def realpath(self, path: str) -> str:
         self.realpath_calls += 1
         return await super().realpath(path)
-
-
-class KnownDirCountingWorkspace(CountingWorkspace, SupportsKnownWorkingDir):
-    """A `CountingWorkspace` whose instructions name the directory without asking, so only the boundary counts.
-
-    On a plain local workspace the instructions also call `working_dir()` once per request.
-    """
-
-    def __init__(self, working_dir: Path) -> None:
-        super().__init__(working_dir)
-        self._known = str(working_dir.resolve())
-
-    @property
-    def known_working_dir(self) -> str:
-        return self._known
 
 
 class SymlinkedWorkingDir(LocalWorkspaceBackend):
@@ -533,14 +517,11 @@ class TestRootDir:
 
     async def test_the_boundary_is_resolved_once_per_run(self, tmp_path: Path) -> None:
         (tmp_path / 'a.txt').write_text('a\n')
-        workspace = KnownDirCountingWorkspace(tmp_path)
+        workspace = CountingWorkspace(tmp_path)
         read: tuple[str, dict[str, object]] = ('read_file', {'path': 'a.txt'})
         await call_tools([FileSystem[None]()], [read, read], workspace=workspace)
-        assert workspace.working_dir_calls == 1
-        # A plain backend can't name its directory without asking: one boundary ask plus one per request (three here).
-        plain = CountingWorkspace(tmp_path)
-        await call_tools([FileSystem[None]()], [read, read], workspace=plain)
-        assert plain.working_dir_calls == 4
+        # One ask for the boundary; the other three are the instructions naming the directory on each request.
+        assert workspace.working_dir_calls == 4
 
     async def test_each_run_resolves_the_boundary_in_its_own_workspace(self, tmp_path: Path) -> None:
         # One toolset serves every run, so durable execution sees the toolset it registered.

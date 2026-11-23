@@ -17,7 +17,6 @@ import pytest
 from .protocol import (
     CommandResult,
     SupportsCommands,
-    SupportsKnownWorkingDir,
     SupportsRealpath,
     WorkspaceBackend,
     WorkspaceRef,
@@ -274,22 +273,6 @@ class WorkspaceBackendSuite:
         assert paths.isabs(working_dir) and paths.normpath(working_dir) == working_dir
         if isinstance(backend, SupportsCommands):
             assert (await _script(backend, 'pwd -P', _POWERSHELL_PWD)).stdout == f'{working_dir}\n'
-
-    async def test_known_working_dir_names_the_working_dir(
-        self, backend: WorkspaceBackend, fresh_backend: Callable[[], WorkspaceBackend] | None
-    ) -> None:
-        """`known_working_dir` is absolute or `None` without starting anything, and `working_dir()` once that has returned."""
-        if not isinstance(backend, SupportsKnownWorkingDir):
-            pytest.skip('backend does not implement SupportsKnownWorkingDir')
-        if fresh_backend is not None:
-            fresh = fresh_backend()
-            assert isinstance(fresh, SupportsKnownWorkingDir)
-            ref = fresh.ref
-            known = fresh.known_working_dir
-            assert known is None or Workspace(fresh).paths.isabs(known)
-            assert fresh.ref == ref, 'reading `known_working_dir` must not create the environment'
-        working_dir = await backend.working_dir()
-        assert backend.known_working_dir == working_dir
 
     async def test_run_starts_in_cwd(self, backend: WorkspaceBackend) -> None:
         """`Workspace.run(cwd=...)` starts the command there, relative paths resolving against the working directory."""

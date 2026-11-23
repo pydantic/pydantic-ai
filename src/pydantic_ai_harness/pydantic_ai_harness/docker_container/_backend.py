@@ -38,7 +38,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     SupportsCommands,
-    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -235,7 +234,7 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir):
+class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -294,11 +293,6 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWo
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
         self._creating = False
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

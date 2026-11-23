@@ -258,7 +258,7 @@ class DurableWorkspace(WrapperWorkspace):
     """The run's workspace inside a durable container: each call from workflow code is a durable operation.
 
     Outside the container, and inside a durable unit, calls go straight to the wrapped workspace.
-    `ref`, `working_dir` and `known_working_dir` report what `ensure` journaled.
+    `ref` and `working_dir` report what `ensure` journaled.
     """
 
     def __init__(self, wrapped: Workspace, *, durability: BaseDurabilityCapability[Any], ctx: RunContext[Any]) -> None:
@@ -286,11 +286,6 @@ class DurableWorkspace(WrapperWorkspace):
 
     def _in_container(self) -> bool:
         return self._durability.in_durable_context and not in_durable_unit()
-
-    @property
-    def known_working_dir(self) -> str | None:
-        # In workflow code, only the journaled value replays the same; the live backend's may not.
-        return self._working_dir if self._in_container() else self.wrapped.known_working_dir
 
     async def working_dir(self) -> str:
         if self._working_dir is None and not self._in_container():

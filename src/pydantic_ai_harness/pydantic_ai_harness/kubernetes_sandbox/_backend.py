@@ -45,7 +45,6 @@ import anyio
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
-    SupportsKnownWorkingDir,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -179,7 +178,7 @@ class _Session:
     commands: AsyncCommandExecutor
 
 
-class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnownWorkingDir):
+class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
     """A sandbox claimed from an agent-sandbox `SandboxWarmPool`, or attached to by its claim.
 
     Construction does no I/O. Without `ref`, the first operation claims a sandbox from `warm_pool`;
@@ -254,11 +253,6 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsKnown
         # An `aclose()` that came while operations were in flight; the last of them closes the connection once.
         self._close_requested = False
         self._operations = 0
-
-    @property
-    def known_working_dir(self) -> str | None:
-        """The resolved working directory, else the configured one; `None` until the environment names it."""
-        return self._resolved_working_dir or self._working_dir
 
     @property
     def ref(self) -> WorkspaceRef | None:

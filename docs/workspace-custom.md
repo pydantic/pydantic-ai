@@ -258,11 +258,6 @@ Supply it from a capability's [`get_workspace`](#supplying-a-workspace-from-a-ca
 A backend whose shell and paths aren't POSIX says so with
 [`SupportsPlatform`][pydantic_ai.workspaces.SupportsPlatform].
 
-A backend that creates its environment on first use can implement
-[`SupportsKnownWorkingDir`][pydantic_ai.workspaces.SupportsKnownWorkingDir] to give a configured working directory
-without starting it. The harness `Shell` and `FileSystem` instructions then name the directory from the first
-request, instead of after the first tool call.
-
 ### Resolving symlinks
 
 A path check, such as "only under `/app`", needs to know where a path really leads: with a link
