@@ -47,7 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import DEFAULT_DESKTOP_BASE_IMAGE, checked_desktop_size
 from pydantic_ai_harness._smolvm_cli import NAME as _NAME, NAME_PREFIX as _NAME_PREFIX
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
@@ -58,7 +58,7 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     require_asyncio,
 )
-from pydantic_ai_harness._x11 import DESKTOP_IMAGE, desktop_display
+from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
@@ -217,16 +217,6 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-def check_desktop(desktop: bool | tuple[int, int], image: str | None, allow_internet_access: bool) -> None:
-    """Refuse a new desktop VM that can't install its display programs."""
-    if desktop and image is None and not allow_internet_access:
-        raise UserError(
-            f'A new desktop VM without an `image` runs `{DESKTOP_IMAGE}` and installs the display programs on first '
-            'use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, xdotool, '
-            'xwininfo, scrot and setsid.'
-        )
-
-
 class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A local [smolvm](https://github.com/smol-machines/smolvm) microVM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
@@ -280,22 +270,25 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
-        if sandbox is None and ref is None:
-            check_desktop(desktop, image, allow_internet_access)
         # On the local target a VM's id is its name, so the backend attaches to it like to a ref.
         self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
         self._passed_in = sandbox is not None
-        self._image = DESKTOP_IMAGE if image is None and desktop else image
+        self._image = DEFAULT_DESKTOP_BASE_IMAGE if image is None and desktop else image
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
         self._working_dir = absolute_path('working_dir', working_dir)
-        self._env = dict(env or {})
-        self._desktop_size = desktop_size(desktop)
-        self._display, self._env = desktop_display(
+        self._display = x11_display(
             self._run_argv,
-            self._desktop_size,
-            self._env,
+            checked_desktop_size(desktop),
             lambda: f'smolvm VM {self._ref.id if self._ref else "(not created)"}',
         )
+        # An existing VM already has whatever its display needs.
+        if self._display and sandbox is None and ref is None and image is None and not allow_internet_access:
+            raise UserError(
+                "A new desktop sandbox without an `image` installs the display's programs with `apt-get` on first "
+                'use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, xdotool, '
+                'xwininfo, scrot and setsid.'
+            )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
         self._machine: smol.Machine | None = None
         self._sandbox: smol.AsyncMachine | None = None
         self._acquisition: asyncio.Task[smol.Machine] | None = None

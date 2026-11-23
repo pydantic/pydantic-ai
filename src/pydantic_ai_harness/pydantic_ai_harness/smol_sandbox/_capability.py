@@ -12,7 +12,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -76,7 +76,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         check_integer('memory_mb', self.memory_mb, optional=True)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
-        desktop_size(self.desktop)
+        checked_desktop_size(self.desktop)
 
     def backend(self, ref: WorkspaceRef) -> SmolSandboxBackend:
         """Attach lazily to an existing VM, one `SmolSandbox` created."""
