@@ -319,6 +319,7 @@ jobs:
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
+          .github/scripts/test_commands.py
           scripts/test_gather_pydantic_ai_review_context.py
 
       - name: Test threat detector telemetry
