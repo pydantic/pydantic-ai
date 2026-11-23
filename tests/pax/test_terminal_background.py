@@ -119,6 +119,13 @@ def test_keys_typed_during_the_query_are_kept_for_the_prompt() -> None:
     assert [key.data for key in get_typeahead(get_app_session().input)] == ['h', 'i', '\r']
 
 
+def test_not_asked_on_a_dumb_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('TERM', 'dumb')
+    with on_a_terminal() as leader:
+        assert terminal_background() is None
+        assert select.select([leader], [], [], 0)[0] == []  # No query was written.
+
+
 def test_not_asked_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('COLORFGBG', '0;15')
     reader, writer = os.pipe()

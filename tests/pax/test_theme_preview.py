@@ -257,7 +257,16 @@ def _hex_colours(rendered: str) -> set[tuple[str, str]]:
 @pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3', '#EEEEEE'])
 async def test_default_theme_reads_on_a_light_background(background: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every brand role, in truecolor and as a 256-colour code, and the diff text reach WCAG AA (4.5:1)."""
-    roles = (theme.ACCENT, theme.INFO, theme.SUCCESS, theme.WARNING, theme.ERROR, theme.MUTED, theme.THINKING)
+    roles = (
+        theme.ACCENT,
+        theme.INFO,
+        theme.SUCCESS,
+        theme.WARNING,
+        theme.ERROR,
+        theme.MUTED,
+        theme.THINKING,
+        theme.SUGAR,
+    )
     with theme.use(lambda: 'default', background=background):
         colours = {role: theme.color(role).removeprefix('bold ') for role in roles}
         rendered = await _render_sample()

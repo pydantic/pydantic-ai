@@ -300,6 +300,7 @@ _ON_LIGHT = {
     GREY: ('#6C6C6C', 242),
     AI_CYAN: ('#005F5F', 23),
     AI_YELLOW: ('#875F00', 94),
+    SUGAR: ('#1C1C1C', 234),  # Near-white body text, such as `/plugins` descriptions, becomes near-black.
 }
 _BASIC = {
     LITHIUM: 95,
@@ -320,7 +321,7 @@ def truecolor() -> bool:
 
 
 def sgr(role: str, *, bold: bool = False) -> str:
-    """Raw escape for surfaces that bypass Rich, with a 16-colour fallback."""
+    """Raw escape for surfaces that bypass Rich, with a 16-colour fallback (on a light terminal, `_ON_LIGHT`'s 256-colour shade)."""
     resolved = color(role)
     if resolved.startswith('bold '):
         resolved = resolved.removeprefix('bold ')
