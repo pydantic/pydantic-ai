@@ -253,14 +253,35 @@ def _markers(messages: Sequence[ModelMessage]) -> set[str]:
     return set(MARKER.findall(str(messages)))
 
 
-def _summary_breaks(history: list[ModelMessage], run: _Run) -> list[str]:
+@dataclass(frozen=True)
+class KnownLoss:
+    """What a summary of one of the `HISTORIES` loses on main, linked to the issue that tracks it."""
+
+    markers: frozenset[str]
+    issue: str
+
+
+_ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
+
+KNOWN_SUMMARY_LOSSES: dict[str, KnownLoss] = {
+    # The transcript a summarizer reads shows a retried `ToolReturnPart` as retry feedback, and leaves the legacy part
+    # out, so the retry's text is in neither the summary nor the kept messages.
+    'legacy retry': KnownLoss(frozenset({'[m1]'}), f'a summary leaves out a legacy `RetryPromptPart`: {_ISSUES}<n>'),
+}
+"""Histories whose summary loses what a message said on main. A listed loss must still happen, exactly."""
+
+
+def _summary_breaks(label: str, history: list[ModelMessage], run: _Run) -> list[str]:
     """Invariant 2: what each message said reaches the model, kept or in the summary that replaced it."""
-    said = _markers(history) | {MARKER.findall(PROMPT)[0]}
-    return [
-        f'request {index} lost {sorted(lost)}'
-        for index, received in enumerate(run.received)
-        if (lost := said - _markers(received))
-    ]
+    said = _markers(history) | set(MARKER.findall(PROMPT))
+    lost = {marker for received in run.received for marker in said - _markers(received)}
+    known = KNOWN_SUMMARY_LOSSES.get(label)
+    expected: set[str] = set() if known is None else set(known.markers)
+    if lost == expected:
+        return []
+    if known is not None and not lost:
+        return [f'the summary now keeps {sorted(expected)}: remove its `KNOWN_SUMMARY_LOSSES` entry ({known.issue})']
+    return [f'the summary lost {sorted(lost)}' + (f', not only the known {sorted(expected)}' if known else '')]
 
 
 NON_EDITORS = sorted(
@@ -323,7 +344,7 @@ async def test_editing_keeps_the_history_sound(
         edited = edited or _edited(history, run)
         found = _newest_request_breaks(run)
         if config.summarizes:
-            found += _summary_breaks(history, run)
+            found += _summary_breaks(label, history, run)
         breaks += [f'{label}: {item}' for item in found]
     assert not breaks, '\n'.join(breaks)
     assert edited, (

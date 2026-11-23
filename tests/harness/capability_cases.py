@@ -1337,7 +1337,8 @@ _FAULTS: dict[str, Faults] = {
             {'the answerer raises': FaultRun(_ASK, lambda tmp_path, monkeypatch: [AskUser(answerer=_answer_fails)])},
             known_breaks={
                 'stream': Exempt(
-                    'events a `handle_deferred_tool_calls` hook emits before raising never reach `event_stream_handler`'
+                    'events a `handle_deferred_tool_calls` hook emits before raising never reach `event_stream_handler`: '
+                    'https://github.com/pydantic/pydantic-ai/issues/<n>'
                 )
             },
         )
@@ -1353,7 +1354,10 @@ _FAULTS: dict[str, Faults] = {
             },
             known_breaks=dict.fromkeys(
                 ('listener', 'stream'),
-                Exempt('a foreground command whose call raises after it started gets no `CommandFinishedEvent`'),
+                Exempt(
+                    'a foreground command whose call raises after it started gets no `CommandFinishedEvent`: '
+                    'https://github.com/pydantic/pydantic-ai/issues/<n>'
+                ),
             ),
         )
     ),
