@@ -66,8 +66,9 @@ async def test_a_timeout_stops_the_command_child_and_returns_its_output(
         await backend.run(['sh', '-c', 'echo $$ > pid; printf started; printf warn >&2; exec sleep 3600'], timeout=5)
     assert (caught.value.stdout, caught.value.stderr) == ('started', 'warn')
     pid = (await backend.read_bytes(f'{await backend.working_dir()}/pid')).decode().strip()
+    # real-wait: the stopped child exits in the live session, which signals nothing the test can wait on
     with anyio.fail_after(30):
-        while await _alive(backend, pid):
+        while await _alive(backend, pid):  # real-wait: polls the live session for the child's exit
             await anyio.sleep(0.5)
 
 
@@ -80,6 +81,7 @@ async def test_a_command_cancelled_before_its_start_answers_never_runs_on(
     with pytest.raises(WorkspaceTimeoutError):
         # Shorter than one round trip, so the deadline passes while the start request is in flight.
         await backend.run(['sh', '-c', 'sleep 5; touch late'], timeout=0.01)
+    # real-wait: gives a command that escaped the fence time to create its file in the live session
     await anyio.sleep(10)
     assert not await backend.exists(f'{root}/late')
 
@@ -94,6 +96,7 @@ async def test_stopping_the_session_mid_command_is_unavailable(
     ref = backend.ref
 
     async def stop_soon() -> None:
+        # real-wait: lets the live command start before the session is stopped under it
         await anyio.sleep(3)
         await AgentCoreSandbox[None](region_name=LIVE_REGION).destroy(ref)
 

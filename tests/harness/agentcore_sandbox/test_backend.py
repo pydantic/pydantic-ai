@@ -23,11 +23,9 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.agentcore_sandbox import AgentCoreSandboxBackend
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .fake_agentcore import FakeAgentCore, Hold, client_error
-
-# Upper bound on waiting for the fake to reach a held call; only a broken test runs into it.
-READINESS_WAIT_TIMEOUT = 10
 
 
 @pytest.mark.parametrize(
