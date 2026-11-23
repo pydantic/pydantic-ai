@@ -335,7 +335,8 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses four functions from `pydantic_ai._telemetry`. Each takes the run first, as
+The house pattern uses four functions from `pydantic_ai._telemetry`; its other names are the run
+telemetry these four read. Each takes the run first, as
 its `ctx` or, where there is none, `current_run_telemetry()`, and does nothing when that run isn't
 traced, so an uninstrumented run pays nothing:
 
