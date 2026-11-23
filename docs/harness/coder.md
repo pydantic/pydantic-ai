@@ -35,7 +35,7 @@ flowchart LR
 
 ## Usage
 
-Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, ripgrep (`rg`), which backs the `list_files` and `grep` tools, and Pillow, which downscales large images `read_file` returns. Without the extra, importing `Coder` raises an `ImportError` naming it:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, ripgrep (`rg`), which backs the `list_files` and `grep` tools, and Pillow, which downscales large images `read_file` returns. Without the extra, importing `Coder` raises an `ImportError` naming it, and without Pillow, constructing `Coder` does:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[coder]"
@@ -331,6 +331,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 ## Upgrading
 
 `json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
+
+Pillow is now in the `coder` extra too, because `Coder` downscales the images `read_file` returns. After an upgrade that does not re-resolve extras, such as `pip install -U pydantic-ai-harness`, constructing `Coder` or loading `coder_agent` raises an `ImportError`: reinstall `pydantic-ai-harness[coder]`, or install `pillow`.
 
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
