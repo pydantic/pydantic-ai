@@ -9,8 +9,9 @@ The bridge also keeps track of what the caller has actually heard. Twilio buffer
 audio it's sent and plays it in order, so the session can't know that by itself: the
 bridge sends a `mark` after each chunk, which Twilio echoes once that chunk has played.
 When the caller talks over the model, the bridge tells Twilio to drop what it hasn't
-played yet (`clear`) and tells the session how much was heard
-(`interrupt(played_bytes=...)`), so history records the reply as the caller heard it.
+played yet (`clear`). On a model that can be interrupted, it also tells the session how
+much was heard (`interrupt(played_bytes=...)`), so history records the reply as the
+caller heard it.
 
 It needs a Twilio phone number, a public HTTPS address for this server (a tunnel such as
 `cloudflared tunnel --url http://localhost:8000` works), and these environment variables:
