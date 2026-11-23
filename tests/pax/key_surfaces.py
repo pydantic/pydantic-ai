@@ -5,10 +5,12 @@ every key in `KEYS` on each case. A key a case does not list stays open. Each ce
 `main`; a change that gives a key a new meaning on purpose updates its cell.
 
 A case drives the construction site it is registered under, so it calls that site even when the site is private.
+Every case paints on `sys.stdout`, as termflow's widgets do, so a test can read the frames it drew.
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from contextlib import nullcontext
 from io import StringIO
@@ -57,7 +59,7 @@ from tests.pax.key_contract import CLOSE, PICK, Keys, Surface, reader_case, widg
 from tests.pax.menu_script import make_context
 from tests.pax.test_accounts import signed
 from tests.pax.test_ask_user_menu import ScreenLog
-from tests.pax.test_plugin_menu import make_loader, run_now
+from tests.pax.test_plugin_menu import PLUGIN, make_loader, run_now
 from tests.pax.test_spinners import catalogue
 
 Site = tuple[str, str, str]
@@ -95,6 +97,12 @@ def _deletable_model(path: Path) -> object:
 def _typed_member(path: Path) -> object:
     typing = MenuResult(item=MenuItem('Type a model name...', value=chain_menu._Row.TYPE))  # pyright: ignore[reportPrivateUsage]
     return chain_menu._pick_member(make_context(path)[0], [], Runners(run_list=lambda menu: typing))  # pyright: ignore[reportPrivateUsage]
+
+
+def _plugins(path: Path) -> object:
+    loader = make_loader(path)
+    (loader.plugins_dir / 'alpha.py').write_text(f'"""Say hello on start."""\n{PLUGIN}')
+    return PluginMenu(loader, apply=run_now).build().run()
 
 
 def _settings_fields(path: Path, *, searchable: bool) -> FieldMenu:
@@ -145,18 +153,18 @@ def _browser(path: Path) -> object:
         delete=entries.remove,
         rename=lambda entry, title: None,
         archive=lambda entry, archived: None,
-        output=StringIO(),
+        output=sys.stdout,
         key_source=lambda: 'x',
         size=lambda: (110, 24),
     ).run()
 
 
 def _question(menu: QuestionMenu, keys: Keys) -> object:
-    return menu.run(console=Console(file=StringIO(), width=80, height=24), key_source=keys)
+    return menu.run(console=Console(file=sys.stdout, width=80, height=24), key_source=keys)
 
 
 def _line(line: LineInput, keys: Keys) -> object:
-    return line.run(surface=PromptSurface(output=StringIO(), size=lambda: (80, 24)), keys=keys)
+    return line.run(surface=PromptSurface(output=sys.stdout, size=lambda: (80, 24)), keys=keys)
 
 
 def _browse(browser: SessionBrowser, keys: Keys) -> object:
@@ -347,11 +355,7 @@ KEY_SURFACES: dict[Site, Surface | Exempt] = {
     ),
     ('ui.menus.plugin_menu', 'PluginMenu.build', 'MenuBuilder'): Surface(
         reason='`/plugins`, where Enter and Space toggle the highlighted plugin',
-        cases=(
-            widget_case(
-                'list', lambda path: PluginMenu(make_loader(path, 'alpha'), apply=run_now).build().run(), CLOSE
-            ),
-        ),
+        cases=(widget_case('list', _plugins, CLOSE),),
     ),
     ('ui.menus.rewind', 'build_rewind_menu', 'MenuBuilder'): Surface(
         reason='`/rewind`, the turns to go back to',

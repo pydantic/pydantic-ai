@@ -3,6 +3,7 @@
 import io
 import math
 import re
+from pathlib import Path
 
 import pytest
 from pygments.token import Keyword
@@ -12,12 +13,15 @@ from rich.syntax import ANSI_LIGHT
 from rich.text import Text
 from termflow.ansi.utils import visible_length
 from termflow.themes import PALETTES
+from termflow.tui.keys import Key
 
 from pydantic_ai import PartStartEvent, TextPart
 from pydantic_ai_harness.file_system import FileEditedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.ui.menus.theme_picker import theme_preview
 from pydantic_ai_pax.ui.rendering import theme
+from tests.pax.key_contract import Case, Surface
+from tests.pax.key_surfaces import KEY_SURFACES, Site
 
 
 @pytest.mark.parametrize('name', theme.names())
@@ -299,3 +303,54 @@ async def test_default_preview_over_a_dark_palette_paints_the_light_background()
     assert {(fg, bg) for fg, bg in painted if _contrast(fg, bg) < 4.5} <= {
         (theme.LOGO.removeprefix('bold '), '#FFFFFF')
     }
+
+
+UNSTYLED_MENUS = {
+    ('models.openrouter', 'choose', 'MenuBuilder'),
+    ('models.openrouter', 'connection_action', 'MenuBuilder'),
+    ('models.vllm', 'choose', 'MenuBuilder'),
+    ('models.vllm', 'connection_action', 'MenuBuilder'),
+}
+"""Menus built without `markdown_style()`: termflow's own sky blue paints their title and cursor, 1.7:1 on white."""
+
+SHOWS_LOGO = {('ui.menus.theme_picker', 'build_theme_picker', 'MenuBuilder')}
+"""Menus whose preview draws the logo, which keeps its brand colours on every background."""
+
+MENUS = [
+    pytest.param(
+        site,
+        case,
+        id=f'{".".join(site[:2])}:{case.name}',
+        marks=pytest.mark.xfail(strict=True, reason='built without `markdown_style()`')
+        if site in UNSTYLED_MENUS
+        else (),
+    )
+    for site, surface in KEY_SURFACES.items()
+    if isinstance(surface, Surface)
+    for case in surface.cases
+]
+
+
+@pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3', '#EEEEEE'])
+@pytest.mark.parametrize(('site', 'case'), MENUS)
+async def test_every_registered_menu_reads_on_a_light_background(
+    site: Site,
+    case: Case,
+    background: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under `default` on a light terminal, every colour a `KEY_SURFACES` menu paints reaches WCAG AA (4.5:1).
+
+    A menu coloured through `theme.color()`, `theme.sgr()` or `markdown_style()` gets the light shades; one that
+    paints a colour of its own, or keeps termflow's default style, does not. Only truecolor foregrounds are measured:
+    the terminal draws its own ANSI colours and faint text.
+    """
+    monkeypatch.setenv('COLORTERM', 'truecolor')
+    with theme.use(lambda: 'default', background=background):
+        await case.press(tmp_path, Key.ESCAPE)
+    painted = _hex_colours(capsys.readouterr().out)
+    assert painted, 'the menu painted no colour: check that its case paints on `sys.stdout`'
+    logo = theme.LOGO.removeprefix('bold ') if site in SHOWS_LOGO else None
+    assert {(fg, bg) for fg, bg in painted if fg != logo and _contrast(fg, bg or background) < 4.5} == set()
