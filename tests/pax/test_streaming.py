@@ -173,7 +173,8 @@ async def test_abort_discards_pending_output() -> None:
     assert 'Discard this' not in output.getvalue()
 
 
-async def test_cancel_during_drain_stops_writer() -> None:
+async def test_abort_while_typing_stops_writer() -> None:
+    """Esc while a part is still being typed drops the rest; a part that ends writes it at once instead."""
     writing = asyncio.Event()
 
     class ObservedOutput(io.StringIO):
@@ -185,13 +186,11 @@ async def test_cancel_during_drain_stops_writer() -> None:
     output = ObservedOutput()
     renderer = StreamRenderer(Console(file=output, width=20000, force_terminal=True), stop_loading=lambda: None)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 10000 + '\n')))
-    task = asyncio.create_task(renderer.finish())
     await writing.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
     await renderer.abort()
-    assert output.getvalue().count('x') < 10000
+    shown = output.getvalue().count('x')
+    await renderer.finish()
+    assert 0 < shown == output.getvalue().count('x') < 10000
 
 
 async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:
