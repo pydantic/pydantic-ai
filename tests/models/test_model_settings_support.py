@@ -32,7 +32,8 @@ that records only path, body and headers on a live transport, while `timeout` is
 - `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
   when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model with no
   effort setting (Mistral's dated magistral ids) supports it while sending nothing at all. "Payload unchanged" is therefore not
-  evidence of non-support, which is exactly what this harness reads it as.
+  evidence of non-support, which is exactly what this harness reads it as. `test_thinking_moves_the_payload` pins its
+  wire per model name instead, at the ids `THINKING_ROUTES` lists, and names each one that sends nothing.
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
   which warns instead) supports it while sending nothing at all.
@@ -73,6 +74,7 @@ from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -101,6 +103,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.zai import ZaiProvider
 
 with try_import() as anthropic_available:
@@ -315,6 +318,8 @@ class Observed:
     Warnings other than `UnsupportedSettingWarning` are recorded only when the caller's filters let them through: the
     suite's `error` filter makes one abort the request instead.
     """
+    profile: ModelProfile
+    """The profile the model resolved for its name, which gates the per-model settings such as `thinking`."""
 
 
 @dataclass(frozen=True)
@@ -349,6 +354,7 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
         unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
         warned=frozenset(warned),
         warning_messages=tuple(str(warning.message) for warning in caught),
+        profile=model.profile,
     )
 
 
@@ -495,12 +501,14 @@ def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     return probe
 
 
-bedrock_probe = botocore_probe(
-    lambda: BedrockConverseModel(
-        'anthropic.claude-sonnet-4-5-20250929-v1:0',
+def _bedrock(model_name: str = 'anthropic.claude-sonnet-4-5-20250929-v1:0') -> BedrockConverseModel:
+    return BedrockConverseModel(
+        model_name,
         provider=BedrockProvider(aws_access_key_id=PROBE_KEY, aws_secret_access_key=PROBE_KEY, region_name='us-east-1'),
     )
-)
+
+
+bedrock_probe = botocore_probe(_bedrock)
 
 
 async def huggingface_probe(settings: ModelSettings) -> ProbeResult:
@@ -527,7 +535,11 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     return probe
 
 
-xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+def _xai(client: AsyncXaiClient, model_name: str = 'grok-4') -> Model:
+    return XaiModel(model_name, provider=XaiProvider(xai_client=client))
+
+
+xai_probe = xai_sdk_probe(_xai)
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -611,17 +623,17 @@ class Case:
     """Settings the model doesn't send but doesn't declare it ignores either, because its output can't break them."""
 
 
-def _openai_chat(client: httpx2.AsyncClient) -> Model:
-    return OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
+def _openai_chat(client: httpx2.AsyncClient, model_name: str = 'gpt-4o') -> Model:
+    return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _openai_responses(client: httpx2.AsyncClient) -> Model:
-    return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
+def _openai_responses(client: httpx2.AsyncClient, model_name: str = 'gpt-4o') -> Model:
+    return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
+def _openai_chatgpt(client: httpx2.AsyncClient, model_name: str = 'gpt-6.1-sol') -> Model:
     return OpenAIResponsesModel(
-        'gpt-6.1-sol',
+        model_name,
         provider=OpenAIChatGPTProvider(
             credentials=OpenAIChatGPTCredentials(
                 client_id='probe', access_token=PROBE_KEY, refresh_token=PROBE_KEY, scope='chatgpt.tokens.use.direct'
@@ -631,9 +643,9 @@ def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
     )
 
 
-def _openai_codex(client: httpx2.AsyncClient) -> Model:
+def _openai_codex(client: httpx2.AsyncClient, model_name: str = 'gpt-5.6-luna') -> Model:
     return OpenAICodexModel(
-        'gpt-5.6-luna',
+        model_name,
         provider=OpenAICodexProvider(
             credentials=OpenAICodexCredentials(access_token=PROBE_KEY, refresh_token=PROBE_KEY, account_id='probe'),
             http_client=client,
@@ -641,73 +653,71 @@ def _openai_codex(client: httpx2.AsyncClient) -> Model:
     )
 
 
-def _cerebras(client: httpx2.AsyncClient) -> Model:
-    return CerebrasModel('llama3.1-8b', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=client))
+def _cerebras(client: httpx2.AsyncClient, model_name: str = 'llama3.1-8b') -> Model:
+    return CerebrasModel(model_name, provider=CerebrasProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _crusoe(client: httpx2.AsyncClient) -> Model:
-    return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
+def _crusoe(client: httpx2.AsyncClient, model_name: str = 'openai/gpt-oss-120b') -> Model:
+    return CrusoeModel(model_name, provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _github_copilot(client: httpx2.AsyncClient) -> Model:
+def _github_copilot(client: httpx2.AsyncClient, model_name: str = 'gpt-5.4') -> Model:
     # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
-    return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
+    return GitHubCopilotModel(model_name, provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _ollama(client: httpx2.AsyncClient) -> Model:
+def _ollama(client: httpx2.AsyncClient, model_name: str = 'llama3.2') -> Model:
     return OllamaModel(
-        'llama3.2', provider=OllamaProvider(base_url='http://probe/v1', api_key=PROBE_KEY, http_client=client)
+        model_name, provider=OllamaProvider(base_url='http://probe/v1', api_key=PROBE_KEY, http_client=client)
     )
 
 
-def _openrouter(client: httpx2.AsyncClient) -> Model:
-    return OpenRouterModel('openai/gpt-4o', provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=client))
+def _openrouter(client: httpx2.AsyncClient, model_name: str = 'openai/gpt-4o') -> Model:
+    return OpenRouterModel(model_name, provider=OpenRouterProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _snowflake(client: httpx2.AsyncClient) -> Model:
-    return SnowflakeModel(
-        'llama3.1-70b', provider=SnowflakeProvider(account='probe', token=PROBE_KEY, http_client=client)
-    )
+def _snowflake(client: httpx2.AsyncClient, model_name: str = 'llama3.1-70b') -> Model:
+    return SnowflakeModel(model_name, provider=SnowflakeProvider(account='probe', token=PROBE_KEY, http_client=client))
 
 
-def _zai(client: httpx2.AsyncClient) -> Model:
-    return ZaiModel('glm-4.6', provider=ZaiProvider(api_key=PROBE_KEY, http_client=client))
+def _zai(client: httpx2.AsyncClient, model_name: str = 'glm-4.6') -> Model:
+    return ZaiModel(model_name, provider=ZaiProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _bedrock_mantle_chat(client: httpx2.AsyncClient) -> Model:
+def _bedrock_mantle_chat(client: httpx2.AsyncClient, model_name: str = 'openai.gpt-oss-safeguard-20b') -> Model:
     # `gpt-oss-safeguard-*` are the only Mantle models served on the Chat Completions interface.
     return BedrockMantleChatModel(
-        'openai.gpt-oss-safeguard-20b',
+        model_name,
         provider=BedrockMantleProvider(api_key=PROBE_KEY, region_name='us-east-1', http_client=client),
     )
 
 
-def _bedrock_mantle_responses(client: httpx2.AsyncClient) -> Model:
+def _bedrock_mantle_responses(client: httpx2.AsyncClient, model_name: str = 'openai.gpt-5.4') -> Model:
     # GPT-5.4 keeps reasoning off by default, so sampling params are not dropped before the wire.
     return BedrockMantleResponsesModel(
-        'openai.gpt-5.4',
+        model_name,
         provider=BedrockMantleProvider(api_key=PROBE_KEY, region_name='us-east-1', http_client=client),
     )
 
 
-def _anthropic(client: httpx2.AsyncClient) -> Model:
-    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=client))
+def _anthropic(client: httpx2.AsyncClient, model_name: str = 'claude-sonnet-4-5') -> Model:
+    return AnthropicModel(model_name, provider=AnthropicProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _groq(client: httpx.AsyncClient) -> Model:
-    return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=PROBE_KEY, http_client=client))
+def _groq(client: httpx.AsyncClient, model_name: str = 'llama-3.3-70b-versatile') -> Model:
+    return GroqModel(model_name, provider=GroqProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _mistral(client: httpx2.AsyncClient) -> Model:
-    return MistralModel('mistral-large-latest', provider=MistralProvider(api_key=PROBE_KEY, http_client=client))
+def _mistral(client: httpx2.AsyncClient, model_name: str = 'mistral-large-latest') -> Model:
+    return MistralModel(model_name, provider=MistralProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _cohere(client: httpx.AsyncClient) -> Model:
-    return CohereModel('command-r-plus', provider=CohereProvider(api_key=PROBE_KEY, http_client=client))
+def _cohere(client: httpx.AsyncClient, model_name: str = 'command-r-plus') -> Model:
+    return CohereModel(model_name, provider=CohereProvider(api_key=PROBE_KEY, http_client=client))
 
 
-def _google(client: httpx2.AsyncClient) -> Model:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+def _google(client: httpx2.AsyncClient, model_name: str = 'gemini-2.5-flash') -> Model:
+    return GoogleModel(model_name, provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _google_decisions(client: httpx2.AsyncClient) -> Model:
@@ -946,6 +956,197 @@ def test_no_caveat_describes_a_different_setting():
     assert not misplaced, f'caveats describing another setting: {sorted(misplaced)}'
 
 
+# `thinking` is off the payload diff above because its support varies by model name within a class, but its wire is
+# still pinned per model name: each route below is probed at model ids whose profile supports thinking there.
+
+_OPENAI = _needs(openai_available, 'openai')
+
+
+@dataclass(frozen=True)
+class ThinkingRoute:
+    """One route `thinking` is probed through, and the model ids whose profile supports thinking on it."""
+
+    id: str
+    probe: Callable[[str], Probe]
+    """Builds the route's probe for one model id."""
+    model_names: tuple[str, ...]
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+THINKING_ROUTES = [
+    # The always-reasoning GPT-6 models reject function tools on Chat Completions, which every probe sends.
+    ThinkingRoute(
+        'OpenAIChatModel', lambda name: http_probe(partial(_openai_chat, model_name=name)), ('gpt-5.4',), _OPENAI
+    ),
+    ThinkingRoute(
+        'OpenAIResponsesModel',
+        lambda name: http_probe(partial(_openai_responses, model_name=name)),
+        ('gpt-5.4', 'gpt-6.1-sol'),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'OpenAICodexModel', lambda name: http_probe(partial(_openai_codex, model_name=name)), ('gpt-5.6-luna',), _OPENAI
+    ),
+    ThinkingRoute(
+        'OpenAIResponsesModel (ChatGPT plan usage)',
+        lambda name: http_probe(partial(_openai_chatgpt, model_name=name)),
+        ('gpt-6.1-sol',),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'CerebrasModel',
+        lambda name: http_probe(partial(_cerebras, model_name=name)),
+        ('kimi-k3', 'zai-glm-5.3'),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'CrusoeModel',
+        lambda name: http_probe(partial(_crusoe, model_name=name)),
+        ('zai-org/GLM-5.3', 'moonshotai/Kimi-K2-Thinking'),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'GitHubCopilotModel',
+        lambda name: http_probe(partial(_github_copilot, model_name=name)),
+        ('gpt-5.4', 'claude-sonnet-4.6'),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'OllamaModel',
+        lambda name: http_probe(partial(_ollama, model_name=name)),
+        ('deepseek-r1', 'nemotron-3-super'),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'OpenRouterModel',
+        lambda name: http_probe(partial(_openrouter, model_name=name)),
+        (
+            'anthropic/claude-sonnet-4.6',
+            'nvidia/nemotron-3-super-120b-a12b',
+            'moonshotai/kimi-k3',
+            'minimax/minimax-m2.7',
+        ),
+        _OPENAI,
+    ),
+    # The OpenAI-compatible gateways resolve a `vendor/model` id through the shared family map, not OpenRouter's own.
+    ThinkingRoute(
+        'OpenAIChatModel (Together)',
+        lambda name: http_probe(
+            lambda client: OpenAIChatModel(name, provider=TogetherProvider(api_key=PROBE_KEY, http_client=client))
+        ),
+        ('nvidia/nemotron-3-super-120b-a12b', 'moonshotai/kimi-k3', 'minimax/minimax-m2.7'),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'SnowflakeModel', lambda name: http_probe(partial(_snowflake, model_name=name)), ('claude-sonnet-4-6',), _OPENAI
+    ),
+    ThinkingRoute('ZaiModel', lambda name: http_probe(partial(_zai, model_name=name)), ('glm-4.6', 'glm-5.3'), _OPENAI),
+    ThinkingRoute(
+        'BedrockMantleResponsesModel',
+        lambda name: http_probe(partial(_bedrock_mantle_responses, model_name=name)),
+        ('openai.gpt-5.4',),
+        _OPENAI,
+    ),
+    ThinkingRoute(
+        'AnthropicModel',
+        lambda name: http_probe(partial(_anthropic, model_name=name)),
+        ('claude-sonnet-4-6', 'claude-opus-4-7'),
+        _needs(anthropic_available, 'anthropic'),
+    ),
+    ThinkingRoute(
+        'GroqModel',
+        lambda name: legacy_http_probe(partial(_groq, model_name=name)),
+        ('openai/gpt-oss-120b', 'qwen/qwen3-32b'),
+        _needs(groq_available, 'groq'),
+    ),
+    ThinkingRoute(
+        'MistralModel',
+        lambda name: http_probe(partial(_mistral, model_name=name)),
+        ('mistral-medium-latest', 'mistral-large-4', 'magistral-medium-2509'),
+        _needs(mistral_available, 'mistral'),
+    ),
+    ThinkingRoute(
+        'CohereModel',
+        lambda name: legacy_http_probe(partial(_cohere, model_name=name)),
+        ('command-a-reasoning-08-2025',),
+        _needs(cohere_available, 'cohere'),
+    ),
+    ThinkingRoute(
+        'GoogleModel',
+        lambda name: http_probe(partial(_google, model_name=name)),
+        ('gemini-2.5-flash', 'gemini-3.1-pro-preview'),
+        _needs(google_available, 'google'),
+    ),
+    ThinkingRoute(
+        'BedrockConverseModel',
+        lambda name: botocore_probe(partial(_bedrock, model_name=name)),
+        (
+            'us.anthropic.claude-opus-4-6-v1',
+            'zai.glm-4.7',
+            'zai.glm-5',
+            'zai.glm-5.3',
+            'deepseek.v3.2',
+            'openai.gpt-oss-120b-1:0',
+            'openai.gpt-6.1-sol',
+        ),
+        _needs(bedrock_available, 'bedrock'),
+    ),
+    ThinkingRoute(
+        'XaiModel',
+        lambda name: xai_sdk_probe(partial(_xai, model_name=name)),
+        ('grok-3-mini', 'grok-4.5'),
+        _needs(xai_available, 'xai'),
+    ),
+]
+
+THINKING_SENDS_NOTHING: dict[tuple[str, str], str] = {
+    ('MistralModel', 'magistral-medium-2509'): (
+        'A dated magistral id always reasons and takes no `reasoning_effort`, so `MistralModel` sends nothing for it.'
+    ),
+}
+"""The `(route, model id)` pairs whose profile supports `thinking` though no `thinking` value moves their payload, and why.
+
+An entry is checked both ways: the payload has to stay unchanged, so the entry has to go once the model sends `thinking`.
+"""
+
+
+@pytest.mark.parametrize(
+    ('route', 'model_name'),
+    [
+        pytest.param(route, model_name, id=f'{route.id}:{model_name}', marks=route.marks)
+        for route in THINKING_ROUTES
+        for model_name in route.model_names
+    ],
+)
+async def test_thinking_moves_the_payload(route: ThinkingRoute, model_name: str, allow_model_requests: None):
+    """`thinking='high'` changes the request of every probed model id whose profile supports thinking.
+
+    A model that always thinks can already think at its default effort with no setting, so for one the effort has to
+    show instead: `thinking='low'` and `thinking='high'` have to send different requests. This catches what
+    https://github.com/pydantic/pydantic-ai/pull/11491 fixed: `BedrockConverseModel` sent nothing for `thinking` on
+    Z.AI GLM and DeepSeek V3.2, and one request for every level on GLM-5.3.
+    """
+    probe = route.probe(model_name)
+    baseline = await probe({})
+    profile = baseline.observed.profile
+    assert profile.get('supports_thinking'), f'{model_name} on {route.id} does not support thinking, so proves nothing'
+
+    always_thinks = profile.get('thinking_always_enabled', False)
+    before = (await probe({'thinking': 'low'})).payload if always_thinks else baseline.payload
+    after = (await probe({'thinking': 'high'})).payload
+    assert before is not None and after is not None, f'{route.id} sent no request for {model_name}'
+    # Without this, a request that varies between identical calls would read as moved.
+    assert (await probe({'thinking': 'high'})).payload == after
+
+    if (route.id, model_name) in THINKING_SENDS_NOTHING:
+        assert before == after, (
+            f'{model_name} on {route.id} sends `thinking` now: remove its `THINKING_SENDS_NOTHING` entry'
+        )
+    else:
+        compared = "`thinking='low'`" if always_thinks else 'no settings'
+        assert before != after, f"`thinking='high'` sends the same request as {compared} for {model_name} on {route.id}"
+
+
 # `max_retries` leaves every request it governs byte-identical, so the payload diff above can't see it.
 # Instead, each model below is answered with a retryable error, and the probe counts how many times the
 # SDK sends the request: with no setting, with `max_retries=0`, and with `max_retries=1`.
@@ -1046,7 +1247,6 @@ class RetryCase:
         return any(attempts != default for attempts in overridden)
 
 
-_OPENAI = _needs(openai_available, 'openai')
 RETRY_CASES = [
     RetryCase('OpenAIChatModel', ('OpenAI',), _openai_chat, (3, 1, 2), marks=_OPENAI),
     RetryCase('OpenAIResponsesModel', ('OpenAI',), _openai_responses, (3, 1, 2), marks=_OPENAI),
