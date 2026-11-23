@@ -1559,6 +1559,8 @@ class TestMarkdownConverter:
                 f'<a href="/x&#{_TOO_MANY_DIGITS};">x</a>', '[x](/x\N{REPLACEMENT CHARACTER})', id='attribute'
             ),
             pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)}65;</p>', 'A', id='leading-zeros'),
+            # Zero, like any value outside Unicode's characters, reads as U+FFFD.
+            pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)};</p>', '\N{REPLACEMENT CHARACTER}', id='all-zeros'),
             pytest.param(
                 f'<p>&#65;&#{_TOO_MANY_DIGITS};</p>', 'A\N{REPLACEMENT CHARACTER}', id='with-parsable-reference'
             ),
