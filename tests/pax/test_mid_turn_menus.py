@@ -636,6 +636,7 @@ async def test_usage_reports_answer_mid_turn(tmp_path: Path, monkeypatch: pytest
             finish.set()
             pipe.send_text('/exit\r')
             await done.wait()
+    # The transcript keeps rows in the order they were shown; the printed copy moves the finished turn's rows.
     text = _plain(surfaces[-1].transcript)
     assert text.index(f'> {command}') < text.index('Retained history cost') < text.index('> /exit')
     # Mid-turn, the report covers the turn that finished, not the running one.
