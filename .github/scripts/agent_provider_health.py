@@ -1055,7 +1055,7 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
     return 'task', f'{result.workflow}:{result.task_key}', failure.kind
 
 
-def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
+def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:  # noqa: C901
     """Return a stage from trusted failed steps and their position in the agent job."""
     for job in jobs:
         if job.get('conclusion') not in ('failure', 'timed_out', 'cancelled', 'action_required'):

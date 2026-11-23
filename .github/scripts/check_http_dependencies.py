@@ -9,6 +9,7 @@ from packaging.requirements import Requirement
 
 
 def wheel_requirements(pattern: str) -> list[Requirement]:
+    """Return the `Requires-Dist` requirements of the first wheel in `dist/` that matches `pattern`."""
     wheel = next(Path('dist').glob(pattern))
     with zipfile.ZipFile(wheel) as archive:
         metadata_path = next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))

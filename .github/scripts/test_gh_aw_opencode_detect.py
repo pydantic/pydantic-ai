@@ -71,7 +71,12 @@ def answer(
         assert isinstance(stdout, io.TextIOBase)
         if len(invoked) <= refused_runs:
             error = {'type': 'provider.go-limit', 'message': 'OpenCode Go weekly usage limit reached.', 'status': 429}
-            stdout.write(json.dumps({'type': 'step_start', 'part': {}}) + '\n' + json.dumps({'type': 'error', 'error': error}) + '\n')
+            stdout.write(
+                json.dumps({'type': 'step_start', 'part': {}})
+                + '\n'
+                + json.dumps({'type': 'error', 'error': error})
+                + '\n'
+            )
             if clock is not None:
                 clock[0] += 60
             raise subprocess.CalledProcessError(1, args)
@@ -244,7 +249,11 @@ def test_coding_plan_failure_names_its_error_type(
         stdout = kwargs['stdout']
         assert isinstance(stdout, io.TextIOBase)
         go = args[4].startswith('opencode-go/')
-        error = {'type': 'provider.go-limit' if go else 'provider.auth', 'message': 'Refused', 'status': 429 if go else 401}
+        error = {
+            'type': 'provider.go-limit' if go else 'provider.auth',
+            'message': 'Refused',
+            'status': 429 if go else 401,
+        }
         stdout.write(json.dumps({'type': 'error', 'error': error}) + '\n')
         raise subprocess.CalledProcessError(1, args)
 

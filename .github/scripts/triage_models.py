@@ -22,6 +22,7 @@ from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 
 def parse_time(value: str) -> dt.datetime:
+    """Parse a GitHub timestamp, which ends in `Z`, into an aware datetime."""
     return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
@@ -78,6 +79,8 @@ def agent_items(path: str, item_model: type[TItem], *, tag: str, limit: int) -> 
 
 
 class SnapshotCandidate(BaseModel):
+    """One item of the trusted snapshot, with the `updated_at` the snapshot recorded for it."""
+
     number: int = Field(ge=1, strict=True)
     updated_at: str
 
@@ -111,11 +114,15 @@ class _GitHubObject(BaseModel):
 
 
 class Account(_GitHubObject):
+    """The account an event names as its actor, assignee or assigner."""
+
     login: str = ''
     type: str = ''
 
 
 class LabelStub(_GitHubObject):
+    """The label a `labeled` or `unlabeled` event names."""
+
     name: str = ''
 
 
