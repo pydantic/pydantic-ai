@@ -1,4 +1,4 @@
-"""`BoxdDesktop` controls a boxd machine's desktop through boxd's computer API (`machines.computer`).
+"""`BoxdDisplayDriver` controls a boxd machine's desktop through boxd's computer API (`machines.computer`).
 
 These facts about boxd's desktop were checked on 2026-11-13 against boxd 0.3.2 on boxd's production cluster. Re-run
 the live display tests in `tests/harness/boxd_sandbox/test_boxd_live.py` before changing how actions map to calls.
@@ -50,6 +50,7 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._png import PNG_SIGNATURE
+from pydantic_ai_harness._x11 import TINT2_BUTTON_STYLE
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 if TYPE_CHECKING:
@@ -60,14 +61,14 @@ DISPLAY = ':100'
 """The X display number of the desktop on every boxd machine."""
 
 # Ten times the 30 seconds the spec's install, update included, took live, so a second install outwaits the first.
-_APT = 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300'
-_INSTALL = f'{_APT} install -y --no-install-recommends tint2 xterm'
+_APT_GET = 'DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300'
+_INSTALL_PANEL_PACKAGES = f'{_APT_GET} install -y --no-install-recommends tint2 xterm'
 
-INSTALL_PANEL = f'{_INSTALL} || {{ {_APT} update && {_INSTALL}; }}'
+INSTALL_PANEL = f'{_INSTALL_PANEL_PACKAGES} || {{ {_APT_GET} update && {_INSTALL_PANEL_PACKAGES}; }}'
 """Installs the panel and the terminal it opens, as root. boxd's image has xterm; on 2026-11-20 tint2 needed an update
 of the package lists first. The lock timeout makes a second install wait for one already running."""
 
-PANEL_LOG = '/tmp/pydantic-ai-desktop.log'
+DESKTOP_LOG = '/tmp/pydantic-ai-desktop.log'
 """Where the panel's install and the panel itself write, so a panel that didn't come up says why."""
 
 # Not `--onlyvisible`: the panel's window stays unviewable until the next computer call.
@@ -81,7 +82,7 @@ _PANEL_HEIGHT = 40
 # desktop places, sizes or focuses a new window. The font is named because xterm ignores `~/.Xdefaults` here; 14 is
 # the size the other sandboxes' desktops use, since models misread a smaller g as 9. The window can be focused only
 # once it is viewable, at the next computer call, so focusing is retried. Both waits end if xterm exits.
-_TERMINAL = f"""#!/bin/sh
+_OPEN_TERMINAL_SCRIPT = f"""#!/bin/sh
 xterm -fa Monospace -fs 14 & pid=$!
 until w=$(xdotool search --pid $pid 2>/dev/null | head -1); [ -n "$w" ]; do kill -0 $pid 2>/dev/null || exit; sleep 0.1; done
 eval "$(xdotool getdisplaygeometry --shell)"
@@ -94,20 +95,13 @@ wait $pid
 # below the panel and as large as the rest of the screen. It opens at the top left otherwise, over the panel. The
 # desktop puts a window back at the top left when it first shows it, at the next computer call, so the move waits for
 # that. The wait ends if the window closes.
-_BROWSER = f"""#!/bin/sh
+_OPEN_BROWSER_SCRIPT = f"""#!/bin/sh
 agent-browser open >/dev/null || exit
 w=$(xdotool search --class Chromium-browser | tail -1)
 until xwininfo -id "$w" 2>/dev/null | grep -q IsViewable; do xwininfo -id "$w" >/dev/null 2>&1 || exit; sleep 0.1; done
 eval "$(xdotool getdisplaygeometry --shell)"
 xdotool windowmove "$w" 0 {_PANEL_HEIGHT} windowsize "$w" "$WIDTH" $((HEIGHT - {_PANEL_HEIGHT})) windowfocus "$w"
 """
-
-_BUTTON_STYLE = (
-    'button_font = Sans 12',
-    'button_font_color = #ffffff 100',
-    'button_padding = 8 4 6',
-    'button_background_id = 2',
-)
 
 # A panel along the top with a button labelled Terminal, and a button per open window. A labelled button, not
 # tint2's icon-only launcher: in live runs GPT-5.5 didn't try the bare icon until it had tried several key shortcuts.
@@ -128,7 +122,7 @@ _TINT2RC = (
     'button = new',
     'button_icon = mini.xterm',
     'button_text = Terminal',
-    *_BUTTON_STYLE,
+    *TINT2_BUTTON_STYLE,
     f'button_lclick_command = {_PANEL_DIR}/terminal',
     'taskbar_padding = 2 2 4',
     'task_text = 1',
@@ -141,14 +135,14 @@ _BROWSER_BUTTON = (
     'button = new',
     'button_icon = web-browser',
     'button_text = Chromium',
-    *_BUTTON_STYLE,
+    *TINT2_BUTTON_STYLE,
     f'button_lclick_command = {_PANEL_DIR}/browser',
 )
 """A second button, labelled with the browser's name like the Terminal one, for when the machine has agent-browser."""
 
 WRITE_PANEL_SETTINGS = (
-    f'mkdir -p "{_PANEL_DIR}" && printf %s {shlex.quote(_TERMINAL)} >"{_PANEL_DIR}/terminal" && '
-    f'printf %s {shlex.quote(_BROWSER)} >"{_PANEL_DIR}/browser" && '
+    f'mkdir -p "{_PANEL_DIR}" && printf %s {shlex.quote(_OPEN_TERMINAL_SCRIPT)} >"{_PANEL_DIR}/terminal" && '
+    f'printf %s {shlex.quote(_OPEN_BROWSER_SCRIPT)} >"{_PANEL_DIR}/browser" && '
     f'chmod +x "{_PANEL_DIR}/terminal" "{_PANEL_DIR}/browser" && {{ printf "%s\\n" {shlex.join(_TINT2RC)}; '
     # Each `P` in `panel_items` is the next button.
     f'if command -v agent-browser >/dev/null; then printf "%s\\n" {shlex.join(_BROWSER_BUTTON)} "panel_items = PPT"; '
@@ -159,11 +153,11 @@ agent-browser, so it is checked at every panel start."""
 
 START_PANEL = (
     # One start at a time, so two can't both find no panel and start two. tint2 must not hold the lock.
-    f'exec >>{PANEL_LOG} 2>&1 9>/tmp/.pydantic-ai-panel.lock; ! command -v flock >/dev/null || flock 9; '
+    f'exec >>{DESKTOP_LOG} 2>&1 9>/tmp/.pydantic-ai-panel.lock; ! command -v flock >/dev/null || flock 9; '
     f'command -v tint2 >/dev/null && command -v xterm >/dev/null || sudo -n sh -c {shlex.quote(INSTALL_PANEL)}; '
     f'{WRITE_PANEL_SETTINGS} || exit; '
     f'if command -v tint2 >/dev/null && ! {_PANEL_SHOWS}; then '
-    f'boxd-desktop-launch "tint2 -c {_PANEL_DIR}/tint2rc >>{PANEL_LOG} 2>&1" 9>&-; i=0; '
+    f'boxd-desktop-launch "tint2 -c {_PANEL_DIR}/tint2rc >>{DESKTOP_LOG} 2>&1" 9>&-; i=0; '
     f'until {_PANEL_SHOWS} || [ $i -ge 50 ]; do sleep 0.2; i=$((i+1)); done; fi; '
     f'{_PANEL_SHOWS}'
 )
@@ -172,21 +166,21 @@ starts the panel with `boxd-desktop-launch` unless a tint2 panel already runs. W
 (under a second live) and exits 0 once it is there. A machine created with `desktop` also installs both from its spec
 at boot; the second install waits for apt's lock."""
 
-_RELEASE_TIMEOUT = 10
-"""Seconds to spend letting go of the mouse button after a drag fails or is cancelled."""
+_RELEASE_TIMEOUT = 5
+"""Seconds to spend letting go of the mouse button after a drag fails or is cancelled, as on the other desktops."""
 
-_TYPED_PER_CALL = 10_000
+_MAX_CHARS_PER_CALL = 10_000
 
-_SCROLLED_PER_CALL = 100
+_MAX_SCROLL_CLICKS_PER_CALL = 100
 
-_REPEATS_PER_CALL = 100
+_MAX_KEY_REPEATS_PER_CALL = 100
 
-_DRAG_POINTS_PER_CALL = 100
+_MAX_DRAG_POINTS_PER_CALL = 100
 """A longer drag presses, moves and releases the button in separate calls."""
 
 _NAMED_KEYSYMS: dict[NamedKey, str] = {'pause': 'Pause', 'numlock': 'Num_Lock', 'scrolllock': 'Scroll_Lock'}
 
-_KEYSYMS: dict[str, str] = {
+_RENAMED_KEYS: dict[str, str] = {
     **_NAMED_KEYSYMS,
     # Sent as keys, not characters, because browsers ignore the Linefeed keysym.
     '\n': 'Return',
@@ -196,34 +190,34 @@ _KEYSYMS: dict[str, str] = {
 
 
 def _keysym(key: str) -> str:
-    if key in _KEYSYMS:
-        return _KEYSYMS[key]
+    if key in _RENAMED_KEYS:
+        return _RENAMED_KEYS[key]
     if len(key) == 1 and not (key.isascii() and key.isalnum()):
         # A symbol such as `+` would be read as the joiner in `ctrl++`. `U002B` can't be misread.
         return f'U{ord(key):04X}'
     return key
 
 
-def _combination(keys: Sequence[str]) -> str:
+def _key_combination(keys: Sequence[str]) -> str:
     return '+'.join(_keysym(key) for key in keys)
 
 
-def _png(result: ComputerActionResult) -> bytes:
+def _screenshot_png(result: ComputerActionResult) -> bytes:
     if result.screenshot is None or not result.screenshot.data.startswith(PNG_SIGNATURE):
         raise WorkspaceError('boxd did not return a PNG screenshot.')
     return result.screenshot.data
 
 
-class BoxdDesktop:
+class BoxdDisplayDriver:
     """Controls a boxd machine's desktop with boxd's computer API.
 
-    `attached` returns the API and the machine's ID. It is called again for every action, because the backend
+    `get_computer_api` returns the API and the machine's ID. It is called again for every action, because the backend
     reconnects with a new client after it closes the old one. The backend also starts the panel in it, so only a call
     that uses the screen waits for the panel.
     """
 
-    def __init__(self, attached: Callable[[], Awaitable[tuple[AsyncComputer, str]]]):
-        self._attached = attached
+    def __init__(self, get_computer_api: Callable[[], Awaitable[tuple[AsyncComputer, str]]]):
+        self._attached = get_computer_api
 
     async def display_size(self) -> tuple[int, int]:
         computer, machine_id = await self._attached()
@@ -232,12 +226,12 @@ class BoxdDesktop:
 
     async def screenshot(self) -> bytes:
         computer, machine_id = await self._attached()
-        return _png(await computer.screenshot(machine_id))
+        return _screenshot_png(await computer.screenshot(machine_id))
 
     async def zoom(self, region: Region) -> bytes:
         computer, machine_id = await self._attached()
         area = (region.left, region.top, region.right - region.left, region.bottom - region.top)
-        return _png(await computer.screenshot(machine_id, region=area))
+        return _screenshot_png(await computer.screenshot(machine_id, region=area))
 
     async def cursor_position(self) -> Point:
         computer, machine_id = await self._attached()
@@ -262,19 +256,19 @@ class BoxdDesktop:
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 sign = -1 if direction in ('up', 'left') else 1
                 vertical = direction in ('up', 'down')
-                for start in range(0, amount, _SCROLLED_PER_CALL):
-                    clicks = sign * min(_SCROLLED_PER_CALL, amount - start)
+                for start in range(0, amount, _MAX_SCROLL_CLICKS_PER_CALL):
+                    clicks = sign * min(_MAX_SCROLL_CLICKS_PER_CALL, amount - start)
                     dx, dy = (0, clicks) if vertical else (clicks, 0)
                     await computer.scroll(machine_id, x, y, dx=dx, dy=dy, modifiers=modifiers)
             case TypeText(text=text):
-                for start in range(0, len(text), _TYPED_PER_CALL):
-                    await computer.type(machine_id, text[start : start + _TYPED_PER_CALL])
+                for start in range(0, len(text), _MAX_CHARS_PER_CALL):
+                    await computer.type(machine_id, text[start : start + _MAX_CHARS_PER_CALL])
             case PressKeys(keys=keys, repeat=repeat):
-                combination = _combination(keys)
-                for start in range(0, repeat, _REPEATS_PER_CALL):
-                    await computer.key(machine_id, combination, repeat=min(_REPEATS_PER_CALL, repeat - start))
+                combination = _key_combination(keys)
+                for start in range(0, repeat, _MAX_KEY_REPEATS_PER_CALL):
+                    await computer.key(machine_id, combination, repeat=min(_MAX_KEY_REPEATS_PER_CALL, repeat - start))
             case HoldKeys(keys=keys, seconds=seconds):
-                await computer.key(machine_id, _combination(keys), hold_ms=max(1, round(seconds * 1000)))
+                await computer.key(machine_id, _key_combination(keys), hold_ms=max(1, round(seconds * 1000)))
             case _:
                 raise UnsupportedActionError(f"boxd's desktop cannot perform {action!r}.")
 
@@ -282,12 +276,12 @@ class BoxdDesktop:
         self, computer: AsyncComputer, machine_id: str, path: Sequence[Point], modifiers: Sequence[str]
     ) -> None:
         points = [(point.x, point.y) for point in path]
-        if len(points) <= _DRAG_POINTS_PER_CALL:
+        if len(points) <= _MAX_DRAG_POINTS_PER_CALL:
             await computer.drag(machine_id, points, modifiers=modifiers)
             return
         if modifiers:
             raise UnsupportedActionError(
-                f"boxd's desktop can hold keys during a drag of at most {_DRAG_POINTS_PER_CALL} points."
+                f"boxd's desktop can hold keys during a drag of at most {_MAX_DRAG_POINTS_PER_CALL} points."
             )
         # Over 100 points: press, then one `move` call per point, then release. No pauses are added, and a browser
         # still sees the drag start and land.

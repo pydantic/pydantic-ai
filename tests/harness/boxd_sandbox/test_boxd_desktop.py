@@ -33,7 +33,7 @@ from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL, WRITE_PANEL_SETTINGS
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 
-from ..display_fakes import look_click_then_finish, screen
+from ..display_fakes import full_display, look_click_then_finish
 from .fake_boxd import APIStatusError, FakeBoxd
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
@@ -42,7 +42,7 @@ pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 async def _started(host: FakeBoxd) -> BoxdSandboxBackend:
     backend = BoxdSandboxBackend(desktop=True)
     # Starts the desktop.
-    await screen(backend).screenshot()
+    await full_display(backend).screenshot()
     host.desktop.calls.clear()
     return backend
 
@@ -119,7 +119,7 @@ def _path(points: int) -> tuple[Point, ...]:
 async def test_each_action_maps_onto_boxd_calls(host: FakeBoxd, action: DisplayAction, calls: list[str]) -> None:
     backend = await _started(host)
 
-    await screen(backend).act(action)
+    await full_display(backend).act(action)
 
     assert host.desktop.calls == calls
 
@@ -136,7 +136,7 @@ async def test_what_boxd_cannot_do_is_refused_before_anything_runs(host: FakeBox
     backend = await _started(host)
 
     with pytest.raises(UnsupportedActionError):
-        await screen(backend).act(action)
+        await full_display(backend).act(action)
     assert host.desktop.calls == []
 
 
@@ -146,7 +146,7 @@ async def test_a_failed_long_drag_releases_the_button(host: FakeBoxd) -> None:
     host.desktop.errors = [None, APIStatusError('the desktop went away', code='internal', grpc_code=13)]
 
     with pytest.raises(APIStatusError, match='the desktop went away'):
-        await screen(backend).act(Drag(path=_path(101)))
+        await full_display(backend).act(Drag(path=_path(101)))
 
     assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 2', 'mouse_up pointer left']
 
@@ -164,7 +164,7 @@ async def test_a_long_drag_whose_release_fails_says_the_button_may_still_be_held
         WorkspaceError,
         match=r'^A long drag failed \(move refused\), and releasing the left mouse button failed too, so it may still be held\.$',
     ):
-        await screen(backend).act(Drag(path=_path(101)))
+        await full_display(backend).act(Drag(path=_path(101)))
 
     assert host.desktop.calls == ['mouse_down 0 0 left', 'mouse_move 1 2', 'mouse_up pointer left']
 
@@ -178,7 +178,7 @@ async def test_rejected_credentials_during_a_long_drag_end_the_run_when_the_rele
     ]
 
     with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials') as error:
-        await screen(backend).act(Drag(path=_path(101)))
+        await full_display(backend).act(Drag(path=_path(101)))
     assert 'not a member' not in str(error.value)
 
 
@@ -194,7 +194,7 @@ async def test_a_machine_deleted_during_a_failed_long_drag_ends_the_run(host: Fa
     host.get_errors.append(NotFoundError('VM is destroyed', code='not_found', grpc_code=5))
 
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
-        await screen(backend).act(Drag(path=_path(101)))
+        await full_display(backend).act(Drag(path=_path(101)))
 
 
 async def test_a_cancelled_long_drag_releases_the_button(host: FakeBoxd) -> None:
@@ -202,7 +202,7 @@ async def test_a_cancelled_long_drag_releases_the_button(host: FakeBoxd) -> None
     host.desktop.hang_on = 'mouse_move 50 100'
 
     async with anyio.create_task_group() as tasks:
-        tasks.start_soon(screen(backend).act, Drag(path=_path(101)))
+        tasks.start_soon(full_display(backend).act, Drag(path=_path(101)))
         await anyio.wait_all_tasks_blocked()  # the button is down and a move waits for boxd
         tasks.cancel_scope.cancel()
 
@@ -216,7 +216,7 @@ async def test_a_cancelled_long_drag_releases_the_button(host: FakeBoxd) -> None
 async def test_the_desktop_is_held_at_its_size_when_it_starts(host: FakeBoxd) -> None:
     backend = BoxdSandboxBackend(desktop=(1440, 900))
 
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
 
     assert host.desktop.calls == ['set_screen_size 1440x900']
 
@@ -234,7 +234,7 @@ async def test_the_panel_starts_on_each_connection_after_the_screen_is_held(host
     assert host.exec_commands.count(START_PANEL) == 1
 
     await backend.aclose()
-    await screen(backend).screenshot()
+    await full_display(backend).screenshot()
 
     assert host.exec_commands.count(START_PANEL) == 2
 
@@ -245,7 +245,7 @@ async def test_a_command_does_not_wait_for_the_panel_but_the_next_look_does(host
     await backend.run(['true'])
     assert START_PANEL not in host.exec_commands
 
-    await screen(backend).screenshot()
+    await full_display(backend).screenshot()
     assert host.exec_commands.count(START_PANEL) == 1
 
 
@@ -260,7 +260,7 @@ async def test_a_panel_that_does_not_start_leaves_the_screen_working(
     backend = BoxdSandboxBackend(desktop=True)
 
     with caplog.at_level(logging.WARNING):
-        assert await screen(backend).screenshot() == host.desktop.png
+        assert await full_display(backend).screenshot() == host.desktop.png
 
     assert caplog.messages == [
         'The panel did not start on boxd machine machine-1; see /tmp/pydantic-ai-desktop.log there'
@@ -308,7 +308,7 @@ def test_the_panel_has_a_browser_button_only_when_the_machine_has_agent_browser(
 
 async def test_looks_come_from_the_desktop(host: FakeBoxd) -> None:
     backend = await _started(host)
-    display = screen(backend)
+    display = full_display(backend)
     # The size boxd reports, not the size that was asked for.
     host.desktop.size = (1000, 700)
 
@@ -324,7 +324,7 @@ async def test_a_reply_that_is_not_a_png_is_a_workspace_error(host: FakeBoxd) ->
     host.desktop.png = b'GIF89a'
 
     with pytest.raises(WorkspaceError, match='did not return a PNG'):
-        await screen(backend).screenshot()
+        await full_display(backend).screenshot()
 
 
 async def test_a_value_boxd_refuses_is_a_workspace_error(host: FakeBoxd) -> None:
@@ -332,7 +332,7 @@ async def test_a_value_boxd_refuses_is_a_workspace_error(host: FakeBoxd) -> None
     host.desktop.errors.append(APIStatusError('unknown key', code='invalid_argument', grpc_code=3))
 
     with pytest.raises(WorkspaceError, match='The boxd desktop failed: unknown key'):
-        await screen(backend).act(PressKeys(keys=('a',)))
+        await full_display(backend).act(PressKeys(keys=('a',)))
 
 
 async def test_a_deleted_machine_ends_the_run(host: FakeBoxd) -> None:
@@ -340,7 +340,7 @@ async def test_a_deleted_machine_ends_the_run(host: FakeBoxd) -> None:
     host.only.status = 'destroyed'
 
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
-        await screen(backend).act(Click(x=1, y=1))
+        await full_display(backend).act(Click(x=1, y=1))
 
 
 async def test_after_aclose_the_desktop_is_held_again_before_any_input(host: FakeBoxd) -> None:
@@ -348,7 +348,7 @@ async def test_after_aclose_the_desktop_is_held_again_before_any_input(host: Fak
     backend = await _started(host)
     await backend.aclose()
 
-    await screen(backend).act(Click(x=1, y=1))
+    await full_display(backend).act(Click(x=1, y=1))
 
     assert host.desktop.calls == ['set_screen_size 1280x800', "click 1 1 left count=1 modifiers=''"]
 

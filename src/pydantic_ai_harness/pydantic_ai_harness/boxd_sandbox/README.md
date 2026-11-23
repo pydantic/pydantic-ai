@@ -129,7 +129,7 @@ Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
 
 Machines on boxd's current default image come with a desktop, with a panel that opens a terminal and boxd's Chromium browser. A fork or snapshot of an older image has none, so use a fresh machine. On an attached machine, the first action installs the panel and terminal if they are missing, with `apt-get` and passwordless `sudo`.
 
-Anyone in your boxd organization can watch the desktop live in the boxd console's Desktop view, and may be able to click and type on it.
+Anyone in your boxd organization can watch the desktop live in the boxd console's Desktop view.
 
 ## Clean up
 

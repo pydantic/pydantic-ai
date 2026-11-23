@@ -69,7 +69,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import LazyDisplay, desktop_size
+from pydantic_ai_harness._display import LazyDisplay, checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -96,7 +96,13 @@ try:
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[boxd]` to use BoxdSandbox.') from _import_error
 
-from pydantic_ai_harness.boxd_sandbox._desktop import DISPLAY, INSTALL_PANEL, PANEL_LOG, START_PANEL, BoxdDesktop
+from pydantic_ai_harness.boxd_sandbox._desktop import (
+    DESKTOP_LOG,
+    DISPLAY,
+    INSTALL_PANEL,
+    START_PANEL,
+    BoxdDisplayDriver,
+)
 
 _T = TypeVar('_T')
 
@@ -278,10 +284,12 @@ async def _start_panel(client: AsyncBoxd, machine_id: str) -> None:
     try:
         result = await client.machines.exec(machine_id, START_PANEL)
     except boxd.BoxdError:
-        logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, PANEL_LOG, exc_info=True)
+        logger.warning(
+            'The panel did not start on boxd machine %s; see %s there', machine_id, DESKTOP_LOG, exc_info=True
+        )
         return
     if result.exit_code != 0:
-        logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, PANEL_LOG)
+        logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, DESKTOP_LOG)
 
 
 async def _probe(client: AsyncBoxd, machine_id: str) -> WorkspaceUnavailableError | None:
@@ -491,21 +499,21 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
-        size = desktop_size(desktop)
-        if size:
+        desktop_size = checked_desktop_size(desktop)
+        if desktop_size:
             # Commands get `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
             self._env = {'DISPLAY': DISPLAY, **self._env}
         self._display = (
             None
-            if size is None
+            if desktop_size is None
             else LazyDisplay(
-                BoxdDesktop(self._attached_computer),
-                partial(self._start_display, size),
-                scope=self._display_scope,
+                BoxdDisplayDriver(self._computer_api),
+                partial(self._start_display, desktop_size),
+                operation=self._display_operation,
             )
         )
         # Set by each start of the display, so the next screen call starts the panel.
-        self._panel_due = False
+        self._panel_start_pending = False
         self._secrets = tuple(secrets or ())
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
@@ -541,7 +549,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         return self._display
 
     @asynccontextmanager
-    async def _display_scope(self) -> AsyncGenerator[None]:
+    async def _display_operation(self) -> AsyncGenerator[None]:
         async with self._operation():
             client, machine_id = await self._acquire()
             async with _mapped_errors('The boxd desktop failed', client=client, machine_id=machine_id):
@@ -555,22 +563,25 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                         raise gone from error
                     raise
 
-    async def _attached_computer(self) -> tuple[AsyncComputer, str]:
-        # The display calls this only inside `_display_scope`, which has already connected to the machine.
+    async def _computer_api(self) -> tuple[AsyncComputer, str]:
+        """The computer API and the machine's ID, after starting the panel if a display start left it pending.
+
+        The display calls this only inside `_display_operation`, which has already connected to the machine.
+        """
         assert self._client is not None and self._ref is not None
         client, machine_id = self._client, self._ref.id
-        if self._panel_due:
-            self._panel_due = False
+        if self._panel_start_pending:
+            self._panel_start_pending = False
             await _start_panel(client, machine_id)
         return client.machines.computer, machine_id
 
     async def _start_display(self, size: tuple[int, int]) -> None:
-        """Start the desktop if it isn't running, and fix its screen at `size`."""
+        """Fix the screen at `size`, which starts boxd's desktop if it isn't running."""
         assert self._client is not None and self._ref is not None
         # Fixing the size makes boxd's console scale the screen instead of resizing it.
         await self._client.machines.computer.set_screen_size(self._ref.id, *size)
         # Not started here, where a shell command would wait for its install too, but before the next screen call.
-        self._panel_due = True
+        self._panel_start_pending = True
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
@@ -761,7 +772,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         # On a later connection, the machine may have rebooted with a newer boxd agent and a desktop of another size.
         self._agent_outdated = False
         if self._display is not None:
-            self._display.reset()
+            self._display.mark_stopped()
         return client
 
     @asynccontextmanager

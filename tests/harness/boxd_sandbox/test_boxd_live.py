@@ -42,7 +42,7 @@ from pydantic_ai_harness.computer_use import DisplayAction
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from ..display_contract_live import check_display_contract
-from ..display_fakes import screen
+from ..display_fakes import full_display
 from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 
 pytestmark = pytest.mark.boxd_live
@@ -99,7 +99,7 @@ async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> N
     desktop keeps the size it was set to, and that a screenshot, a zoom and the pointer position come back as the
     display contract expects."""
     async with _owned(client, desktop=(1440, 900)) as backend:
-        display = screen(backend)
+        display = full_display(backend)
         await display.screenshot()
         assert await display.display_size() == (1440, 900)
         await check_display_contract(display)
@@ -145,6 +145,7 @@ async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
             await display.act(PressKeys(keys=keys))
             # Polls Chromium's key log. A key that never arrives leaves the log empty until the deadline.
             got: list[str] = []
+            # real-wait: the real machine answers on its own clock
             with anyio.move_on_after(10):
                 while not got:
                     logged = await backend.run(['agent-browser', 'eval', 'JSON.stringify(K.splice(0))'], timeout=60)
@@ -181,7 +182,8 @@ async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_a
         await display.act(TypeText(text=text))
         await display.act(PressKeys(keys=('ctrl', 'd')))
 
-        with anyio.fail_after(30):
+        with anyio.fail_after(30):  # real-wait: bounds the poll below
+            # real-wait: the real terminal writes the file on its own clock
             while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 102:
                 await anyio.sleep(0.5)
         assert typed.stdout == text
@@ -201,13 +203,15 @@ async def test_the_panel_opens_a_terminal_below_it_that_has_the_keyboard(client:
         found = await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
         terminal = found.stdout.split()[0]
         # A new window can take the keyboard only once a computer call has shown it, as the agent's next look does.
-        with anyio.fail_after(10):
+        with anyio.fail_after(10):  # real-wait: bounds the poll below
+            # real-wait: a real window takes the keyboard only after a later computer call
             while (await backend.run(['xdotool', 'getwindowfocus'], timeout=30)).stdout.strip() != terminal:
                 await display.display_size()
                 await anyio.sleep(0.2)
         await display.act(TypeText(text='echo typed > /tmp/typed.txt\n'))
 
-        with anyio.fail_after(30):
+        with anyio.fail_after(30):  # real-wait: bounds the poll below
+            # real-wait: the real shell writes the file on its own clock
             while (typed := await backend.run(['cat', '/tmp/typed.txt'], timeout=30)).exit_code != 0:
                 await anyio.sleep(0.5)
         assert typed.stdout == 'typed\n'
@@ -248,13 +252,14 @@ async def test_drags_key_repeats_and_modifiers_reach_a_browser(client: boxd.Asyn
     and with a drag split over 100 points, that a key repeated 3 times is pressed 3 times, and that boxd holds
     modifiers during a click, a wheel turn and a drag, with `super` as the Meta key."""
     async with _owned(client, desktop=True) as backend:
-        display = screen(backend)
+        display = full_display(backend)
         await display.screenshot()
         await backend.write_bytes('/tmp/events.html', _EVENT_LOG_PAGE.encode())
         await backend.run(['agent-browser', 'open', 'file:///tmp/events.html'], timeout=120)
 
         async def logged(action: DisplayAction) -> list[str]:
             await display.act(action)
+            # real-wait: a stray key press on the real desktop arrives with no event to wait on
             await anyio.sleep(1)  # lets every event arrive, so an extra key press would show
             got = await backend.run(['agent-browser', 'eval', 'JSON.stringify(E.splice(0))'], timeout=60)
             return json.loads(json.loads(got.stdout))
