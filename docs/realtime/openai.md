@@ -24,7 +24,7 @@ gpt-realtime.
 
 To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
 group, which bundles the `openai` package together with the realtime WebSocket transport. GPT-Live's
-event types arrived in `openai` 3.12; the group currently requires `openai>=3.31.0`:
+event types arrived in `openai` 3.12; the group currently requires `openai>=3.50.0`:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai-realtime]"
@@ -392,7 +392,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 
 | Setting | Purpose |
 | --- | --- |
-| `openai_voice` | The Live voice, e.g. `marin` (the provider default). Immutable once the session has started |
+| `openai_voice` | The Live voice, e.g. `marin` (the provider default), or a [custom voice](https://developers.openai.com/api/docs/guides/custom-voices) created through OpenAI's voice API, selected by its ID as `{'id': 'voice_1234'}`. Immutable once the session has started |
 | `openai_live_instructions` | The Live model's prompt: persona, language, pacing, style, and when to delegate. The agent's instructions [go to the backend instead](#how-delegation-works) |
 | `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
