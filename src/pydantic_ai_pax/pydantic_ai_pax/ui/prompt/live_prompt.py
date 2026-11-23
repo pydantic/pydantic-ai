@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from itertools import islice
 
 import anyio
-from PIL import Image
 from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.history import History
 from rich.console import Console, ConsoleDimensions
@@ -217,6 +216,9 @@ class LivePrompt:
 
     def paste(self, text: str | None) -> None:
         """Attach clipboard/path images, or insert a literal bracketed paste."""
+        # Pillow is imported on a paste, not at startup, which rarely sees an image.
+        from PIL import Image
+
         self.images.retain([self.buffer.text, *self.queued_messages])
         self.images.notice = ''
         try:

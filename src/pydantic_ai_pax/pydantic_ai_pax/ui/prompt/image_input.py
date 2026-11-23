@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import anyio
-from PIL import Image, ImageGrab
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
@@ -39,6 +38,9 @@ def read_image(path: Path) -> BinaryContent:
     path = local_image_path(str(path))
     if path.stat().st_size > image_codec.MAX_IMAGE_BYTES:
         raise ValueError('Image file exceeds the 10 MiB attachment limit.')
+    # Pillow is imported where images are read, not at startup, which rarely sees one.
+    from PIL import Image
+
     with Image.open(path, formats=FORMATS) as image:
         return encode_image(image)
 
@@ -77,6 +79,8 @@ def pasted_paths(text: str) -> list[Path]:
 
 def clipboard_images() -> list[BinaryContent]:
     """Use Pillow's native macOS/Windows and wl-paste/xclip Linux backends."""
+    from PIL import Image, ImageGrab
+
     try:
         content = ImageGrab.grabclipboard()
     except (NotImplementedError, ChildProcessError) as exc:
@@ -214,6 +218,8 @@ class ImageInput:
             insert(event=event, text=event.data)
 
         def insert(*, event: KeyPressEvent, text: str | None) -> None:
+            from PIL import Image
+
             buffer = event.current_buffer
             self.retain([buffer.text, *queued()])
             self.notice = ''

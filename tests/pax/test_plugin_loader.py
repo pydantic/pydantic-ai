@@ -138,6 +138,25 @@ async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
     assert harness.loader.status_segments() == []
 
 
+async def test_startup_scans_the_plugins_folder_once_per_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Startup reads the declarations to order them, then once per plugin it loads, not for every lookup."""
+    harness = Harness(tmp_path)
+    for name in ('alpha', 'beta', 'gamma'):
+        harness.write(name)
+    scans = 0
+    discover = ProcessPlugins._discover  # pyright: ignore[reportPrivateUsage]
+
+    def counted(self: ProcessPlugins[None], console: Console) -> dict[str, Path]:
+        nonlocal scans
+        scans += 1
+        return discover(self, console)
+
+    monkeypatch.setattr(ProcessPlugins, '_discover', counted)
+    await harness.loader.load_all()
+    assert scans == 4
+    await harness.loader.close('eof')
+
+
 @pytest.mark.parametrize(('first', 'shown'), [('zulu', 'zulu'), ('logfire', 'observability')])
 async def test_registration_order_follows_the_shipped_declarations(tmp_path: Path, first: str, shown: str) -> None:
     """Names order the menu and the list; the built-in declarations order what a turn sees first."""
