@@ -116,3 +116,4 @@ AGENTS.override.md
 /.devcontainer/
 .claude/plans/
 local-notes/
+/junit-reports/

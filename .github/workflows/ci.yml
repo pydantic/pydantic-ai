@@ -40,6 +40,8 @@ env:
   # which is not UTF-8 on Windows. `filterwarnings` in `pyproject.toml` makes the test fail
   # when library code made the call.
   PYTHONWARNDEFAULTENCODING: "1"
+  # Each pytest session writes its JUnit report here, relative to the checkout; see `tests/conftest.py`.
+  PYTEST_JUNIT_DIR: junit-reports
 
 permissions:
   contents: read
@@ -300,6 +302,7 @@ jobs:
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_latest_versions_canary_report.py
+          .github/scripts/test_never_ran.py
           .github/scripts/test_community_demand.py
           .github/scripts/test_triage_telemetry.py
           .github/scripts/test_feature_digest.py
@@ -951,6 +954,16 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
+
   # The sharded jobs below assign whole test modules to shards by the per-test durations their
   # shards uploaded on the latest `main` run (see `.github/scripts/shard_durations.py`). Fetching
   # that baseline once here means every shard of this run splits from the same file, so each module
@@ -1298,6 +1311,16 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
+
   # The durable-execution suites pin their tests to xdist groups sharing a real local server --
   # one group per core Temporal test module, one shared harness Temporal group, one for DBOS, and
   # one for Prefect -- so inside the main matrix those groups dominate its critical path. Running
@@ -1478,6 +1501,16 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
+
   # The harness declares minimum bounds for its own dependencies, so a `pydantic-ai-harness`-only
   # change still proves them here, running just `tests/harness` and `tests/pax` in one shard.
   test-lowest-versions:
@@ -1629,6 +1662,16 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
+
   test-temporal-latest:
     name: test Temporal latest on Python 3.11
     needs: classify
@@ -1657,6 +1700,16 @@ jobs:
           uv run --no-sync pytest
           tests/durable_exec/temporal/test_durability.py::test_durability_rejects_unknown_activity_config_keys
           tests/durable_exec/temporal/test_durability.py::test_durability_coerces_activity_config_values
+
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
@@ -1744,6 +1797,16 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
+
   # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
   # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
   # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
@@ -1795,6 +1858,16 @@ jobs:
           else
             uv run --package pydantic-ai-pax pytest "${tests[@]}"
           fi
+
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
 
   # `WindowsWorkspaceBackend` and the PowerShell side of the harness's file and shell tools run only on
   # Windows, and every other test job runs on Linux. Their coverage joins the rest in the `coverage` job.
@@ -1851,6 +1924,16 @@ jobs:
           name: coverage-windows-workspace
           path: .coverage
           include-hidden-files: true
+
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
 
   test-clai2-web:
     name: test clai2 web UI
@@ -1972,6 +2055,16 @@ jobs:
           name: coverage-fastmcp-3-${{ matrix.fastmcp.name }}
           path: .coverage
           include-hidden-files: true
+
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
 
   # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
   # a real server. Each runs when its capability, the dependencies, or this workflow change, and
@@ -2303,6 +2396,16 @@ jobs:
 
       - run: make integration-bubblewrap
 
+      # The `never-ran` job reads every test job's reports.
+      - name: store JUnit reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ github.job }}-${{ strategy.job-index }}
+          path: junit-reports
+          if-no-files-found: ignore
+          overwrite: true
+
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
   # SDK we cannot drive (the `anthropic` 1.0.0 case). Tag refs only. No job needs it, so a
@@ -2375,6 +2478,54 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage
 
+  # Fails a test under `tests/` that every cell skipped; see `.github/scripts/never_ran.py`. Only a route that
+  # runs every test job can tell, so the reduced routes skip it, and a failed or cancelled test job leaves it to
+  # that job's own failure.
+  never-ran:
+    name: tests that ran in no cell
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    needs:
+      [
+        classify,
+        test,
+        test-all-extras,
+        test-durable-exec,
+        test-lowest-versions,
+        test-temporal-latest,
+        test-fastmcp-3,
+        test-harness-browser-use,
+        test-clai2-clipboard,
+        test-windows-workspace,
+        harness-bubblewrap-integration,
+      ]
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+        && needs.classify.outputs.clai2_only != 'true'
+        && needs.classify.outputs.harness_only != 'true'
+      }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: get JUnit reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: junit-*
+          path: junit-reports
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-suffix: dev
+
+      - run: uv sync --group dev
+      - run: uv run --no-sync python .github/scripts/never_ran.py junit-reports
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -2406,6 +2557,7 @@ jobs:
       - harness-kubernetes-integration
       - harness-bubblewrap-integration
       - coverage
+      - never-ran
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
 
     steps:
@@ -2424,17 +2576,17 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,content-checks'
+              && 'never-ran,quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,docs-only,docs-assets'
+              && 'never-ran,quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'never-ran,docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'never-ran,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'never-ran,docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
               || 'docs-only,content-checks,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'

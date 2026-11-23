@@ -278,7 +278,7 @@ def _leg_failures(leg: Path, python: str, outcome: LegOutcome | None, root: Path
 
 
 def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
-    for case in _testcases(junit):
+    for case in testcases(junit):
         for result in case:
             if result.tag not in ('failure', 'error'):
                 continue
@@ -319,8 +319,11 @@ def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
             yield f'{exception} in {site}', _node_id(case, test_file), _first_line(evidence)
 
 
-def _testcases(junit: Path) -> Iterator[ElementTree.Element]:
-    """Each `testcase` in `junit` as the parser finishes it, parsed from the stream `_chunks` bounds."""
+def testcases(junit: Path) -> Iterator[ElementTree.Element]:
+    """Each `testcase` in `junit` as the parser finishes it, parsed from the stream `_chunks` bounds.
+
+    The case is emptied once the next one is read, so read it before then.
+    """
     parser: ElementTree.XMLPullParser[ElementTree.Element] = ElementTree.XMLPullParser()
     for chunk in _chunks(junit):
         parser.feed(chunk)

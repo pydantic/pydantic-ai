@@ -339,6 +339,14 @@ The suite's `filterwarnings` ignores no `ResourceWarning`, so an unclosed socket
 
 CI runs the tests with `PYTHONWARNDEFAULTENCODING=1`, and `filterwarnings` turns the `EncodingWarning` into an error when library code (`pydantic_ai*`, `pydantic_graph`, `pydantic_evals`, `pydantic_clai2`, `clai`) made the call. A text-mode `open()`, `Path.read_text()`, `Path.write_text()` or `subprocess` call without `encoding=` uses the locale's encoding, which isn't UTF-8 on Windows. Pass `encoding='utf-8'`, or `encoding='locale'` where the platform's encoding is what the code means. Reproduce a failure locally with `PYTHONWARNDEFAULTENCODING=1 uv run pytest <test>`.
 
+## Tests that run in no cell
+
+Every CI test job uploads a JUnit report of each pytest session. On a run that runs every test job, the `never-ran` job fails a test under `tests/` that every report lists as skipped: its skip condition holds in every cell, so CI never runs it, and it can break unseen. An expected failure counts as run.
+
+- Make a cell run it: install what it needs in a job, or give a job what its skip condition checks for.
+- When no cell can, add an entry with the reason to `NEVER_RAN_EXEMPT` in `tests/never_ran.py`, keyed by the test, its file or its directory. An entry that no longer covers a skipped test fails as stale.
+- A test that only a job `ci.yml` runs for some changes runs, such as the Bubblewrap integration job, is listed under that job in `PATH_GATED_JOBS`, and is exempt on a run that skipped the job.
+
 ## Home directory
 
 `tests/home_isolation.py` gives each pytest process, every xdist worker included, its own temporary home directory before collection. `HOME` (and `USERPROFILE` on Windows), `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `IPYTHONDIR` point into it, and subprocesses inherit them. Caches (`XDG_CACHE_HOME`) and the credential files live recordings read (`_CREDENTIAL_PATHS`) keep their real paths.
