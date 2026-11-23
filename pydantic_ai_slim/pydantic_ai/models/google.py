@@ -774,8 +774,8 @@ class GoogleModel(Model[Client]):
         if self._is_google_cloud:
             return _with_google_cloud_media_types(profile)
         # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
-        # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex is not
-        # probed, so it keeps 128.
+        # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex documents the
+        # same minimum but is not probed, so it keeps 128: https://github.com/pydantic/pydantic-ai/issues/14206
         if self._model_name == 'gemini-2.5-flash-lite':
             profile = merge_profile(profile, GoogleModelProfile(google_minimal_thinking_budget=512))
         return profile
