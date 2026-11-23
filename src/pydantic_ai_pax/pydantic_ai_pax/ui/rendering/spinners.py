@@ -188,7 +188,7 @@ def _user_spinner(name: str, raw: object, base: dict[str, Spinner]) -> Spinner:
 def _locked(path: Path) -> Generator[None]:
     """Hold an exclusive lock on a sibling lock file; Windows has no `fcntl`, so there it is unlocked."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.with_name(f'.{path.name}.lock').open('a') as handle:
+    with path.with_name(f'.{path.name}.lock').open('a', encoding='utf-8') as handle:
         if sys.platform != 'win32':  # pragma: no branch
             fcntl.flock(handle, fcntl.LOCK_EX)
         yield

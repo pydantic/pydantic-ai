@@ -11,6 +11,8 @@ An OAuth server connects with its stored sign-in only; `/mcp auth NAME` is the o
 Signed out, it is marked `error` with that hint instead of holding the prompt up for a sign-in.
 """
 
+import locale
+import sys
 import textwrap
 import time
 from collections.abc import Awaitable, Callable
@@ -303,7 +305,8 @@ class MCPServers:
     def log(self, name: str, message: str) -> None:
         """Append a lifecycle line to the server's log, next to its captured stderr."""
         self.store.logs.mkdir(parents=True, exist_ok=True)
-        with self.log_path(name).open('a') as file:
+        # Python's default encoding: UTF-8 in UTF-8 mode, the locale's encoding otherwise.
+        with self.log_path(name).open('a', encoding='utf-8' if sys.flags.utf8_mode else locale.getencoding()) as file:
             file.write(f'{datetime.now().isoformat(timespec="seconds")} [clai] {message}\n')
 
     def log_path(self, name: str) -> Path:

@@ -74,7 +74,7 @@ def _identity(pid: int) -> str | None:
 
 @contextmanager
 def _locked(claim: Path) -> Generator[None]:
-    with (claim / 'lock').open('a') as lock:
+    with (claim / 'lock').open('a', encoding='utf-8') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             yield
@@ -83,7 +83,7 @@ def _locked(claim: Path) -> Generator[None]:
 
 
 def _state(claim: Path, **fields: object) -> None:
-    (claim / 'state.json').write_text(json.dumps(fields))
+    (claim / 'state.json').write_text(json.dumps(fields), encoding='utf-8')
 
 
 def _signal_owned(claim: Path) -> None:
