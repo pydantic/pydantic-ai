@@ -73,8 +73,11 @@ extraction_agent = Agent(
 @search_agent.tool
 async def extract_flights(ctx: RunContext[Deps]) -> list[FlightDetails]:
     """Get details of all flights."""
-    # we pass the usage to the search agent so requests within this agent are counted
-    result = await extraction_agent.run(ctx.deps.web_page_text, usage=ctx.usage)
+    # we pass the usage and its limits to the extraction agent,
+    # so its requests count toward the search agent's limits
+    result = await extraction_agent.run(
+        ctx.deps.web_page_text, usage=ctx.usage, usage_limits=ctx.usage_limits
+    )
     logfire.info('found {flight_count} flights', flight_count=len(result.output))
     return result.output
 

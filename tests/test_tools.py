@@ -2335,7 +2335,11 @@ FUNCTION_TOOLSET_PARAMETERS: dict[str, ToolsetDefault | Exempt] = {
         tool_instance_listed=None,
     ),
 }
-"""How each `FunctionToolset.__init__` parameter reaches the tools the toolset lists, as `docs/toolsets.md` says."""
+"""How each `FunctionToolset.__init__` parameter reaches the tools the toolset lists.
+
+`docs/toolsets.md` lists how the defaults other than `timeout` reach a `Tool` passed in; the rest is read from
+`FunctionToolset` itself.
+"""
 
 InputPath = Literal['constructor_function', 'constructor_tool', 'add_tool', 'add_function', 'tool', 'tool_plain']
 

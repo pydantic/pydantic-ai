@@ -15,6 +15,10 @@ file's count. What the base already has is allowed, so existing writes pass unti
 
 A write that moved between changed files, the same line removed from one and added to another, is not counted.
 
+The scan is syntactic, so it misses a write through an alias (`records = manager.failed_tools; records.add(name)`),
+through `setattr`, or inside a helper the records are passed to. It ratchets the direct writes; it does not prove
+that only `tool_manager.py` writes the records.
+
 During a merge, `--staged` reports a file only when its count is higher than in both parents.
 
 Usage:

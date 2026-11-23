@@ -496,7 +496,8 @@ class ToolManager(Generic[AgentDepsT]):
         `handle_call` to leave those records untouched and get the raw exception instead, for a caller
         that reports nested failures through its own tool. The manager keeps its own record of
         availability refusals, starting empty, so a tool that isn't available yet gets one free
-        refusal per nested manager.
+        refusal per nested manager. It takes this manager's capability, its default `max_retries`
+        for calls to unknown tools, and the capability IDs it resolved for the step.
 
         Args:
             ctx: The run context of the tool call that makes the nested calls. Each nested call's
