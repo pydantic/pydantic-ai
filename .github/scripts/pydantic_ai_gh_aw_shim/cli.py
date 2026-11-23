@@ -110,7 +110,7 @@ from pydantic_ai.messages import (
     repair_messages,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
@@ -1165,8 +1165,15 @@ def build_model(args: Args) -> tuple[Model, str]:
         max_retries=_LLM_MAX_RETRIES,
         http_client=httpx2.AsyncClient(transport=rate_limit_retry_transport(), timeout=_LLM_TIMEOUT),
     )
+    # Z.AI's Anthropic-compatible endpoint maps `output_config.effort` to its own effort levels, and any enabled
+    # `thinking`, a token budget included, to its default `max`: https://docs.z.ai/devpack/latest-model.
+    # Unified `thinking` sends a budget to a model its profile does not know, so the effort is set directly.
     return (
-        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
+        AnthropicModel(
+            model_name,
+            provider=AnthropicProvider(anthropic_client=client),
+            settings=AnthropicModelSettings(anthropic_effort='low'),
+        ),
         f'anthropic:{model_name}',
     )
 

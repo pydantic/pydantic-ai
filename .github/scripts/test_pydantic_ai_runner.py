@@ -2811,6 +2811,26 @@ _RATE_LIMITED_RESPONSE = {
 }
 
 
+def test_build_model_requests_zai_low_effort(monkeypatch: pytest.MonkeyPatch):
+    """Each request sets Z.AI's low effort and no `thinking`, which Z.AI would run at its default `max` effort."""
+    bodies: list[dict[str, object]] = []
+
+    def _handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport
+    monkeypatch.setattr(shim, 'rate_limit_retry_transport', lambda: transport(httpx2.MockTransport(_handle)))
+    monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
+    monkeypatch.setenv('ANTHROPIC_MODEL', 'glm-5.4')
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    assert asyncio.run(Agent(model).run('hi')).output == 'ok'
+    [body] = bodies
+    assert body['model'] == 'glm-5.4'
+    assert body['output_config'] == {'effort': 'low'}
+    assert 'thinking' not in body
+
+
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
     """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
 
