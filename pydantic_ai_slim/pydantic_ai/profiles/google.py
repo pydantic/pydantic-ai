@@ -355,8 +355,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
 
 def _set_minimal_thinking_budget(profile: GoogleModelProfile, model_name: str) -> None:
     # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
-    # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex's thinking
-    # table lists the same minimum: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex is not probed;
+    # its thinking table lists the same minimum for Gemini 2.5 Flash-Lite:
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
     if model_name.startswith('gemini-2.5-flash-lite'):
         profile['google_minimal_thinking_budget'] = 512
 
