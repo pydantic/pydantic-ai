@@ -25,7 +25,7 @@ REVIEW_ENGINES: dict[ReviewEngine, str] = {
     'opencode-deepinfra': 'Reviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)',
 }
 # The attributions an engine published on its earlier models. Reviews that carry one still count on their head.
-EARLIER_REVIEW_ENGINES: dict[ReviewEngine, tuple[str, ...]] = {
+EARLIER_REVIEW_ATTRIBUTIONS: dict[ReviewEngine, tuple[str, ...]] = {
     'opencode-zai': ('Reviewer: OpenCode (zai-coding-plan/glm-5.3-flash)',),
 }
 ReviewVerdict = Literal['APPROVE', 'REQUEST_CHANGES', 'INCOMPLETE']

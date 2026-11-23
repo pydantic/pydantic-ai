@@ -15,7 +15,7 @@ import yaml
 from category_classify_opencode import TOOL_GUIDANCE, Classification
 from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP
 from publish_douwebot_review import (
-    EARLIER_REVIEW_ENGINES,
+    EARLIER_REVIEW_ATTRIBUTIONS,
     REVIEW_ENGINES,
     Finding,
     ReviewEngine,
@@ -503,7 +503,7 @@ def _douwebot_review(
                     16, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-zai'
                 )
             )
-            | {'body': zai['body'].replace(REVIEW_ENGINES['opencode-zai'], EARLIER_REVIEW_ENGINES['opencode-zai'][0])},
+            | {'body': zai['body'].replace(REVIEW_ENGINES['opencode-zai'], EARLIER_REVIEW_ATTRIBUTIONS['opencode-zai'][0])},
             False,
             '',
             id='clean-opencode-zai-on-an-earlier-model',

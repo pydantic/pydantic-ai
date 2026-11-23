@@ -914,7 +914,7 @@ def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebo
 
 @pytest.mark.parametrize(
     ('engine', 'attribution'),
-    [(engine, text) for engine, texts in publish_douwebot_review.EARLIER_REVIEW_ENGINES.items() for text in texts],
+    [(engine, text) for engine, texts in publish_douwebot_review.EARLIER_REVIEW_ATTRIBUTIONS.items() for text in texts],
 )
 def test_gate_reads_the_attribution_of_an_engine_earlier_model(
     engine: publish_douwebot_review.ReviewEngine, attribution: str

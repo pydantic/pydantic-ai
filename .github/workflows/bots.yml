@@ -344,7 +344,7 @@ jobs:
                 | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"))
                 | (($body | capture(" engine=(?<engine>claude|opencode|opencode-zai|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
                 | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"; "")) as $marked
-                # Each engine attribution, then those of its earlier models (`EARLIER_REVIEW_ENGINES`).
+                # Each engine attribution, then those of its earlier models (`EARLIER_REVIEW_ATTRIBUTIONS`).
                 | (if $engine == "claude" then ["\n\nReviewer: Claude Code (claude-opus-5-5)"]
                    elif $engine == "opencode" then ["\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"]
                    elif $engine == "opencode-zai" then ["\n\nReviewer: OpenCode (zai-coding-plan/glm-5.4)", "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"]

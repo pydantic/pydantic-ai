@@ -15,7 +15,7 @@ from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
 from publish_douwebot_review import (
     APPROVAL_BODY,
     DOUWEBOT_MARKER,
-    EARLIER_REVIEW_ENGINES,
+    EARLIER_REVIEW_ATTRIBUTIONS,
     REVIEW_BODIES,
     REVIEW_ENGINES,
 )
@@ -207,7 +207,7 @@ def douwebot_approval(
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
             if (engine := marker[3]) in ('claude', 'opencode', 'opencode-zai', 'opencode-deepinfra'):
-                attributions = (REVIEW_ENGINES[engine], *EARLIER_REVIEW_ENGINES.get(engine, ()))
+                attributions = (REVIEW_ENGINES[engine], *EARLIER_REVIEW_ATTRIBUTIONS.get(engine, ()))
                 suffix = next((f'\n\n{text}' for text in attributions if body.endswith(f'\n\n{text}')), None)
                 if suffix:
                     body = body[: -len(suffix)]

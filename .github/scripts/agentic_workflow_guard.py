@@ -724,7 +724,7 @@ def compiled_awf_configs(lock: Path) -> list[Mapping[str, object]]:
 def check_ai_credits_accounting(lock: Path) -> list[Violation]:
     """Allow verified GLM prices in USD per token, never per-million overlay values.
 
-    Z.ai publishes no GLM-5.4 API price yet, so GLM-5.4 is priced at GLM-5.3's published rates.
+    Z.ai published no GLM-5.4 API price as of 2026-11-23, so GLM-5.4 is priced at GLM-5.3's rates.
     """
     expected: dict[str, object] = {
         'anthropic': {
