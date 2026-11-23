@@ -1471,6 +1471,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
     Within a single test, calls with the same arguments reuse the same client. On teardown, all clients are closed — no process-global state leaks.
+    `tests/leak_guards.py` fails the test when one of them was built by an agent run, which should have closed it.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
@@ -1487,6 +1488,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
             key = (family, repr(sorted(kwargs.items())))
             if key not in cache or cache[key].is_closed:
                 cache[key] = factory(**kwargs)
+                leak_guards.track_http_client(cache[key])
             client = cache[key]
             assert isinstance(client, expected)
             return client
@@ -1514,6 +1516,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
 
         async def _close_all() -> None:
             for client in unclosed:
+                leak_guards.left_open(client)
                 await client.aclose()
 
         asyncio.run(_close_all())
@@ -1525,6 +1528,7 @@ async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClie
     yield
     for client in track_httpx_clients.values():
         if not client.is_closed:
+            leak_guards.left_open(client)
             await client.aclose()
 
 

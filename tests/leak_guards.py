@@ -12,11 +12,17 @@ garbage. This plugin fails the test for what that cannot see:
   or `session`-scoped fixture creates are left to that fixture, and loops third-party code creates to that code. A
   loop left on the main thread is the one `run_sync()` reuses there; once dropped, the collector finalizes it in the
   test that dropped it.
+- An HTTP client an agent run built and left open, such as the one a run gets for a model it builds from a name
+  (https://github.com/pydantic/pydantic-ai/pull/10067). The autouse `track_httpx_clients` fixture closes every client
+  a test leaves open, and fails the test only for one a run built: a client that test code built, or that a provider
+  or agent built outside a run, is its builder's to close.
 """
 
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
+import os
 import threading
 import traceback
 import weakref
@@ -31,6 +37,9 @@ PLUGIN_NAME = 'pydantic_ai_leak_guards'
 
 _ROOT = Path(__file__).resolve().parent.parent
 _ASYNCIO = Path(asyncio.__file__).resolve().parent
+_TESTS = f'{_ROOT / "tests"}{os.sep}'
+_AGENT = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / 'agent' / '__init__.py')
+_AGENT_GRAPH = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / '_agent_graph.py')
 
 
 _CREATOR = '_pydantic_ai_leak_guards_creator'
@@ -49,6 +58,12 @@ class _State:
     """Loops first-party code created off the main thread during the running test."""
     finalized_open: list[str] = field(default_factory=list[str])
     """Where each such loop that the collector finalized while it was still open was created."""
+    run_built_clients: weakref.WeakKeyDictionary[object, str] = field(
+        default_factory=weakref.WeakKeyDictionary[object, str]
+    )
+    """HTTP clients an agent run built during the running test, each with the run's code that built it."""
+    clients_left_open: list[str] = field(default_factory=list[str])
+    """Where each such client that the test left for `track_httpx_clients` to close was built."""
 
 
 _state = _State()
@@ -98,6 +113,31 @@ setattr(asyncio.BaseEventLoop, '__init__', _tracking_init)
 setattr(asyncio.BaseEventLoop, '__del__', _tracking_del)
 
 
+def track_http_client(client: object) -> None:
+    """Note the HTTP client that `track_httpx_clients`' factory just created, if an agent run built it.
+
+    A run built it when an `Agent.iter` or agent graph frame asked for it with no test code in between.
+    """
+    frame = inspect.currentframe()
+    # This function and the fixture's factory come first; the frame after them asked for the client.
+    frame = frame and frame.f_back and frame.f_back.f_back
+    while frame is not None:
+        code = frame.f_code
+        if code.co_filename.startswith(_TESTS):
+            return
+        if code.co_filename == _AGENT_GRAPH or (code.co_filename == _AGENT and code.co_name == 'iter'):
+            site = f'{Path(code.co_filename).relative_to(_ROOT)}:{frame.f_lineno} in {code.co_name}'
+            _state.run_built_clients[client] = site
+            return
+        frame = frame.f_back
+
+
+def left_open(client: object) -> None:
+    """Note that `track_httpx_clients` is closing a client the test left open."""
+    if (site := _state.run_built_clients.get(client)) is not None:
+        _state.clients_left_open.append(site)
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_fixture_setup(fixturedef: pytest.FixtureDef[Any]) -> Generator[None, object, object]:
     shared = fixturedef.scope != 'function'
@@ -118,6 +158,8 @@ def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, object, object
         _state.test_running = False
         _state.loops.clear()
         _state.finalized_open.clear()
+        _state.run_built_clients.clear()
+        _state.clients_left_open.clear()
 
 
 @pytest.hookimpl(wrapper=True)
@@ -132,12 +174,21 @@ def pytest_runtest_makereport(
     for loop in open_loops:
         if not loop.is_running():  # pragma: no branch
             loop.close()
-    if leaked and report.passed:
-        report.outcome = 'failed'
+    problems: list[str] = []
+    if leaked:
         sites = ''.join(f'\n  {creator}' for creator in leaked)
-        report.longrepr = (
+        problems.append(
             f'{item.nodeid} left {len(leaked)} event loop(s) open, created at:{sites}\n'
             'Close each loop where it is created, as `asyncio.get_event_loop().close()` on the thread that ran '
-            '`run_sync()`; see "Leaks" in tests/AGENTS.md.'
+            '`run_sync()`.'
         )
+    if clients := _state.clients_left_open:
+        sites = ''.join(f'\n  {site}' for site in clients)
+        problems.append(
+            f'{item.nodeid} left {len(clients)} HTTP client(s) that an agent run built open, built by:{sites}\n'
+            'The run that builds a client must close it, as it closes the model it builds from a name.'
+        )
+    if problems and report.passed:
+        report.outcome = 'failed'
+        report.longrepr = '\n'.join([*problems, 'See "Leaks" in tests/AGENTS.md.'])
     return report
