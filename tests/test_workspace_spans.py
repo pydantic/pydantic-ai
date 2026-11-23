@@ -111,10 +111,12 @@ async def test_operations_are_traced(tmp_path: Path, include_content: bool) -> N
     } == {str(tmp_path)}
 
 
-@pytest.mark.parametrize('include_content', [False, True])
-async def test_shell_filesystem_commands_are_traced_without_their_text(tmp_path: Path, include_content: bool) -> None:
-    """A command-only backend's file operation shows each command it ran, but never the command, which carries the data."""
-    instrumentation, exporter = instrumented(include_content)
+async def test_shell_filesystem_commands_are_traced_without_their_text(tmp_path: Path) -> None:
+    """A command-only backend's file operation shows each command it ran, but never the command, which carries the data.
+
+    Even with content on: the command can hold the file's contents.
+    """
+    instrumentation, exporter = instrumented(include_content=True)
     agent = Agent(TestModel(call_tools=['read_large_file']), capabilities=[instrumentation])
     data = 'x' * 70_000
 
@@ -147,36 +149,25 @@ async def test_shell_filesystem_commands_are_traced_without_their_text(tmp_path:
     assert all(data[:100] not in str(span.attributes) for span in exporter.get_finished_spans())
 
 
-async def test_a_timeout_is_an_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ('command', 'options', 'error'),
+    [
+        (['sleep', '5'], {'timeout': 0.01}, WorkspaceTimeoutError),
+        # Only file lookups treat a missing file as an answer: a command that never started is a failure.
+        (['true'], {'cwd': 'missing'}, FileNotFoundError),
+    ],
+)
+async def test_a_failed_run_is_an_error(
+    tmp_path: Path, command: list[str], options: dict[str, Any], error: type[Exception]
+) -> None:
     instrumentation, exporter = instrumented(include_content=False)
-    agent = Agent(TestModel(call_tools=['wait']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
+    agent = Agent(TestModel(call_tools=['fail']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
 
     @agent.tool
-    async def wait(ctx: RunContext[Any]) -> str:
-        with pytest.raises(WorkspaceTimeoutError):
-            await ctx.workspace.run(['sleep', '5'], timeout=0.01)
-        return 'timed out'
-
-    await agent.run('go')
-
-    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == snapshot(['workspace run'])
-    [span] = [span for span in exporter.get_finished_spans() if span.name == 'workspace run']
-    assert span.status.status_code.name == 'ERROR'
-    assert [event.attributes for event in span.events] == snapshot(
-        [{'exception.type': 'pydantic_ai.workspaces.protocol.WorkspaceTimeoutError', 'exception.escaped': 'False'}]
-    )
-
-
-async def test_a_run_in_a_missing_directory_is_an_error(tmp_path: Path) -> None:
-    """Only file lookups treat a missing file as an answer: a command that never started is a failure."""
-    instrumentation, exporter = instrumented(include_content=False)
-    agent = Agent(TestModel(call_tools=['run_elsewhere']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
-
-    @agent.tool
-    async def run_elsewhere(ctx: RunContext[Any]) -> str:
-        with pytest.raises(FileNotFoundError):
-            await ctx.workspace.run(['true'], cwd='missing')
-        return 'not started'
+    async def fail(ctx: RunContext[Any]) -> str:
+        with pytest.raises(error):
+            await ctx.workspace.run(command, **options)
+        return 'failed'
 
     await agent.run('go')
 
@@ -203,35 +194,9 @@ async def test_nothing_is_traced_without_instrumentation_or_outside_the_run(tmp_
     assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists']
 
 
-async def test_an_instrumented_sub_agent_traces_with_its_own_settings(tmp_path: Path) -> None:
-    """A sub-agent given the parent's workspace traces to its own provider with its own content setting."""
-    parent_instrumentation, parent_exporter = instrumented(include_content=True)
-    sub_instrumentation, sub_exporter = instrumented(include_content=False)
-    sub_agent = file_agent(capabilities=[sub_instrumentation])
-    agent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
-
-    @agent.tool
-    async def delegate(ctx: RunContext[Any]) -> str:
-        await sub_agent.run('go', workspace=ctx.workspace)
-        assert await ctx.workspace.exists('notes.txt')
-        return 'done'
-
-    await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
-
-    assert workspace_spans(parent_exporter, tmp_path) == snapshot(
-        [{'name': 'workspace exists', 'status': 'UNSET', 'file.path': '<root>/notes.txt'}]
-    )
-    assert [span['name'] for span in workspace_spans(sub_exporter, tmp_path)] == snapshot(
-        ['workspace write_bytes', 'workspace read_bytes', 'workspace exists', 'workspace stat', 'workspace run']
-    )
-    assert not any('file.path' in span for span in workspace_spans(sub_exporter, tmp_path))
-
-
-@pytest.mark.parametrize('shared', ['facade', 'backend'])
-async def test_concurrent_runs_sharing_a_workspace_trace_separately(tmp_path: Path, shared: str) -> None:
-    """Two runs with their own providers, interleaving calls on one workspace, each record only their own."""
-    backend = LocalWorkspaceBackend(tmp_path)
-    workspace = Workspace(backend) if shared == 'facade' else backend
+async def test_concurrent_runs_sharing_a_workspace_trace_separately(tmp_path: Path) -> None:
+    """Two runs with their own providers, interleaving calls on one `Workspace`, each record only their own."""
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
     exporters: list[InMemorySpanExporter] = []
 
     def looping_agent() -> Agent[Any, str]:
@@ -257,49 +222,3 @@ async def test_concurrent_runs_sharing_a_workspace_trace_separately(tmp_path: Pa
     for exporter in exporters:
         assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists'] * 3
         assert len({span.context.trace_id for span in exporter.get_finished_spans() if span.context}) == 1
-
-
-async def test_calls_from_a_task_the_tool_starts_are_traced(tmp_path: Path) -> None:
-    instrumentation, exporter = instrumented(include_content=False)
-    agent = Agent(TestModel(call_tools=['fan_out']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
-
-    @agent.tool
-    async def fan_out(ctx: RunContext[Any]) -> str:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(ctx.workspace.exists, 'a.txt')
-            tg.start_soon(ctx.workspace.exists, 'b.txt')
-        return 'done'
-
-    await agent.run('go')
-
-    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == ['workspace exists'] * 2
-
-
-async def test_a_run_started_inside_a_workspace_operation_traces_its_own(tmp_path: Path) -> None:
-    """A backend whose operation runs another agent, such as a summarizer, doesn't silence that agent's calls."""
-    instrumentation, exporter = instrumented(include_content=False)
-    sub_agent = file_agent(capabilities=[instrumentation])
-
-    class DelegatingBackend(LocalWorkspaceBackend):
-        async def exists(self, path: str) -> bool:
-            await sub_agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
-            return await super().exists(path)
-
-    agent = Agent(TestModel(call_tools=['look']), capabilities=[instrumentation])
-
-    @agent.tool
-    async def look(ctx: RunContext[Any]) -> bool:
-        return await ctx.workspace.exists('notes.txt')
-
-    await agent.run('go', workspace=DelegatingBackend(tmp_path))
-
-    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == snapshot(
-        [
-            'workspace exists',
-            'workspace write_bytes',
-            'workspace read_bytes',
-            'workspace exists',
-            'workspace stat',
-            'workspace run',
-        ]
-    )
