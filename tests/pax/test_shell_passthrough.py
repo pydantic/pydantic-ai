@@ -45,6 +45,7 @@ from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 from tests.pax.test_app_edges import inputs
+from tests.process_lifecycle import assert_interrupting_each_spawn_tick_stops_the_command
 
 
 @pytest.fixture(autouse=True)
@@ -730,3 +731,16 @@ async def test_commands_run_in_the_sessions_directory(tmp_path: Path, monkeypatc
     shell.send_input('/exit')
     assert await shell.run() == 'exit'
     assert str((tmp_path / 'repo').resolve()) in output.getvalue()
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='checks POSIX process groups')
+def test_cancelling_each_tick_of_the_spawn_stops_the_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert_interrupting_each_spawn_tick_stops_the_command(
+        lambda command, _: run_shell_command(
+            command, console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=tmp_path
+        ),
+        tmp_path,
+        monkeypatch,
+        interrupt='cancel',
+        expected=asyncio.CancelledError,
+    )

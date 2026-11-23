@@ -1977,6 +1977,7 @@ jobs:
       azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
       kubernetes: ${{ steps.detect.outputs.kubernetes }}
       bubblewrap: ${{ steps.detect.outputs.bubblewrap }}
+      process_lifecycle: ${{ steps.detect.outputs.process_lifecycle }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2018,7 +2019,12 @@ jobs:
             "$H/pydantic_ai_harness/_workspace_provider.py" "$H/pydantic_ai_harness/_workspace.py" \
             "$H/integration_tests/kubernetes" pydantic_ai_slim/pydantic_ai/workspaces
           detect bubblewrap "$H/pydantic_ai_harness/bubblewrap_sandbox" tests/harness/bubblewrap_sandbox \
-            tests/harness/_fake_remote_tools.py .github/actions/install-subprocess-isolation-deps
+            tests/harness/_fake_remote_tools.py .github/actions/install-subprocess-isolation-deps \
+            pydantic_ai_slim/pydantic_ai/workspaces
+          X=src/pydantic_ai_pax/pydantic_ai_pax
+          detect process_lifecycle "$H/pydantic_ai_harness/shell" tests/harness/shell pydantic_ai_slim/pydantic_ai/workspaces \
+            tests/test_local_workspace.py tests/process_lifecycle.py "$X/cli/shell_passthrough.py" "$X/plugins/git.py" \
+            "$X/runtime/processes.py" tests/pax/test_shell_passthrough.py tests/pax/test_plugin_git.py tests/pax/test_processes.py
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -2292,6 +2298,44 @@ jobs:
 
       - run: make integration-bubblewrap
 
+  # `Shell` jobs, `LocalWorkspaceBackend` and pax's shell passthrough and Git clone start POSIX processes, and every
+  # other job runs them on Linux, where `/bin/sh` is dash. On macOS it is bash 3.2, there is no `setsid`, and a
+  # signal to a process group left with only zombies is refused with EPERM. Runs when those paths change, and
+  # always on `main`, in the merge queue and on tags.
+  test-process-lifecycle-macos:
+    name: test process lifecycle on macOS
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || github.event_name == 'merge_group' || github.ref == 'refs/heads/main'
+              || needs.harness-integration-changes.outputs.process_lifecycle == 'true') }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      # See `test-clai2-clipboard`: no Git-sourced dependency is installed here.
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: process-lifecycle-macos
+
+      - run: uv sync --only-dev
+
+      - name: run tests
+        run: >-
+          uv run --package pydantic-ai-pax pytest -n logical -m "not temporal"
+          tests/harness/shell tests/test_local_workspace.py
+          tests/pax/test_shell_passthrough.py tests/pax/test_plugin_git.py tests/pax/test_processes.py
+
   # Advisory release check: resolve the workspace at the top of the ranges this tag declares and
   # run the suite there, so a release shows whether its own dependency ranges already admit an
   # SDK we cannot drive (the `anthropic` 1.0.0 case). Tag refs only. No job needs it, so a
@@ -2394,6 +2438,7 @@ jobs:
       - harness-azure-durable-task-integration
       - harness-kubernetes-integration
       - harness-bubblewrap-integration
+      - test-process-lifecycle-macos
       - coverage
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
 
@@ -2405,7 +2450,8 @@ jobs:
           # non-test content. Workflow and configuration changes keep the full test matrix.
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
-          # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
+          # LocalStack also skips where its secret is unreadable. `test-process-lifecycle-macos` runs only when its
+          # paths change, and always on `main`, in the merge queue and on tags. `test-clai2-clipboard` runs only when
           # a change reaches `pydantic-ai-pax` (always on pushes to `main`), and never on tags.
           # `test-clai2-web` also follows its workflow, `pyproject.toml`, and `uv.lock`; it runs on tags.
           # A `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
@@ -2413,20 +2459,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,content-checks'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,test-process-lifecycle-macos,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,coverage,docs-only,docs-assets'
+              && 'quality,complexity,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-clai2-clipboard,test-windows-workspace,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,test-process-lifecycle-macos,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-3,test-harness-browser-use,test-windows-workspace,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,test-process-lifecycle-macos'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,test-process-lifecycle-macos'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,test-process-lifecycle-macos'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
+              || 'docs-only,content-checks,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration,test-process-lifecycle-macos'
             }}
           jobs: ${{ toJSON(needs) }}
 

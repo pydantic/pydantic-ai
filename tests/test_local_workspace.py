@@ -32,6 +32,7 @@ from pydantic_ai.workspaces import (
     _host as host_module,
 )
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.process_lifecycle import Interrupt, assert_interrupting_each_spawn_tick_stops_the_command
 
 pytestmark = [
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend tests drive POSIX shell commands'),
@@ -475,6 +476,21 @@ async def test_timeout_while_connecting_pipes_kills_the_process_group(tmp_path: 
     await _assert_process_gone(int(pid_file.read_text()))
 
 
+@pytest.mark.parametrize(
+    ('interrupt', 'expected'), [('cancel', asyncio.CancelledError), ('deadline', WorkspaceTimeoutError)]
+)
+def test_interrupting_each_tick_of_the_spawn_stops_the_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt: Interrupt, expected: type[BaseException]
+) -> None:
+    assert_interrupting_each_spawn_tick_stops_the_command(
+        lambda command, timeout: LocalWorkspaceBackend(tmp_path).run(command, shell=True, timeout=timeout),
+        tmp_path,
+        monkeypatch,
+        interrupt=interrupt,
+        expected=expected,
+    )
+
+
 async def test_kill_tolerates_an_already_exited_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     real_killpg = os.killpg
     killed: list[int] = []
@@ -588,6 +604,71 @@ async def test_timeout_with_denied_group_and_child_kill_still_raises_timeout(
     assert await _process_running(pid)
     real_killpg(pid, signal.SIGKILL)
     await _assert_process_gone(pid)
+
+
+@pytest.mark.parametrize('path', ['cancel', 'output-limit', 'startup-timeout'])
+async def test_denied_kills_keep_the_error_that_stopped_the_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """Every way `run` stops a command keeps its own error when the host denies both the group and the child kill.
+
+    The command-timeout path is covered above; these are the others that go through the same kill.
+    """
+    workspace = LocalWorkspaceBackend(tmp_path)
+    pid_file = tmp_path / 'pid'
+    release = asyncio.Event()
+    pids: list[int] = []
+    real_open_process = anyio.open_process
+    real_killpg = os.killpg
+
+    async def recorded_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
+        process = await real_open_process(*args, **kwargs)
+        pids.append(process.pid)
+        if path == 'startup-timeout':
+            # The spawn acknowledges the process after the command's deadline.
+            await release.wait()
+        return process
+
+    def deny_signal(pid: int, sig: int) -> None:
+        raise PermissionError('signal denied')
+
+    async def cancelled() -> None:
+        task = asyncio.create_task(
+            workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True)
+        )
+        await _wait_for_pid_file(pid_file)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def over_the_output_limit() -> None:
+        with pytest.raises(WorkspaceOutputLimitError):
+            await workspace.run('yes x', shell=True)
+
+    async def timed_out_during_startup() -> None:
+        timeout = 0.05
+        task = asyncio.create_task(
+            workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 3600', shell=True, timeout=timeout)
+        )
+        await _wait_for_pid_file(pid_file)
+        await anyio.sleep(timeout)
+        release.set()
+        with pytest.raises(WorkspaceTimeoutError, match='during startup'):
+            await task
+
+    stops = {'cancel': cancelled, 'output-limit': over_the_output_limit, 'startup-timeout': timed_out_during_startup}
+    monkeypatch.setattr(anyio, 'open_process', recorded_spawn)
+    monkeypatch.setattr(os, 'killpg', deny_signal)
+    monkeypatch.setattr(os, 'kill', deny_signal)
+    try:
+        await stops[path]()
+    finally:
+        release.set()
+        for pid in pids:
+            with suppress(ProcessLookupError):
+                real_killpg(pid, signal.SIGKILL)
+    for pid in pids:
+        await _assert_process_gone(pid)
 
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
