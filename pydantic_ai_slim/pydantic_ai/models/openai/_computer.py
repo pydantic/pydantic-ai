@@ -12,11 +12,11 @@ from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
 from openai.types.responses.response_status import ResponseStatus
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
 from ..._utils import is_str_dict
-from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart
+from ...computer_use import COMPUTER_KIND, ComputerCallPart, ComputerResult, ComputerReturnPart, Key
 from ...messages import (
     BinaryImage,
     ModelMessage,
@@ -46,6 +46,29 @@ class _Strict(BaseModel, extra='forbid', strict=True):
     """Checks OpenAI's data strictly, without converting types. The SDK builds a response without validating it."""
 
 
+_OPENAI_KEY_MAP: dict[str, Key] = {
+    'esc': 'escape',
+    'meta': 'super',
+    'arrowup': 'up',
+    'arrowdown': 'down',
+    'arrowleft': 'left',
+    'arrowright': 'right',
+    'kp_add': '+',
+}
+"""OpenAI key names, lower-cased, that the `computer` tool spells differently.
+
+GPT-5.5 sends upper-case names such as `CTRL`, `ESC`, `META` and `KP_ADD`. OpenAI's guide also names `ARROWLEFT`. A
+name not listed here is only lower-cased.
+"""
+
+
+def _openai_key(name: str) -> str:
+    return _OPENAI_KEY_MAP.get(name.lower(), name.lower())
+
+
+_OpenAIKey = Annotated[str, AfterValidator(_openai_key)]
+
+
 class _OpenAIPoint(_Strict):
     x: int
     y: int
@@ -54,7 +77,7 @@ class _OpenAIPoint(_Strict):
 class _OpenAIPointerAction(_Strict):
     x: int
     y: int
-    keys: list[str] = []
+    keys: list[_OpenAIKey] = []
     """Keys held during the action."""
 
 
@@ -80,12 +103,12 @@ class _OpenAIScroll(_OpenAIPointerAction):
 class _OpenAIDrag(_Strict):
     type: Literal['drag']
     path: list[_OpenAIPoint]
-    keys: list[str] = []
+    keys: list[_OpenAIKey] = []
 
 
 class _OpenAIKeypress(_Strict):
     type: Literal['keypress']
-    keys: list[str]
+    keys: list[_OpenAIKey]
 
 
 class _OpenAIType(_Strict):
