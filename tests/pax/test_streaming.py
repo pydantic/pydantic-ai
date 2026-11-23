@@ -66,6 +66,7 @@ MIXED_TURN = """\
 I will look first.
 
 ● shell ls
+  ⎿ exit 0
 
 ● edit_file a.py
 
@@ -144,6 +145,7 @@ async def test_long_tool_name_does_not_wrap() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=20), stop_loading=lambda: None)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(tool_name='a' * 100, args='{}')))
+    await renderer.finish()
     assert len(output.getvalue().splitlines()) == 2
     assert output.getvalue().endswith('\n\n')
 
