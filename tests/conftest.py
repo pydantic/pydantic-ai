@@ -32,7 +32,15 @@ from pytest_mock import MockerFixture
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BinaryImage,
+    DeferredToolRequests,
+    DeprecatedModelWarning,
+    Embedder,
+    ImageGenerator,
+)
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
@@ -548,6 +556,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         'pydantic_ai_harness/_monty_exec.py',
         ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
     ),
+    # `/sandbox local smol` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or `/sandbox local smol`, or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
@@ -628,6 +639,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax reads keys once the event loop reports the terminal readable, and writes output straight to it.
     ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
     ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', '_key'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', 'key'),
     ('os.write', 'pydantic_ai_pax/cli/shell_terminal.py', 'pass_through'),
     ('os.write', 'pydantic_ai_pax/cli/self_update.py', '_print_line'),
     # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
@@ -733,6 +745,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
 )
 
 
@@ -1044,6 +1057,64 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
     id (or pin the clock) must not see each other's."""
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
+DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
+    # Anthropic, retires 2026-06-15: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-20250514',
+    # Anthropic, retires 2026-08-05: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-1-20250805',
+    # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-mythos-preview',
+    # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.5-preview',
+    # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037
+    'o1-mini',
+    # OpenAI, retires 2026-05-07: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4o-audio-preview',
+    # OpenAI, retires 2026-07-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'computer-use-preview',
+    # OpenAI, retires 2026-10-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.1-nano',
+    'o3-mini',
+    'o4-mini',
+    # OpenAI, retires 2026-12-11: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-pro',
+    'o3',
+    # OpenAI, retires 2027-01-20: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-audio-mini',
+    # OpenAI, retires 2027-04-01: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5.4-nano',
+)
+"""Models the suite's recordings and mocks use, which their providers have since deprecated.
+
+Grouped by the provider's announcement, each group with its retirement date and the issue tracking the move of its
+tests to a current model. See `ignore_deprecated_models_in_recordings`.
+"""
+
+
+def ignore_deprecated_models_in_recordings(record_mode: str | None) -> None:
+    """Ignore the deprecation warnings for `DEPRECATED_MODELS_IN_RECORDINGS`, unless the run records cassettes.
+
+    Replaying an existing recording against one of these models is fine, but recording a new one must fail, so a test
+    moves to a current model before it's re-recorded. That covers Pydantic AI's `DeprecatedModelWarning` and the
+    `anthropic` SDK's own `DeprecationWarning` for the models in its table, which pytest shows.
+    """
+    if record_mode not in (None, 'none'):
+        return
+    model_ids = '|'.join(map(re.escape, DEPRECATED_MODELS_IN_RECORDINGS))
+    warnings.filterwarnings('ignore', f"Model '[^']*:(?:{model_ids})' is deprecated", DeprecatedModelWarning)
+    warnings.filterwarnings('ignore', f"The model '(?:{model_ids})' is deprecated", DeprecationWarning)
+
+
+@pytest.fixture(autouse=True)
+def replay_deprecated_models(request: pytest.FixtureRequest) -> None:
+    ignore_deprecated_models_in_recordings(request.config.getoption('record_mode'))
 
 
 @pytest.fixture

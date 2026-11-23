@@ -8,7 +8,7 @@ Pydantic AI includes a built-in web chat interface that you can use to interact 
 
 ![Web Chat UI](img/web-chat-ui.png)
 
-For CLI usage with `clai web`, see the [CLI - Web Chat UI documentation](cli.md#web-chat-ui).
+For CLI usage with `clai web`, see the [CLI - Web Chat UI documentation](cli.md#web-chat-ui). `clai` is deprecated in favour of pax: see [Migrating to pax](cli.md#migrating-to-pax). [`Agent.to_web()`][pydantic_ai.agent.Agent.to_web] is not deprecated.
 
 !!! note
     The web UI is meant for local development and debugging. In production, you can use one of the [UI Event Stream integrations](ui/overview.md) to connect your agent to a custom frontend.
