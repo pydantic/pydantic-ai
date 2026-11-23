@@ -1611,8 +1611,8 @@ and use `await abort()` on cancellation.
 
 Response and thinking parts end with a blank separator line; responses have no
 repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
-before the tool's arguments finish streaming. Redirected output and `-p` print
-each line once it is complete.
+before the tool's arguments finish streaming. Redirected output prints each
+line once it is complete.
 
 Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
 without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and

@@ -322,6 +322,16 @@ def test_a_long_preview_cannot_evict_the_lines_it_is_shown_after() -> None:
     assert plain(buffer, width=40) == ['a', 'b', 'c', '']
 
 
+def test_a_preview_left_by_an_aborted_part_counts_against_the_budget() -> None:
+    """Nothing replaces it once the part freezes, so it stays, and repeated cancels must not grow past the limit."""
+    buffer = TranscriptBuffer(max_chars=20)
+    for _ in range(4):
+        block = _block(buffer)
+        block.write(f'{PREVIEW}{"p" * 9}')
+        block.freeze()
+    assert plain(buffer, width=40) == ['p' * 9, 'p' * 9, '']
+
+
 def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
     buffer = TranscriptBuffer(max_chars=10)
     block = _block(buffer)
