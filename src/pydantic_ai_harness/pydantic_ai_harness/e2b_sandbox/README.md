@@ -139,7 +139,7 @@ A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Googl
 
 - When `sandbox_timeout` runs out, a run that is still going fails. Set it longer than your longest task.
 - The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
-- The desktop keeps `printscreen` and the media and volume keys for itself, so the window in front never gets them.
+- The desktop keeps `printscreen` for itself, so the window in front never gets it.
 
 ## Clean up
 

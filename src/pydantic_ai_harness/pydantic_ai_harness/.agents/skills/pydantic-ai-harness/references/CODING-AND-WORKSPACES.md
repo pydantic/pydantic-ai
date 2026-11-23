@@ -410,9 +410,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
 - `E2BSandbox(desktop=True)` gives a new sandbox a 1280x800 screen for `ComputerUse()`, from E2B's `desktop`
-  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. XFCE keeps `printscreen` and the
-  media and volume keys, so apps never receive them. The agent can type only ASCII. A custom `template` must include
-  Xvfb, `xdotool`, `xwininfo`, `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop. Windows of a sandbox made
+  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. XFCE keeps `printscreen`, so
+  apps never receive it. The agent can type only ASCII. A custom `template` must include Xvfb, `xdotool`,
+  `xwininfo`, `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop. Windows of a sandbox made
   with E2B's Desktop SDK are on another display, so the agent can't see them.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
