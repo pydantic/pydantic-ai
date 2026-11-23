@@ -1,0 +1,179 @@
+# description: Removes expired exclude-newer-package overrides and upgrades uv.lock and the gh-aw runner's script lock each Monday, and opens one pull request with the result.
+name: Lock refresh
+
+# Dependabot's `uv` job checks only the dependencies the root `pyproject.toml` declares, so a package that only a
+# workspace member declares, such as `anthropic`, stays at its locked version until someone runs `uv lock --upgrade`.
+# A dated `[tool.uv.exclude-newer-package]` override likewise stays after the global `exclude-newer` window has passed
+# its date, and from then on holds its package below that window. Each week this workflow removes the expired overrides
+# with `lock_overrides.py remove`, upgrades both locks to the newest releases inside the window, and opens a pull request
+# that takes the result through CI and review.
+#
+# `uv lock` can build an sdist to read its metadata, which runs that package's build backend, so the refresh has a job
+# of its own with no credentials and hands the three files over as an artifact: a step can change `GITHUB_ENV` and
+# `GITHUB_PATH` for the steps after it, so a later step in the same job would not keep a dependency away from the
+# token. The pull request job copies only those three files into its checkout.
+#
+# The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no workflow runs for a pull
+# request opened with GITHUB_TOKEN, so the pull request would arrive without this repository's required checks.
+#
+# Each run pushes to its own `lock-refresh-<run id>` branch, which every attempt of the run reuses. A rerun commits its
+# refresh on top of what an earlier attempt pushed, so the push stays a fast-forward and the pull request's diff stays
+# this refresh against the same `main` commit. Once the run's pull request is open, it closes the ones earlier runs
+# opened.
+
+on:
+  schedule:
+    - cron: '41 5 * * 1' # Mondays
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: lock-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh the locks
+    if: github.repository == 'pydantic/pydantic-ai' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.collect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: false
+
+      # Overrides first: the script lock reads the root `[tool.uv]` settings, overrides included.
+      - name: Remove expired overrides and upgrade the locks
+        run: |
+          set -o pipefail
+          out="${RUNNER_TEMP}/lock-refresh"
+          mkdir "$out"
+          uv run --no-project .github/scripts/lock_overrides.py remove | tee "${out}/removed.txt"
+          uv lock --upgrade 2>&1 | tee "${out}/workspace.txt"
+          uv lock --script .github/scripts/pydantic-ai-runner --upgrade 2>&1 | tee "${out}/runner.txt"
+
+      - name: Collect the changed files and the pull request body
+        id: collect
+        run: |
+          if git diff --quiet -- pyproject.toml uv.lock .github/scripts/pydantic-ai-runner.lock; then
+            echo "No override has expired and both locks are current."
+            exit 0
+          fi
+          out="${RUNNER_TEMP}/lock-refresh"
+          cp pyproject.toml uv.lock .github/scripts/pydantic-ai-runner.lock "$out/"
+          removed=$(sed 's/.*/`&`/' "${out}/removed.txt" | paste -sd ',' - | sed 's/,/, /g')
+          {
+            cat <<'EOF'
+          Upgrades every package in `uv.lock` and `.github/scripts/pydantic-ai-runner.lock` to its newest release inside the `[tool.uv] exclude-newer` window, and removes each `[tool.uv.exclude-newer-package]` override whose date that window has passed.
+
+          EOF
+            echo "Expired overrides removed: ${removed:-none}."
+            echo
+            echo "Opened by the weekly [lock refresh run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). The next run that finds changes closes this pull request and opens a new one from a newer \`main\`."
+            for lock in workspace:'uv lock --upgrade' runner:'uv lock --script .github/scripts/pydantic-ai-runner --upgrade'; do
+              printf '\n<details><summary><code>%s</code></summary>\n\n```\n' "${lock#*:}"
+              cat "${out}/${lock%%:*}.txt"
+              printf '```\n\n</details>\n'
+            done
+          } > "${out}/body.md"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.collect.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lock-refresh
+          path: |
+            ${{ runner.temp }}/lock-refresh/pyproject.toml
+            ${{ runner.temp }}/lock-refresh/uv.lock
+            ${{ runner.temp }}/lock-refresh/pydantic-ai-runner.lock
+            ${{ runner.temp }}/lock-refresh/body.md
+          if-no-files-found: error
+          retention-days: 1
+          # A rerun of the job uploads the same name again.
+          overwrite: true
+
+  pull-request:
+    name: open the lock refresh pull request
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lock-refresh
+          path: ${{ runner.temp }}/lock-refresh
+
+      - name: Generate app token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
+          # Only the pinned action reads it, in a job that runs no dependency code.
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env]
+          owner: pydantic
+          repositories: pydantic-ai
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push the refresh and open its pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          refresh="${RUNNER_TEMP}/lock-refresh"
+          cp "${refresh}/pyproject.toml" pyproject.toml
+          cp "${refresh}/uv.lock" uv.lock
+          cp "${refresh}/pydantic-ai-runner.lock" .github/scripts/pydantic-ai-runner.lock
+
+          branch="lock-refresh-${GITHUB_RUN_ID}"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          # A rerun finds the branch an earlier attempt pushed, and commits on top of it.
+          if gh api "repos/${GH_REPO}/git/ref/heads/${branch}" --silent 2>/dev/null; then
+            git fetch --quiet --depth=1 "$remote" "refs/heads/${branch}"
+            git reset --soft FETCH_HEAD
+          fi
+          git add pyproject.toml uv.lock .github/scripts/pydantic-ai-runner.lock
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --quiet --message 'chore: update locked Python dependencies'
+          fi
+          git push --quiet "$remote" "HEAD:refs/heads/${branch}"
+
+          number=$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')
+          if [[ -n "$number" ]]; then
+            gh pr edit "$number" --body-file "${refresh}/body.md"
+          else
+            gh pr create --head "$branch" --base main --title 'Update locked Python dependencies' \
+              --label dependencies --label pkg:core --body-file "${refresh}/body.md"
+            number=$(gh pr list --state open --head "$branch" --json number --jq '.[0].number')
+          fi
+
+          # The author and the branch name together pick out the pull requests this workflow opened. Only earlier
+          # runs': a rerun of an older run must not close a newer refresh. `--app` goes through search, whose index
+          # can lag, but it has indexed the pull requests earlier runs opened.
+          superseded=$(gh pr list --state open --app pydantic-docs --limit 100 --json number,headRefName --jq "
+            .[] | select(.headRefName | test(\"^lock-refresh-[0-9]+\$\"))
+            | select((.headRefName | ltrimstr(\"lock-refresh-\") | tonumber) < ${GITHUB_RUN_ID}) | .number")
+          for old in $superseded; do
+            gh pr close "$old" --delete-branch --comment "Superseded by #${number}, which refreshes the locks from a newer \`main\`."
+          done

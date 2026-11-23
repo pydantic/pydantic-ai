@@ -17,7 +17,6 @@ exclude-newer-span = "P7D"
 [options.exclude-newer-package]
 cassetter = false
 genai-prices = false
-k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 listentome = false
 logfire = false
 logfire-api = false

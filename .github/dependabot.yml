@@ -8,20 +8,16 @@ updates:
   package-ecosystem: npm # zizmor: ignore[dependabot-cooldown] -- Security-only updates; cooldown applies only to version updates.
   schedule:
     interval: monthly
-- cooldown:
-    default-days: 7
-  directory: /
-  groups:
-    python-packages:
-      patterns:
-      - "*"
+- directory: /
   # Setting `labels` replaces Dependabot's defaults (`dependencies` plus the ecosystem label),
   # so they are listed again next to `pkg:core`, which the `Package Label` check requires.
   labels:
   - dependencies
   - python:uv
   - pkg:core
-  package-ecosystem: uv
+  # This job checks only the dependencies the root `pyproject.toml` declares, so `lock-refresh.yml` keeps the lock current weekly.
+  open-pull-requests-limit: 0
+  package-ecosystem: uv # zizmor: ignore[dependabot-cooldown] -- Security-only updates; cooldown applies only to version updates.
   schedule:
     interval: monthly
 - cooldown:
