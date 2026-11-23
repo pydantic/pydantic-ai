@@ -411,7 +411,9 @@ class _HTMLConversionEstimate:
         work = 8 * (indent_depth + 1)
         if tag.name in ('td', 'th'):
             colspan_attr = tag.get('colspan')
-            digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
+            digits = (
+                colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and _is_parsable_decimal(colspan_attr) else ''
+            )
             colspan = min(1000, int(digits[:4] or '1'))
             # A first-row cell can also generate two full-width header lines.
             work += 8 * colspan
@@ -445,7 +447,7 @@ class _HTMLConversionEstimate:
             return 4
         start_attr = parent.get('start')
         start_digits = 1
-        if isinstance(start_attr, str) and start_attr.isdecimal():
+        if isinstance(start_attr, str) and _is_parsable_decimal(start_attr):
             start_digits = len(start_attr.lstrip('0')) or 1
         return max(start_digits, len(str(len(parent.contents)))) + 3
 

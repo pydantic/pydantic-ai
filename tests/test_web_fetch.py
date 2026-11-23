@@ -1099,6 +1099,8 @@ _TEXT_BUDGET = '_MAX_HTML_TEXT_SCAN_COST'
 # Content after these 16 `<div>`s sits at depth 18 (the document itself is depth 1), two levels past the 16 where
 # deep scans start. The deepest `<div>` charges 8 conversion cost for its own scan.
 _DEEP = '<div>' * 16
+# One digit more than `int()` parses.
+_TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
 
 # Each case is a document, the budget it pins, and the exact total charged against that budget.
 _BUDGET_TOTAL_CASES = [
@@ -1122,6 +1124,10 @@ _BUDGET_TOTAL_CASES = [
     # Ordered-list markers are as wide as the start number without leading zeros, or the item count, plus 3.
     pytest.param('<ol start="0012"><li>a\nb</li></ol>', _COST_BUDGET, 12, id='ordered-list-start'),
     pytest.param('<ol start="12²"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-non-decimal-start'),
+    # A start `int()` rejects counts as absent, as the converter treats it.
+    pytest.param(
+        f'<ol start="{_TOO_MANY_DIGITS}"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-start-too-long'
+    ),
     pytest.param('<ol><li>a\nb</li>' + '<li></li>' * 9 + '</ol>', _COST_BUDGET, 66, id='ordered-list-item-count'),
     # Past depth 16, each tag charges 8 per level, times its indent depth plus one.
     pytest.param(_DEEP + '<p><br></p>', _COST_BUDGET, 48, id='deep-tags'),
@@ -1131,6 +1137,9 @@ _BUDGET_TOTAL_CASES = [
     ),
     pytest.param('<table><tr><td colspan="2000">x</td></tr></table>', _COST_BUDGET, 8024, id='colspan-capped-at-1000'),
     pytest.param('<table><tr><td colspan="x">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-not-a-number'),
+    pytest.param(
+        f'<table><tr><td colspan="{_TOO_MANY_DIGITS}">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-too-long'
+    ),
     pytest.param(_DEEP + '<table><tr><td colspan="3">x</td></tr></table>', _COST_BUDGET, 224, id='deep-colspan'),
     # Each `<thead>` row that holds a data cell also charges the whole `<thead>`; the first `<tbody>` row, the whole
     # table.
@@ -1254,8 +1263,6 @@ _BUDGET_CHECK_CASES = [
 
 
 class TestMarkdownConverter:
-    # One digit more than `int()` parses.
-    _TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
     # The largest number `int()` parses and `str()` writes.
     _LARGEST_NUMBER = '9' * sys.get_int_max_str_digits()
 
