@@ -402,6 +402,9 @@ rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minim
 
 On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens. The exception is `gemini-2.5-flash-lite`
 on the Gemini API, which rejects budgets below 512 there and gets 512.
+To send another budget for `minimal`, set
+[`GoogleModelProfile.google_minimal_thinking_budget`][pydantic_ai.profiles.google.GoogleModelProfile.google_minimal_thinking_budget]
+in the model's `profile`.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
