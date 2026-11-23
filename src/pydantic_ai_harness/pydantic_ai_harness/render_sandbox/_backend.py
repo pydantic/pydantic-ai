@@ -39,7 +39,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -50,7 +50,7 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
-from pydantic_ai_harness._x11 import desktop_display
+from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
@@ -125,12 +125,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             check_provider(ref, 'render')
         check_sandbox_timeout(sandbox_timeout)
         check_env(env)
-        if ref is None and desktop and not allow_internet_access:
-            raise UserError(
-                'A new desktop sandbox installs the display programs on first use with `apt-get`, so it needs '
-                '`allow_internet_access=True`.'
-            )
-        self._env = dict(env or {})
         self._client = client
         self._ref = ref
         self._allow_internet_access = allow_internet_access
@@ -143,12 +137,18 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._resolved_working_dir: str | None = None
         # A sandbox this backend created still needs its `working_dir` made, even if readiness is retried.
         self._working_dir_pending = False
-        self._display, self._env = desktop_display(
+        self._display = x11_display(
             self._run_argv,
-            desktop_size(desktop),
-            self._env,
+            checked_desktop_size(desktop),
             lambda: f'Render sandbox {self._ref.id if self._ref else "(not created)"}',
         )
+        # An existing sandbox already has whatever its display needs.
+        if self._display and ref is None and not allow_internet_access:
+            raise UserError(
+                "A new desktop sandbox installs the display's programs with `apt-get` on first use, which needs "
+                '`allow_internet_access=True`.'
+            )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
 
     @property
     def display(self) -> Display | None:
