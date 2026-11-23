@@ -134,7 +134,7 @@ async def test_gpt_oss_on_a_compatible_endpoint_gets_the_announcement_first(
 
     result = await agent.run('Reply with one word: what color is the sky on a clear day?')
 
-    assert result.output
+    assert result.output == snapshot('Blue')
     assert request_capture.body('/chat/completions')['messages'] == snapshot(
         [
             {'role': 'system', 'content': ANNOUNCEMENT},
