@@ -267,9 +267,23 @@ class _Lines:
             self.chars += len(decoded)
             started = theme.painted_in()
         self.pending_theme = started
+        self._prune()
+
+    def _prune(self) -> None:
         self.pending = self.pending[-self.max_chars :]
         while len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars:
             self.chars -= len(self.lines.pop(0).text)
+
+    def keep_preview(self) -> None:
+        """Make a shown preview part of the stream, as nothing will replace it now."""
+        if (preview := self.preview) is not None:
+            self.preview = None
+            self.revision += 1
+            self.lines += preview.lines
+            self.chars += preview.chars
+            # The preview went on from the unfinished line, so its own unfinished line includes it.
+            self.pending, self.pending_theme, self._decoder = preview.pending, preview.pending_theme, preview._decoder
+            self._prune()
 
     def tail(self) -> Text:
         decoder = TranscriptDecoder()
@@ -349,6 +363,7 @@ class MarkdownBlock(io.StringIO):
     def freeze(self) -> None:
         """Keep only what was shown, as an aborted stream never rendered the rest of its source."""
         self.source = None
+        self._stream.keep_preview()
         self._changed()
 
     def _lines(self, *, width: int) -> list[_Line]:

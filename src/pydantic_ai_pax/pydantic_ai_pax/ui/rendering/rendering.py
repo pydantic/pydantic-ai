@@ -307,14 +307,14 @@ class MarkdownPipeline:
         """Whether to start showing `line`; leading spaces wait for the text that says whether it is a table row.
 
         A table renders only once it ends, so its rows, and text arriving while it is still open, are not shown early.
-        Nor is an opening fence, which its newline turns into the code block's rule.
+        Nor is an opening fence, which its newline turns into the code block's rule, or text that may still become one.
         """
         stripped = line.lstrip()
         state = self._parser.state
         return (
             self.preview
             and bool(stripped)
-            and not stripped.startswith(('|', '```', '~~~'))
+            and not any(held.startswith(stripped[: len(held)]) for held in ('|', '```', '~~~', '<pre>'))
             and not state.is_in_code()
             and not state.is_in_table()
         )
