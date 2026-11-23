@@ -2,12 +2,11 @@
 
 import io
 import re
-from asyncio import Future
 from collections import deque
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
-from typing import IO, cast
+from typing import IO
 
 import anyio
 from rich.console import Console, RenderableType
@@ -185,6 +184,8 @@ class PartWriter(SmoothWriter):
         )
         self._queued: deque[tuple[str, str]] = deque()
         """Writes made whole by `commit`, each with the text typed after it, waiting behind `_pending`."""
+        self._failed = False
+        """Whether a tick's write failed, which ends the drainer with that error."""
 
     def write(self, text: str) -> int:
         """Queue `text` to be typed after everything already queued."""
@@ -215,8 +216,12 @@ class PartWriter(SmoothWriter):
                 emitted.append(whole)
                 n -= 1
         # The drainer asks only while units remain, so something is always emitted.
-        self._target.write(''.join(emitted))
-        self._target.flush()
+        try:
+            self._target.write(''.join(emitted))
+            self._target.flush()
+        except BaseException:
+            self._failed = True
+            raise
 
     def _flush_all(self) -> None:
         """Write everything left at once, in order: Termflow's hook for when output must not wait."""
@@ -231,9 +236,7 @@ class PartWriter(SmoothWriter):
 
     async def close(self) -> None:
         """Write what is still queued at once, so the next tool line or the prompt does not wait for it to be typed."""
-        # Termflow annotates its task as a bare `Task`.
-        drainer = cast('Future[None] | None', self._task)  # pyright: ignore[reportUnknownMemberType]
-        if drainer is None or not drainer.done():
+        if not self._failed:
             try:
                 self._flush_all()
             except BaseException:

@@ -24,6 +24,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.conftest import no_leaked_tasks
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -174,11 +175,12 @@ async def test_a_failed_write_at_part_end_is_not_written_again() -> None:
                 raise OSError('terminal closed')
 
     output = FailsOnce()
-    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
-    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='once\n')))
-    with pytest.raises(OSError, match='terminal closed'):
-        await renderer.finish()
-    await asyncio.sleep(0.05)  # real-wait: a drainer still running would write again by now
+    with no_leaked_tasks():
+        renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
+        await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='once\n')))
+        with pytest.raises(OSError, match='terminal closed'):
+            await renderer.finish()
+        await asyncio.sleep(0)  # the cancelled drainer ends on its next step
     assert output.getvalue().count('once') == 1
 
 
