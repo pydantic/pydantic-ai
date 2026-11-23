@@ -1218,6 +1218,8 @@ paste to reveal it for editing; recalled history shows the full text.
 While a turn or command runs, the rule above the draft shows how long it has run
 and that Esc interrupts it; with a draft or a queued message it also shows the
 queue and steer keys, which keep their place first on a narrow terminal.
+A turn that finishes ends with a muted `Done in 12s` row; an interrupted one with
+`Interrupted. Type what to do instead.`
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.

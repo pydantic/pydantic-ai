@@ -342,21 +342,22 @@ class ToolOutput:
         return True
 
     def _inspection_header(self, tool_call_id: str, name: str, args: DisplayArgs) -> bool:
+        """Name what is read or listed, with only the arguments the model set."""
         if name == 'read_file':
             if args.path is None:
                 return False
-            limit = min(args.limit, 2000) if args.limit is not None else 2000
-            details = f'offset={args.offset} limit={limit} lines'
-            if args.limit is not None and args.limit > 2000:
-                details += f' (requested {args.limit})'
-            path = args.path
+            details = ''
+            if args.limit is not None:
+                # The default read limit is 2000 lines, whatever the model asks for.
+                details = f' lines {args.offset + 1}-{args.offset + min(args.limit, 2000)}'
+            elif args.offset:
+                details = f' from line {args.offset + 1}'
+            argument = args.path + details
         else:
-            path = args.path or '.'
-            limit = args.limit if args.limit is not None else 200
-            details = f'recursive={str(args.recursive).lower()} limit={limit}'
-            if args.glob is not None:
-                details += f' glob={args.glob!r}'
-        self.header(tool_call_id, name=name, argument=f'{path!r} {details}')
+            first = None if args.limit is None else f'first {args.limit}'
+            parts = (args.path or '.', args.glob, None if args.recursive else 'not recursive', first)
+            argument = ' '.join(part for part in parts if part)
+        self.header(tool_call_id, name=name, argument=argument)
         return True
 
     def render_result(self, event: FunctionToolResultEvent) -> None:
