@@ -9,13 +9,7 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai import (
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPart,
-)
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
