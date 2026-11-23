@@ -161,9 +161,8 @@ def gateway_provider(
 
     canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
-        # Use the implied providerId as the default route. A route with no provider of its own keeps its name.
-        name = upstream_provider.removeprefix('gateway/')
-        route = name if name in _GATEWAY_ROUTE_APIS else _gateway_route(canonical)
+        # Use the implied providerId as the default route.
+        route = _gateway_route(upstream_provider, canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -393,9 +392,13 @@ _GATEWAY_ROUTE_REMAP: dict[str, str] = {
 }
 
 
-def _gateway_route(provider: str) -> str:
-    """Translate a canonical provider name into the Gateway URL route segment."""
-    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+def _gateway_route(provider: str, canonical: str) -> str:
+    """The Gateway URL route segment for a `gateway/` provider name and its canonical name."""
+    name = provider.removeprefix('gateway/')
+    if name in _GATEWAY_ROUTE_APIS:
+        # A route with no provider of its own keeps its name.
+        return name
+    return _GATEWAY_ROUTE_REMAP.get(canonical, canonical)
 
 
 # Gateway routes with no Pydantic AI provider of their own, mapped to the canonical
