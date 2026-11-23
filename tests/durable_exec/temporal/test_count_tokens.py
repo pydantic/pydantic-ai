@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart
@@ -179,6 +180,15 @@ class _MisconfiguredCountModel(_RejectedCountModel):
     error = _CountConfigError('The app is misconfigured.')
 
 
+_sent_requests: list[str] = []
+"""Each request the no-count-endpoint model's client was asked to send. Its transport sends none of them."""
+
+
+def _refuse_request(request: httpx2.Request) -> httpx2.Response:
+    _sent_requests.append(str(request.url))
+    return httpx2.Response(400)
+
+
 class _NoCountEndpointModel(OpenAICodexModel):
     """A model whose provider serves no token counting, so its `count_tokens` raises before any request."""
 
@@ -213,7 +223,14 @@ _misconfigured_count_agent = Agent(
     capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
 )
 _no_count_endpoint_agent = Agent(
-    _NoCountEndpointModel('gpt-5.5', provider=OpenAICodexProvider(openai_client=AsyncOpenAI(api_key='mock-api-key'))),
+    _NoCountEndpointModel(
+        'gpt-5.5',
+        provider=OpenAICodexProvider(
+            openai_client=AsyncOpenAI(
+                api_key='mock-api-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(_refuse_request))
+            )
+        ),
+    ),
     name='count_tokens_no_count_endpoint',
     capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
 )
@@ -268,6 +285,7 @@ async def test_count_tokens_errors_fail_the_count_once(
     the workflow sees it as a `UserError`, which fails the workflow instead of its task.
     """
     _count_attempts.clear()
+    _sent_requests.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -283,3 +301,4 @@ async def test_count_tokens_errors_fail_the_count_once(
         )
     assert output == expected
     assert _count_attempts == [error]
+    assert _sent_requests == []
