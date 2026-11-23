@@ -30,7 +30,10 @@ _RELAUNCH_WEB = 'CLAI_RELAUNCH_WEB'
 In the environment, which only you can read, rather than on the command line `ps` shows every user.
 """
 SUBCOMMANDS = ('config', 'plugins', 'sessions', 'update')
-"""The `pax` subcommands. The agent can run `pax` from its shell, so none may widen what the agent may do."""
+"""The `pax` subcommands.
+
+The agent can run `pax` from its shell, so none may save a setting that widens what the agent may do.
+"""
 
 
 def _list_live_sessions() -> None:

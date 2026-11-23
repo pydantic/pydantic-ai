@@ -24,12 +24,14 @@ WIDGETS = {
 """The classes whose instances read keys, by the top-level package that defines them."""
 
 
-def _origins(tree: ast.Module) -> dict[str, str]:
-    """Each name a module imports, by the dotted path it comes from."""
+def _origins(tree: ast.Module, own: str) -> dict[str, str]:
+    """Each name a module imports, by the dotted path it comes from; a relative import resolves against `own`."""
     origins: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module is not None:
-            origins.update({alias.asname or alias.name: f'{node.module}.{alias.name}' for alias in node.names})
+        if isinstance(node, ast.ImportFrom):
+            package = own.rsplit('.', node.level)[0] if node.level else ''
+            source = '.'.join(part for part in (package, node.module or '') if part)
+            origins.update({alias.asname or alias.name: f'{source}.{alias.name}' for alias in node.names})
         elif isinstance(node, ast.Import):
             origins.update(
                 {
@@ -63,7 +65,8 @@ def construction_sites() -> Iterator[Site]:
     for path in sorted(PACKAGE.rglob('*.py')):
         module = '.'.join(path.relative_to(PACKAGE).with_suffix('').parts)
         tree = ast.parse(path.read_text(encoding='utf-8'))
-        yield from _sites(tree, module, f'pydantic_ai_pax.{module}', _origins(tree), ())
+        own = f'pydantic_ai_pax.{module}'
+        yield from _sites(tree, module, own, _origins(tree, own), ())
 
 
 def _sites(node: ast.AST, module: str, own: str, origins: dict[str, str], scope: tuple[str, ...]) -> Iterator[Site]:
@@ -90,11 +93,14 @@ def _sites(node: ast.AST, module: str, own: str, origins: dict[str, str], scope:
             'from pydantic_ai_pax.ui.menus.question_menu import QuestionMenu\n\ndef f():\n    QuestionMenu()\n',
             'QuestionMenu',
         ),
+        ('from .question_menu import QuestionMenu\n\ndef f():\n    QuestionMenu()\n', 'QuestionMenu'),
+        ('from . import question_menu\n\ndef f():\n    question_menu.QuestionMenu()\n', 'QuestionMenu'),
     ],
 )
 def test_the_scan_sees_renamed_and_qualified_constructions(source: str, widget: str) -> None:
     tree = ast.parse(source)
-    assert set(_sites(tree, 'demo', 'pydantic_ai_pax.demo', _origins(tree), ())) == {('demo', 'f', widget)}
+    own = 'pydantic_ai_pax.ui.menus.demo'
+    assert set(_sites(tree, 'demo', own, _origins(tree, own), ())) == {('demo', 'f', widget)}
 
 
 def test_every_key_reading_surface_is_registered() -> None:
