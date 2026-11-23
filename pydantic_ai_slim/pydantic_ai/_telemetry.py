@@ -39,6 +39,7 @@ __all__ = (
     'open_span',
     'publish_run_telemetry',
     'record_decision',
+    'records_content',
     'run_telemetry_scope',
     'set_content_attribute',
 )
@@ -153,8 +154,13 @@ def set_content_attribute(
 
     For content known when the span opens, pass `content=` to `open_span` instead.
     """
-    if (telemetry := _telemetry_of(ctx)) is not None and telemetry.include_content:
+    if records_content(ctx):
         span.set_attribute(key, value)
+
+
+def records_content(ctx: RunContext[Any] | RunTelemetry | None) -> bool:
+    """Whether the run's spans record content, to skip building a content value that costs something or can raise."""
+    return (telemetry := _telemetry_of(ctx)) is not None and telemetry.include_content
 
 
 def current_span(ctx: RunContext[Any] | RunTelemetry | None) -> Span:
@@ -184,7 +190,8 @@ def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | 
         return None
     # Telemetry published for the same tracer can only narrow content: a durable worker that doesn't record
     # content publishes that, while `ctx` still carries the run's own flag. Agents sharing a tracer provider
-    # share tracers too, so a parent's published telemetry must not turn on a child's content.
+    # share tracers too, so a sub-agent's `for_run`, which still sees its parent's published value, records
+    # content only when both runs do. That fails closed: a parent's setting never turns a child's content on.
     published = _current.get()
     include_content = ctx.trace_include_content
     if published is not None and published.tracer is ctx.tracer:
