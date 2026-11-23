@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      # Temporary: runs CI on this branch before it has a pull request. Reverted before the pull request opens.
+      - test-suite-reliability
     tags:
       - "**"
       # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
