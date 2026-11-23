@@ -909,6 +909,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Validate what `override(capabilities=...)` keeps of the agent's own capabilities.
+
+        `capabilities` are the leaves of the list's items taken unchanged from `root_capability.capabilities`.
+        A durability capability refuses a list that doesn't pass its bound copy through: dropping it would run
+        the agent without durability, and reaching it any other way, as a copy you constructed or inside
+        another capability, would bind it again and register this engine's durable units a second time.
+        Checked wherever the override is entered, inside or outside a durable container, because DBOS and
+        Prefect carry an override entered outside a workflow or flow into it.
+        """
+        for capability in capabilities:
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if capability is self:
+                return
+        name = type(self).__name__
+        raise UserError(
+            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, "
+            f'the item of `agent.root_capability.capabilities` that holds the bound `{name}` the agent registered '
+            f'its durable {self.durable_unit_plural} with. A `{name}` you construct, or the bound one inside '
+            'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, '
+            'for example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
