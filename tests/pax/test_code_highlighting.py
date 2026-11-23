@@ -1,6 +1,7 @@
 """Fenced code stays literal, streams line by line, and is lexed with the complete block's context."""
 
 import io
+from typing import IO
 
 import pytest
 from rich.color import Color
@@ -12,6 +13,7 @@ from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta,
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.rendering import PartWriter
 
 
 @pytest.mark.parametrize('chunk_size', [1, 1000])
@@ -118,10 +120,23 @@ async def test_code_uses_terminal_foreground_and_palette_syntax(name: str, think
     assert '\x1b]' not in output.getvalue()
 
 
-async def test_live_panel_shows_code_lines_as_they_arrive_and_lexes_the_block_at_the_fence() -> None:
+async def test_live_panel_shows_code_lines_as_they_arrive_and_lexes_the_block_at_the_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Untimed(PartWriter):
+        """Writes what it is given at once, so the rows do not depend on the drainer's timer."""
+
+        def write(self, text: str) -> int:
+            self._target.write(text)
+            return len(text)
+
+    def make_writer(self: StreamRenderer, output: IO[str]) -> PartWriter:
+        return Untimed(output, tick_interval=3600, catch_up_seconds=1, min_chars_per_tick=1)
+
+    monkeypatch.setattr(StreamRenderer, '_make_writer', make_writer)
     surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
-    console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80)
-    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
+    console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80, no_color=False)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
 
     def rows() -> list[Text]:
         return [Text.from_ansi(row) for row in surface.transcript.frame(width=80, height=50).rows]
