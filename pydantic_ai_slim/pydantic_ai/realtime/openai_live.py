@@ -245,7 +245,8 @@ _MAX_FORWARDED_PAUSE_MS = 500
 
 #: The most tokens Live accepts in one `session.thinking.append` or `session.instructions.append`.
 _CONTEXT_TOKEN_LIMIT = 500
-#: The most tokens of `instructions` a session can start with.
+#: The most tokens of `instructions` a session can start with, in the same tokenizer (checked live: 16,384 start, 16,385
+#: are refused).
 _START_INSTRUCTIONS_TOKEN_LIMIT = 16_384
 #: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
 _CONTEXT_ENCODING = 'o200k_base'

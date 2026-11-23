@@ -43,7 +43,10 @@ from pydantic import Base64Bytes, BaseModel, Field, TypeAdapter
 from twilio.request_validator import RequestValidator
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import RealtimeInputSpeechStartEvent
+from pydantic_ai.messages import (
+    RealtimeInputSpeechStartEvent,
+    RealtimeResponseInterruptedEvent,
+)
 from pydantic_ai.realtime import RealtimeSession
 
 from .audio import mulaw_to_pcm16, pcm16_to_mulaw
@@ -168,7 +171,8 @@ class PlaybackMarks:
 app = FastAPI()
 validator = RequestValidator(os.environ.get('TWILIO_AUTH_TOKEN', ''))
 public_url = os.environ.get('PUBLIC_URL', 'http://localhost:8000')
-# The calls `/twiml` answered, whose stream `/media-stream` is waiting for.
+# The calls `/twiml` answered, whose stream `/media-stream` is waiting for. A production
+# server would also forget a call whose stream never arrives.
 answered_calls: set[str] = set()
 
 
@@ -249,6 +253,9 @@ async def bridge(
     async def playback() -> None:
         async for chunk in session.stream_audio():
             payload = pcm16_to_mulaw(chunk, rate=session.audio_output_sample_rate)
+            # Named before the media goes out: a `clear` sent meanwhile drops the
+            # chunk, and must drop its mark with it.
+            mark = marks.sent(len(chunk))
             await websocket.send_json(
                 {
                     'event': 'media',
@@ -257,29 +264,30 @@ async def bridge(
                 }
             )
             await websocket.send_json(
-                {
-                    'event': 'mark',
-                    'streamSid': stream_sid,
-                    'mark': {'name': marks.sent(len(chunk))},
-                }
+                {'event': 'mark', 'streamSid': stream_sid, 'mark': {'name': mark}}
             )
 
     async def barge_in() -> None:
         async for event in session:
-            if isinstance(event, RealtimeInputSpeechStartEvent):
+            # Models that report the caller starting to talk (OpenAI gpt-realtime, Azure,
+            # xAI) can be interrupted; Gemini and ElevenLabs Agents interrupt themselves and
+            # say so. Either way, Twilio still holds audio the caller shouldn't hear.
+            # OpenAI GPT-Live reports neither: it stops talking by itself, and sends its
+            # audio at the pace it speaks it, so little of it waits in Twilio's buffer.
+            if isinstance(
+                event, RealtimeInputSpeechStartEvent | RealtimeResponseInterruptedEvent
+            ):
                 played = marks.played_bytes
                 # `clear` makes Twilio echo every mark still pending, for audio the
                 # caller never heard: drop them first, so they don't count as played.
                 marks.discard_pending()
                 await websocket.send_json({'event': 'clear', 'streamSid': stream_sid})
-                await session.interrupt(played_bytes=played)
+                if isinstance(event, RealtimeInputSpeechStartEvent):
+                    await session.interrupt(played_bytes=played)
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(playback)
-        # A model without interruption, like OpenAI GPT-Live, stops talking over the
-        # caller by itself.
-        if session.profile.get('supports_interruption'):
-            tg.start_soon(barge_in)
+        tg.start_soon(barge_in)
         # Returns when Twilio stops the stream, and raises when the socket drops.
         await session.send_audio(caller_audio())
         tg.cancel_scope.cancel()

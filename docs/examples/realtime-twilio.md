@@ -37,7 +37,8 @@ PUBLIC_URL=https://<your public host>
 ```
 
 `TWILIO_AUTH_TOKEN` is your Twilio account's auth token, which the server checks Twilio's signatures with.
-To run against another realtime model, such as `openai:gpt-live-1`, set `TWILIO_REALTIME_MODEL`.
+To run against another realtime model, such as a [GPT-Live model](../realtime/openai.md#model-names), set
+`TWILIO_REALTIME_MODEL` to its name.
 
 With [dependencies installed and your key set](./setup.md#usage), start the server:
 

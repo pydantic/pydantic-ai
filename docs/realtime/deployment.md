@@ -252,8 +252,8 @@ async def media_stream(websocket: WebSocket):
             async for chunk in session.stream_audio():
                 mulaw = pcm16_to_mulaw(chunk, rate=session.audio_output_sample_rate)
                 payload = base64.b64encode(mulaw).decode()
+                mark = {'name': marks.name_next(len(chunk))}  # before a `clear` can drop the chunk
                 await websocket.send_json({'event': 'media', 'streamSid': stream_sid, 'media': {'payload': payload}})
-                mark = {'name': marks.name_next(len(chunk))}
                 await websocket.send_json({'event': 'mark', 'streamSid': stream_sid, 'mark': mark})
 
         async def barge_in():
@@ -289,12 +289,14 @@ What a bridge has to get right:
 - **`clear` echoes every pending mark.** Interrupting the session doesn't stop audio Twilio already has: send
   `clear` too. Twilio then drops what it hasn't played and echoes every mark still pending, though nobody heard
   that audio. Read the played count and forget the pending marks before sending `clear`, so those echoes count
-  for nothing.
-- **GPT-Live interrupts itself.** [GPT-Live](openai.md#gpt-live-feature-support-and-limitations) reports no speech
-  start and has no `interrupt()`: it stops talking over the caller by itself, and sends its audio as it speaks it
-  (ten 100 ms frames a second in our recordings), so little of it waits in Twilio's buffer. Start the barge-in task
-  only where the session's [profile][pydantic_ai.realtime.RealtimeSession.profile] reports
-  `supports_interruption`, as the example does.
+  for nothing, and name each chunk's mark before sending the chunk, so a `clear` sent in between drops the mark
+  too.
+- **Models that interrupt themselves.** Gemini and ElevenLabs Agents cut their own reply short when the caller
+  talks and report a [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
+  rather than a speech start: send `clear` on it too, with no `interrupt()` call, as the example does.
+  [GPT-Live](openai.md#gpt-live-feature-support-and-limitations) reports neither and has no `interrupt()`: it
+  stops talking over the caller by itself, and sends its audio at the pace it speaks it (ten 100 ms frames a
+  second in our recordings), so little of it waits in Twilio's buffer to play on.
 - **Per-call context.** The stream URL takes no query string. Put the call's context in `<Parameter>` elements of
   the `<Stream>`, read them from the `start` message's `customParameters` before opening the session, and pass
   them as the session's [`deps`](../dependencies.md).

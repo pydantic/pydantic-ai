@@ -38,7 +38,12 @@ with try_import() as imports_successful:
     from twilio.request_validator import RequestValidator
 
     from examples.pydantic_ai_examples.realtime_twilio.audio import mulaw_to_pcm16, pcm16_to_mulaw
-    from pydantic_ai.messages import BinaryAudio, ModelMessage, RealtimeInputSpeechStartEvent
+    from pydantic_ai.messages import (
+        BinaryAudio,
+        ModelMessage,
+        RealtimeInputSpeechStartEvent,
+        RealtimeResponseInterruptedEvent,
+    )
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.realtime._utils import session_instructions
     from pydantic_ai.realtime.codec import (
@@ -104,11 +109,13 @@ with try_import() as imports_successful:
     class TwilioCallConnection(InferredConnection):
         """Speaks two chunks of a reply, then reports the caller talking once their audio arrives.
 
-        The session runs on the app's event loop, in `TestClient`'s thread, so the test waits for the
-        cancel on a `threading.Event`.
+        `interruption` is how: the speech start most providers report, or the interruption Gemini and
+        ElevenLabs Agents report. The session runs on the app's event loop, in `TestClient`'s thread,
+        so the test waits for the cancel on a `threading.Event`.
         """
 
-        def __init__(self) -> None:
+        def __init__(self, interruption: RealtimeCodecEvent | None = None) -> None:
+            self.interruption = interruption or RealtimeInputSpeechStartEvent()
             self.sent: list[RealtimeInput] = []
             self.instructions: str | None = None
             self.cancelled = threading.Event()
@@ -125,7 +132,7 @@ with try_import() as imports_successful:
             yield AudioDelta(data=REPLY_CHUNK)
             yield AudioDelta(data=REPLY_CHUNK)
             await self._caller_spoke.wait()
-            yield RealtimeInputSpeechStartEvent()
+            yield self.interruption
             await asyncio.Event().wait()
 
 
@@ -474,16 +481,13 @@ def test_twilio_bridge_passes_the_call_context_and_key_presses(mocker: MockerFix
     assert 'The caller pressed 5 on their keypad.' in connection.sent
 
 
-def test_twilio_bridge_leaves_barge_in_to_a_model_that_handles_it(
+def test_twilio_bridge_clears_twilio_when_the_model_interrupts_itself(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ):
-    """A model without interruption, like OpenAI GPT-Live, stops talking over the caller by itself: the
-    bridge sends no `clear` and interrupts nothing."""
+    """Gemini and ElevenLabs Agents cut their own reply short and say so: the bridge still clears the audio
+    Twilio holds, and has nothing to interrupt."""
     client = _twilio_client(monkeypatch)
-    monkeypatch.setattr(
-        realtime_twilio, 'MODEL', OpenAIRealtimeModel('gpt-realtime', profile={'supports_interruption': False})
-    )
-    connection = TwilioCallConnection()
+    connection = TwilioCallConnection(RealtimeResponseInterruptedEvent())
     _connect_to(mocker, connection)
     _answer(client, 'CA1')
 
@@ -492,6 +496,7 @@ def test_twilio_bridge_leaves_barge_in_to_a_model_that_handles_it(
         twilio.send_json(_start('CA1'))
         assert [twilio.receive_json()['event'] for _ in range(4)] == ['media', 'mark', 'media', 'mark']
         twilio.send_json(_caller_audio())
+        assert twilio.receive_json() == {'event': 'clear', 'streamSid': STREAM_SID}
         twilio.send_json({'event': 'stop', 'streamSid': STREAM_SID})
         assert _until_closed(twilio) == []
 
