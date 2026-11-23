@@ -214,6 +214,18 @@ class _FailedCall:
             return cls(str(error), 'unavailable')
         return cls(error.message, 'config')
 
+    def left_pressed(self, call_inputs: _CallInputs, actions: list[ComputerToolAction]) -> list[MouseButton]:
+        """The buttons the failed call may have left pressed, for the run's end to release."""
+        if self.error_type in ('tool', 'retry'):
+            return self.maybe_pressed
+        # Worked out here, not when the call pressed them, so a durable run's replay, which skips the call, releases
+        # the same buttons when the run ends. A configuration error either comes before any action or after the call
+        # released its buttons.
+        if self.error_type == 'config':
+            return call_inputs.pressed_at_start
+        # A lost workspace may have gone after the presses.
+        return [*call_inputs.pressed_at_start, *(action.button for action in actions if isinstance(action, MouseDown))]
+
     def error(self) -> Exception:
         if self.error_type == 'tool':
             return ToolFailed(self.message)
@@ -291,24 +303,30 @@ class _ActionRunner:
     async def perform(self, actions: list[ComputerToolAction]) -> tuple[int, str | None]:
         """Run the actions in order until one fails. Return how many ran and why the next one failed."""
         for index, action in enumerate(actions):
-            pressing = action.button if isinstance(action, MouseDown) and action.button not in self.pressed else None
-            if pressing:
-                # Count the press before it runs, because a press can take effect and still raise an error.
-                self.pressed.append(pressing)
-            try:
-                await self._run(action, last=index == len(actions) - 1)
-            except WorkspaceUnavailableError:
-                raise
-            except WorkspaceError as e:
-                if pressing and isinstance(e, UnsupportedActionError):
-                    self.pressed.remove(pressing)  # the display refused the press, so nothing is pressed
-                return index, str(e) or type(e).__name__
-            released = (
-                action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
-            )
-            if released in self.pressed:
-                self.pressed.remove(released)
+            if (error := await self._perform_one(action, last=index == len(actions) - 1)) is not None:
+                return index, error
         return len(actions), None
+
+    async def _perform_one(self, action: ComputerToolAction, *, last: bool) -> str | None:
+        """Run one action and keep `pressed` up to date. Return why it failed, if it did."""
+        pressing = action.button if isinstance(action, MouseDown) and action.button not in self.pressed else None
+        if pressing:
+            # Count the press before it runs, because a press can take effect and still raise an error.
+            self.pressed.append(pressing)
+        try:
+            await self._run(action, last=last)
+        except WorkspaceUnavailableError:
+            raise
+        except WorkspaceError as e:
+            if pressing and isinstance(e, UnsupportedActionError):
+                self.pressed.remove(pressing)  # the display refused the press, so nothing is pressed
+            return str(e) or type(e).__name__
+        released = (
+            action.button if isinstance(action, MouseUp | Click) else 'left' if isinstance(action, Drag) else None
+        )
+        if released in self.pressed:
+            self.pressed.remove(released)
+        return None
 
     async def _run(self, action: ComputerToolAction, *, last: bool) -> None:
         match action:
@@ -518,15 +536,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons, and
         # this record is never read.
         run_buttons = run_buttons or _RunPressedButtons(run_id=ctx.run_id)
-        if found_call is not None:
-            # The model chose a response's calls together, so once one fails the rest would act on a screen it
-            # didn't expect.
-            if run_buttons.failed_response_index == found_call[0]:
-                raise ToolFailed(_EARLIER_CALL_FAILED)
-            run_buttons.failed_response_index = found_call[0]  # cleared below if the call succeeds
+        response_index = found_call[0] if found_call else None
+        # The model chose a response's calls together, so once one fails the rest would act on a screen it didn't
+        # expect.
+        if response_index is not None and run_buttons.failed_response_index == response_index:
+            raise ToolFailed(_EARLIER_CALL_FAILED)
+        run_buttons.failed_response_index = response_index  # cleared below if the call succeeds
         call_inputs = _CallInputs(
             # The model gave its positions on the latest screenshot before its call.
-            screenshot_size=latest_screenshot_size(ctx.messages[: found_call[0]]) if found_call else None,
+            screenshot_size=latest_screenshot_size(ctx.messages[:response_index]) if found_call else None,
             # A call left a plain `ToolCallPart` had arguments that didn't validate, so a hook replaced them.
             actions_changed=found_call is not None
             and (not isinstance(part := found_call[1], ComputerCallPart) or part.actions != actions),
@@ -540,17 +558,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         run_buttons.maybe_pressed = [*maybe_pressed_before, *call_inputs.pressed_at_start]
         outcome = await self._perform_call(ctx, actions, call_inputs)
         if isinstance(outcome, _FailedCall):
-            if outcome.error_type in ('tool', 'retry'):
-                run_buttons.maybe_pressed = [*maybe_pressed_before, *outcome.maybe_pressed]
-            else:
-                # Set here, not when the call pressed them, so a durable run's replay, which skips the call, releases
-                # the same buttons when the run ends. A configuration error either comes before any action or after
-                # the call released its buttons.
-                run_buttons.maybe_pressed = [*maybe_pressed_before, *call_inputs.pressed_at_start]
-                if outcome.error_type == 'unavailable':  # a lost workspace may have gone after the presses
-                    run_buttons.maybe_pressed.extend(
-                        action.button for action in actions if isinstance(action, MouseDown)
-                    )
+            run_buttons.maybe_pressed = [*maybe_pressed_before, *outcome.left_pressed(call_inputs, actions)]
             raise outcome.error()
         tool_return, pressed = outcome
         result: ComputerResult = tool_return.metadata
