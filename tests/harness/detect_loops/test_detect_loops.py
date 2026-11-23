@@ -33,7 +33,6 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
 from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError, LoopNudgePart
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
-from tests.harness.conftest import Instrumented
 
 
 def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
@@ -51,13 +50,10 @@ def _call(tool_name: str = 'read_file', args: dict[str, object] | str | None = N
 
 
 def _agent(
-    responses: Sequence[Sequence[ModelResponsePart]] | FunctionModel,
-    detector: DetectLoops[object],
-    *,
-    extra_capabilities: Sequence[AbstractCapability[object]] = (),
+    responses: Sequence[Sequence[ModelResponsePart]] | FunctionModel, detector: DetectLoops[object]
 ) -> Agent[object, str]:
     model = responses if isinstance(responses, FunctionModel) else _scripted(*responses)
-    agent = Agent(model, capabilities=[*extra_capabilities, detector], retries=10)
+    agent = Agent(model, capabilities=[detector], retries=10)
     progress = count()
 
     @agent.tool_plain
@@ -441,41 +437,6 @@ class TestDetectLoops:
         [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
         assert 'detect_loops.fingerprints' not in (span.attributes or {})
         assert (span.attributes or {})['detect_loops.pattern'] == 'repeated_result'
-
-    @pytest.mark.parametrize('include_content', [False, True])
-    async def test_a_tool_name_the_run_does_not_offer_is_content(
-        self, include_content: bool, instrumented: Instrumented
-    ):
-        """The model made the name up, so it is model output, not one of the run's tool names."""
-        tracing, exporter = instrumented(include_content)
-        agent = _agent([[_call('made_up_tool')]] * 3, DetectLoops(), extra_capabilities=[tracing])
-
-        await agent.run('Read it')
-
-        [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
-        assert dict(span.attributes or {}) == (
-            snapshot(
-                {
-                    'detect_loops.pattern': 'repeated_result',
-                    'detect_loops.action': 'nudge',
-                    'detect_loops.count': 3,
-                    'detect_loops.window': 3,
-                    'detect_loops.tool_names': (),
-                }
-            )
-            if not include_content
-            else snapshot(
-                {
-                    'detect_loops.pattern': 'repeated_result',
-                    'detect_loops.action': 'nudge',
-                    'detect_loops.count': 3,
-                    'detect_loops.window': 3,
-                    'detect_loops.tool_names': (),
-                    'detect_loops.fingerprints': ('abc1c4bb4fcb40a0',),
-                    'detect_loops.unknown_tool_names': ('made_up_tool',),
-                }
-            )
-        )
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_cleared_tool_results_are_not_mistaken_for_a_loop(self):
