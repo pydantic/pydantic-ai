@@ -83,6 +83,21 @@ class TestShellOnWindows:
         result = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
         assert 'True 1' in result
 
+    async def test_the_wrapper_reads_its_script_from_the_job_directory(self, project: Path) -> None:
+        """Antivirus software flags an `-EncodedCommand` launch, so no script goes on the wrapper's command line."""
+        shell = Shell[None](tools=['start_command', 'stop_command'])
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'start_command', {'command': 'Start-Sleep 600'})
+        assert 'ID: ' in started, started
+        command_id = started.rsplit('ID: ', 1)[1].strip()
+        pid = (project / '.pydantic-ai-harness' / 'shell' / command_id / 'handle').read_text().split()[0]
+        script = f"[Console]::Out.Write((Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine)"
+        try:
+            line = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
+        finally:
+            await call_tool([shell, workspace], 'stop_command', {'command_id': command_id})
+        assert 'supervisor.ps1' in line and 'EncodedCommand' not in line, line
+
     @pytest.mark.parametrize(
         ('path', 'protected', 'error'),
         [
