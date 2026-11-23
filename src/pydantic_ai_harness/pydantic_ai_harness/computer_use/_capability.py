@@ -530,12 +530,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         ],
     ) -> ToolReturn:
         found_call = _find_computer_call(ctx)
-        part = found_call[1] if found_call else None
-        confirmation = part.confirmation if isinstance(part, ComputerCallPart) else None
-        if confirmation is not None and not ctx.tool_call_approved:
-            # The provider asked for a person to approve this action before it runs. This is checked here, in the
-            # tool, so no hook can skip it.
-            raise ApprovalRequired(metadata={'reason': confirmation})
         changes_screen = not all(isinstance(action, _ObservingAction) for action in actions)
         if changes_screen and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
@@ -549,6 +543,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         # expect.
         if response_index is not None and run_buttons.failed_response_index == response_index:
             raise ToolFailed(_EARLIER_CALL_FAILED)
+        part = found_call[1] if found_call else None
+        confirmation = part.confirmation if isinstance(part, ComputerCallPart) else None
+        if confirmation is not None and not ctx.tool_call_approved:
+            # The provider asked for a person to approve this action before it runs. This is checked here, in the
+            # tool, so no hook can skip it.
+            raise ApprovalRequired(metadata={'reason': confirmation})
         run_buttons.failed_response_index = response_index  # cleared below if the call succeeds
         call_inputs = _CallInputs(
             # The model gave its positions on the latest screenshot before its call.
