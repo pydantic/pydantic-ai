@@ -368,7 +368,8 @@ Where the tracer comes from:
 - Code that runs during a run but has no `RunContext`, such as a backend, store or session that runs
   can share, passes `current_run_telemetry()`: the calling run's tracer and content policy, read at
   call time. Never store a tracer on such an object: a run sharing it would trace to another run's
-  tracer. Inside a hook, pass `ctx` instead: the value is only published once `wrap_run` starts.
+  tracer (`pydantic_ai/workspaces/_telemetry.py` is the example). Inside a hook, pass `ctx` instead:
+  the value is only published once `wrap_run` starts.
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).

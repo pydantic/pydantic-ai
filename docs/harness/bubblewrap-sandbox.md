@@ -143,7 +143,7 @@ The wrapped workspace must run commands without a controlling terminal. Otherwis
 
 ## Telemetry
 
-`BubblewrappedWorkspace` emits no spans of its own. The run's workspace is the wrapped one's, so core's [instrumentation](../capabilities/instrumentation.md) records its `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each wrapped command runs inside its tool call's span.
+`BubblewrappedWorkspace`'s `workspace run` spans record the caller's command, not the `bwrap` launcher; see [workspace spans](../logfire.md#workspace-spans). The run's workspace is the wrapped one's, so core's [instrumentation](../capabilities/instrumentation.md) records its `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each wrapped command runs inside its tool call's span.
 
 ## API reference
 

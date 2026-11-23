@@ -142,6 +142,8 @@ SECRETS = {
     'model_settings': 'SENTINEL-model-settings',
     'deps': 'SENTINEL-deps',
     'validation_context': 'SENTINEL-validation-context',
+    'workspace_path': 'SENTINEL-workspace-path',
+    'workspace_command': 'SENTINEL-workspace-command',
 }
 
 
@@ -186,6 +188,28 @@ async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) ->
     assert attributes is not None
     assert attributes['pydantic_ai.workspace.provider'] == 'local'
     assert attributes['pydantic_ai.workspace.id'] == str(tmp_path)
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_workspace_calls(tmp_path: Path, include_content: bool) -> None:
+    """File paths and shell commands a tool sends through the run's workspace."""
+    settings, exporter = redacted_setup(include_content)
+    agent = Agent(
+        TestModel(call_tools=['use_workspace']),
+        capabilities=[LocalWorkspace(tmp_path), Instrumentation(settings=settings)],
+    )
+
+    @agent.tool
+    async def use_workspace(ctx: RunContext[Any]) -> str:
+        path = f'{SECRETS["workspace_path"]}.txt'
+        await ctx.workspace.write_text(path, 'hello')
+        await ctx.workspace.read_text(path)
+        await ctx.workspace.run(['true', SECRETS['workspace_command']])
+        return 'done'
+
+    await agent.run('go')
+
+    check(exporter, include_content, {'workspace_path', 'workspace_command'})
 
 
 def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str]) -> None:
@@ -1572,7 +1596,9 @@ ENTRY_POINT_PARAMETERS: dict[tuple[EntryPointGroup, str], Swept | NotExported | 
     ),
     ('run', 'workspace'): ExportedByDesign(
         "Its provider and id are the run span's `pydantic_ai.workspace.*`, per "
-        '`test_workspace_identity_is_recorded_without_content`.'
+        '`test_workspace_identity_is_recorded_without_content`. The paths and commands its calls carry '
+        'are swept in `test_no_content_reaches_telemetry_from_workspace_calls`, and inside a Temporal activity in '
+        '`test_temporal_workspace_activity_records_content_only_if_the_run_and_the_worker_do`.'
     ),
     ('run', 'spec'): Swept(
         channels=('spec',),
