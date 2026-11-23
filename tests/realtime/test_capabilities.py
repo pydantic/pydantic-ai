@@ -221,6 +221,31 @@ async def test_root_capability_override_reaches_session() -> None:
     assert 'from override' in model.instructions
 
 
+async def test_capabilities_override_reaches_session() -> None:
+    """`override(capabilities=...)` replaces the root capability for a realtime session, like `iter`, and stacks onto
+    the agent's own capabilities when they're listed beside the addition."""
+
+    class ConfiguredCap(AbstractCapability[object]):
+        def get_instructions(self) -> str:
+            return 'configured'
+
+    class AddedCap(AbstractCapability[object]):
+        def get_instructions(self) -> str:
+            return 'added'
+
+    agent = Agent(instructions='Be helpful.', capabilities=[ConfiguredCap()])
+
+    replaced = _RecordingModel()
+    with agent.override(capabilities=[AddedCap()]):
+        await _drain(agent, replaced)
+    stacked = _RecordingModel()
+    with agent.override(capabilities=[*agent.root_capability.capabilities, AddedCap()]):
+        await _drain(agent, stacked)
+
+    assert replaced.instructions == 'Be helpful.\n\nadded'
+    assert stacked.instructions == 'Be helpful.\n\nconfigured\n\nadded'
+
+
 async def test_regular_settings_do_not_reach_session() -> None:
     """Regular agent and capability settings do not leak into realtime settings."""
 

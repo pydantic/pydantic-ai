@@ -308,6 +308,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     so disabling this also stops them from being sent back entirely. Hosted tool-search items are the exception:
     they carry their state (the query and discovered tools) inline, so they are still replayed with the IDs
     omitted, and previously discovered tools stay callable.
+
+    A local `search_tools` call replayed as a `tool_search_call` item never carries a function call (`fc_*`) ID,
+    even with this enabled: the API rejects that ID on a tool-search item.
     """
 
     openai_truncation: Literal['disabled', 'auto']
