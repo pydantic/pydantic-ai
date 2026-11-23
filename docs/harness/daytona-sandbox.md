@@ -125,7 +125,7 @@ Daytona's default snapshot has a desktop with a terminal and Chromium. A custom 
 
 - A public sandbox gets no desktop, since its preview link needs no token and anyone with it can control the desktop: the run fails with `UserError`.
 - On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
-- The desktop can't press F13 to F24, the keypad's Enter, `+`, `-`, `*`, `/` and `.` keys, print screen, pause, scroll lock, the menu key or media keys, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
+- The desktop can't press print screen, pause, scroll lock or the menu key, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
 
 ## Clean up
 
