@@ -1167,7 +1167,7 @@ async def test_ctrl_o_expands_tool_results_in_place_and_keeps_them_across_a_resi
             '         1      print("hi")',
         ]
         assert shown()[:7] == expanded
-        assert live.output.full_screen or inline, 'inline output that still fits stays inline'
+        assert live.output.full_screen is not inline, 'inline output that still fits stays inline'
         # A result that arrives while output is shown opens expanded.
         listing = ToolCallPart('list_files', {'path': 'src'}, tool_call_id='l')
         await renderer.on_stream_event(FunctionToolCallEvent(part=listing))
