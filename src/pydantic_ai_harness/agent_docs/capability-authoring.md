@@ -335,8 +335,8 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses four functions from `pydantic_ai._telemetry`; its other names are the run
-telemetry these four read. Each takes the run first, as
+The house pattern uses four functions from `pydantic_ai._telemetry`, plus `records_content` for
+content that costs something to build; its other names are the run telemetry these read. Each takes the run first, as
 its `ctx` or, where there is none, `current_run_telemetry()`, and does nothing when that run isn't
 traced, so an uninstrumented run pays nothing:
 
@@ -412,11 +412,11 @@ Content:
   such as a `FileNotFoundError` from an existence check.
 - `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
   building a content value costs something or can raise, such as `str()` of an object a guard returned
-  or a serialized message, build it only `if ctx.trace_include_content` (`telemetry.include_content`
-  when you hold a `RunTelemetry` instead of a `ctx`) and pass `None` otherwise:
-  `content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None`. Don't
-  test `span.is_recording()` for this: `record_decision` gives you no span, and a span records when the
-  run is traced without content too.
+  or a serialized message, build it only `if records_content(ctx)` and pass `None` otherwise:
+  `content={'guardrail.replacement': str(replacement)} if records_content(ctx) else None`. Don't read
+  `ctx.trace_include_content` for this: it raises in a durable unit that didn't carry it, and a durable
+  worker can record less than the run asks. Don't test `span.is_recording()` either: `record_decision`
+  gives you no span, and a span records when the run is traced without content too.
 
 Names:
 
@@ -439,9 +439,13 @@ operator reading a trace and a developer reading the code name the same outcome 
 
 Code that still calls `ctx.tracer.start_span` or `start_as_current_span`, or checks
 `ctx.trace_include_content` to gate recording content itself, predates these functions and moves onto
+<<<<<<< HEAD
 them in follow-ups; don't copy it. Checking it to skip building costly content, as above, is fine.
 Smart search (`smart_search/_toolset.py`) keeps its own span on purpose: the span records no failure
 and leaves it to the enclosing tool span, which redacts it by `include_content`.
+=======
+them in follow-ups; don't copy it. To skip building costly content, use `records_content(ctx)`, as above.
+>>>>>>> origin/aditya/telemetry-conventions
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.
