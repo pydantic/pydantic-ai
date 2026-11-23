@@ -38,6 +38,7 @@ from pydantic_ai import (
 from pydantic_ai.embeddings import Embedder, EmbeddingModel
 
 from .conftest import gave_up_on, try_import
+from .model_adapter_cases import gave_up_body_reaches_model
 
 with try_import() as imports_successful:
     import httpx
@@ -86,7 +87,7 @@ def _categories(exc: ModelAPIError) -> set[type[ModelAPIError]]:
     return {cls for cls in _CATEGORIES if isinstance(exc, cls)}
 
 
-def _openai(handler: Handler) -> EmbeddingModel:
+def _openai(handler: Handler) -> OpenAIEmbeddingModel:
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
@@ -96,7 +97,7 @@ def _openai(handler: Handler) -> EmbeddingModel:
     return OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(openai_client=client))
 
 
-def _cohere(handler: Handler) -> EmbeddingModel:
+def _cohere(handler: Handler) -> CohereEmbeddingModel:
     client = AsyncClientV2(
         api_key='test',
         base_url='http://localhost',
@@ -105,7 +106,7 @@ def _cohere(handler: Handler) -> EmbeddingModel:
     return CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=client))
 
 
-def _google(handler: Handler) -> EmbeddingModel:
+def _google(handler: Handler) -> GoogleEmbeddingModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return GoogleEmbeddingModel(
         'gemini-embedding-001',
@@ -436,8 +437,9 @@ async def test_http_provider_error_category(case: Case):
 _GAVE_UP_TWINS = [
     case
     for case in CASES
-    # Cohere's SDK takes a legacy `httpx` client, whose retrying transport closes the response without reading it.
-    if case.model in (_openai, _google) and ModelHTTPError in case.categories and 'transport-gave-up' not in case.id
+    if gave_up_body_reaches_model(case.model)
+    and ModelHTTPError in case.categories
+    and 'transport-gave-up' not in case.id
 ]
 
 

@@ -16,6 +16,7 @@ from pydantic_ai._utils import BaseExceptionGroup, gather
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
@@ -32,6 +33,7 @@ try:
         HTTPClientError,
         ReadTimeoutError,
     )
+    from urllib3.exceptions import HTTPError as Urllib3HTTPError, TimeoutError as Urllib3TimeoutError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use Bedrock embedding models, '
@@ -674,6 +676,10 @@ class BedrockEmbeddingModel(EmbeddingModel):
                     accept='application/json',
                 )
             )
+            # `InvokeModel` returns the body as an undecoded byte stream, so this is the response decode other
+            # providers' SDKs do internally.
+            with map_decode_errors(self.model_name):
+                response_body = json.loads(response['body'].read())
         except ClientError as e:
             metadata = e.response.get('ResponseMetadata', {})
             status_code = metadata.get('HTTPStatusCode')
@@ -695,16 +701,16 @@ class BedrockEmbeddingModel(EmbeddingModel):
             # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
             timeout = isinstance(e, (ReadTimeoutError, ConnectTimeoutError))
             raise _model_errors.connection_error(self.model_name, str(e), e, timeout=timeout) from e
+        except Urllib3HTTPError as e:
+            # botocore reads an error status's body straight from the urllib3 response, outside its own transport
+            # error handling, so a connection that breaks off or times out there raises the raw urllib3 error.
+            timeout = isinstance(e, Urllib3TimeoutError)
+            raise _model_errors.connection_error(self.model_name, transport_error_message(e), e, timeout=timeout) from e
 
         # Extract input token count from HTTP headers
         input_tokens = int(
             response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amzn-bedrock-input-token-count', '0')
         )
-
-        # `InvokeModel` returns the body as an undecoded byte stream, so this is the response decode other providers'
-        # SDKs do internally.
-        with map_decode_errors(self.model_name):
-            response_body = json.loads(response['body'].read())
         return response_body, input_tokens
 
     async def max_input_tokens(self) -> int | None:

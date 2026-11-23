@@ -39,6 +39,7 @@ from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameter
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..conftest import gave_up_on, retrying_client, try_import
+from ..model_adapter_cases import gave_up_body_reaches_model
 
 with try_import() as imports_successful:
     import grpc
@@ -116,7 +117,7 @@ _CONTEXT_WINDOW: set[type[ModelAPIError]] = {ModelHTTPError, ModelRequestRejecte
 """A context window overflow is also a rejected request."""
 
 
-def _openai(handler: Handler) -> Model:
+def _openai(handler: Handler) -> OpenAIChatModel:
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
@@ -126,7 +127,7 @@ def _openai(handler: Handler) -> Model:
     return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 
 
-def _openai_responses(handler: Handler) -> Model:
+def _openai_responses(handler: Handler) -> OpenAIResponsesModel:
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
@@ -136,7 +137,7 @@ def _openai_responses(handler: Handler) -> Model:
     return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 
 
-def _openrouter(handler: Handler) -> Model:
+def _openrouter(handler: Handler) -> OpenRouterModel:
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
@@ -146,7 +147,7 @@ def _openrouter(handler: Handler) -> Model:
     return OpenRouterModel('openai/gpt-5.2', provider=OpenRouterProvider(openai_client=client))
 
 
-def _anthropic(handler: Handler) -> Model:
+def _anthropic(handler: Handler) -> AnthropicModel:
     client = AsyncAnthropic(
         api_key='test',
         base_url='http://localhost',
@@ -156,7 +157,7 @@ def _anthropic(handler: Handler) -> Model:
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
 
 
-def _zai(handler: Handler) -> Model:
+def _zai(handler: Handler) -> ZaiModel:
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
@@ -166,7 +167,7 @@ def _zai(handler: Handler) -> Model:
     return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
 
 
-def _moonshotai(handler: Handler) -> Model:
+def _moonshotai(handler: Handler) -> OpenAIChatModel:
     client = AsyncOpenAI(
         api_key='test',
         base_url='http://localhost/v1',
@@ -176,7 +177,7 @@ def _moonshotai(handler: Handler) -> Model:
     return OpenAIChatModel('kimi-k2.5', provider=MoonshotAIProvider(openai_client=client))
 
 
-def _anthropic_bedrock(handler: Handler) -> Model:
+def _anthropic_bedrock(handler: Handler) -> AnthropicModel:
     client = AsyncAnthropicBedrock(
         aws_region='us-east-1',
         aws_access_key='test',
@@ -199,7 +200,7 @@ def _bedrock_invoke_error(status_code: int, code: str, message: str) -> Handler:
     )
 
 
-def _groq(handler: Handler) -> Model:
+def _groq(handler: Handler) -> GroqModel:
     client = AsyncGroq(
         api_key='test',
         base_url='http://localhost',
@@ -209,7 +210,7 @@ def _groq(handler: Handler) -> Model:
     return GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client))
 
 
-def _google(handler: Handler) -> Model:
+def _google(handler: Handler) -> GoogleModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return GoogleModel(
         'gemini-2.5-flash',
@@ -217,7 +218,7 @@ def _google(handler: Handler) -> Model:
     )
 
 
-def _mistral(handler: Handler) -> Model:
+def _mistral(handler: Handler) -> MistralModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return MistralModel(
         'mistral-large-latest',
@@ -225,7 +226,7 @@ def _mistral(handler: Handler) -> Model:
     )
 
 
-def _cohere(handler: Handler) -> Model:
+def _cohere(handler: Handler) -> CohereModel:
     client = AsyncClientV2(
         api_key='test',
         base_url='http://localhost',
@@ -234,7 +235,7 @@ def _cohere(handler: Handler) -> Model:
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
 
 
-def _ollama(handler: Handler) -> Model:
+def _ollama(handler: Handler) -> OllamaModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return OllamaModel(
         'gpt-oss:20b-cloud',
@@ -2262,27 +2263,10 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     assert (exc.__cause__ is not None) == case.has_cause
 
 
-_TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
-    _openai,
-    _openrouter,
-    _zai,
-    _moonshotai,
-    _ollama,
-    _anthropic,
-    _anthropic_bedrock,
-    _google,
-    _mistral,
-)
-"""Models whose status a retrying transport gave up on is classified from its body as their SDK's error is.
-
-Groq and Cohere chat aren't: their SDKs take a legacy `httpx` client, whose retrying transport closes the response
-without reading its body.
-"""
-
 _GAVE_UP_TWINS = [
     case
     for case in CASES
-    if case.model in _TRANSPORT_CLASSIFIED_MODELS
+    if gave_up_body_reaches_model(case.model)
     and not case.stream
     and case.has_cause
     and ModelHTTPError in case.categories
