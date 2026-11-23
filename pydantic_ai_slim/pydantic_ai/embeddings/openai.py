@@ -213,7 +213,9 @@ def _map_usage(
         return RequestUsage()
 
     usage_data = usage.model_dump(exclude_none=True)
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'total_tokens'} if isinstance(v, int)}
+    details = {
+        k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'total_tokens'} if _utils.is_usage_count(v)
+    }
     response_data = dict(model=model, usage=usage_data)
 
     return RequestUsage.extract(

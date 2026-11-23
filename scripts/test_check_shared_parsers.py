@@ -110,6 +110,12 @@ def test_an_unchanged_tree_passes_silently(repo: Path, capsys: pytest.CaptureFix
             'usage-count',
             id='usage-int-or-float-filter',
         ),
+        pytest.param(
+            'pydantic_ai_slim/pydantic_ai/embeddings/provider.py',
+            'def map_usage(data):\n    return RequestUsage(details={k: v for k, v in data.items() if isinstance(v, int)})\n',
+            'usage-count',
+            id='embeddings-usage-int-filter',
+        ),
     ],
 )
 def test_a_hand_written_parse_fails_and_says_what_to_do(
@@ -160,7 +166,7 @@ def test_a_hand_written_parse_fails_and_says_what_to_do(
         pytest.param(
             'pydantic_ai_slim/pydantic_ai/usage.py',
             'def merge(value):\n    return RequestUsage(n=value) if isinstance(value, int) else None\n',
-            id='int-check-outside-models',
+            id='int-check-outside-the-usage-mappers',
         ),
     ],
 )

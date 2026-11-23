@@ -15,11 +15,12 @@ from typing import Literal
 from urllib.parse import quote, quote_plus
 
 Redactor = Literal['Shell', 'BrowserUse']
+Encoding = Literal['as-written', 'json-escaped', 'json-escaped-ascii', 'quote-plus', 'quote']
 
 SECRET = 'p@ss w"rd/é\\'
 """A value whose encodings below all differ from it, and from each other."""
 
-ENCODINGS: dict[str, Callable[[str], str]] = {
+ENCODINGS: dict[Encoding, Callable[[str], str]] = {
     'as-written': lambda value: value,
     'json-escaped': lambda value: json.dumps(value, ensure_ascii=False)[1:-1],
     'json-escaped-ascii': lambda value: json.dumps(value)[1:-1],
@@ -27,7 +28,7 @@ ENCODINGS: dict[str, Callable[[str], str]] = {
     'quote': quote,
 }
 
-COVERED: dict[Redactor, frozenset[str]] = {
+COVERED: dict[Redactor, frozenset[Encoding]] = {
     'Shell': frozenset({'as-written'}),
     'BrowserUse': frozenset({'as-written', 'json-escaped', 'quote-plus'}),
 }

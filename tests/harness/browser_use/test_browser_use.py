@@ -51,7 +51,7 @@ from pydantic_ai_harness.browser_use import (
     default_browser_agent,
 )
 
-from ..secret_forms import COVERED, ENCODINGS, SECRET
+from ..secret_forms import COVERED, ENCODINGS, SECRET, Encoding
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -1411,7 +1411,7 @@ class TestSensitiveDataSafety:
 
     @pytest.mark.parametrize('encoding', ENCODINGS)
     async def test_redacts_the_encodings_its_docs_promise(
-        self, kill_calls: list[BrowserSession], encoding: str
+        self, kill_calls: list[BrowserSession], encoding: Encoding
     ) -> None:
         """The value as written, JSON-escaped and `quote_plus`-encoded is redacted; see `tests/harness/secret_forms.py`."""
         form = ENCODINGS[encoding](SECRET)

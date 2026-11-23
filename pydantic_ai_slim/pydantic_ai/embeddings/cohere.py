@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from pydantic_ai import _model_errors
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import is_str_dict, is_usage_count
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models._transport_errors import transport_error_message
@@ -269,11 +269,11 @@ def _map_usage(response: EmbedByTypeResponse, provider: str, provider_url: str, 
     usage_data = {
         k: int(v)
         for k, v in u.billed_units.model_dump(exclude_none=True).items()
-        if isinstance(v, int | float) and v > 0
+        if (is_usage_count(v) or isinstance(v, float)) and v > 0
     }
     if not usage_data:
         return RequestUsage()
-    details = {k: int(v) for k, v in usage_data.items() if k != 'input_tokens' and isinstance(v, int | float) and v > 0}
+    details = {k: v for k, v in usage_data.items() if k != 'input_tokens' and v > 0}
     response_data = dict(model=model, meta=dict(billed_units=usage_data))
 
     return RequestUsage.extract(

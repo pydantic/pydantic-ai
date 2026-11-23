@@ -62,7 +62,7 @@ from pydantic_ai_harness.shell._toolset import ShellToolset
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool
-from ..secret_forms import COVERED, ENCODINGS, SECRET
+from ..secret_forms import COVERED, ENCODINGS, SECRET, Encoding
 
 
 def _env_toolset(
@@ -2371,7 +2371,7 @@ class TestShellSecretEnv:
         assert output == '[stdout]\ntoken=[REDACTED:TMP_TOKEN]'
 
     @pytest.mark.parametrize('encoding', ENCODINGS)
-    async def test_masks_the_encodings_its_docs_promise(self, tmp_path: Path, encoding: str) -> None:
+    async def test_masks_the_encodings_its_docs_promise(self, tmp_path: Path, encoding: Encoding) -> None:
         """Only the value as written is masked; see `tests/harness/secret_forms.py`."""
         form = ENCODINGS[encoding](SECRET)
         output = await call_tool(

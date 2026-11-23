@@ -54,6 +54,7 @@ with try_import() as logfire_imports_successful:
 
 with try_import() as openai_imports_successful:
     from openai import AsyncOpenAI
+    from openai.types.create_embedding_response import Usage
 
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -446,6 +447,30 @@ class TestOpenAI:
             )
         )
 
+    async def test_usage_details_leave_out_bool_fields(self):
+        """A `bool` in the usage report is not a count, though `bool` subclasses `int`.
+
+        The OpenAI SDK keeps usage fields it doesn't declare, so a flag reaches the usage mapper as sent. No recorded
+        embeddings response carries one, hence the mocked client.
+        """
+        mock_client = AsyncMock()
+        mock_embedding_item = MagicMock()
+        mock_embedding_item.embedding = [0.1, 0.2, 0.3]
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_embedding_item]
+        mock_response.usage = Usage.model_validate(
+            {'prompt_tokens': 3, 'total_tokens': 3, 'is_byok': True, 'cached_tokens': 2}
+        )
+        mock_response.model = 'test-model'
+
+        mock_client.embeddings.create.return_value = mock_response
+
+        model = OpenAIEmbeddingModel('test-model', provider=OpenAIProvider(openai_client=mock_client))
+
+        result = await model.embed('test', input_type='query')
+        assert result.usage.details == {'cached_tokens': 2}
+
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):
         model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key=openai_api_key))
@@ -574,6 +599,26 @@ def test_cohere_empty_billed_units():
             )
             == RequestUsage()
         )
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+def test_cohere_billed_units_leave_out_bool_fields():
+    """A `bool` in the billed units is not a count, though `bool` subclasses `int`.
+
+    The Cohere SDK keeps billed-unit fields it doesn't declare, so a flag reaches the usage mapper as sent. No recorded
+    embeddings response carries one, hence the hand-built response.
+    """
+    response = EmbedByTypeResponse(
+        id='test',
+        embeddings=EmbedByTypeResponseEmbeddings(float_=[[0.1]]),
+        meta=cohere.ApiMeta(
+            billed_units=cohere.ApiMetaBilledUnits.model_validate({'input_tokens': 3, 'images': 2, 'is_byok': True})
+        ),
+    )
+    usage = cohere_embeddings._map_usage(  # pyright: ignore[reportPrivateUsage]
+        response, 'cohere', 'https://api.cohere.com', 'embed-v4.0'
+    )
+    assert usage.details == {'images': 2}
 
 
 @pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')

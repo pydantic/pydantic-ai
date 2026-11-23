@@ -9,8 +9,8 @@ Each of these has one shared parser, and each hand-written copy has needed its o
   a MIME type or a content type. Drop the parameters with `pydantic_ai._utils.bare_media_type`, and lowercase the
   result where the comparison is case-insensitive.
 - `usage-count`: an `isinstance(value, int)` with no `not isinstance(value, bool)` beside it, in a function under
-  `pydantic_ai/models/` that builds a `RequestUsage`. `bool` subclasses `int`, so a provider's flag counts as 1:
-  use `pydantic_ai._utils.is_usage_count`.
+  `pydantic_ai/models/`, `embeddings/` or `realtime/` that builds a `RequestUsage` from a provider's report. `bool`
+  subclasses `int`, so a provider's flag counts as 1: use `pydantic_ai._utils.is_usage_count`.
 
 Each rule counts what it finds in each file, and a change may not raise a file's count. What the base already has
 is allowed. During a merge, `--staged` reports a rule in a file only when its count is higher than in both parents.
@@ -50,7 +50,7 @@ _ADVICE: dict[Rule, str] = {
 
 _RETRY_AFTER_HOME = 'pydantic_ai_slim/pydantic_ai/exceptions.py'
 _MEDIA_TYPE_HOME = ('pydantic_ai_slim/pydantic_ai/_utils.py', 'bare_media_type')
-_MODELS = 'pydantic_ai_slim/pydantic_ai/models/'
+_USAGE_MAPPERS = tuple(f'pydantic_ai_slim/pydantic_ai/{package}/' for package in ('models', 'embeddings', 'realtime'))
 _MEDIA_TYPE_NAME = re.compile(r'(?i)media|mime|content.?type')
 _SPLITS = frozenset({'split', 'rsplit', 'partition'})
 
@@ -112,23 +112,20 @@ class _Finder(ast.NodeVisitor):
         return bool(_MEDIA_TYPE_NAME.search(ast.unparse(func.value)))
 
     def usage_count_filter(self, node: ast.Call) -> bool:
-        if not self.path.startswith(_MODELS) or not self.functions or len(node.args) != 2:
+        if not self.path.startswith(_USAGE_MAPPERS) or not self.functions or len(node.args) != 2:
             return False
         if 'RequestUsage' not in ast.unparse(self.functions[-1]):
             return False
         if 'int' not in {n.id for n in ast.walk(node.args[1]) if isinstance(n, ast.Name)}:
             return False
         subject = ast.unparse(node.args[0])
-        return not any(_excludes_bool(conjunction, subject) for conjunction in self.conjunctions(node))
-
-    def conjunctions(self, node: ast.Call) -> list[ast.BoolOp]:
-        """The `and` expressions in the enclosing function that `node` is a direct operand of."""
-        function = self.functions[-1]
-        return [
+        # The `and` expressions in the enclosing function that `node` is a direct operand of.
+        conjunctions = (
             n
-            for n in ast.walk(function)
+            for n in ast.walk(self.functions[-1])
             if isinstance(n, ast.BoolOp) and isinstance(n.op, ast.And) and any(v is node for v in n.values)
-        ]
+        )
+        return not any(_excludes_bool(conjunction, subject) for conjunction in conjunctions)
 
 
 def _excludes_bool(conjunction: ast.BoolOp, subject: str) -> bool:
