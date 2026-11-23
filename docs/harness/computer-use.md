@@ -35,7 +35,9 @@ print(result.output)
 
 ## Models
 
-The model must accept images. Every model gets `computer` as a regular function tool.
+The model must accept images. On the models listed under [Google](../models/google.md#computer-use), it gets its provider's own computer use
+tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
+tool.
 
 ## Safety
 
@@ -59,6 +61,10 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
             raise ApprovalRequired
     return args
 ```
+
+Gemini can flag an action for a person to approve. `ComputerUse` then asks for approval itself, after your hooks run,
+so no hook can skip it. If your own hook already asked and the call was approved, that approval counts. See
+[Google](../models/google.md#actions-that-need-approval).
 
 ## Durable execution
 

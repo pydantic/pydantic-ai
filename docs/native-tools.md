@@ -864,7 +864,7 @@ A request needs exactly one `computer` tool the model can call. With none, an `o
 |----------|-----------|-------|
 | OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
 | OpenRouter | ❌ | The model gets the function tool. |
-| Google | ❌ | |
+| Google | ✅ | On the models listed under [Google](models/google.md#computer-use). Actions Gemini flags pause a non-streamed run for approval. |
 | xAI | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
