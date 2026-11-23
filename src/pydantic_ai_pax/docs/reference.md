@@ -1201,7 +1201,7 @@ response has omitted usage information.
 ```text
 Follow-up: Add tests for the change
 Command: /usage
-─ Working ⠋ ────────────────────────────────────
+─ Working ⠋ 12s · Esc to interrupt ─────────────
 /
 /resume Browse or restore a saved session; claude or codex imports theirs
 /set Change settings; no arguments opens menu
@@ -1215,6 +1215,9 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+While a turn or command runs, the rule above the draft shows how long it has run
+and that Esc interrupts it; with a draft or a queued message it also shows the
+queue and steer keys, which keep their place first on a narrow terminal.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.
@@ -1751,7 +1754,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to fit; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1764,6 +1767,13 @@ Every field is independently selectable and reorderable:
 
 Reordering preserves each field's colours and conditional visibility. Plugin
 fragments move and hide together through `plugins`, not as individual fields.
+
+When the row is wider than the terminal, `workspace` shortens to its last folder
+(`…/jsonrc`), then fields are hidden, least important first, until it fits:
+`assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
+`plugins`, the `context` labels, then `model`. `activity` and the context figure
+always stay. The row is cut at the edge rather than wrapped if it still does not fit.
+
 To set the list directly, keep the JSON in one quoted argument:
 
 ```text
