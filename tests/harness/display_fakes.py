@@ -123,7 +123,7 @@ class FullDisplay(Display, SupportsZoom, SupportsCursorPosition, Protocol):
     """A display with every optional ability, as every harness sandbox's is."""
 
 
-def screen(backend: WorkspaceBackend) -> FullDisplay:
+def full_display(backend: WorkspaceBackend) -> FullDisplay:
     """A sandbox backend's display, checked to have every optional ability."""
     assert isinstance(backend, SupportsDisplay)
     display = backend.display
