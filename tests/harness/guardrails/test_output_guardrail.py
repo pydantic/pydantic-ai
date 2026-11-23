@@ -22,6 +22,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import GuardrailError
+from tests.harness.conftest import Instrumented
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -234,12 +235,34 @@ class TestOutputGuardrailStreaming:
                 await result.get_output()
 
 
+def _refuse_ssn(_: object) -> GuardrailResult:
+    return GuardrailResult.block('contains SSN')
+
+
+def _allow(_: object) -> bool:
+    return True
+
+
+def _retry_once():
+    calls: list[object] = []
+
+    def guard(output: object) -> GuardrailResult:
+        calls.append(output)
+        return GuardrailResult.retry('try again') if len(calls) == 1 else GuardrailResult.allow()
+
+    return guard
+
+
+def _replace_clean(_: object) -> GuardrailResult:
+    return GuardrailResult.replace('clean')
+
+
 class TestOutputGuardrailTracing:
     """Spans emitted on block and redaction."""
 
     async def test_block_span_includes_message_when_enabled(self):
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.block('contains SSN'))
+        og = OutputGuardrail(guard=_refuse_ssn)
 
         with pytest.raises(OutputBlocked):
             await og.after_output_process(
@@ -253,13 +276,15 @@ class TestOutputGuardrailTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'output',
             'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_ssn',
+            'guardrail.position': 0,
             'guardrail.message': 'contains SSN',
         }
 
     async def test_block_span_omits_message_by_default(self):
         """The refusal message may quote sensitive output, so it is gated like redactions are."""
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.block('contains SSN'))
+        og = OutputGuardrail(guard=_refuse_ssn)
 
         with pytest.raises(OutputBlocked):
             await og.after_output_process(
@@ -268,7 +293,53 @@ class TestOutputGuardrailTracing:
 
         span = _only_span(exporter)
         assert span.name == 'guardrail blocked output'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'output', 'guardrail.action': 'block'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'output',
+            'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_ssn',
+            'guardrail.position': 0,
+        }
+
+    async def test_a_chain_span_names_the_guard_that_decided(self):
+        tracer, exporter = _recording_tracer()
+        og = OutputGuardrail(guard=[_allow, _refuse_ssn])
+
+        with pytest.raises(OutputBlocked):
+            await og.after_output_process(
+                _run_ctx(tracer=tracer), output_context=_TEXT_OUTPUT_CONTEXT, output='leaks SSN'
+            )
+
+        attributes = dict(_only_span(exporter).attributes or {})
+        assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_refuse_ssn', 1)
+
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_retry_records_a_span(self, include_content: bool, instrumented: Instrumented):
+        """Without it a retry shows only as a second model request."""
+        tracing, exporter = instrumented(include_content)
+        agent = Agent(
+            TestModel(custom_output_text='answer'), capabilities=[OutputGuardrail(guard=_retry_once()), tracing]
+        )
+
+        assert (await agent.run('hello')).output == 'answer'
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name.startswith('guardrail')]
+        assert span.name == 'guardrail retried output'
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'output',
+            'guardrail.action': 'retry',
+            'guardrail.guard': '_retry_once.<locals>.guard',
+            'guardrail.position': 0,
+            **({'guardrail.message': 'try again'} if include_content else {}),
+        }
+
+    async def test_a_replacement_is_stringified_when_content_is_on(self, instrumented: Instrumented):
+        tracing, exporter = instrumented(True)
+        agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=_replace_clean), tracing])
+
+        await agent.run('hello')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail redacted output']
+        assert (span.attributes or {})['guardrail.replacement'] == 'clean'
 
 
 class TestOutputGuardrailOrdering:
@@ -280,7 +351,7 @@ class TestOutputGuardrailOrdering:
 
     async def test_redaction_span_records_only_the_replacement_when_enabled(self):
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.replace('clean'))
+        og = OutputGuardrail(guard=_replace_clean)
 
         out = await og.after_output_process(
             _run_ctx(tracer=tracer, trace_include_content=True),
@@ -299,10 +370,13 @@ class TestOutputGuardrailOrdering:
 
     async def test_redaction_span_omits_content_by_default(self):
         tracer, exporter = _recording_tracer()
-        og = OutputGuardrail(guard=lambda _: GuardrailResult.replace('clean'))
+        og = OutputGuardrail(guard=_replace_clean)
 
         await og.after_output_process(_run_ctx(tracer=tracer), output_context=_TEXT_OUTPUT_CONTEXT, output='dirty')
 
         span = _only_span(exporter)
         assert span.name == 'guardrail redacted output'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'output', 'guardrail.action': 'replace'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'output',
+            'guardrail.action': 'replace',
+        }
