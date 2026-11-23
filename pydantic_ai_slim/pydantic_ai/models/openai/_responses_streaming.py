@@ -31,7 +31,7 @@ from ._citations import (
     responses_citations_provider_details,
     responses_output_text_annotation_ta,
 )
-from ._computer import map_computer_call, stop_computer_calls_unless_completed
+from ._computer import block_computer_calls, map_computer_call
 from ._errors import map_api_errors, response_error, response_error_type
 from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
@@ -108,9 +108,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         response = super().get()
-        response.parts = stop_computer_calls_unless_completed(
-            response.parts, self.model_request_parameters, status=self._status, refused=self._has_refusal
-        )
+        if self._status not in (None, 'completed'):
+            # OpenAI says not to run the actions of a response that didn't complete. A stream learns its status only
+            # after sending its calls. Some compatible APIs send no status.
+            response.parts = block_computer_calls(response.parts, self.model_request_parameters)
         if self._is_websocket:
             response.provider_details = {**(response.provider_details or {}), 'transport': 'websocket'}
         return with_history_digest(response, self._history)
@@ -622,8 +623,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             provider_response_id=self.provider_response_id,
             timestamp=self.timestamp,
         )
-        if call := map_computer_call(item, self.model_request_parameters, call_id, self.provider_name):
-            yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
+        call = map_computer_call(item, self.model_request_parameters, call_id, self.provider_name)
+        yield self._parts_manager.handle_part(vendor_part_id=item.id, part=call)
 
     def _map_function_call_done(
         self, item: responses.ResponseFunctionToolCall, item_id: str

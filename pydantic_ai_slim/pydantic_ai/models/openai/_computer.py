@@ -1,16 +1,16 @@
 """OpenAI's native computer tool.
 
-Turns OpenAI's `computer_call` items into calls of the `computer` tool, and the tool's results back into
-`computer_call_output` items.
+Turns each OpenAI `computer_call` item into one call of the `computer` tool, and the tool's result back into a
+`computer_call_output` item.
 """
 
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated, Any, Literal, assert_never
 
 from openai.types import responses
-from openai.types.responses.response_status import ResponseStatus
 from pydantic import AfterValidator, BaseModel, Field, TypeAdapter, ValidationError
 
 from ..._framing import TOOL_RESULT_TAG, frame
@@ -26,7 +26,6 @@ from ...messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from .. import ModelRequestParameters
-from .._computer_calls import UNFINISHED_COMPUTER_ARGS, block_computer_calls
 
 _SCROLL_PIXELS_PER_CLICK = 114
 """How many pixels one mouse-wheel click scrolls.
@@ -41,40 +40,69 @@ _BLANK_SCREENSHOT = (
 )
 """A 1x1 PNG sent in a `computer_call_output` that has no screenshot. The API requires an image in every output."""
 
+BLOCKED_CALL_ARGS = '{"actions": ['
+"""Arguments for a `computer` call that must not run: invalid JSON, like a call cut off by the token limit."""
 
-class _Strict(BaseModel, extra='forbid', strict=True):
+
+def block_computer_calls(
+    parts: Sequence[ModelResponsePart], model_request_parameters: ModelRequestParameters
+) -> list[ModelResponsePart]:
+    """Give every `computer` call in `parts` arguments that aren't valid JSON, so none of them runs.
+
+    OpenAI says not to run the actions of a response that didn't complete, even when a call in it finished. The agent
+    treats a blocked call like any call whose arguments don't parse: it asks the model again.
+    """
+    tool_names = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)
+    return [
+        replace(part, args=BLOCKED_CALL_ARGS)
+        if isinstance(part, ToolCallPart) and part.tool_name in tool_names
+        else part
+        for part in parts
+    ]
+
+
+class _OpenAIActionModel(BaseModel, strict=True):
     """Checks OpenAI's data strictly, without converting types. The SDK builds a response without validating it."""
 
 
 _OPENAI_KEY_MAP: dict[str, Key] = {
     'esc': 'escape',
     'meta': 'super',
-    'arrowup': 'up',
-    'arrowdown': 'down',
-    'arrowleft': 'left',
-    'arrowright': 'right',
+    'metaleft': 'super',
     'kp_add': '+',
+    'leftctrl': 'ctrl',
+    'ctrlleft': 'ctrl',
+    'leftshift': 'shift',
+    'shiftleft': 'shift',
+    'leftalt': 'alt',
+    'altleft': 'alt',
+    'numpadenter': 'enter',
+    'numpadsubtract': '-',
+    'numpadmultiply': '*',
+    'numpaddivide': '/',
+    'numpaddecimal': '.',
+    **{f'numpad{digit}': str(digit) for digit in range(10)},
 }
 """OpenAI key names, lower-cased, that the `computer` tool spells differently.
 
-GPT-5.5 sends upper-case names such as `CTRL`, `ESC`, `META` and `KP_ADD`. OpenAI's guide also names `ARROWLEFT`. A
-name not listed here is only lower-cased.
+GPT-5.5 sends upper-case names such as `CTRL`, `ESC`, `META`, `KP_ADD`, `NUMPAD5` and `LEFTSHIFT`. A name not listed
+here is only lower-cased.
 """
 
 
-def _openai_key(name: str) -> str:
+def _key_from_openai(name: str) -> str:
     return _OPENAI_KEY_MAP.get(name.lower(), name.lower())
 
 
-_OpenAIKey = Annotated[str, AfterValidator(_openai_key)]
+_OpenAIKey = Annotated[str, AfterValidator(_key_from_openai)]
 
 
-class _OpenAIPoint(_Strict):
+class _OpenAIPoint(_OpenAIActionModel):
     x: int
     y: int
 
 
-class _OpenAIPointerAction(_Strict):
+class _OpenAIPointerAction(_OpenAIActionModel):
     x: int
     y: int
     keys: list[_OpenAIKey] = []
@@ -100,27 +128,27 @@ class _OpenAIScroll(_OpenAIPointerAction):
     scroll_y: int
 
 
-class _OpenAIDrag(_Strict):
+class _OpenAIDrag(_OpenAIActionModel):
     type: Literal['drag']
     path: list[_OpenAIPoint]
     keys: list[_OpenAIKey] = []
 
 
-class _OpenAIKeypress(_Strict):
+class _OpenAIKeypress(_OpenAIActionModel):
     type: Literal['keypress']
     keys: list[_OpenAIKey]
 
 
-class _OpenAIType(_Strict):
+class _OpenAIType(_OpenAIActionModel):
     type: Literal['type']
     text: str
 
 
-class _OpenAIWait(_Strict):
+class _OpenAIWait(_OpenAIActionModel):
     type: Literal['wait']
 
 
-class _OpenAIScreenshot(_Strict):
+class _OpenAIScreenshot(_OpenAIActionModel):
     type: Literal['screenshot']
 
 
@@ -137,85 +165,66 @@ _OpenAIAction = (
 )
 """The OpenAI computer actions the `computer` tool can run. Each model has only the fields that are mapped."""
 
-_OPENAI_ACTION: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
+_OPENAI_ACTION_ADAPTER: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
 
 
-def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
-    """Turn one OpenAI computer action into `computer` tool actions, each with a note if it runs differently.
+def _map_computer_action(raw: Any) -> list[Any]:
+    """Turn one OpenAI computer action into `computer` tool actions.
 
-    An invalid action becomes one the tool refuses, naming the invalid fields, so none of the call runs.
+    An action that doesn't validate goes to the tool under a field no action has, so the tool refuses the call and
+    none of it runs. Sent as it is, a click without coordinates would be a valid click wherever the pointer is.
     """
     try:
-        action = _OPENAI_ACTION.validate_python(raw)
-    except ValidationError as error:
-        return [(_refused_action(error), None)]
+        action = _OPENAI_ACTION_ADAPTER.validate_python(raw)
+    except ValidationError:
+        return [{'unsupported_openai_action': raw}]
     match action:
         case _OpenAIClick():
             button = 'middle' if action.button == 'wheel' else action.button
-            return [({'type': 'click', 'x': action.x, 'y': action.y, 'button': button, 'modifiers': action.keys}, None)]
+            return [{'type': 'click', 'x': action.x, 'y': action.y, 'button': button, 'modifiers': action.keys}]
         case _OpenAIDoubleClick():
-            return [({'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}, None)]
+            return [{'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}]
         case _OpenAIMove():
-            return [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+            return [{'type': 'mouse_move', 'x': action.x, 'y': action.y}]
         case _OpenAIDrag():
             path = [{'x': point.x, 'y': point.y} for point in action.path]
-            return [({'type': 'drag', 'path': path, 'modifiers': action.keys}, None)]
+            return [{'type': 'drag', 'path': path, 'modifiers': action.keys}]
         case _OpenAIScroll():
             return _map_scroll(action)
         case _OpenAIKeypress():
-            return [({'type': 'press_keys', 'keys': action.keys}, None)]
+            return [{'type': 'press_keys', 'keys': action.keys}]
         case _OpenAIType():
-            return [({'type': 'type_text', 'text': action.text}, None)]
+            return [{'type': 'type_text', 'text': action.text}]
         case _OpenAIWait():
-            return [({'type': 'wait'}, None)]
+            return [{'type': 'wait'}]
         case _OpenAIScreenshot():
-            return [({'type': 'screenshot'}, None)]
+            return [{'type': 'screenshot'}]
         case _:
             assert_never(action)
 
 
-_TOOL_TYPES: dict[object, str] = {
-    'double_click': 'click',
-    'move': 'mouse_move',
-    'keypress': 'press_keys',
-    'type': 'type_text',
-}
-"""The `computer` tool's name for each OpenAI action type that has a different name."""
-
-
-def _refused_action(error: ValidationError) -> dict[str, Any]:
-    """Build an action the tool refuses, naming the fields that failed validation."""
-    # A field error's location starts with the action type. An unknown type comes back as the error's tag instead,
-    # and an action that isn't an object has neither.
-    details = error.errors()
-    fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
-    kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
-    # The tool's name for the type makes its refusal name the bad fields instead of the type.
-    return {'type': _TOOL_TYPES.get(kind, kind), 'unsupported_fields': fields}
-
-
-def _map_scroll(action: _OpenAIScroll) -> list[tuple[dict[str, Any], str | None]]:
+def _map_scroll(action: _OpenAIScroll) -> list[Any]:
     """Turn an OpenAI scroll into tool scrolls.
 
     OpenAI scrolls by pixels on both axes at once. The tool scrolls in one direction at a time, by wheel clicks.
     """
     scrolls = [
-        _scroll(action, axis, pixels, direction)
-        for axis, pixels, direction in (
-            ('scroll_x', action.scroll_x, 'right' if action.scroll_x > 0 else 'left'),
-            ('scroll_y', action.scroll_y, 'down' if action.scroll_y > 0 else 'up'),
+        _scroll_on_axis(action, pixels, direction)
+        for pixels, direction in (
+            (action.scroll_x, 'right' if action.scroll_x > 0 else 'left'),
+            (action.scroll_y, 'down' if action.scroll_y > 0 else 'up'),
         )
         if pixels
     ]
     # A scroll of 0 pixels on both axes only moves the pointer to its position.
-    return scrolls or [({'type': 'mouse_move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+    return scrolls or [{'type': 'mouse_move', 'x': action.x, 'y': action.y}]
 
 
-def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tuple[dict[str, Any], str | None]:
-    """Build a scroll along one axis in wheel clicks, with a note when the clicks don't match the pixels asked for."""
+def _scroll_on_axis(action: _OpenAIScroll, pixels: int, direction: str) -> dict[str, Any]:
+    """Build a scroll along one axis, in the wheel clicks nearest to the pixels asked for."""
     # Integer math, since a JSON integer can be larger than a float holds exactly.
     clicks = max(1, (abs(pixels) + _SCROLL_PIXELS_PER_CLICK // 2) // _SCROLL_PIXELS_PER_CLICK)
-    scroll = {
+    return {
         'type': 'scroll',
         'x': action.x,
         'y': action.y,
@@ -223,9 +232,6 @@ def _scroll(action: _OpenAIScroll, axis: str, pixels: int, direction: str) -> tu
         'amount': clicks,
         'modifiers': action.keys,
     }
-    if clicks * _SCROLL_PIXELS_PER_CLICK == abs(pixels):
-        return scroll, None
-    return scroll, f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
 
 
 _COMPUTER_CALL_KEYS = (
@@ -243,10 +249,10 @@ def stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
     after a hook changed them, is not sent: it would tell the model its actions ran.
     """
     stored = (part.provider_details or {}).get('computer_call')
-    if not is_str_dict(stored) or stored.get('type') != 'computer_call':
+    if not is_str_dict(stored) or stored.get('type') != 'computer_call' or not isinstance(stored.get('actions'), list):
         return None
     # A call blocked because its response didn't complete still sends its item back unchanged.
-    if part.args != UNFINISHED_COMPUTER_ARGS and _call_args(stored) not in (part.args, part.args_as_dict()):
+    if part.args != BLOCKED_CALL_ARGS and _computer_args_from_item(stored) not in (part.args, part.args_as_dict()):
         return None
     return {key: value for key, value in stored.items() if key in _COMPUTER_CALL_KEYS}
 
@@ -256,58 +262,29 @@ def map_computer_call(
     model_request_parameters: ModelRequestParameters,
     tool_call_id: str,
     provider_name: str,
-) -> ComputerCallPart | None:
-    """Turn a `computer_call` item into a `computer` tool call that keeps the item, or `None` without the tool."""
-    # A real request always has the tool. The stream parity test replays recorded streams without tools.
-    tool_name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
-    if tool_name is None:
-        return None
+) -> ComputerCallPart:
+    """Turn a `computer_call` item into a `computer` tool call that keeps the item."""
+    # OpenAI sends a `computer_call` only when the request sent its computer tool for this `computer` tool.
+    tool_name = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)[0]
     # The SDK doesn't validate a response, so the item can hold any value. Keep it as sent, without warnings.
-    dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
+    item_json = item.model_dump(mode='json', exclude_none=True, warnings=False)
     return ComputerCallPart(
         tool_name,
-        _call_args(dumped),
+        _computer_args_from_item(item_json),
         tool_call_id=tool_call_id,
         id=item.id,
         provider_name=provider_name,
-        provider_details={'computer_call': dumped},
+        provider_details={'computer_call': item_json},
     )
 
 
-def stop_computer_calls_unless_completed(
-    parts: Sequence[ModelResponsePart],
-    model_request_parameters: ModelRequestParameters,
-    *,
-    status: ResponseStatus | None,
-    refused: bool,
-) -> list[ModelResponsePart]:
-    """Block every `computer` call in a response unless it completed and the model didn't refuse.
-
-    OpenAI says not to run the actions of an incomplete, failed or refused response, even when a call in it finished.
-    A stream learns the status only after sending its calls, so this runs on the final parts. No status counts as
-    completed, since some OpenAI-compatible APIs send none. A refused response that isn't streamed has no parts, so the
-    run raises `ContentFilterError`.
-    """
-    if status in (None, 'completed') and not refused:
-        return list(parts)
-    return block_computer_calls(parts, model_request_parameters)
-
-
-def _call_args(dumped: dict[str, Any]) -> dict[str, Any] | str:
+def _computer_args_from_item(item_json: dict[str, Any]) -> dict[str, Any] | str:
     """Build the `computer` tool call's arguments from a `computer_call` item."""
-    if dumped.get('status') != 'completed':
+    if item_json.get('status') != 'completed':
         # OpenAI says not to run a partly generated action.
-        return UNFINISHED_COMPUTER_ARGS
-    return {'actions': [action for action, _ in _map_actions(dumped)]}
-
-
-def _map_actions(dumped: dict[str, Any]) -> list[tuple[dict[str, Any], str | None]]:
-    """Turn a `computer_call` item's actions into `computer` tool actions, each with its note on a pixel scroll."""
-    actions: list[Any] = dumped.get('actions', [])
-    if not isinstance(actions, list):
-        # A malformed call: none of it runs.
-        actions = [None]
-    return [tool_action for action in actions for tool_action in _map_computer_action(action)]
+        return BLOCKED_CALL_ARGS
+    actions: list[Any] = item_json.get('actions', [])
+    return {'actions': [tool_action for action in actions for tool_action in _map_computer_action(action)]}
 
 
 def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCallPart]:
@@ -324,33 +301,21 @@ def computer_calls_by_id(messages: Sequence[ModelMessage]) -> dict[str, ToolCall
     }
 
 
-def _scroll_notes(call: ToolCallPart, result: ComputerResult | None) -> list[str]:
-    """Rebuild the notes on the pixel scrolls that ran, from the stored item's validated numbers.
-
-    Notes aren't stored as text on the call, since a history from storage or a UI could put any text there. A changed
-    call gets none, since its summary covers it, and neither does a result that doesn't record its outcome.
-    """
-    if result is None or result.get('changed') or not (stored := stored_computer_call(call)):
-        return []
-    notes = [note for _, note in _map_actions(stored)]
-    return [note for note in notes[: result['performed']] if note]
-
-
-def _needs_summary(result: ComputerResult | None) -> bool:
+def _needs_result_text(result: ComputerResult | None) -> bool:
     """Whether a `computer` result must send its text along with the screenshot, because the call failed or changed.
 
     A result that doesn't record its outcome, such as one rebuilt by a UI, might describe a failure.
     """
-    return result is None or 'error' in result or bool(result.get('changed'))
+    return result is None or 'error' in result or bool(result.get('actions_changed'))
 
 
-def map_computer_call_output(
-    part: ToolReturnPart, call_id: str, call: ToolCallPart, *, changed: bool
+def map_computer_result(
+    part: ToolReturnPart, call_id: str, call: ToolCallPart, *, changed_after_storing: bool
 ) -> list[responses.ResponseInputItemParam]:
     """Turn a `computer` result into a `computer_call_output`, plus a user message when an image alone isn't enough.
 
-    A `changed` call is one a hook renamed or gave other actions after the API stored it. If it ran, a note says what
-    actually ran, because OpenAI's stored item still shows what the model asked for.
+    A call `changed_after_storing` is one a hook renamed or gave other actions after the API stored it. If it ran, a
+    note says what actually ran, because OpenAI's stored item still shows what the model asked for.
     """
     # A failed or denied call returns a plain `ToolReturnPart`, with no screenshot.
     computer_return = part if isinstance(part, ComputerReturnPart) else None
@@ -367,21 +332,20 @@ def map_computer_call_output(
         },
     }
     items: list[responses.ResponseInputItemParam] = [output]
-    # Read a successful result through its validated content, so content stored as a JSON string reads as a list.
-    content = (computer_return.typed_content if computer_return else None) or part.content_items()
+    content = part.content_items()
     # The output holds one image. Images before the final screenshot, such as a zoom, go in the message after it.
     images = [item for item in content if isinstance(item, BinaryImage)]
     extra_images = images[:-1] if image is not None else images
-    notes = _scroll_notes(call, computer_return.result) if computer_return else []
+    notes: list[str] = []
     # A denied or interrupted call didn't run.
-    if changed and part.outcome in ('success', 'failed'):
+    if changed_after_storing and part.outcome in ('success', 'failed'):
         notes.append(f'The call ran as {call.tool_name} with the arguments {call.args_as_json_str()}.')
-    if computer_return is None or image is None or _needs_summary(computer_return.result) or extra_images or notes:
-        items.append(_summary_message(part, content, extra_images, notes))
+    if computer_return is None or image is None or _needs_result_text(computer_return.result) or extra_images or notes:
+        items.append(_map_result_message(part, content, extra_images, notes))
     return items
 
 
-def _summary_message(
+def _map_result_message(
     part: ToolReturnPart, content: Sequence[object], extra_images: list[BinaryImage], notes: list[str]
 ) -> responses.EasyInputMessageParam:
     """Build the user message that follows a `computer_call_output`, which can only hold an image.
@@ -390,12 +354,12 @@ def _summary_message(
     """
     texts = [item for item in content if isinstance(item, str)]
     references = [f'See file {image.identifier}.' for image in extra_images]
-    note = (
+    text = (
         ' '.join([*texts, *notes, *references])
         if texts or notes or references
         else part.model_response_str(wrap_if_error=False)
     )
-    framed = frame(TOOL_RESULT_TAG, note, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+    framed = frame(TOOL_RESULT_TAG, text, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
     if not extra_images:
         return responses.EasyInputMessageParam(role='user', content=framed)
     message_content: list[responses.ResponseInputContentParam] = [

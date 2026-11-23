@@ -67,7 +67,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...computer_use import COMPUTER_KIND, ComputerReturnPart
+from ...computer_use import COMPUTER_KIND
 from ...durable_exec._operation_backend import in_durable_unit
 from ...exceptions import (
     ModelConnectionError,
@@ -93,7 +93,6 @@ from ...messages import (
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
-    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchReturnPart,
@@ -178,10 +177,10 @@ from ._citations import (
     responses_output_text_annotations_ta,
 )
 from ._computer import (
+    block_computer_calls,
     computer_calls_by_id,
     map_computer_call,
-    map_computer_call_output,
-    stop_computer_calls_unless_completed,
+    map_computer_result,
     stored_computer_call,
 )
 from ._errors import (
@@ -756,12 +755,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
-        azure_client = isinstance(self._provider.client, AsyncAzureOpenAI)
-        if azure_client or is_gateway_provider(self._provider):
+        is_azure_client = isinstance(self._provider.client, AsyncAzureOpenAI)
+        if is_azure_client or is_gateway_provider(self._provider):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
             # while HTTP succeeds (live, 2026-10-22).
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
-        if azure_client or not isinstance(self._provider, OpenAIProvider | BedrockMantleProvider):
+        if is_azure_client or not isinstance(self._provider, OpenAIProvider | BedrockMantleProvider):
             # Checked live only on OpenAI's API and Bedrock Mantle. Other providers get `ComputerUse`'s function
             # tool, even when the model's profile lists `ComputerTool` for its own provider's API (Claude's does).
             profile = merge_profile(
@@ -873,14 +872,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             allow_no_new_messages=True,
         )
         # Without the native tool, an output that answers a held computer call needs the full history.
-        calls = self._held_computer_calls(
+        server_computer_calls = self._server_stored_computer_calls(
             messages,
             new_messages,
-            declares_computer=ComputerTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS),
+            sends_native_computer=ComputerTool in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS),
             in_conversation=False,
         )
-        if calls is None:
-            previous_response_id, new_messages, calls = None, messages, {}
+        if server_computer_calls is None:
+            previous_response_id, new_messages, server_computer_calls = None, messages, {}
         messages = new_messages
         # The endpoint doesn't take `configuration_update` items: the compacted window carries no effort change.
         # Removed after resolving the response to continue, which matches the history as stored.
@@ -899,14 +898,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             previous_response_id=previous_response_id,
             standing_prompt_retained=False,
-            calls=calls,
+            server_computer_calls=server_computer_calls,
         )
         if instructions_override is not None:
             instructions = instructions_override
         # The compact endpoint refuses a `computer_call_output` unless the request enables the computer tool, even
         # after the run stopped using it. The SDK's `compact` method has no `tools` argument.
-        holds_computer_output = any(item.get('type') == 'computer_call_output' for item in openai_messages)
-        computer_tools = {'tools': [{'type': 'computer'}]} if holds_computer_output else None
+        has_computer_call_output = any(item.get('type') == 'computer_call_output' for item in openai_messages)
+        computer_tool_body = {'tools': [{'type': 'computer'}]} if has_computer_call_output else None
 
         try:
             with map_decode_errors(self.model_name):
@@ -915,7 +914,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model=self.model_name,
                     instructions=instructions,
                     previous_response_id=previous_response_id or OMIT,
-                    extra_body=computer_tools,
+                    extra_body=computer_tool_body,
                 )
         except APIStatusError as e:  # pragma: lax no cover
             if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
@@ -1236,9 +1235,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['refusal'] = refusal_text
 
         return ModelResponse(
-            parts=stop_computer_calls_unless_completed(
-                items, model_request_parameters, status=response.status, refused=refusal_text is not None
-            ),
+            # OpenAI says not to run the actions of a response that didn't complete. Some compatible APIs send no status.
+            parts=items
+            if response.status in (None, 'completed')
+            else block_computer_calls(items, model_request_parameters),
             usage=map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
@@ -1297,8 +1297,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         provider_response_id=response.id,
                         timestamp=timestamp,
                     )
-                    if computer_call := map_computer_call(item, model_request_parameters, call_id, self.system):
-                        items.append(computer_call)
+                    items.append(map_computer_call(item, model_request_parameters, call_id, self.system))
                 case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
@@ -1573,14 +1572,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         previous_response_id, conversation_id, new_messages = await self._resolve_server_side_state(
             model_settings, messages
         )
-        calls = self._held_computer_calls(
+        server_computer_calls = self._server_stored_computer_calls(
             messages,
             new_messages,
-            declares_computer=self._native_computer_name(wire_request_parameters) is not None,
+            sends_native_computer=self._native_computer_name(wire_request_parameters) is not None,
             in_conversation=conversation_id is not None,
         )
-        if calls is None:
-            previous_response_id, new_messages, calls = None, messages, {}
+        if server_computer_calls is None:
+            previous_response_id, new_messages, server_computer_calls = None, messages, {}
         messages = new_messages
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -1590,7 +1589,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             wire_request_parameters,
             previous_response_id=previous_response_id,
-            calls=calls,
+            server_computer_calls=server_computer_calls,
         )
         reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
@@ -2601,12 +2600,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return False
         return None
 
-    def _held_computer_calls(
+    def _server_stored_computer_calls(
         self,
         messages: list[ModelMessage],
         new_messages: list[ModelMessage],
         *,
-        declares_computer: bool,
+        sends_native_computer: bool,
         in_conversation: bool,
     ) -> dict[str, ToolCallPart] | None:
         """The `computer_call`s the server holds from before `new_messages`, by tool call ID.
@@ -2617,17 +2616,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         OpenAI conversation that would duplicate the items, so it raises `UserError`.
         """
         restored = self._restore_response_scoped_tool_call_ids(messages)
-        held_count = len(restored) - len(new_messages)
-        calls = computer_calls_by_id(restored[:held_count])
-        answered = {
+        stored_count = len(restored) - len(new_messages)
+        server_computer_calls = computer_calls_by_id(restored[:stored_count])
+        answered_call_ids = {
             part.tool_call_id
-            for message in restored[held_count:]
+            for message in restored[stored_count:]
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, ToolReturnPart)
         }
-        if declares_computer or not calls.keys() & answered:
-            return calls
+        if sends_native_computer or not server_computer_calls.keys() & answered_call_ids:
+            return server_computer_calls
         if in_conversation:
             raise UserError(
                 "This request answers a native `computer_call` that the OpenAI conversation holds, but it doesn't send "
@@ -2636,7 +2635,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
         return None
 
-    def _held_computer_call(
+    def _replayable_computer_call(
         self, part: ToolCallPart, model_request_parameters: ModelRequestParameters
     ) -> dict[str, Any] | None:
         """The `computer_call` item OpenAI stored for `part`, or `None` if a hook renamed the call or changed its actions.
@@ -2760,7 +2759,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         standing_prompt_retained: bool = True,
         previous_response_id: str | None = None,
-        calls: dict[str, ToolCallPart] | None = None,
+        server_computer_calls: dict[str, ToolCallPart] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -2793,8 +2792,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # request's builtin configuration is the source of truth: a `ToolCallPart` for
             # `search_tools` belongs in the native replay flow whenever tool search is active.
             client_tool_search_active=has_tool_search(model_request_parameters),
-            computer_calls=calls or {},
-            computer_is_native=self._native_computer_name(model_request_parameters) is not None,
+            computer_calls_by_id=server_computer_calls or {},
+            sends_native_computer=self._native_computer_name(model_request_parameters) is not None,
         )
         for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
@@ -2880,10 +2879,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         call_id = _guard_tool_call_id(t=part)
         call_id, _ = split_combined_tool_call_id(call_id)
         # A `computer_call` this provider made gets a `computer_call_output`, whatever the tool is now.
-        computer_call = context.computer_calls.get(part.tool_call_id)
+        computer_call = context.computer_calls_by_id.get(part.tool_call_id)
         if computer_call is not None and computer_call.provider_name == self.system:
-            changed = self._held_computer_call(computer_call, context.model_request_parameters) is None
-            context.openai_messages.extend(map_computer_call_output(part, call_id, computer_call, changed=changed))
+            changed = self._replayable_computer_call(computer_call, context.model_request_parameters) is None
+            context.openai_messages.extend(
+                map_computer_result(part, call_id, computer_call, changed_after_storing=changed)
+            )
         elif call_id in context.client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
             # Replay the local `search_tools` result as a
             # `tool_search_output` so the provider rehydrates the
@@ -3108,11 +3109,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         should_send_item_id: bool,
     ) -> responses.ResponseComputerToolCallParam | None:
         """A `computer_call` OpenAI made, to send back unchanged so the API can match its output to it."""
-        if not context.computer_is_native:
+        if not context.sends_native_computer:
             return None
-        if not (computer_call := self._held_computer_call(item, context.model_request_parameters)):
+        if not (computer_call := self._replayable_computer_call(item, context.model_request_parameters)):
             return None
-        context.computer_calls[item.tool_call_id] = item
+        context.computer_calls_by_id[item.tool_call_id] = item
         replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
         # The call ID may have been adjusted for this request.
         replayed_call['call_id'] = call_id
@@ -3543,40 +3544,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         Iterates content directly to preserve order of mixed file/data content.
         """
-        items = _tool_return_items(part)
-        if items is None:
+        if not part.files:
             return part.model_response_str()
 
         output: list[
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
         ] = []
 
-        for item in items:
+        for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
                 output.append(self._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))
-        if isinstance(part, ComputerReturnPart) and ComputerTool in self.profile.get(
-            'supported_native_tools', SUPPORTED_NATIVE_TOOLS
-        ):
-            # `auto` can shrink the screenshot that the model's click positions refer to.
-            for content in output:
-                if content['type'] == 'input_image':
-                    content['detail'] = 'original'
         return output
-
-
-def _tool_return_items(part: ToolReturnPart) -> Sequence[str | MultiModalContent] | None:
-    """The items a tool result goes back as, or `None` when it goes back as text.
-
-    A `computer` result is read through its validated content, so one stored as a JSON string keeps its screenshot.
-    """
-    typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
-    if typed is not None:
-        return typed
-    return part.content_items(mode='str') if part.files else None
 
 
 @dataclass
@@ -3589,9 +3571,9 @@ class _ResponsesMapMessagesContext:
     store_disabled: bool
     client_tool_search_active: bool
     client_replay_call_ids: set[str] = field(default_factory=set[str])
-    computer_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
-    """The `computer_call`s held by the server or sent in this request, by tool call ID."""
-    computer_is_native: bool = False
+    computer_calls_by_id: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
+    """The `computer_call`s stored by the server or sent in this request, by tool call ID."""
+    sends_native_computer: bool = False
     # Mirrors the Anthropic renderer's per-request `tool_addition` dedupe: several history
     # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
     # plus a replayed search return), and one declaration per request is enough.

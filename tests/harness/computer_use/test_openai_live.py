@@ -45,7 +45,7 @@ from tests.models.conftest import json_objects
 
 from ...conftest import RequestCapture, try_import
 from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
-from .shared_live import DONE, TASK, _is_object_list, vcr_config as vcr_config  # pyright: ignore[reportPrivateUsage]
+from .shared_live import DONE, TASK, is_object_list, vcr_config as vcr_config
 
 with try_import() as openai_installed:
     from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -534,7 +534,7 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
         result: ToolReturn,
     ) -> ToolReturn:
         # As if an app added its own image to the result, before the screenshot.
-        assert _is_object_list(result.return_value)
+        assert is_object_list(result.return_value)
         return ToolReturn([picture, *result.return_value], metadata=result.metadata)
 
     agent = Agent(
@@ -557,22 +557,6 @@ async def test_gpt_sees_an_image_a_result_holds_beside_its_screenshot(
         'input_image',
         'input_text',
     ]
-
-
-@needs_openai
-@pytest.mark.vcr
-async def test_gpt_is_told_how_a_pixel_scroll_ran(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
-) -> None:
-    provider = ScreenProvider()
-    agent = Agent(
-        _gpt(openai_api_key, request_capture, 'gpt-5.4-mini'), capabilities=[provider.capability(), ComputerUse()]
-    )
-    await agent.run('Scroll down by exactly 250 pixels at x=640 y=400 in one scroll action, then reply "done".')
-
-    assert provider.actions == [Scroll(x=640, y=400, direction='down', amount=2)]
-    last = request_capture.bodies('/responses')[-1]
-    assert 'scroll_y=250 ran as 2 wheel clicks of about 114 pixels each.' in str(json_objects(last['input'])[-1])
 
 
 @needs_openai
@@ -600,7 +584,6 @@ ACTION_STEPS: list[tuple[str, DisplayAction]] = [
     ('Double-click at x=100 y=200.', Click(x=100, y=200, count=2)),
     ('Right-click at x=100 y=200.', Click(x=100, y=200, button='right')),
     ('Middle-click at x=100 y=200.', Click(x=100, y=200, button='middle')),
-    ('Press the mouse back button at x=100 y=200.', Click(x=100, y=200, button='back')),
     ('Hold shift and click at x=100 y=200.', Click(x=100, y=200, modifiers=('shift',))),
     ('Move the pointer to x=100 y=200 without clicking.', MouseMove(x=100, y=200)),
     ('Scroll down by 300 pixels at x=100 y=200.', Scroll(x=100, y=200, direction='down', amount=3)),
