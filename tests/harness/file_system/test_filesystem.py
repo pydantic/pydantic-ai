@@ -914,12 +914,28 @@ class TestReadFile:
             'Too large to view: the limit is 5000000 bytes.\n'
         )
 
-    async def test_read_image_too_large_to_decode_is_returned_unchanged(self, tmp_path: Path) -> None:
+    async def test_read_image_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
         # 30 megapixels in a small file: decoding it to downscale would take far more memory than the file.
         raw = _encoded_image((6000, 5000), mode='1')
         (tmp_path / 'huge.png').write_bytes(raw)
         result = await _unhashed_toolset().read_file('huge.png', workspace=LocalWorkspaceBackend(tmp_path))
-        assert result == [f'[huge.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
+        assert result == (
+            f'[huge.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: 6000x5000 pixels is over the 25,000,000 that can be downscaled.\n'
+        )
+
+    async def test_read_large_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
+        # Over the decode limit at full size, but a JPEG decodes at 1/4 scale here, under it.
+        raw = _encoded_image((6000, 5000), 'JPEG', mode='L')
+        (tmp_path / 'photo.jpg').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[photo.jpg | image/jpeg | {len(raw)} bytes]\nShown downscaled from 6000x5000 to 1024x853 pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (1024, 853)
 
     def test_max_image_side_without_pillow_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, 'PIL', None)

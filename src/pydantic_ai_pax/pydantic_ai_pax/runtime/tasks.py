@@ -39,6 +39,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
+from pydantic_ai_harness.coder import MAX_IMAGE_SIDE
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.sub_agents import (
@@ -52,7 +53,6 @@ from pydantic_ai_harness.sub_agents import (
     TaskQuestionAskedEvent,
 )
 from pydantic_ai_pax.plugins import TaskInfo, TaskProgress
-from pydantic_ai_pax.runtime.image_codec import MAX_IMAGE_SIDE
 from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.task_prompts import is_delegate_tool

@@ -210,7 +210,8 @@ from its leading bytes, not its extension), and a text description (size, media 
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
 With `max_image_side` set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that
 on either side is downscaled first, in its own format; the header adds a
-`Shown downscaled from WxH to wxh pixels.` line and keeps the file's own size and hash. It needs Pillow
+`Shown downscaled from WxH to wxh pixels.` line and keeps the file's own size and hash; one over 25
+megapixels at its decoding scale is described as too large. It needs Pillow
 (the `coder` extra); setting `max_image_side` without it raises `ImportError`.
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 

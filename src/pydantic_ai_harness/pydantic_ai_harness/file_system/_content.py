@@ -76,18 +76,13 @@ strictest per-image limit among mainstream providers. A larger file gets the
 text description instead of content that would fail the next model request.
 """
 
-MAX_IMAGE_SIDE = 1024
-"""Longest side, in pixels, of an image `Coder`'s `read_file` returns; a larger one is downscaled to it.
-
-Providers reject images over their own dimension limits, or downscale them anyway
-at the cost of the tokens spent sending the full size.
-"""
-
-_MAX_DECODE_PIXELS = 25_000_000
-"""Largest image, in pixels, `downscale_image` decodes; a larger one is sent as it is, within `MAX_MEDIA_BYTES`.
+MAX_DECODE_PIXELS = 25_000_000
+"""Largest image, in pixels, `downscale_image` decodes; `read_file` describes a larger one instead of sending it.
 
 A small compressed file can declare enough pixels to take hundreds of MB and seconds
-of CPU to decode, below Pillow's own decompression-bomb limit.
+of CPU to decode, below Pillow's own decompression-bomb limit. A JPEG is decoded at
+the smallest of 1/2, 1/4 or 1/8 scale that still covers the target size, so this
+bounds the decoded size, not the file's.
 """
 
 _PIL_FORMATS = {'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/gif': 'GIF', 'image/webp': 'WEBP'}
@@ -102,6 +97,13 @@ class DownscaledImage:
     shown: tuple[int, int]
 
 
+@dataclass
+class TooLargeToDecode:
+    """An image over `MAX_DECODE_PIXELS` even at the scale it can be decoded at, with its size."""
+
+    size: tuple[int, int]
+
+
 def require_pillow() -> None:
     """Fail when `max_image_side` is set but Pillow, which downscales the images, is not installed."""
     if importlib.util.find_spec('PIL') is None:
@@ -110,24 +112,29 @@ def require_pillow() -> None:
         )
 
 
-def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledImage | None:
+def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledImage | TooLargeToDecode | None:
     """`data` with its longest side brought down to `max_side` pixels, in its own format and aspect ratio.
 
-    `None` when the image already fits, is over `_MAX_DECODE_PIXELS`, or is not an
-    image Pillow can decode, such as a truncated file: then the file is sent as it
-    is. EXIF orientation is applied first, since the re-encoded copy carries no metadata.
+    `None` when the image already fits, or is not an image Pillow can decode, such
+    as a truncated file: then the file is sent as it is. EXIF orientation is applied
+    first, since the re-encoded copy carries no metadata.
     """
     from PIL import Image, ImageOps
 
     image_format = _PIL_FORMATS[media_type]
     try:
         with Image.open(BytesIO(data), formats=[image_format]) as image:
-            if max(image.size) <= max_side or image.width * image.height > _MAX_DECODE_PIXELS:
+            if max(image.size) <= max_side:
                 return None
+            original = image.size
+            image.draft(None, (max_side, max_side))
+            if image.width * image.height > MAX_DECODE_PIXELS:
+                return TooLargeToDecode(original)
             oriented = ImageOps.exif_transpose(image)
+            if oriented.size != image.size:
+                original = (original[1], original[0])
             if oriented.mode in ('1', 'P', 'PA'):
                 oriented = oriented.convert('RGBA')
-            original = oriented.size
             oriented.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             output = BytesIO()
             oriented.save(output, format=image_format, quality=90)

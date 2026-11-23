@@ -9,11 +9,11 @@ from PIL import Image, ImageOps
 from typing_extensions import Buffer
 
 from pydantic_ai.messages import BinaryContent
+from pydantic_ai_harness.coder import MAX_IMAGE_SIDE
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PENDING_BYTES = 32 * 1024 * 1024
 MAX_PIXELS = 25_000_000
-MAX_IMAGE_SIDE = 1024
 FORMATS = ('PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF')
 
 

@@ -42,9 +42,11 @@ from pydantic_ai_harness.file_system._access import AccessPatterns
 from pydantic_ai_harness.file_system._changes import Change, count_lines, skip_lines, split_lines
 from pydantic_ai_harness.file_system._command_search import run_posix_search
 from pydantic_ai_harness.file_system._content import (
+    MAX_DECODE_PIXELS,
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
     Replacement,
+    TooLargeToDecode,
     apply_replacements,
     bytes_hash,
     check_expected_hash,
@@ -999,18 +1001,20 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + hex_preview(raw, self._body_budget(header + intro))
-        if (
-            self._max_image_side is not None
-            and media_type.startswith('image/')
-            and (
-                downscaled := await anyio.to_thread.run_sync(
-                    downscale_image, raw, media_type, self._max_image_side, abandon_on_cancel=True
-                )
+        if self._max_image_side is not None and media_type.startswith('image/'):
+            downscaled = await anyio.to_thread.run_sync(
+                downscale_image, raw, media_type, self._max_image_side, abandon_on_cancel=True
             )
-        ):
-            (width, height), (shown_width, shown_height) = downscaled.original, downscaled.shown
-            header += f'Shown downscaled from {width}x{height} to {shown_width}x{shown_height} pixels.\n'
-            raw = downscaled.data
+            if isinstance(downscaled, TooLargeToDecode):
+                width, height = downscaled.size
+                return (
+                    f'{header}Too large to view: {width}x{height} pixels is over the {MAX_DECODE_PIXELS:,} '
+                    'that can be downscaled.\n'
+                )
+            if downscaled is not None:
+                (width, height), (shown_width, shown_height) = downscaled.original, downscaled.shown
+                header += f'Shown downscaled from {width}x{height} to {shown_width}x{shown_height} pixels.\n'
+                raw = downscaled.data
         if len(raw) <= MAX_MEDIA_BYTES:
             return [header, BinaryContent(data=raw, media_type=media_type)]
         return f'{header}Too large to view: the limit is {MAX_MEDIA_BYTES} bytes.\n'

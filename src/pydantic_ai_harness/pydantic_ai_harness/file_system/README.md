@@ -368,6 +368,8 @@ applies the same rule to absolute symlink targets.
   With `max_image_side` set (`Coder` sets 1024), an image larger than that on
   its longest side is downscaled to it first, in its own format and aspect
   ratio, and the header names both sizes; the hash is still that of the file.
+  An image over 25 megapixels, even at the 1/2 to 1/8 scale a JPEG decodes at,
+  is described instead of decoded.
   Downscaling needs Pillow, which the `coder` extra installs; setting
   `max_image_side` without it raises an `ImportError`. A file over 5 MB even then, the strictest mainstream per-image
   limit, is described instead, as is any other binary file.
