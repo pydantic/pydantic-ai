@@ -410,10 +410,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
 - `E2BSandbox(desktop=True)` gives a new sandbox a 1280x800 screen for `ComputerUse()`, from E2B's `desktop`
-  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. XFCE keeps `printscreen` and the
-  media and volume keys, so apps never receive them. The agent can type only ASCII. A custom `template` needs
-  `xdotool`, `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with
-  `apt-get` as root or with passwordless `sudo`, plus `startxfce4` for the XFCE desktop. Windows of a sandbox made
+  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. XFCE keeps `printscreen`, so
+  apps never receive it. The agent can type only ASCII. A custom `template` needs `xdotool`, `xwininfo`, `scrot`,
+  `setsid`, and Xvfb unless an X server runs, which the first use installs with `apt-get` as root or with
+  passwordless `sudo`, plus `startxfce4` for the XFCE desktop. Windows of a sandbox made
   with E2B's Desktop SDK are on another display, so the agent can't see them.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
@@ -425,9 +425,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
 - `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
-  sets another size, fixed at creation. It can't press F13 to F24, keypad Enter, the keypad's `+ - * / .` keys, print
-  screen, pause, scroll lock, the menu key or media keys, use side mouse buttons, or type characters beyond U+FFFF
-  (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
+  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, use side mouse
+  buttons, or type characters beyond U+FFFF (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
   desktop use or shell command raises `UserError`.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
