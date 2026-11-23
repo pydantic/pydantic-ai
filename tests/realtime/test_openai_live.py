@@ -2536,6 +2536,9 @@ async def test_voice_instructions_are_appended_and_kept_for_a_replacement_sessio
 
     session_start: dict[str, Any] = {'model': 'gpt-live-1', 'instructions': _text_of(8)}
     connection = _Recorder(object(), session_start=session_start)  # pyright: ignore[reportArgumentType]
+    # Live accepts an empty append (checked live), which adds nothing to keep.
+    await connection.send(AppendVoiceInstructions(''))
+    assert connection._voice_instructions == []  # pyright: ignore[reportPrivateUsage]
     for words in (4, 5, 6):
         await connection.send(AppendVoiceInstructions(_text_of(words)))
         if words == 5:
@@ -2543,8 +2546,8 @@ async def test_voice_instructions_are_appended_and_kept_for_a_replacement_sessio
             assert session_start['instructions'] == '\n\n'.join([_text_of(8), _text_of(4), _text_of(5)])
 
     assert sent == [
-        {'type': 'session.instructions.append', 'delegation_id': None, 'content': _text_of(words)}
-        for words in (4, 5, 6)
+        {'type': 'session.instructions.append', 'delegation_id': None, 'content': content}
+        for content in ('', *(_text_of(words) for words in (4, 5, 6)))
     ]
     # The third append would pass the cap, so the oldest is dropped.
     assert session_start['instructions'] == '\n\n'.join([_text_of(8), _text_of(5), _text_of(6)])

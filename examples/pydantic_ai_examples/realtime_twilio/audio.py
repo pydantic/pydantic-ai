@@ -44,13 +44,6 @@ def _factor(rate: int) -> int:
     return rate // LINE_RATE
 
 
-def _pcm16(samples: array[int]) -> bytes:
-    """Little-endian bytes, as realtime sessions exchange PCM16."""
-    if sys.byteorder == 'big':
-        samples.byteswap()
-    return samples.tobytes()
-
-
 def mulaw_to_pcm16(mulaw: bytes, *, rate: int) -> bytes:
     """Decode 8 kHz mu-law, as Twilio sends it, to PCM16 at `rate`.
 
@@ -64,7 +57,10 @@ def mulaw_to_pcm16(mulaw: bytes, *, rate: int) -> bytes:
         out.extend(
             current + (following - current) * step // factor for step in range(factor)
         )
-    return _pcm16(out)
+    # Realtime sessions exchange little-endian PCM16.
+    if sys.byteorder == 'big':
+        out.byteswap()
+    return out.tobytes()
 
 
 def pcm16_to_mulaw(pcm: bytes, *, rate: int) -> bytes:

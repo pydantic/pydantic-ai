@@ -1103,7 +1103,8 @@ class OpenAILiveConnection(RealtimeConnection):
                 f'and this is {tokens}. Add the instructions in shorter pieces.'
             )
         await self._send_event({'type': 'session.instructions.append', 'delegation_id': None, 'content': text})
-        if self._session_start is None:
+        # An empty append adds nothing for a replacement session to start with, and would never be dropped.
+        if self._session_start is None or not text:
             return
         # A replacement session starts with the voice model's own instructions and those appended since, but no more
         # than Live's cap: the newest that fit, as the running session took them all and the newest take precedence.
