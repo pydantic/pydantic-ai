@@ -62,10 +62,12 @@ def main(argv: list[str] | None = None) -> int:
     # A missing job is a `KeyError`: the `never-ran` job must need every job named here.
     gated = tuple(path for job, paths in PATH_GATED_JOBS.items() if needs[job]['result'] == 'skipped' for path in paths)
     nodes = {node_id for node_id in never_ran(reports, ROOT) if not node_id.startswith(gated)}
+    # An entry for a skipped job's tests names none of the tests judged here, which doesn't make it stale.
+    exempt = {key: reason for key, reason in NEVER_RAN_EXEMPT.items() if not key.startswith(gated)}
     try:
         assert_classified(
-            {entry(node_id, NEVER_RAN_EXEMPT) for node_id in nodes},
-            NEVER_RAN_EXEMPT,
+            {entry(node_id, exempt) for node_id in nodes},
+            exempt,
             complete_walk=True,
             table_name='NEVER_RAN_EXEMPT',
         )

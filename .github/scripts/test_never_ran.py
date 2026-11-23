@@ -122,6 +122,17 @@ def test_a_path_gated_jobs_tests_are_exempt_only_when_it_was_skipped(
     assert never_ran.main([str(reports)]) == exit_code
 
 
+def test_an_entry_for_a_skipped_path_gated_jobs_test_is_not_stale(root: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('NEEDS', json.dumps({'gated-job': {'result': 'skipped'}}))
+    monkeypatch.setattr(
+        never_ran, 'NEVER_RAN_EXEMPT', {'tests/gated/test_c.py::test_one': Exempt('the gated job skips it too')}
+    )
+    reports = root / 'reports'
+    _report(reports, 'a.xml', ('tests/gated/test_c.py', 'test_one', _SKIPPED))
+
+    assert never_ran.main([str(reports)]) == 0
+
+
 def test_no_reports_fails(root: Path):
     (root / 'reports').mkdir()
 
