@@ -7,11 +7,11 @@ import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
-from typing import Self, cast
+from pathlib import Path, PurePath
+from typing import ClassVar, Literal, Self, cast
 
 import anyio
-from rich.cells import set_cell_size
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
@@ -78,6 +78,26 @@ class Status:
     """The subagent these figures belong to, painted before the model; empty for the main conversation."""
     subagent: 'Callable[[], Status | None]' = lambda: None
     """The running subagent whose figures replace these on the row until it settles; see `Tasks.focused`."""
+
+    FIT_STEPS: ClassVar[tuple[tuple[Literal['shorten', 'hide'], FooterField], ...]] = (
+        ('shorten', 'workspace'),
+        ('hide', 'assistant_age'),
+        ('hide', 'output'),
+        ('hide', 'cost'),
+        ('hide', 'queued'),
+        ('hide', 'updates'),
+        ('hide', 'live'),
+        ('hide', 'workspace'),
+        ('hide', 'plugins'),
+        ('shorten', 'context'),
+        ('hide', 'model'),
+    )
+    """How a footer too wide for the terminal gives way, first step first.
+
+    `workspace` shortens to its last folder and `context` to its bare figure. `activity` is never
+    hidden, nor is `context`'s figure: they say whether Pax is working and how full the conversation
+    is. `model` goes last because it names a focused subagent whose figures are shown.
+    """
 
     def clear_conversation(self) -> None:
         """Forget the figures of a conversation the shell switched away from."""
@@ -164,8 +184,11 @@ class Status:
         painted = self.toolbar()
         return (frame + ' ' if frame else '', *(text for _, text in painted))
 
-    def _fields(self) -> dict[FooterField, list[tuple[str, str]]]:
-        """Style each field by meaning, before applying the main conversation's layout."""
+    def _fields(self) -> tuple[dict[FooterField, list[tuple[str, str]]], dict[FooterField, list[tuple[str, str]]]]:
+        """Style each field by meaning, before applying the main conversation's layout.
+
+        Also returns the shorter form of each field a `FIT_STEPS` step shortens.
+        """
         shown = self.subagent() or self
         estimated = '~' if shown.context_estimated else ''
         context = f'{estimated}{_compact_tokens(shown.context_tokens)}/{_compact_tokens(shown.window)}'
@@ -188,15 +211,18 @@ class Status:
             else ''
         )
         queued = self.queued()
+        # A POSIX path can contain terminal controls; sanitize it on every painter.
+        path = _short_path(terminal_text(shown.workspace, keep=''))
+        folder = f'…/{PurePath(path).name}'
+        figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
+        shorter: dict[FooterField, list[tuple[str, str]]] = {
+            'workspace': [(theme.MUTED, folder if cell_len(folder) < cell_len(path) else path)],
+            'context': [figure],
+        }
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            # A POSIX path can contain terminal controls; sanitize it on every painter.
-            'workspace': [(theme.MUTED, _short_path(terminal_text(shown.workspace, keep='')))],
-            'context': [
-                (theme.MUTED, 'context: '),
-                (theme.WARNING if shown.context_alert else theme.MUTED, context),
-                (theme.MUTED, ' tokens'),
-            ],
+            'workspace': [(theme.MUTED, path)],
+            'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
             'activity': activity,
@@ -205,7 +231,7 @@ class Status:
             'live': [(theme.MUTED, self.live())],
             'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
             'assistant_age': [(theme.MUTED, age)],
-        }
+        }, shorter
 
     def _plugin_text(self) -> str:
         """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
@@ -228,18 +254,22 @@ class Status:
         """Show compact used/max context, with `?` for unknown counts."""
         return ''.join(self.segments(frame))
 
-    def toolbar(self) -> list[tuple[str, str]]:
-        """Apply visibility and ordering without tying any field's style to its position."""
-        fields = self._fields()
-        painted: list[tuple[str, str]] = []
-        for name in self.fields():
-            fragments = fields[name]
-            if not any(text for _, text in fragments):
-                continue
-            if painted:
-                painted.append((theme.MUTED, ' | '))
-            painted.extend((role, text) for role, text in fragments if text)
-        return painted
+    def toolbar(self, *, width: int | None = None) -> list[tuple[str, str]]:
+        """Apply visibility and ordering without tying any field's style to its position.
+
+        With `width`, take `FIT_STEPS` in turn until the row fits in that many cells, keeping the
+        configured order of what is left; a row that still does not fit is the painter's to cut.
+        """
+        (fields, shorter), order = self._fields(), self.fields()
+        row = _join(fields, order)
+        if width is None:
+            return row
+        for step, name in self.FIT_STEPS:
+            if sum(cell_len(text) for _, text in row) <= width:
+                break
+            fields[name] = shorter[name] if step == 'shorten' else []
+            row = _join(fields, order)
+        return row
 
 
 class StatusLine:
@@ -318,7 +348,7 @@ class StatusLine:
             return
         rows = 4 if height >= 6 and width >= 4 else 1
         # Leave one column unused so the footer cannot trigger autowrap.
-        fragments = self.status.toolbar()
+        fragments = self.status.toolbar(width=max(0, width - 1))
         prefix = '\x1b7'
         if (height, rows) != (self._height, self._rows):
             self._clear()
@@ -346,6 +376,18 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:
+    """The fields of `order` that have text, joined by separators."""
+    painted: list[tuple[str, str]] = []
+    for name in order:
+        fragments = [(role, text) for role, text in fields[name] if text]
+        if fragments:
+            if painted:
+                painted.append((theme.MUTED, ' | '))
+            painted.extend(fragments)
+    return painted
 
 
 def _compact_tokens(count: int | None) -> str:

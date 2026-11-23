@@ -147,9 +147,9 @@ class OpenRouterAuth:
                     except UserError as exc:
                         if 'error' in parse_qs(urlparse(line[1]).query) and not code.done():
                             code.set_exception(exc)
-                        status, message = '400 Bad Request', 'Authorization failed. Return to CLAI and try again.'
+                        status, message = '400 Bad Request', 'Authorization failed. Return to Pax and try again.'
                     else:
-                        status, message = '200 OK', 'Authorization received. Return to CLAI to finish connecting.'
+                        status, message = '200 OK', 'Authorization received. Return to Pax to finish connecting.'
                         if not code.done():
                             code.set_result(received)
                 body = message.encode()

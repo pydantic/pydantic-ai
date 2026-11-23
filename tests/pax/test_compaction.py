@@ -63,7 +63,6 @@ from pydantic_ai_pax.plugins import (
     load_plugin,
 )
 from pydantic_ai_pax.plugins.loader import PluginLoader
-from pydantic_ai_pax.runtime.session import local_workspace_provider
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus import dialogs
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -358,31 +357,23 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
 
 
 @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
-async def test_compact_keeps_naming_a_workspace_other_than_this_machine(strategy: str) -> None:
-    # A `!command` saves a request with no response after it, so compacting can keep that request alone.
-    log = ModelRequest(parts=[UserPromptPart('ran cat log: ' + 'a log line\n' * 2000)])
-
-    async def compact(ref: WorkspaceRef) -> list[ModelMessage]:
-        history = [
-            ModelRequest(parts=[UserPromptPart('first question')]),
-            ModelResponse(parts=[TextPart('first answer ' * 500)], workspace_ref=ref),
-            log,
-        ]
-        transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
-        notice = await make_plugin(transcript, strategy=strategy, protected_tokens=0).commands.execute_async('/compact')
-        assert notice.startswith('Compacted 3 messages down to ')
-        return transcript.messages
-
-    # This machine's folder: saved as compacted, as the session works in its own folder anyway.
-    local = await compact(WorkspaceRef(provider=local_workspace_provider(), id='/repo'))
-    assert all(isinstance(message, ModelRequest) for message in local)
-    # A sandbox: still named after the compacted history, so the next turn runs there.
+async def test_compact_keeps_the_latest_workspace_response(strategy: str) -> None:
+    # A `!command` saves a request with no response after it, so the kept tail can be that request alone.
     sandbox = WorkspaceRef(provider='e2b', id='sbx-1')
-    *compacted, named = await compact(sandbox)
-    assert (len(compacted), compacted[-1]) == (len(local), local[-1]) == (len(local), log)
-    # With no parts, providers send nothing for it, so the model is not made to have said anything.
-    assert isinstance(named, ModelResponse)
-    assert (named.parts, named.workspace_ref) == ([], sandbox)
+    workspace_response = ModelResponse(parts=[TextPart('second answer')], workspace_ref=sandbox)
+    log = ModelRequest(parts=[UserPromptPart('ran cat log: ' + 'a log line\n' * 2000)])
+    history = [
+        ModelRequest(parts=[UserPromptPart('first question')]),
+        ModelResponse(parts=[TextPart('first answer ' * 500)], workspace_ref=sandbox),
+        ModelRequest(parts=[UserPromptPart('second question')]),
+        workspace_response,
+        log,
+    ]
+    transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
+    notice = await make_plugin(transcript, strategy=strategy, protected_tokens=0).commands.execute_async('/compact')
+    assert notice.startswith('Compacted 5 messages down to ')
+    # The next turn finds its sandbox from this response, so it stays.
+    assert transcript.messages[-2:] == [workspace_response, log]
 
 
 async def test_gauge_marks_its_reading_estimated_until_a_response_reports_usage(
