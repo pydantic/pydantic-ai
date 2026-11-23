@@ -7,3 +7,5 @@
 ::: pydantic_ai.run.PendingMessage
 
 ::: pydantic_ai.run.PendingMessagePriority
+
+::: pydantic_ai.run.PendingMessagePlacement
