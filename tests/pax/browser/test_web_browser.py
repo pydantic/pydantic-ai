@@ -374,6 +374,87 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+VIEWS = ['sessions', 'projects']
+"""The sidebar's two listings, which render different rows and row controls."""
+
+MARK_CONTROLS = """() => {
+  const controls = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')]
+    .filter((control) => !control.disabled && control.tabIndex >= 0 && control.type !== 'hidden' && !control.closest('[inert]'))
+  controls.forEach((control, index) => control.setAttribute('data-control', String(index)))
+  return controls.length
+}"""
+"""Mark each control the page renders in the Tab order; return how many."""
+
+MARK_UNNAMED_FIELDS = """() => [...document.querySelectorAll('input[placeholder], textarea[placeholder]')]
+  .filter((field) => field.placeholder && !field.hasAttribute('aria-label') && !field.hasAttribute('aria-labelledby')
+    && !(field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`)))
+  .map((field, index) => {
+    field.setAttribute('data-unnamed', String(index))
+    return field.placeholder
+  })"""
+"""Mark each field with a placeholder and no name of its own; return their placeholders."""
+
+
+async def open_view(page: Page, web_ui: WebUI, view: str) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
+    if view == 'projects':
+        await sidebar.get_by_role('button', name='Projects', exact=True).click()
+        await expect(sidebar.locator('.project-head').first).to_be_visible()
+
+
+@pytest.mark.parametrize('view', VIEWS)
+async def test_tab_reaches_every_control_a_pointer_can(page: Page, web_ui: WebUI, view: str) -> None:
+    """A control hidden with `display` until hover takes no focus, so a keyboard cannot reach it (#12217)."""
+    await open_view(page, web_ui, view)
+    count: int = await page.evaluate(MARK_CONTROLS)
+    await page.mouse.move(0, 0)
+    reached: set[str] = set()
+    for _ in range(2 * count + 2):
+        await page.keyboard.press('Tab')
+        focused: str = await page.evaluate("() => document.activeElement?.getAttribute('data-control') ?? ''")
+        if focused in reached:
+            break
+        if focused:
+            reached.add(focused)
+    missed: list[str] = []
+    for index in map(str, range(count)):
+        if index in reached:
+            continue
+        control = page.locator(f'[data-control="{index}"]')
+        if not await control.count():
+            # Re-rendered during the walk; its replacement carries no mark.
+            continue
+        if not await control.is_visible():
+            row = await control.evaluate_handle(
+                'control => { let row = control.parentElement; while (row && !row.checkVisibility()) row = row.parentElement; return row }'
+            )
+            if (element := row.as_element()) is None:
+                continue
+            await element.hover()
+            revealed = await control.is_visible()
+            await page.mouse.move(0, 0)
+            if not revealed:
+                continue
+        missed.append(await control.evaluate("c => c.getAttribute('aria-label') || c.title || c.className"))
+    assert not missed, f'Tab never focuses these controls a pointer can use; hide one by size or opacity: {missed}'
+
+
+@pytest.mark.parametrize('view', VIEWS)
+async def test_a_field_with_no_name_of_its_own_is_named_by_its_placeholder(
+    page: Page, web_ui: WebUI, view: str
+) -> None:
+    """A wrapping label names a field after everything inside it, as it named the session search 'Archived Ctrl K' (#11306)."""
+    await open_view(page, web_ui, view)
+    placeholders: list[str] = await page.evaluate(MARK_UNNAMED_FIELDS)
+    for index, placeholder in enumerate(placeholders):
+        field = page.locator(f'[data-unnamed="{index}"]')
+        await expect(field).to_have_accessible_name(re.compile(re.escape(placeholder)))
+
+
 async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
     """A repository's heading shows its main checkout's folder, not the Git folder that keys it."""
     session = {
