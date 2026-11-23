@@ -96,10 +96,10 @@ def test_every_provider_sdk_extra_caps_its_sdk():
         requirements = {
             canonicalize_name(requirement.name): requirement for requirement in map(Requirement, EXTRAS[extra])
         }
-        for sdk in entry.sdks:
-            requirement = requirements.get(canonicalize_name(sdk))
-            if requirement is None or not any(
-                spec.operator in ('<', '<=', '==', '~=') for spec in requirement.specifier
-            ):
-                uncapped.append(f'{extra}: {requirement or sdk}')
+        uncapped += [
+            f'{extra}: {requirement or sdk}'
+            for sdk in entry.sdks
+            if (requirement := requirements.get(canonicalize_name(sdk))) is None
+            or not any(spec.operator in ('<', '<=', '==', '~=') for spec in requirement.specifier)
+        ]
     assert uncapped == [], 'cap each provider SDK below its next untested major:\n' + '\n'.join(uncapped)
