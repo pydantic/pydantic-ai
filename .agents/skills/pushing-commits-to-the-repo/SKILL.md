@@ -42,10 +42,7 @@ Set the light model's effort from the PR's complexity.
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
 Until a size label exists, do not claim the trivial-S exception.
-Clean means douwebot's latest non-dismissed completed verdict on the current head is `APPROVE`.
-It also means no douwebot findings on that head except settled optional findings.
-A settled optional finding is an inline comment on that approval that starts with `Optional:` and whose review thread is resolved.
-Blocking findings and review-body findings block, resolved or not. An unresolved optional finding blocks.
+`Gate: clean douwebot approval` decides what a clean approval is; [PR metadata gates enforce the merge bar](../../../.github/workflows/AGENTS.md#pr-metadata-gates-enforce-the-merge-bar) explains it.
 Address every douwebot comment, including `Optional:` comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
@@ -54,15 +51,8 @@ Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](
 Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode|opencode-zai> -->` receipt.
 Legacy receipts omit `engine` or carry `engine=opencode-deepinfra`.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
-Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
-
-`PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
-Size S remains a manual judgment; review enforcement skips merge groups after admission.
-On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
-Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
-If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
 [`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
