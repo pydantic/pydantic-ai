@@ -2019,6 +2019,7 @@ jobs:
           uv run --all-packages --all-extras --no-extra sentence-transformers pytest --collect-only -q tests > "$RUNNER_TEMP/collect.log" 2>&1 || status=$?
           grep -E 'ERROR collecting|errors? during collection|tests collected' "$RUNNER_TEMP/collect.log" || true
           echo "collection exited $status"
+          tail -n 60 "$RUNNER_TEMP/collect.log"
 
   test-clai2-web:
     name: test clai2 web UI
