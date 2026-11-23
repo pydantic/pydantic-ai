@@ -6,6 +6,7 @@ Split out of `test_capabilities.py` per #7304.
 from __future__ import annotations
 
 import copy
+import json
 import pickle
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
@@ -17,7 +18,7 @@ from uuid import UUID
 
 import anyio
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from pydantic_ai import _agent_graph
 from pydantic_ai._enqueue import EnqueueGuard, PendingMessage, PendingMessagePriority, PendingMessageQueue
@@ -43,8 +44,10 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityEvent,
+    DataCapabilityPart,
     EnqueuedMessagesEvent,
     ImageUrl,
+    InstructionCapabilityPart,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -52,6 +55,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
+    OperatorSource,
     PartStartEvent,
     RetryFeedbackPart,
     RetryInfo,
@@ -75,11 +79,14 @@ from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
+from tests.models.conftest import json_objects
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, try_import
 
 with try_import() as anthropic_imports_successful:
+    import httpx2
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -3302,3 +3309,235 @@ def test_run_context_queue_changes_need_a_live_queue(
             ctx.dequeue('some-id')
         else:
             ctx.set_enqueue_priority('some-id', 'asap')
+
+
+# ===== Placing content before the prompt =====
+
+
+@dataclass(kw_only=True)
+class _ContextPart(DataCapabilityPart[str], namespace='test_before_prompt', name='context', tag='context'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _NotePart(InstructionCapabilityPart, namespace='test_before_prompt', name='note'):
+    pass
+
+
+def _context(text: str) -> _ContextPart:
+    return _ContextPart(content=text, source=OperatorSource())
+
+
+@dataclass
+class _EnqueueBeforePrompt(AbstractCapability[Any]):
+    """Enqueues `_ContextPart`s placed before the prompt from `before_model_request`, on every step."""
+
+    texts: tuple[str, ...]
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        for text in self.texts:
+            ctx.enqueue(_context(f'{text} {ctx.run_step}'), placement='before_prompt')
+        return request_context
+
+
+def _shape(messages: list[ModelMessage]) -> list[list[str]]:
+    """Each request's parts as `<type>` or `<type>:<text>`, and each response as `response`."""
+    shape: list[list[str]] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            shape.append(['response'])
+            continue
+        shape.append(
+            [
+                f'{type(part).__name__}:{part.content}'
+                if isinstance(part, _ContextPart | UserPromptPart | SystemPromptPart)
+                else type(part).__name__
+                for part in message.parts
+            ]
+        )
+    return shape
+
+
+async def test_before_prompt_content_goes_into_the_prompt_request_in_enqueue_order():
+    """Content from before the run and from a hook lands right before the prompt, after the standing system prompt.
+
+    The app's content is delivered by the drain ahead of the hooks and the hook's by the one after them, so the two
+    deliveries go into the same request one after the other. Each enqueue call gets an event, in history order,
+    holding its parts as they sit in history.
+    """
+    received: list[list[ModelMessage]] = []
+    events: list[EnqueuedMessagesEvent] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        received.append(messages)
+        yield 'done'
+
+    # Listening to events makes the run stream.
+    @dataclass
+    class Listen(AbstractCapability[Any]):
+        @on_event(EnqueuedMessagesEvent)
+        async def delivered(self, ctx: RunContext[Any], event: EnqueuedMessagesEvent) -> None:
+            events.append(event)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn),
+        system_prompt='Be brief.',
+        capabilities=[_EnqueueBeforePrompt(texts=('memory', 'plan')), Listen()],
+    )
+    nodes: list[_agent_graph.ModelRequestNode[Any, Any]] = []
+    async with agent.iter('What now?') as run:
+        app_id = run.enqueue('The account is on the Team plan.', placement='before_prompt')
+        async for node in run:
+            if isinstance(node, _agent_graph.ModelRequestNode):
+                nodes.append(node)
+    assert run.result is not None
+    history = run.result.all_messages()
+
+    assert _shape(history) == snapshot(
+        [
+            [
+                'SystemPromptPart:Be brief.',
+                'UserPromptPart:The account is on the Team plan.',
+                '_ContextPart:memory 1',
+                '_ContextPart:plan 1',
+                'UserPromptPart:What now?',
+            ],
+            ['response'],
+        ]
+    )
+    # The model reads the question last, and the node's request is the copy in history.
+    [[sent]] = received
+    assert isinstance(sent, ModelRequest)
+    assert sent.parts[-1] == UserPromptPart('What now?', timestamp=IsDatetime())
+    assert nodes[0].request is history[0]
+    assert run.result.new_messages() == history
+
+    request = history[0]
+    assert isinstance(request, ModelRequest)
+    assert [event.enqueue_id == app_id for event in events] == [True, False, False]
+    assert [event.parts for event in events] == [(part,) for part in request.parts[1:4]]
+    assert [[message.parts for message in event.messages] for event in events] == [
+        [[part]] for part in request.parts[1:4]
+    ]
+
+
+async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_it():
+    """In the tool loop the request carries tool results, not a prompt: a hook's content is its own request, and a
+    tool's goes right after its return."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_EnqueueBeforePrompt(texts=('memory',))])
+
+    @agent.tool
+    def lookup(ctx: RunContext[Any]) -> str:
+        ctx.enqueue(_context('found by the tool'), placement='before_prompt')
+        return 'ok'
+
+    result = await agent.run('What now?')
+    assert _shape(result.all_messages()) == snapshot(
+        [
+            ['_ContextPart:memory 1', 'UserPromptPart:What now?'],
+            ['response'],
+            ['ToolReturnPart', '_ContextPart:found by the tool'],
+            ['_ContextPart:memory 2'],
+            ['response'],
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(SystemPromptPart('Be brief.'), id='system-prompt'),
+        pytest.param(_NotePart(content='Be brief.', source=OperatorSource()), id='instruction-part'),
+        pytest.param(ModelRequest(parts=[_context('context')]), id='complete-request'),
+    ],
+)
+async def test_before_prompt_takes_only_data_and_user_content(content: SystemPromptPart | _NotePart | ModelRequest):
+    """Instructions and system prompts stay after the user's words, and a complete message can't go into a request."""
+
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])))
+    async with agent.iter('What now?') as run:
+        with pytest.raises(UserError, match="placement='before_prompt'"):
+            run.enqueue(content, placement='before_prompt')
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_before_prompt_data_precedes_the_question_and_an_instruction_change_follows_it_on_a_sealed_model(
+    allow_model_requests: None,
+):
+    """On a model with sealed system blocks, data placed before the prompt is read before the question, while the
+    request's own instruction change is still sent after the user's words (`_system_prompts_after_user_words`).
+
+    A mock transport, so the test pins the bytes `AnthropicModel` sends: a recording replays whatever the body.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        body: JsonValue = json.loads(request.content)
+        assert isinstance(body, dict)
+        bodies.append(body)
+        # The agent run streams the request.
+        events: list[tuple[str, dict[str, JsonValue]]] = [
+            (
+                'message_start',
+                {
+                    'type': 'message_start',
+                    'message': {
+                        'id': 'msg-1',
+                        'type': 'message',
+                        'role': 'assistant',
+                        'model': 'claude-sonnet-4-6',
+                        'content': [],
+                        'stop_reason': None,
+                        'usage': {'input_tokens': 1, 'output_tokens': 0},
+                    },
+                },
+            ),
+            (
+                'content_block_start',
+                {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+            ),
+            (
+                'content_block_delta',
+                {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}},
+            ),
+            ('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
+            (
+                'message_delta',
+                {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
+            ),
+            ('message_stop', {'type': 'message_stop'}),
+        ]
+        stream = ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events)
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=stream.encode())
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test', http_client=client))
+    agent = Agent(model, deps_type=str, capabilities=[_EnqueueBeforePrompt(texts=('memory',))])
+
+    @agent.instructions(name='tone', on_change='append')
+    def tone(ctx: RunContext[str]) -> str:
+        return f'Answer in a {ctx.deps} tone.'
+
+    first = await agent.run('What now?', deps='casual')
+    second = await agent.run('And then?', deps='formal', message_history=first.all_messages())
+
+    assert _shape(second.all_messages()[2:]) == snapshot(
+        [['_ContextPart:memory 1', 'UserPromptPart:And then?', 'InstructionDeltaPart'], ['response']]
+    )
+    # The last user turn, as the first line of each text block.
+    texts: list[str] = []
+    for block in json_objects(json_objects(bodies[1]['messages'])[-1]['content']):
+        text = block['text']
+        assert isinstance(text, str)
+        texts.append(text.strip().splitlines()[0][:60])
+    assert texts == snapshot(
+        ['<context>', 'memory 1', '</context>', 'And then?', '<system verified><pyai:context id="agent:tone">']
+    )

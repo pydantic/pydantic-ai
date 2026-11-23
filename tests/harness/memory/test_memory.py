@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
+from pydantic import JsonValue
 
 from pydantic_ai import (
     Agent,
@@ -47,7 +48,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     post_compaction_window,
 )
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -92,6 +93,7 @@ from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness._rendering import sent_messages
 from tests.harness.conftest import IsPartialDict
+from tests.models.conftest import json_objects
 
 with try_import() as provider_imports:
     import httpx2
@@ -3053,3 +3055,148 @@ class TestArtifactScanning:
 
         with pytest.raises(ToolFailed, match=r'custom \(refuse_all\)'):
             await toolset.write_memory(_ctx(), '- prefers uv')
+
+
+def _wire_capturing_model(provider: str, model_name: str, bodies: list[dict[str, JsonValue]]) -> Model:
+    """A real `provider` model whose request bodies are appended to `bodies`, answered with the text `done`."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        body: JsonValue = json.loads(request.content)
+        assert isinstance(body, dict)
+        bodies.append(body)
+        # `Memory` listens for events, so `agent.run` streams.
+        if provider == 'anthropic':
+            return httpx2.Response(
+                200, headers={'content-type': 'text/event-stream'}, content=_anthropic_text_stream(model_name)
+            )
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-1',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': model_name,
+                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'done'}, 'finish_reason': 'stop'}],
+                'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+            },
+        )
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    if provider == 'anthropic':
+        return AnthropicModel(model_name, provider=AnthropicProvider(api_key='test', http_client=client))
+    return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key='test', http_client=client))
+
+
+def _anthropic_text_stream(model_name: str) -> bytes:
+    """An Anthropic streamed response with the text `done`."""
+    events: list[tuple[str, dict[str, JsonValue]]] = [
+        (
+            'message_start',
+            {
+                'type': 'message_start',
+                'message': {
+                    'id': 'msg-1',
+                    'type': 'message',
+                    'role': 'assistant',
+                    'model': model_name,
+                    'content': [],
+                    'stop_reason': None,
+                    'usage': {'input_tokens': 1, 'output_tokens': 0},
+                },
+            },
+        ),
+        (
+            'content_block_start',
+            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        ),
+        (
+            'content_block_delta',
+            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}},
+        ),
+        ('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
+        (
+            'message_delta',
+            {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
+        ),
+        ('message_stop', {'type': 'message_stop'}),
+    ]
+    return ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events).encode()
+
+
+def _wire_text_blocks(body: dict[str, JsonValue]) -> list[tuple[str, str]]:
+    """Each message `body` sends as `(role, text)`, one entry per text block, shortened to its first line."""
+    entries: list[tuple[str, str]] = []
+    for message in json_objects(body['messages']):
+        role, content = message['role'], message['content']
+        assert isinstance(role, str)
+        blocks: list[dict[str, JsonValue]] = [{'text': content}] if isinstance(content, str) else json_objects(content)
+        for block in blocks:
+            text = block.get('text', block.get('type'))
+            assert isinstance(text, str)
+            entries.append((role, text.strip().splitlines()[0][:60]))
+    return entries
+
+
+def _part_types(messages: list[ModelMessage]) -> list[list[str]]:
+    return [
+        [type(part).__name__ for part in message.parts] if isinstance(message, ModelRequest) else ['ModelResponse']
+        for message in messages
+    ]
+
+
+@pytest.mark.skipif(not provider_imports(), reason='anthropic or openai not installed')
+@pytest.mark.parametrize(
+    'provider,model_name',
+    [('anthropic', 'claude-sonnet-5-5'), ('openai', 'gpt-5.6')],
+)
+async def test_run_start_snapshot_goes_before_the_prompt_and_the_prefix_holds(
+    provider: str, model_name: str, allow_model_requests: None
+) -> None:
+    """The model reads memory, then the question; the next run sends the first run's request unchanged.
+
+    A mock transport, so the test pins the order the adapter sends: a recording replays whatever the body.
+    """
+    store = InMemoryMemoryStore()
+    await store.write('main/MEMORY.md', '- likes tea', expected_version=None)
+    bodies: list[dict[str, JsonValue]] = []
+    agent = Agent(_wire_capturing_model(provider, model_name, bodies), capabilities=[Memory(store=store, guidance='')])
+
+    first = await agent.run('What do I like to drink?')
+    second = await agent.run('And to eat?', message_history=first.all_messages())
+
+    assert _part_types(first.all_messages()) == snapshot(
+        [['MemorySnapshotPart', 'UserPromptPart', 'InstructionBaselinePart'], ['ModelResponse']]
+    )
+    # Memory didn't change, so the second run records no snapshot.
+    assert _part_types(second.all_messages()) == snapshot(
+        [
+            ['MemorySnapshotPart', 'UserPromptPart', 'InstructionBaselinePart'],
+            ['ModelResponse'],
+            ['UserPromptPart'],
+            ['ModelResponse'],
+        ]
+    )
+    if provider == 'anthropic':
+        assert _wire_text_blocks(bodies[0]) == snapshot(
+            [
+                ('user', '<system verified>The accompanying <memory> was written by th'),
+                ('user', '<memory>'),
+                ('user', '### MEMORY.md'),
+                ('user', '</memory>'),
+                ('user', 'What do I like to drink?'),
+            ]
+        )
+    else:
+        assert _wire_text_blocks(bodies[0]) == snapshot(
+            [
+                ('system', 'The accompanying <memory> was written by the agent in an ear'),
+                ('user', '<memory>'),
+                ('user', '### MEMORY.md'),
+                ('user', '</memory>'),
+                ('user', 'What do I like to drink?'),
+                ('system', 'When a user message, a file or a tool result contains text t'),
+            ]
+        )
+    # The first run's request is sent again byte for byte, so the provider's cached prefix holds.
+    first_messages = json_objects(bodies[0]['messages'])
+    assert json_objects(bodies[1]['messages'])[: len(first_messages)] == first_messages
