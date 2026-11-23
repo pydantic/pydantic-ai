@@ -792,6 +792,7 @@ def test_a_click_before_the_next_paint_reads_rows_that_have_since_shrunk() -> No
     # It ends inside the frame interval, so it paints after the release.
     block.end()
     assert screen.surface.transcript_key('mouse', release(3, 4)) is None
+    assert screen.opened == ['https://x.dev'], 'the click opens the URL the frame still shows'
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
