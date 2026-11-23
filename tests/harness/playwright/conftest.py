@@ -14,7 +14,7 @@ collect_ignore = ['test_playwright.py'] if importlib.util.find_spec('playwright'
 if not collect_ignore:  # pragma: no branch
     import pytest
 
-    from pydantic_ai_harness.playwright import _toolset as toolset_module
+    from pydantic_ai_harness import _browser_egress as egress_module
 
     @pytest.fixture(autouse=True)
     def no_real_dns(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -29,9 +29,9 @@ if not collect_ignore:  # pragma: no branch
         care about it can count lookups. The cache is module-level, so it is emptied
         between tests.
         """
-        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        egress_module.resolution_cache.clear()
 
         async def public_address(host: str) -> tuple[str, ...]:
             return ('93.184.216.34',)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', public_address)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', public_address)

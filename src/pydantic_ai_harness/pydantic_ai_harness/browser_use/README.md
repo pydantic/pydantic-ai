@@ -13,9 +13,10 @@ the tool returns a text result.
 > This README covers the browser-use integration: one `browse_web` tool that
 > hands a goal to an autonomous agent. To have the host model drive the browser
 > itself with typed actions -- navigate, click, type, screenshot -- see
-> [`PlaywrightBrowser`](../playwright/). Give an agent one or the other: each
-> capability runs its own browser, so a session opened by one is not visible to
-> the other.
+> [`PlaywrightBrowser`](../playwright/), or for one raw Chrome DevTools Protocol
+> tool that code calls in loops, [`CDPBrowser`](../cdp_browser/). Give an agent
+> one of them: each capability runs its own browser, so a session opened by one
+> is not visible to the others.
 
 ```mermaid
 flowchart TB

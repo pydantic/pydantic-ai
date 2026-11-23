@@ -130,8 +130,6 @@ cli = [
     "pyperclip>=1.9.0",
     "pyyaml>=6.0.2",
 ]
-# Browser capability (Chrome DevTools Protocol over a websocket)
-browser = ["websockets>=14.0"]
 # Realtime (bidirectional speech-to-speech streaming sessions)
 realtime = ["websockets>=14.0"]
 # Per-provider realtime bundles: the provider SDK group plus the realtime transport deps.
