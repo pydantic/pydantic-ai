@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# Print the checked-in label catalog path. Use --refresh after repository labels change.
+# Print the path of the repository's label catalog, cached in the git common dir that every worktree of
+# the clone shares. A catalog younger than a day is printed as is; an older one is fetched again.
+# --refresh fetches it now, for example after repository labels change.
 set -euo pipefail
 
 if [[ $# -gt 1 || (${1:-} != '' && ${1:-} != '--refresh') ]]; then
   echo "Usage: $0 [--refresh]" >&2
   exit 2
 fi
+refresh=${1:-}
 
-catalog="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/labels.tsv"
-if [[ -f "$catalog" && ${1:-} != '--refresh' ]]; then
+catalog="$(git -C "$(dirname -- "${BASH_SOURCE[0]}")" rev-parse --path-format=absolute --git-common-dir)/pydantic-ai-labels.tsv"
+if [[ -z $refresh && -n $(find "$catalog" -mmin -1440 2>/dev/null) ]]; then
   printf '%s\n' "$catalog"
   exit 0
 fi
+
+# Without --refresh, a failed fetch falls back to an older catalog when one exists.
+stale() {
+  if [[ -z $refresh && -f $catalog ]]; then
+    echo 'Could not refresh the label catalog; printing the cached one.' >&2
+    printf '%s\n' "$catalog"
+    exit 0
+  fi
+  exit 1
+}
 
 response=$(gh api graphql -f query='
   query {
@@ -26,15 +39,15 @@ response=$(gh api graphql -f query='
         pageInfo { startCursor }
       }
     }
-  }')
+  }') || stale
 data=$(jq -ce '.data.repository | {
   total: .firstBatch.totalCount,
   labels: (.firstBatch.nodes + .lastBatch.nodes | unique_by(.name))
-}' <<<"$response")
+}' <<<"$response") || stale
 
 if ! jq -e '.total == (.labels | length)' <<<"$data" >/dev/null; then
-  first_cursor=$(jq -er '.data.repository.firstBatch.pageInfo.endCursor' <<<"$response")
-  last_cursor=$(jq -er '.data.repository.lastBatch.pageInfo.startCursor' <<<"$response")
+  first_cursor=$(jq -er '.data.repository.firstBatch.pageInfo.endCursor' <<<"$response") || stale
+  last_cursor=$(jq -er '.data.repository.lastBatch.pageInfo.startCursor' <<<"$response") || stale
   response=$(gh api graphql -f firstCursor="$first_cursor" -f lastCursor="$last_cursor" -f query='
     query($firstCursor: String!, $lastCursor: String!) {
       repository(owner: "pydantic", name: "pydantic-ai") {
@@ -46,16 +59,16 @@ if ! jq -e '.total == (.labels | length)' <<<"$data" >/dev/null; then
           nodes { name description }
         }
       }
-    }')
+    }') || stale
   data=$(jq -ce --argjson previous "$data" '.data.repository | {
     total: .firstBatch.totalCount,
     labels: ($previous.labels + .firstBatch.nodes + .lastBatch.nodes | unique_by(.name))
-  }' <<<"$response")
+  }' <<<"$response") || stale
 fi
 
 if ! jq -e '.total == (.labels | length)' <<<"$data" >/dev/null; then
   echo 'Label catalog is incomplete after two requests; cached catalog was not replaced.' >&2
-  exit 1
+  stale
 fi
 
 temporary=$(mktemp "$catalog.XXXXXX")
