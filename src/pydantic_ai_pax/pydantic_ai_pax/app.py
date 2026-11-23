@@ -19,7 +19,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_pax import warm_imports
-from pydantic_ai_pax.clai_docs import CAPABILITY_ID as LEGACY_DOCS_ID, ClaiDocs
 from pydantic_ai_pax.cli.self_update import WebHandoff
 from pydantic_ai_pax.commands import (
     Commands,
@@ -29,7 +28,7 @@ from pydantic_ai_pax.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.models.resolver import ModelResolver
-from pydantic_ai_pax.pax_docs import PaxDocs
+from pydantic_ai_pax.pax_docs import LEGACY_CAPABILITY_ID, ClaiDocs, PaxDocs
 from pydantic_ai_pax.plugins import (
     SessionEndReason,
     SessionStart,
@@ -62,7 +61,7 @@ OutputT = TypeVar('OutputT')
 
 
 def _resumed_docs(ctx: RunContext[None]) -> ClaiDocs | None:
-    return ClaiDocs() if LEGACY_DOCS_ID in parse_loaded_capabilities(ctx.messages) else None
+    return ClaiDocs() if LEGACY_CAPABILITY_ID in parse_loaded_capabilities(ctx.messages) else None
 
 
 def create_agent(model: str | None = None) -> Agent[None, str]:

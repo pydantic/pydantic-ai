@@ -87,7 +87,7 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
 
 
 _NO_OLDER_ENTRY: set[str] = set()
-"""Default accounts already found to have no older per-entry login; this Pax process never writes one."""
+"""Default accounts already found to have no older per-entry login; this Pax never writes one."""
 
 
 def has_credentials(*, account: str) -> bool:

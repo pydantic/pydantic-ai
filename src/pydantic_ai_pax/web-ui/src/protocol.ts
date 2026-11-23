@@ -272,7 +272,7 @@ export type OrchestratorEvent = ChatMessage | OrchestratorState
 /** `queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user. */
 export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
 
-/** A session open in this Pax process, named by its conversation ID. */
+/** A session open in this Pax, named by its conversation ID. */
 export interface LiveEntry {
   id: string
   state: LiveState
@@ -377,7 +377,7 @@ export interface SessionEntry {
   updated_at: string
   /** When it was first saved, which the sidebar orders by, so activity and renames never move a row. */
   created_at: string
-  /** `running`: a turn of a session live in this Pax process; `busy`: a turn another Pax process runs. */
+  /** `running`: a turn of a session live in this Pax; `busy`: a turn another Pax process runs. */
   state: SessionState
   /** The process running a `busy` session's turn. */
   owner_pid: number | null
@@ -460,7 +460,7 @@ export interface PluginRow {
   has_menu: boolean
   /** That menu is declared, so this page shows it; otherwise it opens in the terminal. */
   settings_menu: boolean
-  /** Whether this Pax process has a terminal for an undeclared menu to open in; `pax --web` has none. */
+  /** Whether this Pax has a terminal for an undeclared menu to open in; `pax --web` has none. */
   terminal: boolean
   form: PluginForm | null
   /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */
