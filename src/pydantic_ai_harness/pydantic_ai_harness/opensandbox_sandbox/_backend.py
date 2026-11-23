@@ -268,7 +268,6 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         self._ref = ref
         self._connection = connection
         self._working_dir = working_dir
-        self._env = dict(env or {})
         self._resource = dict(resource) if resource is not None else None
         if network_policy is None and not allow_internet_access:
             network_policy = NetworkPolicy(defaultAction='deny')
@@ -286,8 +285,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             checked_desktop_size(desktop),
             lambda: f'OpenSandbox sandbox {self._ref.id if self._ref else "(not created)"}',
         )
-        if self._display:
-            self._env = {'DISPLAY': DISPLAY, **self._env}
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
 
     @property
     def display(self) -> Display | None:
