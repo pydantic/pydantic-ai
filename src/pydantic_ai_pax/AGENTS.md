@@ -71,7 +71,8 @@ they agree in the same PR.
   workspace in `runtime/session.py`'s `WorkspacelessCapability`.
   The one exception is a built-in that moves some conversations elsewhere, as
   `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
-  run's own history, the same history `get_workspace` resolves from.
+  run's own history, the same history `get_workspace` resolves from. Answer
+  `shell_line_workspace` from that history too, so `!` lines run where the runs do.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -515,7 +516,8 @@ uv run --no-sync pytest -p no:cacheprovider tests/pax
 change updates the reference (and the README when it changes what the tour shows)
 and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
 images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
-the images in `docs/images/`. Plain
+the images in `docs/images/`. `docs/harness/clai2.md` is generated from the README by
+`scripts/sync_docs_page.py`, which pre-commit runs; edit the README, never the page. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 Agent-readable docs are indexed by `clai_docs._CLAI_DOCS`. Docs outside
