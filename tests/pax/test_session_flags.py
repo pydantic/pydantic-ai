@@ -341,6 +341,18 @@ def test_flags_reach_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert seen == [(NEW_ID, True)]
 
 
+def test_quitting_prints_how_to_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def chat(*_: object, **__: object) -> str:
+        return NEW_ID
+
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', chat)
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db')])
+    cli.run()
+    assert capsys.readouterr().out == f'Resume this conversation with: pax --resume {NEW_ID}\n'
+
+
 @pytest.mark.parametrize('mode', [[], ['-p', 'hi'], ['--web']])
 def test_continue_resumes_the_newest_session_here(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: list[str]

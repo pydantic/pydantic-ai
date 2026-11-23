@@ -80,7 +80,8 @@ async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: py
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         pipe.send_text(f'hello\r{command}\r/exit\r')
-        await chat(
+        # The conversation shown at exit is the new, unsaved one: there is nothing to resume.
+        assert not await chat(
             Agent(TestModel()),
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=24),

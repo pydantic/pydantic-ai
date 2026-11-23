@@ -153,7 +153,8 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         pipe.send_text(f'hello\r/resume {prior.summary.id}\r/exit\r')
-        await chat(
+        # The conversation shown last is the one to resume.
+        assert prior.summary.id == await chat(
             Agent(TestModel(call_tools=[], custom_output_text='fresh answer')),
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=24),

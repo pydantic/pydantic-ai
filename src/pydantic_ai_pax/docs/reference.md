@@ -1218,6 +1218,8 @@ paste to reveal it for editing; recalled history shows the full text.
 While a turn or command runs, the rule above the draft shows how long it has run
 and that Esc interrupts it; with a draft or a queued message it also shows the
 queue and steer keys, which keep their place first on a narrow terminal.
+A turn that finishes ends with a muted `Done in 12s` row; an interrupted one with
+`Interrupted. Type what to do instead.`
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.
@@ -1256,7 +1258,8 @@ terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
 *Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
 Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
 terminals. On exit, CLAI prints the retained
-transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
+transcript into native terminal scrollback, without output cleared by Ctrl+L, then, for a saved
+conversation, the `pax --resume ID` command that reopens it. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
