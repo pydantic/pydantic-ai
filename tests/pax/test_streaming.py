@@ -7,7 +7,6 @@ from typing import IO, Literal
 import pytest
 from rich.console import Console
 from rich.text import Text
-from termflow.stream import SmoothWriter
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
@@ -15,7 +14,7 @@ from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import color_system, render_markdown, thinking_heading
+from pydantic_ai_pax.ui.rendering.rendering import PartWriter, color_system, render_markdown, thinking_heading
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -156,16 +155,16 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
 
     def writer(
         target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
-    ) -> SmoothWriter:
+    ) -> PartWriter:
         observed.append((tick_interval, catch_up_seconds, min_chars_per_tick))
-        return SmoothWriter(
+        return PartWriter(
             target,
             tick_interval=tick_interval,
             catch_up_seconds=catch_up_seconds,
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.PartWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds
@@ -242,3 +241,18 @@ def test_whole_markdown_repaint_processes_complete_source_lines() -> None:
         'one',
         'two',
     ]
+
+
+def test_smoothing_types_a_preview_but_writes_its_replacement_at_once() -> None:
+    """Retyping a finished code block from its first character would blank the preview the user was reading."""
+    writes: list[str] = []
+
+    class ObservedOutput(io.StringIO):
+        def write(self, text: str) -> int:
+            writes.append(text)
+            return super().write(text)
+
+    writer = PartWriter(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
+    writer.write('preview')
+    writer.commit('the rendered block\n')
+    assert writes == ['preview', 'the rendered block\n'], 'what was still being typed goes first, then the block'

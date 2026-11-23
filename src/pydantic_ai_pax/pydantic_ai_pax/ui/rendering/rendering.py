@@ -45,7 +45,7 @@ from pydantic_ai_pax.config import ToolCallDisplay
 from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
 from pydantic_ai_pax.ui.prompt.prompt_selection import trim_url
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
-from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock
+from pydantic_ai_pax.ui.prompt.prompt_transcript import DROP, PREVIEW, MarkdownBlock
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.grep_output import GrepOutput
 from pydantic_ai_pax.ui.rendering.markdown_table import table_lines
@@ -180,6 +180,16 @@ class LinkOutput(io.StringIO):
         self.output.flush()
 
 
+class PartWriter(SmoothWriter):
+    """Types a streaming part out smoothly; a finished code block replaces its preview in one write."""
+
+    def commit(self, text: str) -> None:
+        """Write what is still being typed, then `text`, at once."""
+        self._flush_all()
+        self._target.write(text)
+        self._target.flush()
+
+
 def thinking_heading(console: Console) -> str:
     """The label reasoning starts with, styled for `console`."""
     with console.capture() as capture:
@@ -188,7 +198,12 @@ def thinking_heading(console: Console) -> str:
 
 
 class MarkdownPipeline:
-    """Termflow's line parser and renderer, with whole code fences highlighted by Rich."""
+    """Termflow's line parser and renderer, with code fences highlighted by Rich.
+
+    With `preview`, for output a `MarkdownBlock` shows, a code block's lines appear as they arrive.
+    The closing fence replaces them with the whole block lexed at once, so multiline strings and
+    comments keep their state.
+    """
 
     def __init__(
         self,
@@ -197,15 +212,19 @@ class MarkdownPipeline:
         console: Console,
         thinking: bool,
         hyperlinks: bool,
+        preview: bool = False,
         continuation: tuple[Parser, str] | None = None,
     ) -> None:
         """Render to `output` at `console`'s width."""
         self.output = output
         self.console = console
         self.thinking = thinking
+        self.preview = preview
         self._parser = Parser()
+        self._rendered = io.StringIO()
+        """What the events of one line rendered, written to `output` at once."""
         self._renderer = MarkdownRenderer(
-            output=output,  # pyright: ignore[reportArgumentType] -- Termflow annotates TextIO but only writes and flushes.
+            output=self._rendered,
             width=console.width,
             style=markdown_style(),
             features=RenderFeatures(clipboard=False, hyperlinks=hyperlinks, images=False),
@@ -213,6 +232,8 @@ class MarkdownPipeline:
         )
         self._code_lines: list[str] = []
         self._code_language = 'text'
+        self._code_shown = False
+        """Whether the open code block's lines are on screen as a preview."""
         if continuation is not None:
             self._parser, self._code_language = deepcopy(continuation)
         self._continued_fence = continuation is not None and self._parser.state.is_in_code()
@@ -231,36 +252,69 @@ class MarkdownPipeline:
 
     def _render_events(self, events: list[ParseEvent]) -> None:
         for event in events:
-            if isinstance(event, CodeBlockStartEvent):
-                self._code_language = (event.language or 'text').split()[0]
-                self._code_lines = []
-                self._continued_fence = False
-            elif isinstance(event, CodeBlockLineEvent):
-                self._code_lines.append(event.line)
-            elif isinstance(event, CodeBlockEndEvent):
-                # Steering immediately before the closing fence has no code left to display.
-                if self._continued_fence and not self._code_lines:
-                    self._continued_fence = False
-                    continue
-                self._continued_fence = False
-                # Lex the whole fence so multiline strings and comments keep their state.
-                with self.console.capture() as capture:
-                    self.console.rule(Text(self._code_language), align='left', style=theme.color(theme.MUTED))
-                    self.console.print(
-                        Syntax(
-                            '\n'.join(self._code_lines),
-                            LANGUAGE_ALIASES.get(self._code_language.lower(), self._code_language.lower()),
-                            theme=theme.syntax_theme(),
-                            background_color='default',
-                            word_wrap=True,
-                        ),
-                        style=Style(dim=self.thinking),
-                    )
-                    self.console.rule(style=theme.color(theme.MUTED))
-                self.output.write(capture.get())
-                self._code_lines = []
+            if isinstance(event, (CodeBlockStartEvent, CodeBlockLineEvent, CodeBlockEndEvent)):
+                self._render_code(event)
             else:
                 self._renderer.render(event)
+        text = self._rendered.getvalue()
+        self._rendered.seek(0)
+        self._rendered.truncate()
+        if DROP in text and isinstance(self.output, PartWriter):
+            self.output.commit(text)
+        elif text:
+            self.output.write(text)
+            self.output.flush()
+
+    def _render_code(self, event: CodeBlockStartEvent | CodeBlockLineEvent | CodeBlockEndEvent) -> None:
+        if isinstance(event, CodeBlockStartEvent):
+            self._code_language = (event.language or 'text').split()[0]
+            self._code_lines = []
+            self._continued_fence = False
+            if self.preview:
+                self._show_code_rule()
+        elif isinstance(event, CodeBlockLineEvent):
+            self._code_lines.append(event.line)
+            if self.preview:
+                if not self._code_shown:
+                    self._show_code_rule()
+                # Lexed alone, a line inside a multiline string may be off until the fence lexes the block.
+                self._rendered.write(self._code(event.line))
+        elif self._continued_fence and not self._code_lines:
+            # Steering immediately before the closing fence has no code left to display.
+            self._continued_fence = False
+        else:
+            self._continued_fence = False
+            if self._code_shown:
+                self._rendered.write(DROP)
+                self._code_shown = False
+            self._rendered.write(
+                self._code_rule() + self._code('\n'.join(self._code_lines)) + self._code_rule(end=True)
+            )
+            self._code_lines = []
+
+    def _show_code_rule(self) -> None:
+        self._rendered.write(PREVIEW + self._code_rule())
+        self._code_shown = True
+
+    def _code_rule(self, *, end: bool = False) -> str:
+        with self.console.capture() as capture:
+            title = '' if end else Text(self._code_language)
+            self.console.rule(title, align='left', style=theme.color(theme.MUTED))
+        return capture.get()
+
+    def _code(self, code: str) -> str:
+        with self.console.capture() as capture:
+            self.console.print(
+                Syntax(
+                    code,
+                    LANGUAGE_ALIASES.get(self._code_language.lower(), self._code_language.lower()),
+                    theme=theme.syntax_theme(),
+                    background_color='default',
+                    word_wrap=True,
+                ),
+                style=Style(dim=self.thinking),
+            )
+        return capture.get()
 
 
 def render_markdown(
@@ -332,7 +386,7 @@ class StreamRenderer:
         self._heading_printed = False
         self.show_thinking = show_thinking
         self.stop_loading = stop_loading
-        self._writer: SmoothWriter | None = None
+        self._writer: PartWriter | None = None
         self._markdown: MarkdownPipeline | None = None
         self._block: MarkdownBlock | None = None
         self._output: IO[str] | None = None
@@ -489,15 +543,17 @@ class StreamRenderer:
             console=self.console,
             thinking=self._thinking,
             hyperlinks=self.console.is_terminal,
+            # History replays whole parts, so there is nothing to show early.
+            preview=self._block is not None and self.smooth,
             continuation=continuation,
         )
 
-    def _make_writer(self, output: IO[str]) -> SmoothWriter:
+    def _make_writer(self, output: IO[str]) -> PartWriter:
         """Reasoning keeps Code Puppy's slower thinking pace; responses use the configured catch-up."""
         output = LinkOutput(output=output)
         if self._thinking:
-            return SmoothWriter(output, tick_interval=0.02, catch_up_seconds=0.4, min_chars_per_tick=2)
-        return SmoothWriter(output, tick_interval=0.012, catch_up_seconds=self.smooth_seconds, min_chars_per_tick=1)
+            return PartWriter(output, tick_interval=0.02, catch_up_seconds=0.4, min_chars_per_tick=2)
+        return PartWriter(output, tick_interval=0.012, catch_up_seconds=self.smooth_seconds, min_chars_per_tick=1)
 
     def _feed(self, content: str) -> None:
         content = terminal_text(content)
@@ -563,7 +619,7 @@ class StreamRenderer:
         self._tool_output.abort()
         self._close_group()
         if self._block is not None:
-            self._block.freeze()
+            self._block.abort()
         writer, self._writer = self._writer, None
         self._reset()
         if writer is not None:
