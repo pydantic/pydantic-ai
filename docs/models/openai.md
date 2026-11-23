@@ -383,7 +383,8 @@ regular function tool with all the actions.
 Pydantic AI picks the tool by provider class, not by the server it calls. If `OpenAIProvider(base_url=...)` points at
 a server without the computer tool, remove it in the model's `profile=` argument:
 `profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Use
-`| {ComputerTool}` instead to send it through another provider whose server supports it.
+`| {ComputerTool}` instead to send it through another provider whose server supports it. Set it in the model's `profile=`;
+setting it in the provider's profile has no effect.
 
 #### Referencing earlier responses
 
