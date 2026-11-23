@@ -97,7 +97,7 @@ A few keys to know:
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
-| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of tool calls. Output already in the terminal's scrollback is shown on the alternate screen, which stays for the session. |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of commands. Output already in the terminal's scrollback is shown on the alternate screen, which stays for the session. |
 | <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
 

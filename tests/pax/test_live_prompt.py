@@ -1113,91 +1113,64 @@ async def test_the_full_screen_editor_takes_the_terminal_from_the_start() -> Non
         assert terminal.lines()[-1].strip() == 'ready', 'the editor sits at the bottom of the terminal'
 
 
+async def run_command(renderer: StreamRenderer, *, call_id: str, command: str, output: str) -> None:
+    """Stream a finished foreground command and its tool result, whose output ends with the harness's handles."""
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id=call_id))
+    )
+    lines = output.count('\n')
+    await renderer.on_stream_event(
+        CommandFinishedEvent(
+            tool_call_id=call_id,
+            pid=7,
+            output_path='/tmp/out',
+            status_path='/tmp/status',
+            exit_code=0,
+            truncated=False,
+            line_count=lines,
+        )
+    )
+    result = f'{output}PID: 7 (supervisor; use `kill` to stop)\nOutput: /tmp/out\nStatus: /tmp/status'
+    await renderer.on_stream_event(FunctionToolResultEvent(part=ToolReturnPart('shell', result, tool_call_id=call_id)))
+    await renderer.finish()
+
+
 @pytest.mark.parametrize('inline', [False, True])
-async def test_ctrl_o_expands_tool_results_in_place_and_keeps_them_across_a_resize(inline: bool) -> None:
+async def test_ctrl_o_expands_command_output_in_place_and_keeps_it_across_a_resize(inline: bool) -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal, inline=inline) as (live, _, _):
         renderer = StreamRenderer(live.console, stop_loading=lambda: None)
-        shell = ToolCallPart('shell', {'command': 'make test'}, tool_call_id='s')
-        await renderer.on_stream_event(FunctionToolCallEvent(part=shell))
-        await renderer.on_stream_event(
-            CommandFinishedEvent(
-                tool_call_id='s',
-                pid=7,
-                output_path='/tmp/out',
-                status_path='/tmp/status',
-                exit_code=0,
-                truncated=False,
-                line_count=2,
-            )
-        )
-        result = (
-            'passed one\npassed two\nPID: 7 (supervisor; use `kill` to stop)\nOutput: /tmp/out\nStatus: /tmp/status'
-        )
-        await renderer.on_stream_event(FunctionToolResultEvent(part=ToolReturnPart('shell', result, tool_call_id='s')))
-        read = ToolCallPart('read_file', {'path': 'app.py'}, tool_call_id='r')
-        await renderer.on_stream_event(FunctionToolCallEvent(part=read))
-        content = '[app.py | 1 lines]\n     1\tprint("hi")\n'
-        await renderer.on_stream_event(
-            FunctionToolResultEvent(part=ToolReturnPart('read_file', content, tool_call_id='r'))
-        )
-        await renderer.finish()
+        await run_command(renderer, call_id='s', command='make test', output='passed one\npassed two\n')
 
         def shown() -> list[str]:
             live.output.refresh()
             live.paint()
             return [line for line in terminal.lines() if line][:8]
 
-        collapsed = [
-            '● shell make test',
-            '  ⎿ exit 0 · 2 lines · ctrl+o to expand',
-            "● read_file 'app.py'",
-            '  ⎿ ctrl+o to expand',
-        ]
-        assert shown()[:4] == collapsed
+        assert shown()[:2] == ['● shell make test', '  ⎿ exit 0 · 2 lines · ctrl+o to expand']
         live.feed('ctrl-o')
         assert live.notice == 'Showing tool output.'
-        expanded = [
-            '● shell make test',
-            '  ⎿ exit 0 · 2 lines',
-            '    passed one',
-            '    passed two',
-            "● read_file 'app.py'",
-            '    [app.py | 1 lines]',
-            '         1      print("hi")',
-        ]
-        assert shown()[:7] == expanded
+        expanded = ['● shell make test', '  ⎿ exit 0 · 2 lines', '    passed one', '    passed two']
+        assert shown()[:4] == expanded
         assert live.output.full_screen is not inline, 'inline output that still fits stays inline'
         # A result that arrives while output is shown opens expanded.
-        listing = ToolCallPart('list_files', {'path': 'src'}, tool_call_id='l')
-        await renderer.on_stream_event(FunctionToolCallEvent(part=listing))
-        await renderer.on_stream_event(
-            FunctionToolResultEvent(part=ToolReturnPart('list_files', 'src/app.py', tool_call_id='l'))
-        )
-        await renderer.finish()
-        shown()
-        assert '    src/app.py' in terminal.lines()
+        await run_command(renderer, call_id='l', command='ls', output='app.py\n')
+        assert shown()[4:7] == ['● shell ls', '  ⎿ exit 0 · 1 line', '    app.py']
         terminal.resize(width=30, height=24)
         live.console.size = (30, 24)
         live.output.resize_notice()
-        assert shown()[:4] == ['● shell make test', '  ⎿ exit 0 · 2 lines', '    passed one', '    passed two']
+        assert shown()[:4] == expanded
         live.feed('ctrl-o')
         assert live.notice == 'Hiding tool output.'
         # The hint is left out where it does not fit.
-        assert shown()[:4] == [collapsed[0], '  ⎿ exit 0 · 2 lines', *collapsed[2:]]
+        assert shown()[:3] == ['● shell make test', '  ⎿ exit 0 · 2 lines', '● shell ls']
 
 
-async def test_ctrl_o_shows_results_already_printed_to_scrollback_on_the_alternate_screen() -> None:
+async def test_ctrl_o_shows_output_already_printed_to_scrollback_on_the_alternate_screen() -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal, inline=True) as (live, _, _):
         renderer = StreamRenderer(live.console, stop_loading=lambda: None)
-        await renderer.on_stream_event(
-            FunctionToolCallEvent(part=ToolCallPart('list_files', {'path': 'src'}, tool_call_id='l'))
-        )
-        await renderer.on_stream_event(
-            FunctionToolResultEvent(part=ToolReturnPart('list_files', 'src/app.py\nsrc/util.py', tool_call_id='l'))
-        )
-        await renderer.finish()
+        await run_command(renderer, call_id='l', command='ls src', output='src/app.py\nsrc/util.py\n')
         # A menu or command between turns prints the inline rows into the terminal's scrollback.
         live.output.release()
         live.paint()

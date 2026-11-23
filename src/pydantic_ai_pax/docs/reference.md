@@ -1235,14 +1235,14 @@ conversation so far into the terminal's scrollback, where it stays even after `/
 `/resume`, and the compact editor comes back below the command's output. Once the
 session fills the terminal, you change the terminal's width or make it shorter, or a
 command, menu, or question takes over the editor during a turn, or you press Ctrl+O while
-tool output is already in the terminal's scrollback, the editor sits below a Termflow live
+command output is already in the terminal's scrollback, the editor sits below a Termflow live
 transcript panel on the alternate screen, for the rest of the session.
 `/set display.full_screen true` starts there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Ctrl+O shows or hides the full output of tool
-calls in place (see [How tool calls look](#how-tool-calls-look)). Ctrl+L clears the screen, as in
+bottom or submitting follows new output again. Ctrl+O shows or hides the full output of
+commands in place (see [How tool calls look](#how-tool-calls-look)). Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
@@ -1573,27 +1573,26 @@ Tool and argument names are pink; argument values and bullet markers are muted g
 Successful file writes and edits also show their diffs, even with `display.tool_output` off.
 A finished shell command always adds one result row under its header, such as
 `⎿ exit 0 · 23 lines`, or `⎿ running in background · log PATH` for a background command.
-A nonzero exit is red; with `display.tool_output` on, its last lines follow, so the reason is
-on screen. The row ends with the path of the command's log when the command keeps
+A nonzero exit is red. The row shows the path of the command's log when the command keeps
 running or its output was cut. A call of any tool that fails or is refused gets a red row with
 the first line of the reason; a file change you refuse says `refused` and why, and a call whose
 arguments did not validate says `invalid arguments`. When calls run in parallel, a row that
-does not sit under its own header starts with the command or call it belongs to. Other shell
+does not sit under its own header ends with the command or call it belongs to. A row too wide
+for the terminal is clipped at its end; a log path after it wraps instead, so it stays whole. Other shell
 output and grep results stay out of the terminal; the model still receives full tool results.
 Long summaries are clipped to the terminal width.
-
-In the interactive prompt, Ctrl+O shows the output of every command, read, and listing in the
-transcript under its row, and hides it again. A row whose output is hidden ends with
-`ctrl+o to expand` when the row has room. A command shows the output the tool returned to the
-model, with secrets masked: the end of a long output (about 16 KB), marked where earlier output
-was left out, and the full output stays in its log. A read shows the numbered lines the model
-got, and a listing its paths. Results that arrive later, while the output is shown, open shown
-too. Output is wrapped to the terminal's width and rendered again when it changes. `pax -p` and
-redirected output are unchanged.
 Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
+
+In the interactive prompt, Ctrl+O shows the output of every finished command in the transcript
+under its result row, and hides it again. A row whose output is hidden ends with
+`ctrl+o to expand` when the row has room. The output is what the tool returned to the model,
+with secrets masked: the end of a long output (about 16 KB), marked where earlier output was left
+out, and the full output stays in its log. Results that arrive later, while the output is shown,
+open shown too. When the transcript runs out of room, the oldest commands lose their output
+first, so earlier answers stay. `pax -p` and redirected output are unchanged.
 
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
@@ -1700,19 +1699,16 @@ Full output remains in the log; display formatting does not alter model results.
 Shell output defaults to the first 20 logical lines per command. Change it with
 `/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
 to the next prompt. After the command returns, its result row counts the lines in the
-log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown`,
-including an unterminated final line. A failed command repeats only the last lines the preview
-left out (the last 3 at most), so the reason is on screen. When the preview is cut, by this limit
-or by the capability's 16 KB event preview cap, the row ends with the log path, where the full
+log snapshot at that time and how many the preview showed, as in `exit 0 · 200 lines, 20 shown · log PATH`,
+including an unterminated final line. When the preview is cut, by this limit
+or by the capability's 16 KB event preview cap, the row shows the log path, where the full
 output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, plus the offset and line limit only when the call sets them
-(Coder's default offset is 0, and its default and largest limit 2000 lines). Listing
-headers show the directory, plus `recursive=false`, a result limit, or a glob only when
-the call sets them. Coder listings recurse using ripgrep and honor ignore rules. These
-defaults describe Coder tools. Read and listing calls add no result row on success, except in the
-interactive prompt, where a `⎿ ctrl+o to expand` row lets you see what the tool returned.
+Read headers show the path, zero-based offset, and effective line limit (Coder
+default and maximum: 2000). Listing headers show the directory, recursive mode,
+result limit (default 200), and optional glob. Coder listings recurse using
+ripgrep and honor ignore rules. These displayed defaults describe Coder tools. Read and listing calls add no result row on success.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no
