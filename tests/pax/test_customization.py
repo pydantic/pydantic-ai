@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -127,7 +128,9 @@ async def test_default_agent_loads_docs_then_reads_guide(tmp_path: Path, monkeyp
 
 
 @pytest.mark.parametrize('resume_on', ['custom agent', 'default agent'])
-async def test_custom_agent_can_opt_in_with_the_former_name(resume_on: str) -> None:
+async def test_custom_agent_can_opt_in_with_the_former_name(
+    resume_on: Literal['custom agent', 'default agent'],
+) -> None:
     """A history that loaded `clai_customization` resumes with its tools on that agent and on the default one."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
