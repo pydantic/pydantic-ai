@@ -22,7 +22,7 @@ def test_native_text_copy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(text_clipboard, 'COPY_TIMEOUT', READINESS_WAIT_TIMEOUT)
     command = copy_command()  # Imported before the suite's fixture replaces it.
     assert command is not None
-    text = 'copied from CLAI \u2713\nsecond line'
+    text = 'copied from Pax \u2713\nsecond line'
     run_copy(command=command, text=text)
     if sys.platform == 'darwin':
         paste = ['pbpaste']

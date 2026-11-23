@@ -1,4 +1,4 @@
-"""Check an installed CLAI 2's web assets against the validated source bundle.
+"""Check an installed Pax's web assets against the validated source bundle.
 
 Run with the installed environment's Python and `-I` to exclude the checkout:
 

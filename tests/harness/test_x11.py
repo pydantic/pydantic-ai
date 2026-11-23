@@ -120,8 +120,8 @@ class ScriptedDesktop(DockerContainerBackend):
         (Click(x=10, y=20), ['xdotool', 'mousemove', '10', '20', 'click', '--repeat', '1', '1']),
         (Click(count=2, button='right'), ['xdotool', 'click', '--repeat', '2', '3']),
         (
-            Click(x=1, y=2, button='back', modifiers=('ctrl', 'shift')),
-            ['xdotool', 'keydown', 'ctrl', 'shift', 'mousemove', '1', '2', 'click', '--repeat', '1', '8']
+            Click(x=1, y=2, button='middle', modifiers=('ctrl', 'shift')),
+            ['xdotool', 'keydown', 'ctrl', 'shift', 'mousemove', '1', '2', 'click', '--repeat', '1', '2']
             + ['keyup', 'shift', 'ctrl'],
         ),
         (MouseMove(x=5, y=6), ['xdotool', 'mousemove', '5', '6']),
@@ -138,7 +138,7 @@ class ScriptedDesktop(DockerContainerBackend):
         (MouseDown(button='middle'), ['xdotool', 'mousedown', '2']),
         (MouseUp(), ['xdotool', 'mouseup', '1']),
         (
-            Scroll(x=7, y=8, direction='down'),
+            Scroll(x=7, y=8, direction='down', amount=3),
             ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '--delay', '20', '5'],
         ),
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
