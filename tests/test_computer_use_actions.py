@@ -34,45 +34,6 @@ from pydantic_ai.computer_use import (
 )
 
 
-@pytest.mark.parametrize(
-    'given, expected',
-    [
-        ('KP_Enter', ('numpad_enter',)),
-        ('XF86AudioMute', ('volumemute',)),
-        ('Caps_Lock', ('capslock',)),
-        ('Print', ('printscreen',)),
-        ('Super_L', ('super',)),
-        ('Meta_L', ('super',)),
-        ('ctrl+Page_Down', ('ctrl', 'pagedown')),
-        ('ctrl+plus', ('ctrl', '+')),
-        ('minus', ('-',)),
-        ('bracketleft', ('[',)),
-        ('question', ('?',)),
-        ('NumpadAdd', ('numpad_add',)),
-        ('NumpadEnter', ('numpad_enter',)),
-        ('AudioVolumeUp', ('volumeup',)),
-        ('MediaPlayPause', ('mediaplay',)),
-        ('ShiftLeft', ('shift',)),
-        ('CTRL', ('ctrl',)),
-        ('Return', ('enter',)),
-        ('ESC', ('escape',)),
-        ('ctrl+shift+T', ('ctrl', 'shift', 't')),
-        ('+', ('+',)),
-        ('ctrl+shift++', ('ctrl', 'shift', '+')),
-    ],
-)
-def test_key_names_normalize_to_one_spelling(given: str, expected: tuple[str, ...]) -> None:
-    assert PressKeys(keys=(given,)).keys == expected
-
-
-@pytest.mark.parametrize('key', ['Control_R', 'Shift_R', 'Alt_R', 'Super_R', 'Meta_R', 'ControlRight', 'AltRight'])
-def test_right_hand_modifiers_are_refused(key: str) -> None:
-    # Right-hand modifiers are rejected, so their names stay free for keys such as AltGr instead of meaning the
-    # left-hand modifier forever.
-    with pytest.raises(ValidationError, match='is not a key'):
-        PressKeys(keys=(key,))
-
-
 def test_fields_an_action_does_not_have_are_refused() -> None:
     # Dropping one would act differently than asked: a `mouse_down` with a position would press at the pointer.
     adapter = TypeAdapter(list[ComputerToolAction])
@@ -88,7 +49,7 @@ def test_fields_an_action_does_not_have_are_refused() -> None:
 
 _EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
     (
-        {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
+        {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['CTRL', 'Super', 'alt']},
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
     ),
     ({'type': 'mouse_move', 'x': 3, 'y': 4}, MouseMove(x=3, y=4)),
@@ -100,8 +61,8 @@ _EVERY_ACTION: list[tuple[dict[str, object], ComputerToolAction]] = [
     ({'type': 'mouse_up'}, MouseUp()),
     ({'type': 'scroll', 'direction': 'down', 'x': 10, 'y': 20}, Scroll(direction='down', x=10, y=20)),
     ({'type': 'type_text', 'text': 'hello'}, TypeText(text='hello')),
-    ({'type': 'press_keys', 'keys': ['CTRL', 'Return']}, PressKeys(keys=('ctrl', 'enter'))),
-    ({'type': 'hold_keys', 'keys': ['ESC'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),
+    ({'type': 'press_keys', 'keys': ['CTRL', 'Enter', 'T']}, PressKeys(keys=('ctrl', 'enter', 't'))),
+    ({'type': 'hold_keys', 'keys': ['Escape'], 'seconds': 1}, HoldKeys(keys=('escape',), seconds=1)),
     ({'type': 'wait', 'seconds': 0.5}, Wait(seconds=0.5)),
     ({'type': 'screenshot'}, Screenshot()),
     (
@@ -146,17 +107,25 @@ def test_actions_of_a_bad_shape_are_refused(invalid: dict[str, object]) -> None:
             id='empty-region',
         ),
         pytest.param(lambda: PressKeys(keys=()), 'at least 1 item', id='no-keys'),
+        # A provider's own spelling is the model adapter's to convert, so it doesn't reach an action.
         pytest.param(
-            lambda: PressKeys(keys=('Hyper_L',)),
-            "'Hyper_L' is not a key: use a single character or one of ctrl, ",
+            lambda: PressKeys(keys=('Page_Down',)),
+            "Input should be 'ctrl', 'shift', 'alt', 'super', 'enter'",
             id='unknown-key',
         ),
-        pytest.param(lambda: HoldKeys(keys=('',), seconds=1), 'a key name must not be empty', id='empty-key'),
-        # Splitting a combination can leave an empty key between two `+`.
-        pytest.param(lambda: PressKeys(keys=('ctrl+++',)), 'a key name must not be empty', id='empty-key-in-combo'),
+        pytest.param(
+            lambda: PressKeys(keys=('ctrl+s',)),
+            "Input should be 'ctrl', 'shift', 'alt', 'super', 'enter'",
+            id='combination',
+        ),
+        pytest.param(
+            lambda: HoldKeys(keys=('',), seconds=1), 'String should have at least 1 character', id='empty-key'
+        ),
         # Modifiers are checked before anything runs, so a key that isn't one can't be skipped mid-action.
         pytest.param(
-            lambda: Click(modifiers=('ctrl', 'a')), 'modifiers must be ctrl, shift, alt or super', id='not-a-modifier'
+            lambda: TypeAdapter(Click).validate_python({'modifiers': ['ctrl', 'a']}),
+            "Input should be 'ctrl', 'shift', 'alt' or 'super'",
+            id='not-a-modifier',
         ),
     ],
 )
