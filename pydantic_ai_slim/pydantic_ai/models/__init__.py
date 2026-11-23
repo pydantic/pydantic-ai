@@ -4176,24 +4176,24 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
-def _natives_with_computer_tool(
+def _drop_unrunnable_computer_tool(
     params: ModelRequestParameters, natives: list[AbstractNativeTool]
 ) -> list[AbstractNativeTool]:
     """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls."""
     # A tool that is left out because a native tool is sent in its place can't run any calls.
-    sent_ids = {t.unique_id for t in natives}
-    computer_tools = [
+    native_tool_ids = {t.unique_id for t in natives}
+    computer_tool_names = [
         name
         for name in params.available_tool_names_for_kind(COMPUTER_KIND)
-        if params.tool_defs[name].unless_native not in sent_ids
+        if params.tool_defs[name].unless_native not in native_tool_ids
     ]
     kept: list[AbstractNativeTool] = []
     for native_tool in natives:
-        if isinstance(native_tool, ComputerTool) and not computer_tools:
+        if isinstance(native_tool, ComputerTool) and not computer_tool_names:
             if native_tool.optional:
                 continue
             raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
-        if isinstance(native_tool, ComputerTool) and len(computer_tools) > 1:
+        if isinstance(native_tool, ComputerTool) and len(computer_tool_names) > 1:
             # Which of them ran a call would depend on the order of the tools.
             raise UserError(
                 '`ComputerTool` needs a `computer` tool the model can call, and this request has more than one.'
@@ -4234,7 +4234,7 @@ def _supported_native_tools(
             for t in unsupported_natives
             if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
         ]
-        supported_names = [t.__name__ for t in supported_types]
+        supported_names = sorted(t.__name__ for t in supported_types)
         raise UserError(
             f'Native tool(s) {unsupported_names} not supported by this model. '
             f'Supported: {supported_names}. '
@@ -4324,7 +4324,7 @@ def resolve_request_tools(
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
     # After the tool search drop, so a tool kept because tool search isn't sent can run a `ComputerTool`'s calls.
-    supported_natives = _natives_with_computer_tool(params, supported_natives)
+    supported_natives = _drop_unrunnable_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.
