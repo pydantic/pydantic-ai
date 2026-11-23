@@ -119,6 +119,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 ModelOverloadedError, status_code=429, model_name=model_name, body=str(e), in_stream=True
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e), in_stream=True) from e
+    except httpx.HTTPStatusError as e:
+        # A retrying transport, set through `huggingface_hub.set_async_client_factory`, raises this for a status it
+        # gave up on, before `huggingface_hub` checks the status itself.
+        raise _model_errors.transport_status_error(model_name, e.response) from e
     except (httpx.TransportError, InferenceTimeoutError) as e:
         # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
         timeout = isinstance(e, httpx.TimeoutException | InferenceTimeoutError)

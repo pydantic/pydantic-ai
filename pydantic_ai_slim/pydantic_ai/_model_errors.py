@@ -472,6 +472,8 @@ _TRANSPORT_PHASES: dict[tuple[str, str], TransportPhase] = {
     ('botocore', 'EndpointConnectionError'): 'connect',
     ('botocore', 'ReadTimeoutError'): 'read',
     ('botocore', 'ResponseStreamingError'): 'read',
+    # botocore raises it, without a `__cause__`, for a connection that broke off before the whole response was read.
+    ('botocore', 'ConnectionClosedError'): 'read',
     # botocore reads an event stream straight from urllib3, so these only reach us while reading a response.
     ('urllib3', 'ReadTimeoutError'): 'read',
     ('urllib3', 'ProtocolError'): 'read',
