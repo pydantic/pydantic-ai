@@ -317,9 +317,7 @@ class IPythonCodeModeToolset(WrapperToolset[AgentDepsT]):
             tool=tool,
             # Nested calls go through the standard validation and execution path, with the agent's
             # capability hooks, against the wrapped toolset's tools.
-            tool_manager=ToolManager(
-                toolset=self.wrapped, root_capability=parent_tm.root_capability, ctx=ctx, tools=tool.wrapped_tools
-            ),
+            tool_manager=parent_tm.for_nested_calls(ctx, toolset=self.wrapped, tools=tool.wrapped_tools),
             max_tool_calls=self.max_tool_calls,
         )
         result = await kernel._execute(  # pyright: ignore[reportPrivateUsage]

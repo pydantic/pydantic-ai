@@ -108,6 +108,15 @@ repos:
         types: [python]
         language: system
         pass_filenames: false
+      - id: tool-manager-state
+        name: Tool manager retry records
+        # Like `complexity`, `--staged` checks only what is staged, against `HEAD` and during a merge `MERGE_HEAD`.
+        entry: uv
+        args: [run, --no-sync, scripts/check_tool_manager_state.py, --staged]
+        files: ^(pydantic_ai_slim/pydantic_ai|src)/
+        types: [python]
+        language: system
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv

@@ -31,7 +31,6 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     ToolFailedError,
     ToolRetryError,
-    UnexpectedModelBehavior,
     UserError,
 )
 from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
@@ -51,7 +50,6 @@ if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.capabilities import WrapRunHandler, WrapToolExecuteHandler
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.tool_manager import ToolManager
 
 
 _INSTRUCTIONS = """\
@@ -131,17 +129,6 @@ class _Completion:
 
 _Outcome = _Completion | BaseException
 """What a finished background task hands to the run: the completed call, or the error that ends the run."""
-
-
-def _raise_if_retries_exhausted(tool_manager: ToolManager[Any], completion: _Completion) -> None:
-    """Raise if a retry would take the tool past its `max_retries`, which ends the run as for a sequential call."""
-    assert tool_manager.ctx is not None  # Set once the run has started.
-    if tool_manager.ctx.retries.get(completion.tool_name, 0) >= completion.max_retries:
-        raise UnexpectedModelBehavior(
-            f'Tool {completion.tool_name!r} exceeded max retries count of {completion.max_retries}. '
-            'Consider raising the retry limit, or see the docs on tool retries: '
-            'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
-        ) from completion.retry
 
 
 _SignalledError = (
@@ -501,7 +488,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             raise outcome
         if outcome.retry is not None:
             assert ctx.tool_manager is not None  # Set once the run has started.
-            _raise_if_retries_exhausted(ctx.tool_manager, outcome)
+            # A retry past the tool's `max_retries` ends the run here, as for a sequential call; `_settle` charges it.
+            ctx.tool_manager._check_max_retries(outcome.tool_name, outcome.max_retries, outcome.retry)  # pyright: ignore[reportPrivateUsage]
         return outcome
 
     def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Completion]) -> None:
@@ -533,8 +521,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         unsettled, self._unsettled = self._unsettled, []
         for completion in unsettled:
             if completion.retry is not None:
-                _raise_if_retries_exhausted(tool_manager, completion)
-                tool_manager.failed_tools.add(completion.tool_name)
+                tool_manager._charge_retry(completion.tool_name, completion.max_retries, completion.retry)  # pyright: ignore[reportPrivateUsage]
             elif completion.succeeded:
                 tool_manager.succeeded_tools.add(completion.tool_name)
 

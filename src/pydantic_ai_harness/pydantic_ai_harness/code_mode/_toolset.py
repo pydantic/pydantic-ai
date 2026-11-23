@@ -1401,19 +1401,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         callable_defs = tool.callable_defs
 
-        # Build a ToolManager for the sandbox's inner tools so that sandboxed
-        # tool calls go through the standard validation/execution path. We
-        # inherit `root_capability` from the agent's ToolManager (for capability
-        # hooks) but use the *wrapped* toolset and its tools.
+        # Sandboxed tool calls go through the standard validation/execution path, with the agent's
+        # capability hooks, against the *wrapped* toolset and its tools.
         # See https://github.com/pydantic/pydantic-ai/pull/4307
         parent_tm = ctx.tool_manager
         assert parent_tm is not None, 'CodeModeToolset requires ctx.tool_manager to be set'
-        tool_manager = ToolManager(
-            toolset=self.wrapped,
-            root_capability=parent_tm.root_capability,
-            ctx=ctx,
-            tools=tool.wrapped_tools,
-        )
+        tool_manager = parent_tm.for_nested_calls(ctx, toolset=self.wrapped, tools=tool.wrapped_tools)
 
         # Tools flagged `sequential` are rendered as `def` (sync) and resolved inline.
         global_sequential = global_mode_is_sequential(tool_manager.get_parallel_execution_mode)

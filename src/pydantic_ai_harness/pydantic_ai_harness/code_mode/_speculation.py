@@ -44,7 +44,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call, schema_arg_names
@@ -707,12 +706,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         sandbox_name = extracted.sandbox_name
         original_name = step.sanitized_to_original.get(sandbox_name, sandbox_name)
         parent_manager = ctx.tool_manager
-        tool_manager = ToolManager(
-            toolset=step.wrapped,
-            root_capability=parent_manager.root_capability if parent_manager is not None else None,
-            ctx=ctx,
-            tools=step.wrapped_tools,
-        )
+        # Both callers have the step's manager: `wrap_run_event_stream` observes a stream only when
+        # `CodeModeToolset.from_run_context` finds the step's tools, and `prelaunch_for_execution` runs
+        # inside `run_code`, which requires the manager.
+        assert parent_manager is not None, 'speculation runs with the run step tool manager set'
+        tool_manager = parent_manager.for_nested_calls(ctx, toolset=step.wrapped, tools=step.wrapped_tools)
         watch.launched += 1
         self.stats.launched += 1
         launch_id = f'{watch.tool_call_id}__spec_{watch.launched}'

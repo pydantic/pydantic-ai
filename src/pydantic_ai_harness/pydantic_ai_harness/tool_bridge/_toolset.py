@@ -21,7 +21,6 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
-from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -226,14 +225,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
                 "`ToolBridgeToolset` needs the run's tool manager, so bridged calls run through tool hooks."
             )
         name = target.tool_def.name
-        manager = ToolManager(
-            toolset=self.wrapped,
-            root_capability=parent.root_capability,
-            ctx=ctx,
-            tools=bridged,
-            failed_tools=parent.failed_tools,
-            succeeded_tools=parent.succeeded_tools,
-        )
+        manager = parent.for_nested_calls(ctx, toolset=self.wrapped, tools=bridged)
         assert ctx.tool_call_id is not None, 'the run sets the ID of the `tool_call` call being executed'
         # One `tool_call` runs one bridged call, so they share an ID, as a direct call would keep its own.
         call = ToolCallPart(tool_name=name, args=args_json or '{}', tool_call_id=ctx.tool_call_id)

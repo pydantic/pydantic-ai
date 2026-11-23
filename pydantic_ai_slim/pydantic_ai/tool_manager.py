@@ -477,6 +477,36 @@ class ToolManager(Generic[AgentDepsT]):
         self._release_context()
         return new_tm
 
+    def for_nested_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        toolset: AbstractToolset[AgentDepsT],
+        tools: dict[str, ToolsetTool[AgentDepsT]],
+    ) -> ToolManager[AgentDepsT]:
+        """Build a tool manager for the calls a tool makes to tools the model doesn't call directly.
+
+        A tool that dispatches other tools itself, such as a sandbox's `run_code` or a dispatcher that
+        looks tools up by name, runs each of those calls through the returned manager, so they get the
+        same argument validation, capability hooks and deferred-call handling as a call the model makes.
+
+        The returned manager shares this step's records of failed and successful tools, so a retry it
+        charges (with `wrap_validation_errors=True`) counts toward the called tool's own `max_retries`
+        in the next step, as a direct call's would. Pass `wrap_validation_errors=False` to its
+        `handle_call` to leave those records untouched and get the raw exception instead, for a caller
+        that reports nested failures through its own tool. The manager keeps its own record of
+        availability refusals, starting empty, so a tool that isn't available yet gets one free
+        refusal per nested manager.
+
+        Args:
+            ctx: The run context of the tool call that makes the nested calls. Each nested call's
+                context is built from it.
+            toolset: The toolset the nested calls run against, usually the one the calling toolset wraps.
+            tools: The tools nested calls may name, already resolved for this step, keyed by the name
+                they are called by.
+        """
+        return replace(self, toolset=toolset, ctx=ctx, tools=tools, availability_refused=set[str]())
+
     def _release_context(self) -> None:
         if self.ctx is not None and self.ctx.tool_manager is self:
             # Keep contexts retained by tools or hooks intact while breaking the manager's cycle.
@@ -531,6 +561,16 @@ class ToolManager(Generic[AgentDepsT]):
                 'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
             ) from error
         return retries + 1
+
+    def _charge_retry(self, name: str, max_retries: int, error: Exception) -> int:
+        """Count a retry of `name` toward its `max_retries` in this step's records, and return the attempt.
+
+        Raises:
+            UnexpectedModelBehavior: The tool has already used its `max_retries`.
+        """
+        attempt = self._check_max_retries(name, max_retries, error)
+        self.failed_tools.add(name)
+        return attempt
 
     @staticmethod
     def _wrap_error_as_retry(
@@ -776,8 +816,7 @@ class ToolManager(Generic[AgentDepsT]):
                     raise
                 name = call.tool_name
                 max_retries = validated.tool.max_retries
-                attempt = self._check_max_retries(name, max_retries, e)
-                self.failed_tools.add(name)
+                attempt = self._charge_retry(name, max_retries, e)
                 raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
             except ToolFailed as e:
                 if not wrap_validation_errors:
@@ -906,8 +945,7 @@ class ToolManager(Generic[AgentDepsT]):
         if isinstance(error, _ToolUnavailable) and name not in self.availability_refused:
             self.availability_refused.add(name)
         else:
-            attempt = self._check_max_retries(name, max_retries, cause)
-            self.failed_tools.add(name)
+            attempt = self._charge_retry(name, max_retries, cause)
         charged_max_retries = max_retries if attempt is not None else None
         validation_error = (
             _record_attempt(error, attempt=attempt, max_retries=charged_max_retries)
@@ -1091,8 +1129,7 @@ class ToolManager(Generic[AgentDepsT]):
                 raise
             name = call.tool_name
             max_retries = validated.tool.max_retries
-            attempt = self._check_max_retries(name, max_retries, e)
-            self.failed_tools.add(name)
+            attempt = self._charge_retry(name, max_retries, e)
             raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
         except ToolFailed as e:
             if not wrap_validation_errors:
@@ -1263,8 +1300,7 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except ToolRetryError as e:
             cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
-            attempt = self._check_max_retries(name, tool.max_retries, cause)
-            self.failed_tools.add(name)
+            attempt = self._charge_retry(name, tool.max_retries, cause)
             raise _record_attempt(e, attempt=attempt, max_retries=tool.max_retries)
 
         # Gated like `failed_tools` above: raw-mode (streaming) callers leave retry-budget state untouched.
@@ -1385,8 +1421,7 @@ class ToolManager(Generic[AgentDepsT]):
             if not wrap_validation_errors:
                 raise
             max_retries = validated.tool.max_retries
-            attempt = self._check_max_retries(name, max_retries, e)
-            self.failed_tools.add(name)
+            attempt = self._charge_retry(name, max_retries, e)
             raise self._wrap_error_as_retry(name, validated.call, e, attempt=attempt, max_retries=max_retries) from e
 
         _usage_attribution.record_tool_call(usage)

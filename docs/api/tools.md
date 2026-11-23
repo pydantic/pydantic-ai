@@ -10,3 +10,4 @@
     options:
         members:
             - parallel_execution_mode
+            - for_nested_calls
