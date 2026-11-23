@@ -3,7 +3,7 @@
 A gate test that builds a `CompletedProcess` with literal output tests the gate against what its author believed a
 command prints. `gh`, `git` and `griffecli` printed something else in shipped defects (R45), for example
 https://github.com/pydantic/pydantic-ai/pull/10963. Record the real output through `.github/scripts/_commands.py` and
-replay it with `_commands.Replay` instead.
+replay it with `_command_fixtures.Replay` instead.
 
 The check counts, in each changed test file, the `CompletedProcess(...)` calls whose `stdout` or `stderr` is a
 non-empty string or bytes literal or an f-string. Empty output claims nothing about what a command prints, so it is
@@ -89,7 +89,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for g in grown:
         message = (
             f'hand-written command output grew from {g.old} to {g.new}: record the real output with '
-            f'`{GUIDE}` and replay it with `Replay`'
+            f'`{GUIDE}` and replay it with `_command_fixtures.Replay`'
         )
         if options.github:
             print(f'::error file={escape(g.path, prop=True)},line={g.lines[0]}::{escape(message)}')
