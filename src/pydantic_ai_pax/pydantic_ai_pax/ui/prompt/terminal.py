@@ -18,6 +18,7 @@ from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.terminal_background import drain_late_reply
 
 if TYPE_CHECKING:
     from pydantic_ai_pax.cli.self_update import WebHandoff
@@ -152,13 +153,14 @@ class Terminal(Generic[DepsT, OutputT]):
         if self.lines:
             yield
             return
+        drain_late_reply()  # Just before the editor reads keys, the last moment a late reply can be told apart.
         self.editor = LivePrompt(
             console=self.console,
             commands=self._shown().commands,
             history=self.history,
             images=self.images,
             interrupts=self._shown().interrupts,
-            toolbar=lambda: self._shown().status.toolbar(),
+            toolbar=lambda: self._shown().status.toolbar(width=self.console.width),
             steer=lambda text: self._shown().steer(text),
             run_now=lambda text: self._shown().run_now(text),
             transcript=self.transcript,
@@ -196,7 +198,9 @@ class Terminal(Generic[DepsT, OutputT]):
                 [
                     (theme.color(style), text)
                     for style, text in (
-                        [(theme.MUTED, self.images.notice)] if self.images.notice else self._shown().status.toolbar()
+                        [(theme.MUTED, self.images.notice)]
+                        if self.images.notice
+                        else self._shown().status.toolbar(width=self.console.width)
                     )
                 ]
             ),

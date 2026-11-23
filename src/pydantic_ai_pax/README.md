@@ -240,10 +240,13 @@ in the reference for everything else, including vLLM and OpenRouter.
 ### Tool calls and diffs
 
 Each tool call gets one line: the tool and what it worked on, as in the screenshot at
-the top. When Pax edits or writes a file, you see the diff. Shell output stays out of
-the way unless you ask for it with `/set display.tool_output true`; the model always gets
-the full output. To list fewer lines, `/set display.tool_calls grouped` counts calls in
-a row instead, such as `● shell 4, grep 2`.
+the top. When Pax edits or writes a file, you see the diff. A shell command adds one row
+with its exit code and line count, such as `⎿ exit 0 · 23 lines`, in red when the
+command fails. A failed or refused call of any tool gets a red row with the reason.
+The rest of the shell output stays out of the way unless you ask for it with
+`/set display.tool_output true`; the model always gets the full output. To list fewer
+lines, `/set display.tool_calls grouped` counts calls in a row instead, such as
+`● shell 4, grep 2`. That style prints no result rows.
 
 ### Questions from the model
 
@@ -358,7 +361,8 @@ and apply right away. You can also type one directly, such as
 ### Colours: `/theme`
 
 `/theme` previews each palette on a sample conversation before you pick it. `default`
-keeps Pax's usual colours and leaves your terminal's palette alone.
+keeps Pax's usual colours and leaves your terminal's palette alone. On a light terminal
+background it uses darker shades that stay readable on it.
 
 ![The /theme picker previewing tokyo_night](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/theme-tokyo-night.png)
 

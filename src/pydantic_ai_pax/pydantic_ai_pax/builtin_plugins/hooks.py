@@ -290,6 +290,7 @@ class HooksPlugin(Plugin[HooksSettings, DepsT]):
             message = f'{headline}: {shown}: {done.stderr}'
         span.set_status(StatusCode.ERROR, message if content else headline)
         self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
+        self.host.console.print()
 
 
 @dataclass

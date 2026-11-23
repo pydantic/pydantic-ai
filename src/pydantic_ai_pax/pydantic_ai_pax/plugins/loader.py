@@ -321,15 +321,19 @@ class SessionPlugins(Generic[DepsT]):
         for name, previous in self._entries.items():
             if name not in refreshed and previous.loaded is not None:
                 refreshed[name] = previous
-        includes = {
-            name: _includes(entry.declaration.factory, entry.loaded)
-            for name, entry in refreshed.items()
-            if entry.loaded is not None
-        }
+        self._entries = refreshed
+        includes = self._loaded_includes()
         for entry in refreshed.values():
             entry.included_in = included_by(entry.declaration.factory, includes)
-        self._entries = refreshed
         return list(refreshed.values())
+
+    def _loaded_includes(self) -> dict[str, frozenset[str]]:
+        """Each loaded plugin's name, with the factories it includes, from this session's own entries."""
+        return {
+            name: _includes(entry.declaration.factory, entry.loaded)
+            for name, entry in self._entries.items()
+            if entry.loaded is not None
+        }
 
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
@@ -457,8 +461,12 @@ class SessionPlugins(Generic[DepsT]):
 
     def _loads_at_start(self, entry: PluginEntry[DepsT]) -> bool:
         """Whether `load_all` loads `entry`: enabled, not loaded yet, and not included in a loaded plugin."""
-        # Read afresh: a plugin loaded earlier in this loop may include this one.
-        return entry.declaration.enabled and entry.loaded is None and self._entry(entry.name).included_in is None
+        # From what is loaded now: a plugin loaded earlier in this loop may include this one.
+        return (
+            entry.declaration.enabled
+            and entry.loaded is None
+            and included_by(entry.declaration.factory, self._loaded_includes()) is None
+        )
 
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, build the plugin, collect its contributions, and fire `session_start`.
@@ -570,7 +578,8 @@ class SessionPlugins(Generic[DepsT]):
 
     async def _unload_included(self, entry: PluginEntry[DepsT], loaded: LoadedPlugin[DepsT]) -> None:
         included = _includes(entry.declaration.factory, loaded)
-        for other in self.entries():
+        # Only loaded plugins are unloaded, and `_entries` holds every one, so the declarations need no new read.
+        for other in list(self._entries.values()):
             if other.loaded is not None and other.declaration.factory in included:
                 await self.unload(other.name)
 

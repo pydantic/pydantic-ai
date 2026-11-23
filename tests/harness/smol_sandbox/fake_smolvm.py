@@ -55,6 +55,16 @@ class FakeProcess:
         return await self.process.wait()
 
     async def aclose(self) -> None:
+        # The command holds the CLI's stdout and stderr, as a command in a smolvm VM does not, so after `kill` they
+        # reach EOF only once the whole group has exited, which can be after the CLI's own exit is reported. Before
+        # anyio 4.14.1 (agronholm/anyio#1166), `Process.aclose()` returns at that exit without closing them, and
+        # asyncio closes the process's transport only once they have closed, so a test could end with it open.
+        # Read them to EOF first.
+        for stream in (self.stdout, self.stderr):
+            assert stream is not None
+            with suppress(anyio.EndOfStream):
+                while True:
+                    await stream.receive()
         await self.process.aclose()
 
 
