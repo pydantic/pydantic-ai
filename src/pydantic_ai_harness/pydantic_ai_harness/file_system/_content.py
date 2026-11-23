@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
+from io import BytesIO
+
+from PIL import Image, ImageOps
 
 from pydantic_ai.exceptions import ModelRetry
 
@@ -73,6 +76,49 @@ File content bypasses the textual `max_read_chars` budget, and 5 MB is the
 strictest per-image limit among mainstream providers. A larger file gets the
 text description instead of content that would fail the next model request.
 """
+
+MAX_IMAGE_SIDE = 1024
+"""Default longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to it.
+
+Providers reject images over their own dimension limits, or downscale them anyway
+at the cost of the tokens spent sending the full size.
+"""
+
+_PIL_FORMATS = {'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/gif': 'GIF', 'image/webp': 'WEBP'}
+
+
+@dataclass
+class DownscaledImage:
+    """An image re-encoded at a smaller size, with its displayed size before and after."""
+
+    data: bytes
+    original: tuple[int, int]
+    shown: tuple[int, int]
+
+
+def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledImage | None:
+    """`data` with its longest side brought down to `max_side` pixels, in its own format and aspect ratio.
+
+    `None` when the image already fits, or is not an image Pillow can decode,
+    such as a truncated file: then the file is sent as it is. EXIF orientation is
+    applied first, since the re-encoded copy carries no metadata.
+    """
+    image_format = _PIL_FORMATS[media_type]
+    try:
+        with Image.open(BytesIO(data), formats=[image_format]) as image:
+            if max(image.size) <= max_side:
+                return None
+            oriented = ImageOps.exif_transpose(image)
+            if oriented.mode in ('1', 'P', 'PA'):
+                oriented = oriented.convert('RGBA')
+            original = oriented.size
+            oriented.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            oriented.save(output, format=image_format, quality=90)
+    except (OSError, SyntaxError, ValueError, EOFError, Image.DecompressionBombError):
+        return None
+    return DownscaledImage(data=output.getvalue(), original=original, shown=oriented.size)
+
 
 _HEX_PREVIEW_BYTES = 64
 """Leading bytes of a non-media binary file shown as hex."""

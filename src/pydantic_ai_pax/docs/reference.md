@@ -1309,7 +1309,8 @@ image shortcut.
 Use a model that accepts images. CLAI sends the image bytes to the selected model;
 provider-specific size and format restrictions can still apply. Each source file
 and encoded attachment is limited to 10 MiB and 25 megapixels, with 32 MiB of
-pending image bytes. Accepted images are saved with the conversation and restored
+pending image bytes. An image larger than 1024 pixels on its longest side is
+downscaled to that before it is attached. Accepted images are saved with the conversation and restored
 by `/resume`. Input recall stores markers, not image bytes: paste the image again
 if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
@@ -1326,9 +1327,6 @@ can grow severalfold as PNG, so send fewer at a time if the 32 MiB limit refuses
 The transcript shows each sent image as a thumbnail in your message, also after a reload or `/resume`.
 The preview of a saved session that is not open, and a delegated task's transcript, show `[image]`
 instead.
-
-Pillow is a CLAI dependency, for the terminal and the web UI, not a harness one; see the CLAI dependency boundary in
-[#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
 
 ### Input history
 

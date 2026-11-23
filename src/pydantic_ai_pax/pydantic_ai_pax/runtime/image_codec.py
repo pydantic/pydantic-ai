@@ -13,6 +13,7 @@ from pydantic_ai.messages import BinaryContent
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PENDING_BYTES = 32 * 1024 * 1024
 MAX_PIXELS = 25_000_000
+MAX_IMAGE_SIDE = 1024
 FORMATS = ('PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF')
 
 
@@ -27,12 +28,13 @@ class ImageBuffer(BytesIO):
 
 
 def encode_image(image: Image.Image) -> BinaryContent:
-    """Normalize to PNG, bounding decoded dimensions and encoded payload size."""
+    """Normalize to PNG at most `MAX_IMAGE_SIDE` pixels on its longest side, bounding decoded dimensions and payload size."""
     if image.width * image.height > MAX_PIXELS:
         raise ValueError('Image exceeds the 25 megapixel limit.')
     mode = 'RGBA' if 'A' in image.getbands() or 'transparency' in image.info else 'RGB'
     with ImageBuffer() as output, ImageOps.exif_transpose(image) as oriented, oriented.convert(mode) as normalized:
         normalized.info.clear()
+        normalized.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE), Image.Resampling.LANCZOS)
         normalized.save(output, format='PNG')
         return BinaryContent(data=output.getvalue(), media_type='image/png')
 

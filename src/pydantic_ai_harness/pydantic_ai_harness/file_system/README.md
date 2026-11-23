@@ -67,7 +67,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it, an image larger than `max_image_side` (1024 pixels by default) on its longest side downscaled to it first; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -365,7 +365,10 @@ applies the same rule to absolute symlink targets.
   a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
   the next request, which ends the run
   ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
-  A file over 5 MB, the strictest mainstream per-image limit, is described
+  An image larger than `max_image_side` pixels on its longest side (1024 by
+  default) is downscaled to it first, in its own format and aspect ratio, and
+  the header names both sizes; the hash is still that of the file. A file over
+  5 MB even then, the strictest mainstream per-image limit, is described
   instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
@@ -466,6 +469,7 @@ FileSystem(
     read_only_patterns=[...],      # read-only globs (defaults to secrets/.git)
     max_read_lines=2000,           # most lines one read_file returns, and its default limit
     max_read_chars=50_000,         # cap on a whole read_file result, ending on a complete line
+    max_image_side=1024,           # longest side of an image read_file returns; larger ones are downscaled (None = full size)
     max_list_results=1000,         # cap for list_directory
     max_search_results=1000,       # cap for search_files and grep
     max_find_results=1000,         # cap for find_files and list_files
