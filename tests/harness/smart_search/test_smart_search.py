@@ -34,9 +34,11 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness import SmartSearch
 from pydantic_ai_harness.smart_search import SmartSearchResult, SmartSearchToolset
+from tests.harness.file_system.test_windows_paths import DriveBackend
 
 from ..conftest import agent_run_names
 from .conftest import (
+    PY_SOURCE,
     FakeJev,
     VanishingBackend,
     calls_smart_search,
@@ -242,6 +244,24 @@ class TestSmartSearch:
         [part] = tool_returns(result.all_messages())
         assert 'no requests left to judge with' in str(part.content)
         assert not judge_model.requests
+
+    async def test_a_subdirectory_of_a_windows_working_directory_is_searched(self, tmp_path: Path) -> None:
+        """On a `'windows'` workspace, `directory` may name a subdirectory; a path outside, or a link out, is refused."""
+        backend = DriveBackend(tmp_path)
+        write_repo(tmp_path / 'project')
+        (tmp_path / 'elsewhere').mkdir()
+        (tmp_path / 'elsewhere' / 'auth.py').write_text(PY_SOURCE)
+        (tmp_path / 'project' / 'out').symlink_to(tmp_path / 'elsewhere', target_is_directory=True)
+        agent = search_agent(None, FakeJev('expired'))
+        workspace = Workspace(backend)
+
+        assert {m.file_path for m in (await search(agent, workspace=workspace, directory='tests')).matches} == {
+            'tests/test_auth.py'
+        }
+        assert len((await search(agent, workspace=workspace, directory='C:\\project\\tests')).matches) == 1
+        for directory in ('..', 'C:\\elsewhere', 'C:\\project-other', 'out'):
+            message = await search_error(agent, workspace=workspace, directory=directory)
+            assert 'outside the working directory' in message, directory
 
     # ------------------------------------------------------------ search
 
