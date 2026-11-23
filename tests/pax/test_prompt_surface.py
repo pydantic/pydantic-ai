@@ -21,7 +21,6 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import (
     MAX_HELD_OSC,
     MODES_OFF,
     MODES_ON,
-    RESIZE_SETTLE,
     WHEEL_ROWS,
     PromptSurface,
     open_in_browser,
@@ -62,10 +61,6 @@ class Screen:
 
     def lines(self) -> list[str]:
         return self.terminal.lines()
-
-    def settle(self) -> None:
-        """Let a new width hold long enough for Markdown to render again at it."""
-        self.now += 2 * RESIZE_SETTLE
 
 
 def test_modified_key_and_mouse_reporting_are_scoped_to_editor_ownership() -> None:
@@ -137,11 +132,8 @@ def test_an_unchanged_frame_is_not_redrawn(monkeypatch: pytest.MonkeyPatch) -> N
     ):
         change()
         screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
-        # Frames at a new width draw until it has held, then the next one does once more.
-        screen.settle()
         screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
-        screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
-    assert len(draws) == 6
+    assert len(draws) == 5
     assert screen.lines()[0] == 'output'
 
 
@@ -432,8 +424,6 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     assert calls == []
     screen.terminal.resize(width=60, height=24)
     screen.surface.paint(ROWS)
-    screen.settle()
-    screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'default 60: **bold**'
     with theme.use(lambda: 'github_light'):
         screen.surface.paint(ROWS)
@@ -460,7 +450,6 @@ def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> N
     block.write('one ')
     screen.terminal.resize(width=10, height=24)
     for word in ('two', 'three', 'four'):
-        screen.settle()
         block.extend(f' {word}')
         block.write(f'{word} ')
         screen.surface.paint(ROWS)
@@ -471,67 +460,6 @@ def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> N
     assert screen.lines()[:3] == ['rendered a', 't 10: one', 'two three']
     screen.surface.paint(ROWS)
     assert calls == [10]
-
-
-def test_a_drag_resize_renders_markdown_again_once_the_width_holds() -> None:
-    """Each width a drag passes would render every visible reply again; only the one it stops at does."""
-    calls: list[int] = []
-
-    def render(*, source: str, width: int) -> str:
-        calls.append(width)
-        return f'{width}: {source}\n'
-
-    screen = Screen(width=40)
-    block = screen.surface.markdown(render=render, width=40)
-    block.extend('answer')
-    block.write('answer\n')
-    block.end()
-    screen.write('x' * 36 + '\n')
-    screen.surface.paint(ROWS)
-    for width in (38, 36, 34):
-        screen.now += FRAME_INTERVAL
-        screen.terminal.resize(width=width, height=24)
-        screen.surface.resize_notice()
-        screen.surface.paint(ROWS)
-        assert screen.lines()[0] == 'answer', 'Markdown keeps its rows while the width changes'
-    assert screen.lines()[1:3] == ['x' * 34, 'xx'], 'other output wraps to each width'
-    screen.surface.scroll(1)
-    screen.surface.scroll(-1)
-    late = screen.surface.markdown(render=render, width=40)
-    late.extend('late')
-    late.write('late\n')
-    late.end()
-    screen.surface.paint(ROWS)
-    assert 'late' in screen.lines(), 'a part with no rows yet shows its streamed rows'
-    assert calls == [], 'scrolling and new parts meanwhile do not render'
-    screen.settle()
-    screen.surface.refresh()
-    assert screen.lines()[0] == '34: answer'
-    assert calls == [34, 34]
-
-
-async def test_a_resize_renders_markdown_once_it_settles_without_waiting_for_the_editor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A short wait stands in for the real one, so waiting it out costs a millisecond.
-    monkeypatch.setattr(prompt_surface, 'RESIZE_SETTLE', 0.001)
-
-    def render(*, source: str, width: int) -> str:
-        return f'{width}: {source}\n'
-
-    screen = Screen(width=40)
-    block = screen.surface.markdown(render=render, width=40)
-    block.extend('answer')
-    block.write('answer\n')
-    block.end()
-    screen.surface.paint(ROWS)
-    screen.terminal.resize(width=20, height=24)
-    screen.surface.paint(ROWS)
-    screen.surface.paint(ROWS)
-    assert screen.lines()[0] == 'answer'
-    screen.now += 0.001
-    await asyncio.sleep(0.01)  # real-wait: the delayed frame is the claim
-    assert screen.lines()[0] == '20: answer'
 
 
 def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
@@ -833,12 +761,6 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
     assert click(screen, 2, 4) == []
-    screen.terminal.resize(width=10, height=12)
-    screen.surface.paint(ROWS)
-    assert click(screen, 3, 2) == [], 'rows kept while a resize settles may be cut off'
-    screen.settle()
-    screen.surface.paint(ROWS)
-    assert click(screen, 3, 2) == [url]
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:

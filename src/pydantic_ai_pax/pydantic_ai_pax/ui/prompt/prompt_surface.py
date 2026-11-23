@@ -39,12 +39,6 @@ INLINE_ON = '\x1b[?25l\x1b[?7l'
 INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
-RESIZE_SETTLE = 0.1
-"""Markdown builds its rows again at a new width once the width has held this long; until then it keeps its last rows.
-
-Rendering a 10,000-line reply again takes about 1 s, and wrapping it again about 0.25 s, while
-dragging a window edge changes the width many times a second.
-"""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
 _TERMINAL_OSC = re.compile(r'\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)')
 _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
@@ -122,9 +116,6 @@ class PromptSurface(io.StringIO):
         """A paint waits for the frame interval to end; see `changed`."""
         self._painted_as: tuple[int, int, str] | None = None
         """The geometry and theme of the last frame; transcript rows wrap and colour by both."""
-        self._width_since = (0, -math.inf)
-        """The width of the last frame, and when a frame first had it."""
-        self._settle_scheduled = False
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -266,9 +257,6 @@ class PromptSurface(io.StringIO):
 
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
-        if self.transcript.keep_rows:
-            # Until the width holds, Markdown rows may be cut off at the right edge.
-            return None
         # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
         rows = self._transcript_rows - (self.view.anchor is not None)
         return url_at(self._frame, cell, rows=rows, joins=self.view.joins())
@@ -346,35 +334,6 @@ class PromptSurface(io.StringIO):
                 self._paint(modes=True)
 
     def _paint(self, *, modes: bool = False) -> None:
-        width, _ = self._geometry()
-        now = self.clock()
-        if width != self._width_since[0]:
-            # The first frame has no earlier width to settle from.
-            self._width_since = (width, now if self._painted_as is not None else -math.inf)
-        wait = RESIZE_SETTLE - (now - self._width_since[1])
-        # Scrolling and clicks read the rows too, so they stay kept until a frame at a held width.
-        self.transcript.keep_rows = wait > 0
-        self._draw(modes=modes)
-        if wait > 0:
-            # The frame once the width holds renders every part at it.
-            self._dirty = True
-            self._settle_later(wait)
-
-    def _settle_later(self, delay: float) -> None:
-        """Paint after `delay` seconds, apart from `_paint_later`, so output still paints at its frame's end."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        if not self._settle_scheduled:
-            self._settle_scheduled = True
-            loop.call_later(delay, self._settled)
-
-    def _settled(self) -> None:
-        self._settle_scheduled = False
-        self.refresh()
-
-    def _draw(self, *, modes: bool) -> None:
         width, height = self._geometry()
         if not self.full_screen and self._paint_compact(modes=modes, width=width, height=height):
             return
