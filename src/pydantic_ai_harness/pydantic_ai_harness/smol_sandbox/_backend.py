@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -46,6 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._smolvm_cli import NAME as _NAME, NAME_PREFIX as _NAME_PREFIX
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
@@ -56,6 +58,8 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     require_asyncio,
 )
+from pydantic_ai_harness._x11 import DESKTOP_IMAGE, desktop_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -213,7 +217,17 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
+def check_desktop(desktop: bool | tuple[int, int], image: str | None, allow_internet_access: bool) -> None:
+    """Refuse a new desktop VM that can't install its display programs."""
+    if desktop and image is None and not allow_internet_access:
+        raise UserError(
+            f'A new desktop VM without an `image` runs `{DESKTOP_IMAGE}` and installs the display programs on first '
+            'use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, xdotool, '
+            'xwininfo, scrot and setsid.'
+        )
+
+
+class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A local [smolvm](https://github.com/smol-machines/smolvm) microVM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
@@ -233,7 +247,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             opens its own handle to it by id. Whoever created it owns deleting it.
         ref: Identity of an existing VM on this machine to attach to on first use: its name.
         image: OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own
-            Alpine Linux root filesystem without pulling anything.
+            Alpine Linux root filesystem without pulling anything, unless `desktop` is set.
         cpus: vCPUs for a new VM; smolvm's default when `None`.
         memory_mb: Memory for a new VM in MiB; smolvm's default when `None`.
         allow_internet_access: Whether a new VM gets unrestricted outbound network access, made from
@@ -243,6 +257,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             default image.
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
+        desktop: Whether the VM has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+            `True` for 1280x800, or its `(width, height)`. The first start installs the programs it needs, which
+            needs `allow_internet_access`. Without an `image`, a new VM runs `debian:bookworm-slim`.
     """
 
     def __init__(
@@ -256,19 +273,29 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = False,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'smol')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
+        if sandbox is None and ref is None:
+            check_desktop(desktop, image, allow_internet_access)
         # On the local target a VM's id is its name, so the backend attaches to it like to a ref.
         self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
         self._passed_in = sandbox is not None
-        self._image = image
+        self._image = DESKTOP_IMAGE if image is None and desktop else image
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
+        self._desktop_size = desktop_size(desktop)
+        self._display, self._env = desktop_display(
+            self._run_argv,
+            self._desktop_size,
+            self._env,
+            lambda: f'smolvm VM {self._ref.id if self._ref else "(not created)"}',
+        )
         self._machine: smol.Machine | None = None
         self._sandbox: smol.AsyncMachine | None = None
         self._acquisition: asyncio.Task[smol.Machine] | None = None
@@ -282,6 +309,11 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         `SmolSandbox.destroy`, which waits for the boot.
         """
         return self._ref
+
+    @property
+    def display(self) -> Display | None:
+        """The VM's desktop, when created with `desktop=True`."""
+        return self._display
 
     async def get_sandbox(self) -> smol.AsyncMachine:
         """Return the SDK's `smol.AsyncMachine`, for smol features the workspace API does not cover.
@@ -378,10 +410,17 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         # Booting or attaching is bounded by the SDK; the timeout is the command's alone.
         machine = await self._vm()
         return await self._exec(
-            machine, [*_EXEC, *argv], env={**self._env, **(env or {})}, working_dir=self._working_dir, timeout=timeout
+            machine, [*_EXEC, *argv], env={**self._env, **env}, working_dir=self._working_dir, timeout=timeout
         )
 
     async def _exec(
