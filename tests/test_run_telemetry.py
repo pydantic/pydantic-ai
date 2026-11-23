@@ -31,7 +31,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import try_import
+from .conftest import Instrumented, try_import
 
 with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace import TracerProvider
@@ -39,15 +39,6 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytestmark = pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
-
-
-def instrumented(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return Instrumentation(
-        settings=InstrumentationSettings(tracer_provider=provider, include_content=include_content)
-    ), exporter
 
 
 @dataclass
@@ -71,14 +62,14 @@ def example_spans(exporter: InMemorySpanExporter) -> list[dict[str, AttributeVal
     ]
 
 
-async def test_spans_in_a_sub_agents_for_run_follow_the_sub_agent():
+async def test_spans_in_a_sub_agents_for_run_follow_the_sub_agent(instrumented: Instrumented):
     """A sub-agent's `for_run` traces to the sub-agent's tracer with its content policy, not its parent's.
 
     `for_run` runs before the sub-agent publishes its own telemetry, so only its `ctx` can say which run
     it belongs to: the value published at that point is the parent's.
     """
-    parent_instrumentation, parent_exporter = instrumented(include_content=False)
-    child_instrumentation, child_exporter = instrumented(include_content=True)
+    parent_instrumentation, parent_exporter = instrumented(False)
+    child_instrumentation, child_exporter = instrumented(True)
     child = Agent(TestModel(), capabilities=[TraceWhenPrepared(), child_instrumentation])
     parent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
 
@@ -97,8 +88,8 @@ async def test_spans_in_a_sub_agents_for_run_follow_the_sub_agent():
     )
 
 
-async def test_content_is_left_out_without_include_content():
-    instrumentation, exporter = instrumented(include_content=False)
+async def test_content_is_left_out_without_include_content(instrumented: Instrumented):
+    instrumentation, exporter = instrumented(False)
     await Agent(TestModel(), capabilities=[TraceWhenPrepared(), instrumentation]).run('go')
 
     assert example_spans(exporter) == snapshot(
@@ -155,8 +146,8 @@ def agent_with_tool(*capabilities: AbstractCapability[object]) -> Agent[None, st
     return agent
 
 
-async def test_current_span_in_a_tool_hook_is_the_calls_execute_tool_span():
-    instrumentation, exporter = instrumented(include_content=False)
+async def test_current_span_in_a_tool_hook_is_the_calls_execute_tool_span(instrumented: Instrumented):
+    instrumentation, exporter = instrumented(False)
     await agent_with_tool(instrumentation).run('go')
 
     assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == [
@@ -174,9 +165,9 @@ async def test_current_span_leaves_the_applications_span_alone_in_an_uninstrumen
     assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [('app request', {})]
 
 
-async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_span_alone():
+async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_span_alone(instrumented: Instrumented):
     """The parent's telemetry is published around the sub-agent, but the sub-agent's own run isn't traced."""
-    instrumentation, exporter = instrumented(include_content=False)
+    instrumentation, exporter = instrumented(False)
     child = agent_with_tool()
     parent = Agent(TestModel(call_tools=['delegate']), capabilities=[instrumentation])
 
@@ -201,9 +192,9 @@ def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
     assert current_span(ctx) is INVALID_SPAN
 
 
-async def test_code_without_a_ctx_traces_to_the_calling_run():
+async def test_code_without_a_ctx_traces_to_the_calling_run(instrumented: Instrumented):
     """A tool's helper with no `RunContext` reads the run's telemetry; outside a run there is none."""
-    instrumentation, exporter = instrumented(include_content=False)
+    instrumentation, exporter = instrumented(False)
     agent = Agent(TestModel(call_tools=['noop']), capabilities=[instrumentation])
 
     @agent.tool_plain
