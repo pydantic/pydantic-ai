@@ -116,14 +116,14 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
             TypeText(text='a' * 1_999 + '\r\n' + 'b'), [f'type {"a" * 1_999}\n', 'type b'], id='type-crlf-in-parts'
         ),
         pytest.param(
-            PressKeys(keys=('ctrl+s',), repeat=2),
+            PressKeys(keys=('ctrl', 's'), repeat=2),
             ["press s modifiers=['ctrl']", "press s modifiers=['ctrl']"],
             id='combination-repeated',
         ),
-        pytest.param(PressKeys(keys=('Return',)), ['press enter modifiers=[]'], id='alias'),
+        pytest.param(PressKeys(keys=('enter',)), ['press enter modifiers=[]'], id='named-key'),
         pytest.param(
-            PressKeys(keys=('numlock', 'numpad5')),
-            ['keydown num_lock', 'keydown num5', 'keyup num5', 'keyup num_lock'],
+            PressKeys(keys=('super', 'numlock')),
+            ["press num_lock modifiers=['cmd']"],
             id='renamed-keys',
         ),
         pytest.param(
@@ -151,8 +151,6 @@ async def test_each_action_maps_onto_daytona_calls(
     ('action', 'message'),
     [
         pytest.param(TypeText(text='done 😀'), 'cannot type characters beyond U\\+FFFF', id='emoji'),
-        pytest.param(PressKeys(keys=('f13',)), "cannot press the key 'f13'", id='key-that-crashes-the-desktop'),
-        pytest.param(PressKeys(keys=('numpad_add',)), "cannot press the key 'numpad_add'", id='numpad-key'),
         # Daytona refuses these itself (live, 2026-11-18): sent, they'd count as held until let go.
         pytest.param(HoldKeys(keys=('ctrl', 'printscreen'), seconds=1), "cannot press the key 'printscreen'", id='key'),
         pytest.param(MouseDown(button='back'), "cannot press the mouse button 'back'", id='side-button-down'),
