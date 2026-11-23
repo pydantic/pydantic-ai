@@ -740,8 +740,9 @@ def _lookup_conv_fn(converter: MarkdownConverter, tag_name: str) -> Callable[[Ta
 
 def _is_parsable_decimal(value: str) -> bool:
     """Whether `value` is decimal digits `int()` parses: none like `²`, and no more than `sys.get_int_max_str_digits()`."""
-    # The limit is 0 when the interpreter sets none.
-    return value.isdecimal() and not 0 < sys.get_int_max_str_digits() < len(value)
+    # The limit is 0 when the interpreter sets none. Compare the length before scanning the digits:
+    # every list item or cell that reads a value passes it here again.
+    return not 0 < sys.get_int_max_str_digits() < len(value) and value.isdecimal()
 
 
 def _collapse_whitespace_run(match: re.Match[str]) -> str:
