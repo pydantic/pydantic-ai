@@ -1234,9 +1234,10 @@ shell's output above it. A slash command or `!` command run between turns prints
 conversation so far into the terminal's scrollback, where it stays even after `/clear` or
 `/resume`, and the compact editor comes back below the command's output. Once the
 session fills the terminal, you change the terminal's width or make it shorter, or a
-command, menu, or question takes over the editor during a turn, the editor sits below
-a Termflow live transcript panel on the alternate screen, for the rest of the session. `/set display.full_screen true` starts
-there instead, from the next start. The rest of this section describes that panel.
+command, menu, or question takes over the editor during a turn, or you press Ctrl+O while
+tool output is already in the terminal's scrollback, the editor sits below a Termflow live
+transcript panel on the alternate screen, for the rest of the session.
+`/set display.full_screen true` starts there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
