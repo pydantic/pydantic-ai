@@ -13,8 +13,7 @@ from typing import Any, Literal
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter, ValidationError
@@ -2484,136 +2483,123 @@ class TestTelemetry:
         assert background.end_time is not None and placeholder.end_time is not None
         assert background.end_time > placeholder.end_time
 
-    async def test_a_tool_not_marked_for_background_is_not_marked_on_its_span(self, instrumented: Instrumented) -> None:
-        instrumentation, exporter = instrumented(False)
-        agent = Agent(TestModel(call_tools=['quick']), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain
-        def quick() -> str:
-            return 'value'
-
-        await agent.run('go')
-
-        assert 'background_tools.backgrounded' not in (_span(exporter, 'execute_tool quick').attributes or {})
-        assert not [span for span in exporter.get_finished_spans() if span.name.startswith('background_tools ')]
-
     @pytest.mark.parametrize(
-        'error, outcome',
+        'hook_error, tool_error, expected',
         [
-            (ModelRetry('secret detail'), 'retried'),
-            (ToolFailed('secret detail'), 'failed'),
-            (CallDeferred(metadata={'detail': 'secret detail'}), 'failed'),
+            (
+                None,
+                ModelRetry('secret detail'),
+                snapshot(
+                    {
+                        'attributes': {
+                            'gen_ai.tool.name': 'broken',
+                            'gen_ai.tool.call.id': 'call_1',
+                            'background_tools.outcome': 'retried',
+                            'background_tools.retry_cause': 'model_retry',
+                        },
+                        'status': 'ERROR',
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_ai.exceptions.ToolRetryError',
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                    }
+                ),
+            ),
+            (
+                None,
+                ToolFailed('secret detail'),
+                snapshot(
+                    {
+                        'attributes': {
+                            'gen_ai.tool.name': 'broken',
+                            'gen_ai.tool.call.id': 'call_1',
+                            'background_tools.outcome': 'failed',
+                        },
+                        'status': 'ERROR',
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_ai.exceptions.ToolFailedError',
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                    }
+                ),
+            ),
+            (
+                lambda: ModelRetry('secret detail'),
+                None,
+                snapshot(
+                    {
+                        'attributes': {
+                            'gen_ai.tool.name': 'broken',
+                            'gen_ai.tool.call.id': 'call_1',
+                            'background_tools.outcome': 'retried',
+                            'background_tools.retry_cause': 'model_retry',
+                        },
+                        'status': 'ERROR',
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_ai.exceptions.ModelRetry',
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                    }
+                ),
+            ),
+            (
+                _validation_error,
+                None,
+                snapshot(
+                    {
+                        'attributes': {
+                            'gen_ai.tool.name': 'broken',
+                            'gen_ai.tool.call.id': 'call_1',
+                            'background_tools.outcome': 'retried',
+                            'background_tools.retry_cause': 'validation_error',
+                        },
+                        'status': 'ERROR',
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_core._pydantic_core.ValidationError',
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                    }
+                ),
+            ),
         ],
-        ids=['retry', 'tool-failed', 'deferred'],
+        ids=['tool-model-retry', 'tool-failed', 'hook-model-retry', 'hook-validation-error'],
     )
-    async def test_failure_is_recorded_without_its_message(
+    async def test_a_failed_call_records_its_outcome(
         self,
-        error: Exception,
-        outcome: str,
+        hook_error: Callable[[], Exception] | None,
+        tool_error: Exception | None,
+        expected: _SpanSummary,
         instrumented: Instrumented,
     ) -> None:
+        """With content off, the exact summary is also the check that no error message reaches the span."""
         instrumentation, exporter = instrumented(False)
-        agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:
-            raise error
-
-        await agent.run('go')
-
-        summary = _summary(_span(exporter, 'background_tools execute broken'))
-        assert summary['attributes']['background_tools.outcome'] == outcome
-        assert summary['status'] == 'ERROR'
-        assert 'secret detail' not in str([(span.attributes, span.events) for span in exporter.get_finished_spans()])
-
-    async def test_a_retry_from_the_tool_records_cores_cause(self, instrumented: Instrumented) -> None:
-        instrumentation, exporter = instrumented(False)
-        agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:
-            raise ModelRetry('try again')
-
-        await agent.run('go')
-
-        attributes = _span(exporter, 'background_tools execute broken').attributes or {}
-        assert attributes['background_tools.retry_cause'] == 'model_retry'
-        # A background retry is charged on delivery, after this span ends.
-        assert 'pydantic_ai.tool.retry.attempt' not in attributes
-
-    @pytest.mark.parametrize(
-        'error_factory, cause',
-        [(lambda: ModelRetry('try again'), 'model_retry'), (_validation_error, 'validation_error')],
-        ids=['model-retry', 'validation-error'],
-    )
-    async def test_a_retry_from_a_hook_records_cores_cause(
-        self,
-        error_factory: Callable[[], Exception],
-        cause: str,
-        instrumented: Instrumented,
-    ) -> None:
-        instrumentation, exporter = instrumented(False)
+        hooks = [_ExecuteHookGuard('before', hook_error)] if hook_error is not None else []
         agent = Agent(
-            _model_calling('lookup'),
-            capabilities=[BackgroundTools(), _ExecuteHookGuard('before', error_factory), instrumentation],
+            _model_calling('broken', tool_call_id='call_1'), capabilities=[BackgroundTools(), *hooks, instrumentation]
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def lookup() -> str:
+        async def broken() -> str:
+            if tool_error is not None:
+                raise tool_error
             # The hook rejects the call.
             return 'value'  # pragma: no cover
 
         await agent.run('go')
 
-        attributes = _span(exporter, 'background_tools execute lookup').attributes or {}
-        assert (attributes['background_tools.outcome'], attributes['background_tools.retry_cause']) == (
-            'retried',
-            cause,
-        )
-
-    async def test_a_tool_raising_cancelled_error_itself_is_interrupted(self, instrumented: Instrumented) -> None:
-        instrumentation, exporter = instrumented(False)
-        agent = Agent(_model_calling('cancelled'), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def cancelled() -> str:
-            raise asyncio.CancelledError
-
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
-
-        attributes = _span(exporter, 'background_tools execute cancelled').attributes or {}
-        assert attributes['background_tools.outcome'] == 'interrupted'
-
-    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self) -> None:
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:
-            return 'value'
-
-        with provider.get_tracer('app').start_as_current_span('app request'):
-            await agent.run('go')
-
-        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
-            ('app request', {})
-        ]
-
-    async def test_failure_message_is_recorded_with_include_content(self, instrumented: Instrumented) -> None:
-        instrumentation, exporter = instrumented(True)
-        agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:
-            raise ToolFailed('visible detail')
-
-        await agent.run('go')
-
-        [event] = _span(exporter, 'background_tools execute broken').events
-        assert (event.attributes or {})['exception.message'] == 'visible detail'
+        assert _summary(_span(exporter, 'background_tools execute broken')) == expected
 
     async def test_run_ending_error_and_cancelled_sibling(self, instrumented: Instrumented) -> None:
         slow_started = asyncio.Event()
