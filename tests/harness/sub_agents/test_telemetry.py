@@ -10,7 +10,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
@@ -66,6 +66,22 @@ def noop() -> str:
     return 'x'
 
 
+def calls_stop(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('stop', {}, tool_call_id='s1')])
+
+
+def cancelling_agent() -> Agent[object, str]:
+    """A sub-agent whose `stop` tool cancels its own run."""
+    agent = Agent(FunctionModel(calls_stop), name='worker')
+
+    @agent.tool
+    def stop(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        return 'ignored'
+
+    return agent
+
+
 class TestSubAgentsTelemetry:
     @pytest.mark.parametrize(
         ('sub_agent', 'outcome', 'model'),
@@ -87,6 +103,7 @@ class TestSubAgentsTelemetry:
                 'contained',
                 'function:function:crash:',
             ),
+            (SubAgent(cancelling_agent()), 'cancelled', 'function:function:calls_stop:'),
             # The model that answered, not the fallback chain.
             (SubAgent(Agent(FallbackModel(FunctionModel(crash), TestModel()), name='worker')), 'ok', 'test:test'),
         ],
