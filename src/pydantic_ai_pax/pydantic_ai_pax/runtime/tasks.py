@@ -52,6 +52,7 @@ from pydantic_ai_harness.sub_agents import (
     TaskQuestionAskedEvent,
 )
 from pydantic_ai_pax.plugins import TaskInfo, TaskProgress
+from pydantic_ai_pax.runtime.image_codec import MAX_IMAGE_SIDE
 from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.task_prompts import is_delegate_tool
@@ -76,7 +77,7 @@ def specialists() -> dict[str, SubAgent[object]]:
                 name=name,
                 description=description,
                 instructions=f'{description} Return evidence with paths and line numbers. Do not modify files.',
-                capabilities=[FileSystem(read_only=True), NON_STRICT_SCHEMAS],
+                capabilities=[FileSystem(read_only=True, max_image_side=MAX_IMAGE_SIDE), NON_STRICT_SCHEMAS],
             ),
             read_only=True,
         )

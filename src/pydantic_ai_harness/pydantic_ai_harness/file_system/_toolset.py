@@ -42,7 +42,6 @@ from pydantic_ai_harness.file_system._access import AccessPatterns
 from pydantic_ai_harness.file_system._changes import Change, count_lines, skip_lines, split_lines
 from pydantic_ai_harness.file_system._command_search import run_posix_search
 from pydantic_ai_harness.file_system._content import (
-    MAX_IMAGE_SIDE,
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
     Replacement,
@@ -54,6 +53,7 @@ from pydantic_ai_harness.file_system._content import (
     hex_preview,
     is_binary,
     normalize_replacements,
+    require_pillow,
     sniff_media_type,
 )
 from pydantic_ai_harness.file_system._events import (
@@ -585,7 +585,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         protected_patterns: Sequence[str] | None = None,
         cwd: Path | None = None,
         max_retries: int | None = None,
-        max_image_side: int | None = MAX_IMAGE_SIDE,
+        max_image_side: int | None = None,
     ) -> None:
         super().__init__(id=id, max_retries=max_retries)
         if cwd is not None:
@@ -614,6 +614,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self._max_search_results = max_search_results
         self._max_find_results = max_find_results
         self._content_hashes = content_hashes
+        if max_image_side is not None:
+            require_pillow()
         self._max_image_side = max_image_side
         self._tools = tuple(tools)
         if unknown := sorted(set(self._tools) - set(FILE_SYSTEM_TOOL_NAMES)):

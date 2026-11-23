@@ -921,14 +921,13 @@ class TestReadFile:
         result = await _unhashed_toolset().read_file('huge.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == [f'[huge.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
 
-    async def test_read_image_without_pillow_is_returned_unchanged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        raw = _encoded_image((3000, 2000))
-        (tmp_path / 'big.png').write_bytes(raw)
+    def test_max_image_side_without_pillow_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, 'PIL', None)
-        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
-        assert result == [f'[big.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
+        with pytest.raises(ImportError, match=r'needs Pillow: install `pydantic-ai-harness\[coder\]`'):
+            _unhashed_toolset()
+        with pytest.raises(ImportError, match='needs Pillow'):
+            FileSystem(max_image_side=1024)
+        assert _unhashed_toolset(max_image_side=None) is not None
 
     async def test_read_image_without_max_image_side_is_returned_unchanged(self, tmp_path: Path) -> None:
         raw = _encoded_image((3000, 2000))
@@ -2768,8 +2767,8 @@ class TestFileSystemCapability:
             FileSystem(max_find_results=-1)
 
     def test_non_positive_max_image_side_rejected(self) -> None:
-        assert FileSystem().max_image_side == 1024
-        assert FileSystem(max_image_side=None).max_image_side is None
+        assert FileSystem().max_image_side is None
+        assert FileSystem(max_image_side=1024).max_image_side == 1024
         with pytest.raises(ValueError, match='max_image_side must be a positive integer'):
             FileSystem(max_image_side=0)
 

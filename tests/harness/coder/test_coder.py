@@ -136,7 +136,12 @@ def test_coder_members_and_parameters() -> None:
         '_SetToolStrict',
     ]
     files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
-    assert (files.root_dir, files.content_hashes, files.tools) == (None, False, FILE_TOOL_NAMES)
+    assert (files.root_dir, files.content_hashes, files.tools, files.max_image_side) == (
+        None,
+        False,
+        FILE_TOOL_NAMES,
+        1024,
+    )
     shell = next(item for item in coder.capabilities if isinstance(item, Shell))
     assert (shell.tools, shell.denied_commands, shell.allow_interactive) == (['shell'], [], True)
     assert (shell.env, shell.denied_env_patterns) == (None, [])

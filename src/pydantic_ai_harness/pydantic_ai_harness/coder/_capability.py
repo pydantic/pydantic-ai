@@ -22,6 +22,7 @@ from pydantic_ai_harness.coder._instructions import (
 )
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness.file_system._content import MAX_IMAGE_SIDE
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
@@ -176,6 +177,7 @@ def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
         max_read_chars=MAX_READ_CHARS,
         tools=FILE_TOOL_NAMES,
         max_retries=MAX_FILE_TOOL_RETRIES,
+        max_image_side=MAX_IMAGE_SIDE,
     )
     if unrestricted:
         # `/` is the filesystem root, or on Windows the working directory's drive.

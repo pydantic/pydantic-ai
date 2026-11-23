@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from io import BytesIO
@@ -76,7 +77,7 @@ text description instead of content that would fail the next model request.
 """
 
 MAX_IMAGE_SIDE = 1024
-"""Default longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to it.
+"""Longest side, in pixels, of an image `Coder`'s `read_file` returns; a larger one is downscaled to it.
 
 Providers reject images over their own dimension limits, or downscale them anyway
 at the cost of the tokens spent sending the full size.
@@ -101,18 +102,23 @@ class DownscaledImage:
     shown: tuple[int, int]
 
 
+def require_pillow() -> None:
+    """Fail when `max_image_side` is set but Pillow, which downscales the images, is not installed."""
+    if importlib.util.find_spec('PIL') is None:
+        raise ImportError(
+            'Downscaling images with `max_image_side` needs Pillow: install `pydantic-ai-harness[coder]` or `pillow`.'
+        )
+
+
 def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledImage | None:
     """`data` with its longest side brought down to `max_side` pixels, in its own format and aspect ratio.
 
     `None` when the image already fits, is over `_MAX_DECODE_PIXELS`, or is not an
-    image Pillow can decode, such as a truncated file, and when Pillow is not
-    installed: then the file is sent as it is. EXIF orientation is applied first,
-    since the re-encoded copy carries no metadata.
+    image Pillow can decode, such as a truncated file: then the file is sent as it
+    is. EXIF orientation is applied first, since the re-encoded copy carries no metadata.
     """
-    try:
-        from PIL import Image, ImageOps
-    except ImportError:
-        return None
+    from PIL import Image, ImageOps
+
     image_format = _PIL_FORMATS[media_type]
     try:
         with Image.open(BytesIO(data), formats=[image_format]) as image:
