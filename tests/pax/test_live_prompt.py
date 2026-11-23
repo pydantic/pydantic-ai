@@ -230,6 +230,7 @@ async def test_working_rule_counts_the_turn_and_names_esc() -> None:
     now = [100.0]
     async with editor() as (live, pipe, _):
         live.interrupts = Interrupts(clock=lambda: now[0])
+        live.ctrl_enter_steers = False
         started, done = anyio.Event(), anyio.Event()
 
         async def operation() -> None:
