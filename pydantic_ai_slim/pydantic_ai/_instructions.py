@@ -412,14 +412,33 @@ def window_prefix(baseline: InstructionBaselinePart, current: Sequence[Instructi
 
     The append-mode blocks at their baseline values, in their baseline positions, minus empty ones, with the
     rewrite-mode blocks from `current`, which [`continues_window`][pydantic_ai._instructions.continues_window]
-    has checked are the ones the baseline records.
+    has checked are the ones the baseline records. Where it let the dynamic rewrite-mode blocks change, because the
+    model reads them outside the cached prefix, they follow the other blocks.
     """
-    rewritten = iter(part for part in current if part.on_change != 'append')
+    rewritten = [part for part in current if part.on_change != 'append']
+    digests = [block for block in baseline.instructions if isinstance(block, InstructionDigest)]
+    if _digests_match(digests, rewritten):
+        return _fill_digests(baseline.instructions, rewritten)
+    kept = [block for block in baseline.instructions if isinstance(block, InstructionPart) or not block.dynamic]
+    literal = [part for part in rewritten if not part.dynamic]
+    return [*_fill_digests(kept, literal), *(part for part in rewritten if part.dynamic)]
+
+
+def _fill_digests(
+    blocks: Sequence[InstructionPart | InstructionDigest], rewritten: Sequence[InstructionPart]
+) -> list[InstructionPart]:
+    """`blocks` without their empty append-mode blocks, each digest replaced by the next part of `rewritten`."""
+    parts = iter(rewritten)
     return [
-        block if isinstance(block, InstructionPart) else next(rewritten)
-        for block in baseline.instructions
+        block if isinstance(block, InstructionPart) else next(parts)
+        for block in blocks
         if not isinstance(block, InstructionPart) or block.content
     ]
+
+
+def _digests_match(digests: Sequence[InstructionDigest], parts: Sequence[InstructionPart]) -> bool:
+    """Whether `parts` are the rewrite-mode blocks `digests` record, unchanged and in the same order."""
+    return len(digests) == len(parts) and all(map(InstructionDigest.matches, digests, parts))
 
 
 @dataclass
@@ -735,25 +754,45 @@ def _recorded_instruction_values(
     return values.values
 
 
-def continues_window(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> bool:
+def continues_window(
+    baseline: InstructionBaselinePart, current: Sequence[InstructionPart], *, rewrites_outside_prefix: bool = False
+) -> bool:
     """Whether `current` can be sent with `baseline`'s prefix, appending changes to its append-mode blocks.
 
     Rewrite-mode blocks are sent as they are, so they must be unchanged, in the same order, per the baseline's
     digests; a block whose policy changed is one of them. An append-mode block whose id didn't survive
     deserialization (a source namespace this version doesn't know) can't be tagged, so it can't anchor a
     window either.
+
+    With `rewrites_outside_prefix`, the model reads the dynamic rewrite-mode blocks outside the cached prefix, so
+    they may change, appear or disappear. The literal ones must still be unchanged, and a change of policy still
+    ends the window.
     """
     if any(isinstance(block, InstructionPart) and block.id is None for block in baseline.instructions):
         return False
     digests = [block for block in baseline.instructions if isinstance(block, InstructionDigest)]
     rewritten = [part for part in current if part.on_change != 'append']
-    return len(digests) == len(rewritten) and all(map(InstructionDigest.matches, digests, rewritten))
+    if not rewrites_outside_prefix:
+        return _digests_match(digests, rewritten)
+    return not _policy_changed(baseline, current) and _digests_match(
+        [digest for digest in digests if not digest.dynamic], [part for part in rewritten if not part.dynamic]
+    )
+
+
+def _policy_changed(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> bool:
+    """Whether a block `baseline` records now has the other `on_change` policy."""
+    appends: dict[InstructionId | None, bool] = {
+        block.id: isinstance(block, InstructionPart) for block in baseline.instructions if block.id is not None
+    }
+    return any(appends.get(part.id, part.on_change == 'append') != (part.on_change == 'append') for part in current)
 
 
 def update_instruction_history(
     messages: Sequence[ModelMessage],
     instructions: list[InstructionPart] | None,
     targets: Sequence[ModelRequest],
+    *,
+    rewrites_outside_prefix: bool = False,
 ) -> list[InstructionPart] | None:
     """Preserve the instruction prefix and append changed instruction blocks to the outgoing request.
 
@@ -763,6 +802,9 @@ def update_instruction_history(
     [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s. When the prefix has to change
     anyway, the request opens a new window with the current values, which costs no more cache than the
     change itself. `targets` are the requests that both this request and the persisted history carry.
+
+    With `rewrites_outside_prefix`, for a model that reads the dynamic rewrite-mode blocks outside the cached
+    prefix, a change to one of them doesn't move the prefix, so the window continues.
     """
     normalized = _normalize_append_parts(instructions or [])
     baseline = instruction_window(messages)
@@ -775,7 +817,11 @@ def update_instruction_history(
             _record_baseline(targets, [])
         return None
     loaded = LoadedInstructionValues.of(messages).values
-    if baseline is not None and recorded is not None and _stays_in_window(baseline, normalized, loaded):
+    if (
+        baseline is not None
+        and recorded is not None
+        and _stays_in_window(baseline, normalized, loaded, rewrites_outside_prefix=rewrites_outside_prefix)
+    ):
         _record_window_changes(targets, recorded, normalized)
     elif any(part.on_change == 'append' for part in normalized):
         baseline = _open_window(targets, normalized, loaded)
@@ -793,7 +839,11 @@ def update_instruction_history(
 
 
 def _stays_in_window(
-    baseline: InstructionBaselinePart, normalized: Sequence[InstructionPart], loaded: Mapping[str, str | None]
+    baseline: InstructionBaselinePart,
+    normalized: Sequence[InstructionPart],
+    loaded: Mapping[str, str | None],
+    *,
+    rewrites_outside_prefix: bool,
 ) -> bool:
     """Whether the request can be sent with `baseline`'s prefix, as `continues_window` decides.
 
@@ -803,7 +853,7 @@ def _stays_in_window(
     takes_over = any(
         part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
     )
-    return not takes_over and continues_window(baseline, normalized)
+    return not takes_over and continues_window(baseline, normalized, rewrites_outside_prefix=rewrites_outside_prefix)
 
 
 def _open_window(
@@ -839,38 +889,74 @@ def _record_window_changes(
             target.parts = [*target.parts, *changes]
 
 
-def recorded_prefix(baseline: InstructionBaselinePart, instructions: str) -> list[InstructionPart] | None:
+def recorded_prefix(
+    baseline: InstructionBaselinePart, instructions: str, *, rewrites_outside_prefix: bool = False
+) -> list[InstructionPart] | None:
     """The instruction parts a request in `baseline`'s window was sent, rebuilt from its recorded `instructions`.
 
     The joined text is split into the baseline's blocks at the blank lines that join them: an append-mode block
     must match its recorded content, and a rewrite-mode block must match its digest's hash, so the parts are
     exactly the ones the request was sent. `None` if the text isn't made of the baseline's blocks.
+
+    With `rewrites_outside_prefix`, a request whose dynamic rewrite-mode blocks changed within the window sent them
+    after the other blocks (see `window_prefix`), so the text after those is one dynamic part.
     """
     blocks = [block for block in baseline.instructions if not isinstance(block, InstructionPart) or block.content]
-    return _split_recorded_prefix(blocks, instructions, 0, 0)
+    parts = _split_recorded_prefix(blocks, instructions, 0, 0)
+    if parts is not None or not rewrites_outside_prefix:
+        return parts
+    kept = [block for block in blocks if isinstance(block, InstructionPart) or not block.dynamic]
+    return _split_recorded_prefix(kept, instructions, 0, 0, dynamic_tail=True)
 
 
 def _split_recorded_prefix(
-    blocks: Sequence[InstructionPart | InstructionDigest], instructions: str, start: int, index: int
+    blocks: Sequence[InstructionPart | InstructionDigest],
+    instructions: str,
+    start: int,
+    index: int,
+    *,
+    dynamic_tail: bool = False,
 ) -> list[InstructionPart] | None:
-    """Split `instructions[start:]` into `blocks[index:]`, as `recorded_prefix` describes."""
+    """Split `instructions[start:]` into `blocks[index:]`, as `recorded_prefix` describes.
+
+    With `dynamic_tail`, text after the last block is returned as one dynamic part.
+    """
     if index == len(blocks):
-        return [] if start == len(instructions) else None
+        if start == len(instructions):
+            return []
+        return [InstructionPart(content=instructions[start:], dynamic=True)] if dynamic_tail else None
     block = blocks[index]
     last = index == len(blocks) - 1
     for end in _recorded_block_ends(block, instructions, start):
-        # Blocks are joined with a blank line, and the last one ends the text.
-        if end != len(instructions) if last else not instructions.startswith('\n\n', end):
+        if not _can_end_recorded_block(instructions, end, last=last, dynamic_tail=dynamic_tail):
             continue
-        if isinstance(block, InstructionPart):
-            part = block
-        elif _instruction_text_hash(instructions[start:end]) == block.content_hash:
-            part = InstructionPart(content=instructions[start:end], id=block.id, dynamic=block.dynamic)
-        else:
+        if (part := _recorded_block_part(block, instructions[start:end])) is None:
             continue
-        if (rest := _split_recorded_prefix(blocks, instructions, end if last else end + 2, index + 1)) is not None:
+        rest = _split_recorded_prefix(
+            blocks, instructions, end if end == len(instructions) else end + 2, index + 1, dynamic_tail=dynamic_tail
+        )
+        if rest is not None:
             return [part, *rest]
     return None
+
+
+def _can_end_recorded_block(instructions: str, end: int, *, last: bool, dynamic_tail: bool) -> bool:
+    """Whether a block can end at `end`.
+
+    Blocks are joined with a blank line, and the last one ends the text unless a dynamic tail follows it.
+    """
+    if end == len(instructions):
+        return last
+    return instructions.startswith('\n\n', end) and (dynamic_tail or not last)
+
+
+def _recorded_block_part(block: InstructionPart | InstructionDigest, text: str) -> InstructionPart | None:
+    """The part `block` records for `text`, or `None` if `text` doesn't match its digest."""
+    if isinstance(block, InstructionPart):
+        return block
+    if _instruction_text_hash(text) != block.content_hash:
+        return None
+    return InstructionPart(content=text, id=block.id, dynamic=block.dynamic)
 
 
 def _recorded_block_ends(block: InstructionPart | InstructionDigest, instructions: str, start: int) -> Sequence[int]:
