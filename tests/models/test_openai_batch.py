@@ -1176,6 +1176,25 @@ async def test_a_refused_batch_raises_its_refusal_when_deleting_its_input_file_f
     assert ('DELETE', '/files/file-input') in api.requests
 
 
+async def test_a_batch_created_as_text_raises_model_api_error(allow_model_requests: None) -> None:
+    """A `text/plain` 200 to the create, once the input file is uploaded, raises `ModelAPIError`, like one to the upload.
+
+    Not a VCR test: no live endpoint answers like this. `tests/test_model_adapter_conformance.py` sends that 200 to the
+    upload, so its cells never reach the create.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if request.method == 'POST' and request.url.path == '/v1/batches':
+            return httpx2.Response(200, headers={'content-type': 'text/plain'}, content=b'upstream error')
+        return api.handle(request)
+
+    client = AsyncOpenAI(api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)))
+    model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=client))
+    with pytest.raises(ModelAPIError, match="Expected a JSON response, got: 'upstream error'"):
+        await model.batch_create([await model.batch_encode(_request())])
+
+
 @pytest.mark.parametrize(
     'status_code,body,error_class',
     [

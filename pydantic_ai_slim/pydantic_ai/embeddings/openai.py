@@ -132,7 +132,8 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
-            with map_decode_errors(self.model_name):
+            # `openai` returns the body's text when its content type isn't JSON, and reads it as an embeddings response.
+            with map_decode_errors(self.model_name, AttributeError):
                 response = await self._client.embeddings.create(
                     input=inputs,
                     model=self.model_name,

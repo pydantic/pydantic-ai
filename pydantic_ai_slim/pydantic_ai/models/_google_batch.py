@@ -57,6 +57,7 @@ from ._batch_codec import (
     shared_group,
     unrun_error,
 )
+from ._decode_errors import map_decode_errors
 from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 from .google import (
     GoogleModel,
@@ -182,10 +183,12 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
     _validate_batch_group(model, group)
     check_batch_bytes(requests, request_size, MAX_BATCH_BYTES, 'Gemini')
     client = _batch_client(model)
-    file = await client.aio.files.upload(
-        file=io.BytesIO(b'\n'.join(_input_line(request) for request in requests)),
-        config=UploadFileConfigDict(mime_type='application/jsonl', display_name='pydantic-ai-batch'),
-    )
+    content = io.BytesIO(b'\n'.join(_input_line(request) for request in requests))
+    # `files.upload` raises `KeyError` when the answer to the request that creates the file names no URL to upload to.
+    with map_decode_errors(model.model_name, KeyError):
+        file = await client.aio.files.upload(
+            file=content, config=UploadFileConfigDict(mime_type='application/jsonl', display_name='pydantic-ai-batch')
+        )
     assert file.name is not None
     # Unlike the upload, the job can't be created twice safely: the first attempt may have created it.
     no_retries = HttpOptionsDict(retry_options={'attempts': 1})

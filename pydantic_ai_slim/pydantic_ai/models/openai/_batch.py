@@ -19,7 +19,7 @@ from typing import Required, cast
 import httpx2
 from openai import APIError, APIStatusError, AsyncOpenAI, Omit
 from openai.types import Batch as OpenAIBatch, responses
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
@@ -39,6 +39,7 @@ from .._batch_codec import (
     shared_group,
     unrun_error,
 )
+from .._decode_errors import check_json_response, map_decode_errors
 from ..batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 from ._errors import status_error
 from ._responses_model import OpenAIResponsesModel
@@ -186,10 +187,16 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
     client = batch_client(model).with_options(max_retries=0)
     lines = (input_line(request) for request in requests)
     headers = {'User-Agent': get_user_agent()}
-    file = await client.files.create(file=('batch.jsonl', b'\n'.join(lines)), purpose='batch', extra_headers=headers)
+    file = check_json_response(
+        model.model_name,
+        await client.files.create(file=('batch.jsonl', b'\n'.join(lines)), purpose='batch', extra_headers=headers),
+    )
     try:
-        batch = await client.batches.create(
-            input_file_id=file.id, endpoint=_ENDPOINT, completion_window='24h', extra_headers=headers
+        batch = check_json_response(
+            model.model_name,
+            await client.batches.create(
+                input_file_id=file.id, endpoint=_ENDPOINT, completion_window='24h', extra_headers=headers
+            ),
         )
     except (APIStatusError, httpx2.HTTPStatusError) as error:
         # `openai` lets a status a retrying transport gave up on through unwrapped.
@@ -208,7 +215,7 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
 async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
     validate_batch_group(model, batch.group, collecting=True)
-    openai_batch = await batch_client(model).batches.retrieve(batch.id)
+    openai_batch = check_json_response(model.model_name, await batch_client(model).batches.retrieve(batch.id))
     if (
         openai_batch.status == 'completed'
         and (uploaded := _UPLOADED_INPUT_FILES.get((batch_credential(model), batch.id))) is not None
@@ -229,7 +236,10 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
         if not file_id:
             continue
         for line in (await client.files.content(file_id)).text.splitlines():
-            result = to_result(_OutputLine.model_validate_json(line))
+            # The SDK returns the file as it is, so reading its lines is the decode the SDK does for other responses.
+            with map_decode_errors(model.model_name, ValidationError):
+                output_line = _OutputLine.model_validate_json(line)
+            result = to_result(output_line)
             results[result.custom_id] = result
     if details['status'] == 'completed':
         uploaded_key = (batch_credential(model), batch.id)
@@ -250,7 +260,7 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
 async def batch_cancel(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
     validate_batch_group(model, batch.group, collecting=True)
-    openai_batch = await batch_client(model).batches.cancel(batch.id)
+    openai_batch = check_json_response(model.model_name, await batch_client(model).batches.cancel(batch.id))
     return to_batch(model, openai_batch, batch.group, batch.request_count)
 
 
