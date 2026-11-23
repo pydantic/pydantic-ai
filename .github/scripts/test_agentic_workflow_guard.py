@@ -804,7 +804,7 @@ def test_compiled_runner_contract_rejects_the_variable_of_older_locks(tmp_path: 
     lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('vars.GH_AW_ZAI_MODEL', 'vars.GH_AW_MODEL'))
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
-    assert 'the unchanged Z.ai model selected through Anthropic' in violations[0].message
+    assert 'the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic' in violations[0].message
 
 
 @pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])

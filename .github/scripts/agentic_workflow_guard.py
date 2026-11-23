@@ -621,7 +621,7 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
         if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
             missing.append('task identity available inside the agent sandbox')
         if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_ZAI_MODEL }}':
-            missing.append('the unchanged Z.ai model selected through Anthropic')
+            missing.append('the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic')
         if env.get('ANTHROPIC_API_KEY') != ENGINE_CREDENTIAL:
             missing.append('injection of the account-selected Z.ai key at the provider proxy')
     return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')] if missing else []
