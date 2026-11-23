@@ -109,7 +109,6 @@ ModelProvider = Literal[
     'bedrock',
     'google',
     'google-cloud',
-    'doubleword',
 ]
 
 
