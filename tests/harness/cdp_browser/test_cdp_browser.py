@@ -14,6 +14,7 @@ import asyncio
 import ipaddress
 import json
 import shutil
+import socket
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
@@ -47,8 +48,10 @@ from pydantic_ai_harness.cdp_browser import (
     EgressRequest,
     _client as client_module,
     _toolset as toolset_module,
+    _websocket_proxy as proxy_module,
 )
 from tests._ports import reserve_loopback_port
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 
 from ._fake_chrome import PAGE_SESSION, FakeChrome, pause_expression
@@ -530,8 +533,11 @@ class TestCDPBrowserLaunch:
         assert chrome.process.returncode == -9
         assert chrome.killed_groups == []
 
-    async def test_a_connection_lost_before_the_first_tab_fails_at_once(self, chrome: FakeChrome):
+    async def test_a_connection_lost_before_the_first_tab_fails_at_once(
+        self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch
+    ):
         """The wait for the first tab ends with the connection, instead of running out its setup timeout."""
+        monkeypatch.setattr(client_module, 'SHUTDOWN_GRACE_SECONDS', 0.01)
         chrome.close_after_auto_attach = True
         with pytest.raises(ConnectionError, match='Chrome DevTools connection closed'):
             await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
@@ -645,13 +651,39 @@ async def socks_connect(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
     """Speak SOCKS5 to the proxy as Chrome does; the reply is empty when the proxy closes without answering."""
     reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    return reader, writer, await socks_handshake(reader, writer, destination, greeting=greeting, command=command)
+
+
+async def socks_handshake(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    destination: bytes,
+    *,
+    greeting: bytes = b'\x05\x01\x00',
+    command: int = 1,
+) -> bytes:
     writer.write(greeting)
     await writer.drain()
     if await reader.read(2) != b'\x05\x00':
-        return reader, writer, b''
+        return b''
     writer.write(bytes([5, command, 0]) + destination)
     await writer.drain()
-    return reader, writer, await reader.read(10)
+    return await reader.read(10)
+
+
+def small_receive_buffer() -> socket.socket:
+    """A socket whose peer runs out of room as soon as its owner stops reading."""
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    sock.setblocking(False)
+    return sock
+
+
+def stalling_listener() -> socket.socket:
+    listener = small_receive_buffer()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    return listener
 
 
 @dataclass
@@ -796,6 +828,157 @@ class TestWebSocketGuard:
             writer.close()
             await writer.wait_closed()
         assert reply == b''
+
+    async def test_a_host_holding_a_nul_is_refused_before_the_policy_and_the_lookup(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        class NeverAsked(EgressPolicy):
+            def refuse(self, request: EgressRequest) -> str | None:  # pragma: no cover
+                raise AssertionError(request.url)
+
+        async def no_lookup(host: str) -> tuple[str, ...]:  # pragma: no cover
+            raise AssertionError(host)
+
+        monkeypatch.setattr(egress_module, 'getaddrinfo', no_lookup)
+        async with CDPBrowserToolset[None](policy=NeverAsked(allowed_domains=['allowed.test'])):
+            destination = name('192.0.2.1\0.allowed.test', echo_server.port)
+            _, writer, reply = await socks_connect(proxy_port(chrome), destination)
+            writer.close()
+            await writer.wait_closed()
+        assert reply[:2] == b'\x05\x02'
+        assert echo_server.connections == []
+
+    async def test_a_peer_that_stops_reading_cannot_hold_a_socket_open(
+        self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(proxy_module, 'CLOSE_GRACE_SECONDS', 0)
+        stalled: set[asyncio.StreamWriter] = set()
+        both_sides_stalled = anyio.Event()
+        real_drain = asyncio.StreamWriter.drain
+
+        async def noting_drain(self: asyncio.StreamWriter) -> None:
+            if self.transport.get_write_buffer_size() > self.transport.get_write_buffer_limits()[1]:
+                stalled.add(self)
+                if len(stalled) == 2:
+                    both_sides_stalled.set()
+            await real_drain(self)
+
+        monkeypatch.setattr(asyncio.StreamWriter, 'drain', noting_drain)
+        unread = bytes(4 * 1024 * 1024)
+        peers: list[asyncio.StreamWriter] = []
+
+        def stop_reading(_: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            peers.append(writer)
+            writer.write(unread)
+
+        server = await asyncio.start_server(stop_reading, sock=stalling_listener())
+        async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
+            client = small_receive_buffer()
+            await asyncio.get_running_loop().sock_connect(client, ('127.0.0.1', proxy_port(chrome)))
+            reader, writer = await asyncio.open_connection(sock=client)
+            destination = ipv4('127.0.0.1', server.sockets[0].getsockname()[1])
+            assert (await socks_handshake(reader, writer, destination))[:2] == b'\x05\x00'
+            writer.write(unread)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await both_sides_stalled.wait()
+        assert [held.transport.get_write_buffer_size() for held in stalled] == [0, 0]
+        for held in (writer, *peers):
+            held.transport.abort()
+        server.close()
+        await server.wait_closed()
+
+    async def test_a_closing_socket_still_delivers_what_it_holds(
+        self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(proxy_module, 'CLOSE_GRACE_SECONDS', READINESS_WAIT_TIMEOUT)
+        unsent_at_close = anyio.Event()
+        real_close = asyncio.StreamWriter.close
+
+        def noting_close(self: asyncio.StreamWriter) -> None:
+            if self.transport.get_write_buffer_size():
+                unsent_at_close.set()
+            real_close(self)
+
+        monkeypatch.setattr(asyncio.StreamWriter, 'close', noting_close)
+        real_open_connection = asyncio.open_connection
+
+        async def small_send_buffer(host: str, port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            reader, writer = await real_open_connection(host, port)
+            writer.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+            return reader, writer
+
+        monkeypatch.setattr(asyncio, 'open_connection', small_send_buffer)
+        payload = bytes(60_000)
+        received = bytearray()
+        delivered = anyio.Event()
+
+        async def read_after_close(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await unsent_at_close.wait()
+            received.extend(await reader.read())
+            writer.close()
+            delivered.set()
+
+        server = await asyncio.start_server(read_after_close, sock=stalling_listener())
+        async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
+            destination = ipv4('127.0.0.1', server.sockets[0].getsockname()[1])
+            _, writer, reply = await socks_connect(proxy_port(chrome), destination)
+            assert reply[:2] == b'\x05\x00'
+            writer.write(payload)
+            writer.write_eof()
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await delivered.wait()
+            writer.close()
+            await writer.wait_closed()
+        assert len(received) == len(payload)
+        server.close()
+        await server.wait_closed()
+
+    async def test_a_connection_landing_as_the_run_ends_gets_no_relay(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        callbacks: list[Callable[[asyncio.StreamReader, asyncio.StreamWriter], None]] = []
+        real_start_server = asyncio.start_server
+
+        async def noting_start_server(
+            callback: Callable[[asyncio.StreamReader, asyncio.StreamWriter], None], host: str, port: int
+        ) -> asyncio.Server:
+            callbacks.append(callback)
+            return await real_start_server(callback, host, port)
+
+        monkeypatch.setattr(asyncio, 'start_server', noting_start_server)
+        async with CDPBrowserToolset[None]():
+            pass
+        reader, writer = await asyncio.open_connection('127.0.0.1', echo_server.port)
+        with no_leaked_tasks():
+            callbacks[-1](reader, writer)
+        assert writer.is_closing()
+        await writer.wait_closed()
+
+    async def test_a_relay_cancelled_before_its_first_step_closes_its_connection(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        callbacks: list[Callable[[asyncio.StreamReader, asyncio.StreamWriter], None]] = []
+        real_start_server = asyncio.start_server
+
+        async def noting_start_server(
+            callback: Callable[[asyncio.StreamReader, asyncio.StreamWriter], None], host: str, port: int
+        ) -> asyncio.Server:
+            callbacks.append(callback)
+            return await real_start_server(callback, host, port)
+
+        monkeypatch.setattr(asyncio, 'start_server', noting_start_server)
+        async with CDPBrowserToolset[None]():
+            reader, writer = await asyncio.open_connection('127.0.0.1', echo_server.port)
+            running = asyncio.all_tasks()
+            callbacks[-1](reader, writer)
+            [relay] = asyncio.all_tasks() - running
+            relay.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await relay
+            closed_by_the_proxy = writer.is_closing()
+            writer.transport.abort()
+        await writer.wait_closed()
+        assert closed_by_the_proxy
 
     async def test_the_end_of_the_run_closes_open_sockets(self, chrome: FakeChrome, echo_server: EchoServer):
         with no_leaked_tasks():
