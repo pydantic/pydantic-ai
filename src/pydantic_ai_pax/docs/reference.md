@@ -1238,14 +1238,16 @@ shell's output above it. A slash command or `!` command run between turns prints
 conversation so far into the terminal's scrollback, where it stays even after `/clear` or
 `/resume`, and the compact editor comes back below the command's output. Once the
 session fills the terminal, you change the terminal's width or make it shorter, or a
-command, menu, or question takes over the editor during a turn, the editor sits below
-a Termflow live transcript panel on the alternate screen, for the rest of the session. `/set display.full_screen true` starts
-there instead, from the next start. The rest of this section describes that panel.
+command, menu, or question takes over the editor during a turn, or you press Ctrl+O while
+command output is already in the terminal's scrollback, the editor sits below a Termflow live
+transcript panel on the alternate screen, for the rest of the session.
+`/set display.full_screen true` starts there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. While scrolled back, `↓ more below · PgDn` shows in the rule
 below the draft, covering no transcript text. New output leaves a scrolled view in
-place; returning to the bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+place; returning to the bottom or submitting follows new output again. Ctrl+O shows or hides
+the full output of commands in place (see [How tool calls look](#how-tool-calls-look)). Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
@@ -1588,6 +1590,13 @@ Use `/set display.tool_output true` to show shell and grep details, or
 `/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
+
+In the interactive prompt, Ctrl+O shows the output of every finished command in the transcript
+under its result row, and hides it again. A row whose output is hidden ends with
+`ctrl+o to expand` when the row has room. The output is what the tool returned to the model,
+with secrets masked: the end of a long output (about 16 KB), marked where earlier output was left
+out, and the full output stays in its log. Results that arrive later, while the output is shown,
+open shown too. `pax -p` and redirected output are unchanged.
 
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
