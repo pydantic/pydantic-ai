@@ -182,6 +182,21 @@ class TestToolOutputLimitsTelemetry:
                 },
                 id='separate-content',
             ),
+            pytest.param(
+                ToolOutputLimits[object](store=FailingStore()),
+                ToolReturn(return_value='small', content='y' * 200_000),
+                snapshot(
+                    {
+                        'tool_output_limits.content.action': 'truncate',
+                        'tool_output_limits.content.original_size': 200000,
+                        'tool_output_limits.content.reduced_size': 4000,
+                        'tool_output_limits.content.size_unit': 'chars',
+                        'tool_output_limits.content.fallback_from': 'spill',
+                        'tool_output_limits.content.fallback_error': 'OSError',
+                    }
+                ),
+                id='separate-content-store-fails',
+            ),
         ],
     )
     async def test_the_span_records_how_the_result_was_reduced(
@@ -220,12 +235,19 @@ class TestToolOutputLimitsTelemetry:
             **handle,
         }
 
-    async def test_a_spill_failure_journaled_by_an_earlier_version_falls_back_without_an_error(
-        self, instrumented: Instrumented
+    @pytest.mark.parametrize(
+        ('journaled', 'error'),
+        [
+            pytest.param({'error': 'OSError'}, {'tool_output_limits.fallback_error': 'OSError'}, id='this-version'),
+            pytest.param(None, {}, id='earlier-version'),
+        ],
+    )
+    async def test_a_replayed_spill_failure_falls_back(
+        self, journaled: object, error: dict[str, str], instrumented: Instrumented
     ):
-        """An earlier version journaled a failed spill as `None`: a replay still falls back, with no error type."""
+        """A replay decodes a journaled spill failure; an earlier version journaled it as `None`, with no error type."""
         durability = RecordingDurability(
-            journal={'replayed__capability__tool_output_limits.spill': {'value': None, 'usage_delta': {}}}
+            journal={'replayed__capability__tool_output_limits.spill': {'value': journaled, 'usage_delta': {}}}
         )
         instrumentation, exporter = instrumented(False)
         agent: Agent[object, str] = Agent(
@@ -240,12 +262,11 @@ class TestToolOutputLimitsTelemetry:
 
         await agent.run('go')
 
-        assert limits_attributes(exporter) == snapshot(
-            {
-                'tool_output_limits.action': 'truncate',
-                'tool_output_limits.original_size': 500,
-                'tool_output_limits.reduced_size': 50,
-                'tool_output_limits.size_unit': 'chars',
-                'tool_output_limits.fallback_from': 'spill',
-            }
-        )
+        assert limits_attributes(exporter) == {
+            'tool_output_limits.action': 'truncate',
+            'tool_output_limits.original_size': 500,
+            'tool_output_limits.reduced_size': 50,
+            'tool_output_limits.size_unit': 'chars',
+            'tool_output_limits.fallback_from': 'spill',
+            **error,
+        }
