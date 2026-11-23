@@ -450,7 +450,7 @@ async def test_socket_directory_symlink_is_not_followed(private_runtime: Path, r
     target.mkdir(mode=0o700)
     (runtime_directory / f'pydantic-clai2-{os.getuid()}').symlink_to(target, target_is_directory=True)
     registry = LiveRegistry(lambda: [], directory=private_runtime)
-    with pytest.raises(PermissionError, match='Unsafe CLAI directory'):
+    with pytest.raises(PermissionError, match='Unsafe Pax directory'):
         async with registry.serving(subscribe):
             pass
     assert list(target.iterdir()) == []

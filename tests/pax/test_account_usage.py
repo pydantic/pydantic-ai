@@ -80,7 +80,7 @@ async def test_codex_usage_reads_the_plan_windows_as_the_signed_in_account() -> 
     body = {'plan_type': 'free'}  # no rate limit reported
     assert await codex_usage(provider) == AccountUsage(windows=(), plan='free')
     body = {'rate_limit': {'primary_window': {'used_percent': 'lots'}}}
-    with pytest.raises(UserError, match='Codex returned usage CLAI cannot read'):
+    with pytest.raises(UserError, match='Codex returned usage Pax cannot read'):
         await codex_usage(provider)
     with pytest.raises(UserError, match='Codex usage unavailable'):
         await codex_usage(codex_provider(lambda request: httpx2.Response(503, json={'error': 'busy'})))

@@ -354,7 +354,7 @@ async def run_form(form: ServerForm, dialogs: Dialogs, editor: Editor | None = N
     """The field-edit loop, until Save succeeds (`True`) or Cancel or backing out (`False`).
 
     `editor` edits the JSON on the terminal, as `edit_in_editor` does; without one, or when it cannot
-    run, a text dialog asks for it. The web UI passes none: an editor would open on CLAI's terminal.
+    run, a text dialog asks for it. The web UI passes none: an editor would open on Pax's terminal.
     """
     while True:
         row = await dialogs.choose(title=form.title, options=form.options(), description=form.preview())

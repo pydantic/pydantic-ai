@@ -1,4 +1,4 @@
-"""`!command` on CLAI's terminal runs on a pseudo-terminal and hands the terminal to full-screen programs."""
+"""`!command` on Pax's terminal runs on a pseudo-terminal and hands the terminal to full-screen programs."""
 
 import asyncio
 import io
@@ -31,7 +31,7 @@ def _set_size(fd: int, rows: int, columns: int) -> None:
 
 @pytest.fixture
 def terminal(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[int, int]]:
-    """A terminal for CLAI to run on: the user's end, which the test types into and reads, and CLAI's end."""
+    """A terminal for Pax to run on: the user's end, which the test types into and reads, and Pax's end."""
     user, clai = os.openpty()
     os.set_blocking(user, False)
     _set_size(clai, 30, 100)
@@ -49,7 +49,7 @@ def user(terminal: tuple[int, int]) -> int:
 
 
 async def _screen_shows(user: int, needle: bytes, screen: bytearray) -> None:
-    """Read what CLAI's terminal shows into `screen` until it contains `needle`."""
+    """Read what Pax's terminal shows into `screen` until it contains `needle`."""
     with anyio.fail_after(5):
         while needle not in screen:
             try:
@@ -110,7 +110,7 @@ async def test_output_is_captured_from_a_terminal(terminal: tuple[int, int], mon
     # stderr comes through a pipe of its own, not the terminal, so it is shown as it arrives: anywhere in stdout.
     assert stdout in console.getvalue().replace('to-stderr', '')
     assert '\x1b' not in console.getvalue()
-    # CLAI's terminal was raw while keys went to the command, and has its own modes back.
+    # Pax's terminal was raw while keys went to the command, and has its own modes back.
     assert termios.tcgetattr(clai)[3] & cooked == cooked
 
 
@@ -214,7 +214,7 @@ async def test_resizing_reaches_the_command(user: int, tmp_path: Path) -> None:
         while not (tmp_path / 'ready').exists():
             await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
     assert (tmp_path / 'started').read_text() == '30 100\n'
-    # Resize CLAI's terminal as a terminal emulator would, and tell CLAI as the kernel would.
+    # Resize Pax's terminal as a terminal emulator would, and tell Pax as the kernel would.
     _set_size(user, 40, 120)
     os.kill(os.getpid(), signal.SIGWINCH)
     with anyio.fail_after(5):
@@ -226,7 +226,7 @@ async def test_resizing_reaches_the_command(user: int, tmp_path: Path) -> None:
 async def test_a_resize_while_the_command_starts_reaches_it(
     user: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A resize after the pseudo-terminal is made but before CLAI listens for resizes still reaches the command."""
+    """A resize after the pseudo-terminal is made but before Pax listens for resizes still reaches the command."""
     started = asyncio.Event()
     start = PtyRun.start
 
@@ -250,7 +250,7 @@ async def test_a_resize_while_the_command_starts_reaches_it(
 
 
 async def test_background_job_cannot_hold_the_command_open(user: int) -> None:
-    """A job left running keeps the pseudo-terminal open; CLAI stops waiting for its output shortly after."""
+    """A job left running keeps the pseudo-terminal open; Pax stops waiting for its output shortly after."""
     with anyio.fail_after(1.5):
         context = await run_shell_command(
             'sleep 2 & echo started', console=Console(file=io.StringIO()), interrupts=Interrupts(), cwd=Path.cwd()

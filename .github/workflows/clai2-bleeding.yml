@@ -1,14 +1,14 @@
 # description: Publishes pydantic-ai-pax and its pinned workspace sdists, plus clai2-bleeding.json, as the moving clai2-bleeding prerelease.
-name: CLAI2 bleeding
+name: Pax bleeding
 
-# Publishes what `/update` installs on CLAI's `main` channel: sdists of `pydantic-ai-pax` and of
+# Publishes what `/update` installs on Pax's `main` channel: sdists of `pydantic-ai-pax` and of
 # the workspace packages it pins exactly, built from each `main` commit that changes them, and
 # `clai2-bleeding.json`, which names that commit. They replace the assets of the `clai2-bleeding`
 # prerelease, whose tag moves with them. Release downloads are not GitHub API requests, so `/update`
 # does not meet the unauthenticated API rate limit that a shared IP exhausts.
 #
 # In pydantic/pydantic-ai only `main` publishes. A fork can run this from "Run workflow" on any
-# branch and point CLAI at its own release with `CLAI_BLEEDING_URL` (see "Updating" in
+# branch and point Pax at its own release with `CLAI_BLEEDING_URL` (see "Updating" in
 # `src/pydantic_ai_pax/docs/reference.md`).
 
 on:
@@ -99,8 +99,8 @@ jobs:
             || gh api -X POST "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA"
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             # A prerelease that is never "latest", so it stays out of the release list's baselines.
-            gh release create "$TAG" --verify-tag --prerelease --latest=false --title 'CLAI2 bleeding' \
-              --notes 'Sdists rebuilt from `main` for `/update` on the CLAI `main` channel. Not a release.'
+            gh release create "$TAG" --verify-tag --prerelease --latest=false --title 'Pax bleeding' \
+              --notes 'Sdists rebuilt from `main` for `/update` on the Pax `main` channel. Not a release.'
           fi
           # Sdists first and the manifest last, so the manifest never names a commit without its files.
           gh release upload "$TAG" dist/bleeding/*.tar.gz --clobber
