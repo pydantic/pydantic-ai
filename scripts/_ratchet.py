@@ -3,7 +3,7 @@
 A check reads each changed `.py` file under its roots on both sides of a change and compares what it measures, so
 a rule ratchets with no committed baseline: whatever the base already has is allowed, and the change may not add to
 it. `--staged` compares the index with `HEAD`, for pre-commit; `--base REF` compares the working tree, untracked
-files included, with `REF`, for CI.
+files included, with `REF`, for CI. A check reads `.py` files unless it passes another `suffix`.
 """
 
 from __future__ import annotations
@@ -66,8 +66,8 @@ def read_objects(specs: Sequence[str]) -> list[str]:
     return blobs
 
 
-def changed_files(revisions: Sequence[str], roots: Sequence[str]) -> list[Change]:
-    """Every changed `.py` file under `roots`, with renames paired."""
+def changed_files(revisions: Sequence[str], roots: Sequence[str], suffix: str = '.py') -> list[Change]:
+    """Every changed file under `roots` whose name ends with `suffix`, with renames paired."""
     fields = git('diff', '--name-status', '-z', '-M', *revisions, '--', *roots).decode().split('\0')
     changes: list[Change] = []
     i = 0
@@ -79,12 +79,12 @@ def changed_files(revisions: Sequence[str], roots: Sequence[str]) -> list[Change
             continue
         changes.append(Change(None if status == 'A' else path, None if status == 'D' else path))
         i += 2
-    return [c for c in changes if (c.new_path or c.old_path or '').endswith('.py')]
+    return [c for c in changes if (c.new_path or c.old_path or '').endswith(suffix)]
 
 
-def untracked_files(roots: Sequence[str]) -> list[Change]:
+def untracked_files(roots: Sequence[str], suffix: str = '.py') -> list[Change]:
     paths = git('ls-files', '--others', '--exclude-standard', '-z', '--', *roots).decode().split('\0')
-    return [Change(None, path) for path in paths if path.endswith('.py')]
+    return [Change(None, path) for path in paths if path.endswith(suffix)]
 
 
 def load(changes: list[Change], base: str, staged: bool) -> None:
@@ -97,12 +97,12 @@ def load(changes: list[Change], base: str, staged: bool) -> None:
             c.new_source = next(news) if staged else Path(c.new_path).read_text(encoding='utf-8')
 
 
-def read_changes(options: Options, roots: Sequence[str]) -> list[Change]:
-    """Every changed `.py` file under `roots`, read on both sides."""
+def read_changes(options: Options, roots: Sequence[str], suffix: str = '.py') -> list[Change]:
+    """Every changed file under `roots` whose name ends with `suffix`, read on both sides."""
     if options.staged:
-        found = changed_files(['--cached', options.base], roots)
+        found = changed_files(['--cached', options.base], roots, suffix)
     else:
-        found = changed_files([options.base], roots) + untracked_files(roots)
+        found = changed_files([options.base], roots, suffix) + untracked_files(roots, suffix)
     load(found, options.base, options.staged)
     return found
 
