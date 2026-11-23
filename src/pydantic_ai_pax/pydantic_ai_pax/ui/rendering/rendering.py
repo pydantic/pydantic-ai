@@ -214,13 +214,21 @@ class LinkOutput(io.StringIO):
 
 
 class PartWriter(SmoothWriter):
-    """Types a streaming part out smoothly; a finished code block replaces its preview in one write."""
+    """Types a streaming part out smoothly; a finished code block replaces its preview in one write.
+
+    When the part ends, whatever is still being typed is written at once.
+    """
 
     def commit(self, text: str) -> None:
         """Write what is still being typed, then `text`, at once."""
         self._flush_all()
         self._target.write(text)
         self._target.flush()
+
+    async def close(self) -> None:
+        """Write what is still being typed at once, so the next tool line or the prompt does not wait for it."""
+        self._flush_all()
+        await super().close()
 
 
 def thinking_heading(console: Console) -> str:

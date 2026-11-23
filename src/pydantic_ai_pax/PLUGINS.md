@@ -3173,9 +3173,9 @@ streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
-has to wait for streamed text to finish and the editor and status row to
-get out of the way. `host.full_screen()` flushes pending output, suspends the
-editor's input reader, and restores the editor and its draft when the block exits.
+needs streamed text written out and the editor and status row out of the way.
+`host.full_screen()` writes pending streamed text at once, suspends the editor's
+input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
