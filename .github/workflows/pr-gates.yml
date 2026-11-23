@@ -20,6 +20,10 @@ on:
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   compatibility-waiver:
     name: 'Gate: compatibility waiver labeled'

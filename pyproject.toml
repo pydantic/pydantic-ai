@@ -454,6 +454,7 @@ quote-style = "single"
 ".github/scripts/test_douwebot_opencode_run.py" = ["D"]
 ".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 ".github/scripts/test_commands.py" = ["D"]
+".github/scripts/test_workflow_policy.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
 "scripts/test_check_test_waits.py" = ["D"]

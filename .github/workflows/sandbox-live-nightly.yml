@@ -26,6 +26,10 @@ concurrency:
   group: sandbox-live-nightly-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   live:
     uses: ./.github/workflows/sandbox-live.yml

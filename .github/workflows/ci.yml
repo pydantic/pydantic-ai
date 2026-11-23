@@ -46,6 +46,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   warm-douwebot-tools:
     name: warm douwebot fallback tools
@@ -321,6 +325,7 @@ jobs:
           .github/scripts/test_ci_matrix.py
           .github/scripts/test_commands.py
           .github/scripts/test_merge_audit.py
+          .github/scripts/test_workflow_policy.py
           scripts/test_gather_pydantic_ai_review_context.py
 
       - name: Test threat detector telemetry
@@ -1800,6 +1805,10 @@ jobs:
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: windows-latest
     timeout-minutes: 20
+    # The tests depend on which tools are on `PATH`, and Git Bash adds its own.
+    defaults:
+      run:
+        shell: pwsh
     env:
       CI: true
       COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.windows-workspace
@@ -2081,7 +2090,7 @@ jobs:
         # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
         # 9.0.4+, not 8.3: older 8.x builds refuse to start on the runner's Ubuntu `7.0.0-*-azure`
         # kernel (https://jira.mongodb.org/browse/SERVER-131779).
-        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
+        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204@sha256:4dec4f546bb40491d41ed7632f8681513a6380d0842c94affa5d3b88e61afda5
         ports:
           - 27017:27017
         options: >-
@@ -2118,7 +2127,7 @@ jobs:
     services:
       postgres:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: postgres:17
+        image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
         ports:
           - 5432:5432
         env:
@@ -2156,7 +2165,7 @@ jobs:
     services:
       redis:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: redis:8
+        image: redis:8@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
         ports:
           - 6379:6379
         options: >-
@@ -2186,7 +2195,8 @@ jobs:
       - name: Start a single-node Redis Cluster
         timeout-minutes: 2
         run: |
-          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+          docker run -d --name redis-cluster -p 6380:6380 \
+            redis:8@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53 \
             redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
           until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
           docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383

@@ -39,6 +39,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   plan:
     name: plan sandbox live tests

@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   stale:
     runs-on: ubuntu-latest

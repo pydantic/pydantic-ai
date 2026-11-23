@@ -36,6 +36,10 @@ concurrency:
   group: clai2-web-bundle
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: build the clai2 web UI bundle

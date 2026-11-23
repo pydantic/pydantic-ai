@@ -30,6 +30,10 @@ on:
 
 permissions: {}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   triage:
     # Fork and Dependabot pull_request runs (re-runs included) get no Actions secrets, so they have no provider key;

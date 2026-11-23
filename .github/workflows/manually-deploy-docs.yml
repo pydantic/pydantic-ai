@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # Note: this should match the `deploy-docs` job in ci.yml
   deploy-docs-manual:

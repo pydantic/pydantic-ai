@@ -36,6 +36,10 @@ concurrency:
   group: protect-github-dir-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   guard:
     name: .github Directory Guard
@@ -132,7 +136,7 @@ jobs:
           # maps maintain and custom roles onto their stable base access level (#6797).
           # Fails closed — unlike `pr-guard.yml`'s courtesy gate, an unreadable permission
           # blocks, because this is a security boundary.
-          AUTHOR_PERMISSION=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null || echo "unknown")
+          AUTHOR_PERMISSION=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null) || AUTHOR_PERMISSION=unknown
           case "$AUTHOR_PERMISSION" in
             write | admin)
               echo "Author ${PR_AUTHOR} has ${AUTHOR_PERMISSION} access to this repo; allowed."

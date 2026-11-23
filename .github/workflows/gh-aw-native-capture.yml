@@ -20,6 +20,10 @@ concurrency:
   group: gh-aw-native-capture-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   native-capture:
     name: gh-aw / native signed capture

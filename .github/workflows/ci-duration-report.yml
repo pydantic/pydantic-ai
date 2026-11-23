@@ -19,6 +19,10 @@ concurrency:
   group: ci-duration-report-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   report:
     if: github.event.label.name == 'trigger:ci-duration-report'

@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   canary:
     uses: ./.github/workflows/latest-versions-canary.yml

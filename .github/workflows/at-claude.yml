@@ -17,6 +17,10 @@ env:
   UV_PYTHON: 3.13
   UV_FROZEN: "1"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   get-pr-info:
     permissions:
@@ -54,7 +58,7 @@ jobs:
           echo "pr_base_sha=$(echo "$PR_DATA" | jq -r '.base.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
           PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.user.login')
-          PR_AUTHOR_PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null || echo "unknown")
+          PR_AUTHOR_PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null) || PR_AUTHOR_PERMISSION=unknown
           echo "pr_author_permission=${PR_AUTHOR_PERMISSION}" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -169,7 +173,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(git add:*),Bash(git checkout:*),Bash(git commit:*),Bash(git push:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),Bash(uv run:*),Bash(make:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number || github.event.issue.number }}:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(git add:*),Bash(git checkout:*),Bash(git commit:*),Bash(git push:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),Bash(uv run:*),Bash(make:*)"
 
   at-claude-fork:
     needs: get-pr-info
@@ -235,7 +239,7 @@ jobs:
           esac
 
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
-          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
+          if grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/' <<< "$CHANGED"; then
             echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping for security."
             exit 1
           fi

@@ -37,6 +37,10 @@ env:
   GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
   GIT_CONFIG_VALUE_0: https://github.com/
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   ui-roundtrip:
     name: UI round trip

@@ -16,6 +16,10 @@ concurrency:
   group: weekly-maintainer-digest
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     if: >-

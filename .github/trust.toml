@@ -1,0 +1,63 @@
+# Who the workflows trust, and who they must exclude. `.github/scripts/workflow_policy.py` checks every
+# workflow against this file, so a new bot, a new allowlist entry or a new credential-less actor starts here.
+
+# Actors whose `pull_request` runs get no repository secrets. A job that reads a secret on `pull_request` excludes
+# each class with one of its conditions, in its own `if:` or in the `if:` of a job it needs to succeed. So does every
+# job that reads a secret in a `credential_dependent` workflow below.
+[credential_less.fork]
+conditions = [
+    "github.event.pull_request.head.repo.full_name == github.repository",
+    "github.event.pull_request.head.repo.fork == false",
+    "github.event.workflow_run.head_repository.full_name == github.repository",
+]
+
+[credential_less.dependabot]
+conditions = [
+    "github.actor != 'dependabot[bot]'",
+    "github.event.pull_request.user.login != 'dependabot[bot]'",
+    "github.event.workflow_run.actor.login != 'dependabot[bot]'",
+]
+
+# A job whose `if:` chain holds one of these never runs on `pull_request`, so it needs no exclusion.
+[pull_request]
+never_runs_on = [
+    "github.ref_type == 'tag'",
+    "github.event_name == 'push'",
+    "github.event_name == 'schedule'",
+    "github.event_name == 'workflow_dispatch'",
+]
+
+# `workflow_run` workflows that read a secret to judge a `pull_request` run by a result that run could only produce
+# with secrets. A credential-less run's missing result would read as a failure.
+[[credential_dependent]]
+workflow = "agent-provider-health.yml"
+reason = "an agent run without the Z.AI key reports unknown quota, which must not open a provider incident"
+
+# Every bot a workflow names, and the allowlists it belongs to. `claude-trigger` is `claude-code-action`'s
+# `allowed_bots`; `team-app` is PR Guard's `TEAM_APP_LOGINS`. Each allowlist must equal its members here.
+[bots."claude[bot]"]
+roles = []
+[bots."dependabot[bot]"]
+roles = ["claude-trigger"]
+[bots."github-actions[bot]"]
+roles = []
+[bots."montybot-pydantic[bot]"]
+roles = ["team-app"]
+[bots."pydantic-docs[bot]"]
+roles = []
+[bots."pydanty[bot]"]
+roles = ["claude-trigger", "team-app"]
+
+# Unbound write commands in an agent's `--allowedTools` that its job needs for what it does. Every other write
+# command is bound to its target, such as `Bash(gh pr comment 123:*)`.
+[[unbound_write_tools]]
+workflow = "at-claude.yml"
+job = "at-claude"
+tool = "git push"
+reason = "the maintainer-requested job pushes the branch it implements"
+
+[[unbound_write_tools]]
+workflow = "at-claude.yml"
+job = "at-claude"
+tool = "gh pr create"
+reason = "the maintainer-requested job opens the pull request it implements"

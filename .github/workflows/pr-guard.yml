@@ -11,6 +11,10 @@ permissions: {}
 concurrency:
   group: pr-guard-${{ github.event.pull_request.number }}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   guard:
     name: Duplicate & Issue-Link Guard

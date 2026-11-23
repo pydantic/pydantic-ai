@@ -19,6 +19,10 @@ concurrency:
   group: pr-review-checks-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}${{ ((github.event.action == 'labeled' && github.event.label.name != 'pr-review-checks:run' && github.event.label.name != 'pr-review-checks:accepted') || (github.event.action == 'edited' && !github.event.changes.base)) && format('-noop-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   gate:
     name: PR Review Checks gate

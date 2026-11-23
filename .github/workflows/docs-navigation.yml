@@ -21,6 +21,10 @@ concurrency:
   group: docs-navigation-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   dispatch:
     name: Dispatch Docs Navigation Check

@@ -22,6 +22,10 @@ concurrency:
   group: agent-spend-report
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   report:
     if: github.repository == 'pydantic/pydantic-ai'

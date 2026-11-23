@@ -15,6 +15,10 @@ env:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   gateway-model-health:
     environment:

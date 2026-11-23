@@ -70,6 +70,10 @@ env:
   # system interpreter.
   UV_PYTHON_PREFERENCE: only-managed
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   latest-versions:
     name: resolve and test at latest versions (${{ matrix.python-version }})

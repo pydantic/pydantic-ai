@@ -34,6 +34,10 @@ concurrency:
   group: clai2-bleeding
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   validate:
     name: validate the published commit

@@ -14,6 +14,10 @@ concurrency:
   group: codspeed-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   classify:
     name: classify changes

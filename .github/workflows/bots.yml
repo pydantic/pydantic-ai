@@ -13,6 +13,10 @@ concurrency:
   group: pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && '-size' || ((github.event.action == 'labeled' && github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') || (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) && format('-noop-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   size-label:
     name: Size Label
@@ -473,7 +477,7 @@ jobs:
         # 300 entries, so it could hide an edit in a large PR). Paths with spaces
         # come through quoted, hence the `"` terminator.
         run: |
-          AUTHOR_PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null || echo "unknown")
+          AUTHOR_PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" --jq '.permission' 2>/dev/null) || AUTHOR_PERMISSION=unknown
           case "$AUTHOR_PERMISSION" in
             write | admin)
               echo "PR author ${PR_AUTHOR} has ${AUTHOR_PERMISSION} access; skipping agent-config guard."
@@ -482,7 +486,7 @@ jobs:
           esac
 
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
-          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json)( |"|$)|/(\.claude|\.agents|agent_docs)/'; then
+          if grep -qiE '/(AGENTS\.md|CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json)( |"|$)|/(\.claude|\.agents|agent_docs)/' <<< "$CHANGED"; then
             echo "::error::PR modifies agent config the reviewer loads (AGENTS.md, CLAUDE.md, CLAUDE.local.md, .mcp.json, .claude/, .agents/, agent_docs/). Skipping douwebot for security."
             exit 1
           fi

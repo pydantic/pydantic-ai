@@ -49,7 +49,8 @@ repos:
     hooks:
       - id: zizmor
   # Validates workflow events, expressions and job graphs, which zizmor and `check-yaml` do not.
-  # `.github/actionlint.yaml` holds its reasoned exceptions. It runs without shellcheck and pyflakes.
+  # `.github/actionlint.yaml` holds its reasoned exceptions. It runs without shellcheck and pyflakes;
+  # `.github/scripts/workflow_policy.py` checks the shell.
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:
@@ -124,6 +125,14 @@ repos:
         args: [run, --no-sync, scripts/check_command_stubs.py, --staged]
         files: ^\.github/scripts/
         types: [python]
+        language: system
+        pass_filenames: false
+      - id: workflow-policy
+        name: Workflow shell and trust policy
+        # Checks every workflow against `.github/trust.toml`, so it runs on the whole directory.
+        entry: uv
+        args: [run, --no-sync, python, .github/scripts/workflow_policy.py]
+        files: ^\.github/(workflows/[^/]*\.yml|scripts/[^/]*\.sh|trust\.toml)$
         language: system
         pass_filenames: false
       - id: check-cassettes
