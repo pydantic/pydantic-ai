@@ -3501,7 +3501,9 @@ instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
-than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
+than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry CLAI's
+own version as `service.version`; `LOGFIRE_SERVICE_VERSION` and
+`OTEL_SERVICE_VERSION` do not change it. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
