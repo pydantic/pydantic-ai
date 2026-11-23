@@ -265,7 +265,11 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     assert 'Fatal server error' in str(error.value)
 
 
-_INSTALL = 'install -y -qq --no-install-recommends xvfb xdotool x11-utils scrot util-linux'
+# The network options `_x11` gives apt, so a mirror it can't reach fails the install quickly.
+_APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=0'
+_UPDATE = f'update -qq {_APT_NETWORK}'
+_INSTALL_ONLY = f'install -y -qq --no-install-recommends {_APT_NETWORK}'
+_INSTALL = f'{_INSTALL_ONLY} xvfb xdotool x11-utils scrot util-linux'
 
 # The fake docker hides a program only from its own bin directory, so a host that has it would skip the install.
 _HOST_TOOLS = (
@@ -301,7 +305,7 @@ async def test_missing_display_programs_are_installed_on_first_use(
     docker.run_as(uid, sudo=uid != 0)
 
     assert await screen(_desktop(container_dir, image='my-desktop')).display_size() == (1280, 800)
-    assert docker.apt_get_calls == [f'{sudo}update -qq', f'{sudo}{_INSTALL}']
+    assert docker.apt_get_calls == [f'{sudo}{_UPDATE}', f'{sudo}{_INSTALL}']
 
 
 async def test_one_missing_program_makes_the_first_start_install_them_all(
@@ -312,7 +316,7 @@ async def test_one_missing_program_makes_the_first_start_install_them_all(
     docker.run_as(0)
 
     assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
-    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.apt_get_calls == [_UPDATE, _INSTALL]
 
 
 async def test_missing_display_programs_without_root_say_what_is_missing(
@@ -369,7 +373,7 @@ async def test_an_x_server_that_starts_during_the_install_is_kept(docker: FakeDo
     docker.start_x_during_install()
 
     assert await screen(backend).display_size() == (1280, 800)
-    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.apt_get_calls == [_UPDATE, _INSTALL]
     assert docker.xvfb_starts == 0
     assert docker.x_lock_exists(backend.ref.id)
 
@@ -413,7 +417,7 @@ async def test_a_desktop_program_the_package_lists_lack_leaves_the_display_worki
     docker.lack_packages('tint2')
 
     assert await screen(_desktop(container_dir, image='my-desktop')).screenshot() == FAKE_SCREENSHOT
-    assert docker.apt_get_calls == ['update -qq', _INSTALL, 'install -y -qq --no-install-recommends tint2']
+    assert docker.apt_get_calls == [_UPDATE, _INSTALL, f'{_INSTALL_ONLY} tint2']
     assert docker.panel_starts == 0
 
 
@@ -429,7 +433,7 @@ async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
     docker.lack_packages('tint2', 'xterm')
 
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
-    install_tint2 = ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    install_tint2 = [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert docker.apt_get_calls == install_tint2
     marker = docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed'
     assert marker.read_text() == ' tint2'
@@ -444,7 +448,7 @@ async def test_a_failed_desktop_install_is_not_run_again_for_the_same_programs(
     docker.uninstall('xterm')
     docker.remove_display()
     await screen(backend).display_size()
-    assert docker.apt_get_calls == [*install_tint2, 'update -qq', 'install -y -qq --no-install-recommends tint2 xterm']
+    assert docker.apt_get_calls == [*install_tint2, _UPDATE, f'{_INSTALL_ONLY} tint2 xterm']
     assert marker.read_text() == ' tint2 xterm'
 
 
@@ -461,7 +465,7 @@ async def test_a_working_desktop_install_removes_the_record_of_a_failed_one(
     docker.run_as(0)
 
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
-    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.apt_get_calls == [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert not marker.exists()
 
 
@@ -482,7 +486,7 @@ async def test_a_failed_desktop_install_is_not_recorded_through_a_symlink(
     docker.lack_packages('tint2')
 
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
-    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.apt_get_calls == [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert target.read_text() == 'kept'
 
 
@@ -501,7 +505,7 @@ async def test_a_failed_update_for_the_desktop_alone_is_kept_in_the_desktop_log(
     docker.lack_packages('tint2')
 
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
-    assert docker.apt_get_calls == ['update -qq', 'install -y -qq --no-install-recommends tint2']
+    assert docker.apt_get_calls == [_UPDATE, f'{_INSTALL_ONLY} tint2']
     assert docker.panel_starts == 0
     # The install failed only because the update did, so it isn't recorded, and the next start tries again.
     assert not (docker.bin_dir / 'containers' / f'{backend.ref.id}.tmp' / 'pydantic-ai-desktop-install-failed').exists()
@@ -523,8 +527,8 @@ async def test_a_running_x_server_gets_no_xvfb_installed(docker: FakeDocker, con
 
     assert await screen(backend).screenshot() == FAKE_SCREENSHOT
     assert docker.apt_get_calls == [
-        'update -qq',
-        'install -y -qq --no-install-recommends xdotool x11-utils scrot util-linux',
+        _UPDATE,
+        f'{_INSTALL_ONLY} xdotool x11-utils scrot util-linux',
     ]
 
 
@@ -632,7 +636,7 @@ async def test_a_failed_install_says_why(docker: FakeDocker, container_dir: Path
     with pytest.raises(WorkspaceUnavailableError, match='could not install xdotool:') as error:
         await screen(_desktop(container_dir, image='my-desktop')).screenshot()
     assert 'Unable to locate package' in str(error.value)
-    assert docker.apt_get_calls == ['update -qq', _INSTALL]
+    assert docker.apt_get_calls == [_UPDATE, _INSTALL]
 
 
 async def test_the_socket_directory_is_made_for_a_user_without_root(docker: FakeDocker, container_dir: Path) -> None:

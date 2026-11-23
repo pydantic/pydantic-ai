@@ -240,6 +240,20 @@ _CLIENTS = 'xdotool xwininfo scrot setsid'
 _PACKAGES = 'xdotool x11-utils scrot util-linux'
 """The Debian packages that have `_CLIENTS`."""
 
+_APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=0'
+"""Options that make an `apt-get` that can't reach its mirrors fail soon, so the start reports the missing programs.
+
+A network that drops packets, such as a Render sandbox's without internet, otherwise runs out `_START_TIMEOUT`: there,
+live, each DNS lookup took 80 seconds, and apt looks up its host again for each list and each of its 4 tries. With
+these options and `_APT_DNS`, `apt-get update` gave up in 49 seconds, and a sandbox with internet still installed the
+packages. The 20 seconds are for connecting and for each wait for data, not for a whole download, so a slow mirror that
+keeps sending still works.
+"""
+
+_APT_DNS = 'RES_OPTIONS="timeout:2 attempts:1"'
+"""Asks each DNS server once, for at most 2 seconds, instead of glibc's 5 seconds twice. A working server answers in
+milliseconds."""
+
 _DESKTOP_PROGRAMS = 'fluxbox tint2 xterm'
 """The window manager, panel and terminal, each in the Debian package of the same name. `xprop`, used to wait for the
 window manager, comes with `x11-utils` in `_PACKAGES`."""
@@ -415,11 +429,12 @@ def start_x_server(log: str, *, desktop: bool = True) -> str:
         '[ -z "$missing" ] || '
         """{ echo "the display needs$missing, and there's no root or passwordless sudo to install them with" >&2; """
         'exit 1; }; '
-        'else install="$elevate env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends"; '
+        f'else apt_get() {{ $elevate env DEBIAN_FRONTEND=noninteractive {_APT_DNS} apt-get "$@"; }}; '
+        f'install="apt_get install -y -qq --no-install-recommends {_APT_NETWORK}"; '
         # With only the desktop's programs missing, the update logs to fd 8, since starting Xvfb below empties `log`.
         # A failed update clears `updated`, so the install failure after it isn't recorded.
-        'updated=1; if [ -z "$missing" ]; then $elevate apt-get update -qq >&8 2>&1 || updated=; '
-        f'elif ! {{ $elevate apt-get update -qq && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
+        f'updated=1; if [ -z "$missing" ]; then apt_get update -qq {_APT_NETWORK} >&8 2>&1 || updated=; '
+        f'elif ! {{ apt_get update -qq {_APT_NETWORK} && $install $xvfb_package {_PACKAGES}; }} >{log} 2>&1; then '
         f'echo "could not install$missing:" >&2; tail -n 5 {log} >&2; exit 1; fi; '
         # The desktop's own install, so a package the lists lack only leaves the desktop out. Its failure is recorded
         # only after a working update, and never through a symlink.
