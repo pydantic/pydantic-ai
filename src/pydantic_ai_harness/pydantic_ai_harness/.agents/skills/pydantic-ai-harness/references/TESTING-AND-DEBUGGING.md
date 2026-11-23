@@ -173,7 +173,7 @@ print(asked[0].questions[0].header)
 `Memory()` defaults to `InMemoryMemoryStore`. Seed it with `InMemoryMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
 afterwards. The snapshot is a `MemorySnapshotPart` kept in message history, which the model gets
-as data in a `<memory>` tag on the user channel. It's added on a run's first request only when
+as data in a `<memory>` tag on the user channel, before the prompt. It's added on a run's first request only when
 memory changed since the last one.
 
 ```python
@@ -190,8 +190,8 @@ injected: list[str] = []
 
 def script(messages, info):
     if len(messages) == 1:
-        # The model gets the snapshot framed: its last user part's text is the `<memory>` element.
-        injected.append(''.join(item.content for item in messages[0].parts[-1].content))
+        # The model gets the snapshot framed, before the prompt: the user part ahead of `hi` is the `<memory>` element.
+        injected.append(''.join(item.content for item in messages[0].parts[-2].content))
         return ModelResponse(parts=[ToolCallPart('write_memory', {'content': '- uses uv'})])
     return ModelResponse(parts=[TextPart('ok')])
 
