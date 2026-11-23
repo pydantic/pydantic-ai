@@ -1716,7 +1716,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         add_breakpoint: bool,
         stable_only: bool,
     ) -> str | Omit:
-        """Move the instructions into leading input messages, and mark a cache breakpoint after the last static one.
+        """Move instructions into leading input messages, with `add_breakpoint` marking the last static one for caching.
 
         The top-level `instructions` field cannot carry a breakpoint. With `stable_only`, the parts that rewrite the
         prefix when they change stay in the top-level field, which the model reads after the input. Mutates
