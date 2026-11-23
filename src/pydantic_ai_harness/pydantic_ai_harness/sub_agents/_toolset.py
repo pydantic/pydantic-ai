@@ -1226,20 +1226,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if _emits_events(ctx):
             await ctx.emit(event)
         if isinstance(event, ParentMessageEvent) and event.vetoed:
-            self._telemetry(ctx).decision(
-                'vetoed',
-                agent_name=event.agent_name,
-                task_id=event.task_id,
-                attributes={'sub_agents.event': event.kind},
-                content=veto_reason_content(event),
-            )
+            self._telemetry(ctx).vetoed(event)
         elif isinstance(event, TaskBackgroundedEvent):
-            self._telemetry(ctx).decision(
-                'task backgrounded',
-                agent_name=event.agent_name,
-                task_id=event.task_id,
-                attributes={'sub_agents.reason': event.reason},
-            )
+            self._telemetry(ctx).backgrounded(event)
         if record is not None:
             await owner.notify(record, event)
         return event
@@ -1947,7 +1936,7 @@ def _record_delegation_ended(
             attributes=attributes,
         )
         return
-    name_attributes, name_content = telemetry.agent_name(agent_name)
+    name_attributes, name_content = telemetry.agent_name_attributes(agent_name)
     span = current_span(telemetry.ctx)
     # The SDK warns about, and drops, an attribute set on a span that has already ended.
     if not span.is_recording():

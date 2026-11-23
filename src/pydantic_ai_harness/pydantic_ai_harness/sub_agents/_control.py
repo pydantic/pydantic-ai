@@ -91,7 +91,7 @@ class TaskTelemetry:
     """Agent names the application configured. Any other name was chosen by the model, by creating that agent,
     so it is recorded only as content."""
 
-    def agent_name(self, agent_name: str) -> tuple[dict[str, str], dict[str, str]]:
+    def agent_name_attributes(self, agent_name: str) -> tuple[dict[str, str], dict[str, str]]:
         """`sub_agents.agent_name` as `(attributes, content)`: an attribute only for an agent the app configured."""
         attribute = {'sub_agents.agent_name': agent_name}
         return (attribute, {}) if agent_name in self.configured_names else ({}, attribute)
@@ -106,7 +106,7 @@ class TaskTelemetry:
         content: Mapping[str, AttributeValue] | None = None,
     ) -> None:
         """Record a `SubAgents` decision with its agent name and optional task id."""
-        name_attributes, name_content = self.agent_name(agent_name)
+        name_attributes, name_content = self.agent_name_attributes(agent_name)
         decision_attributes = {**name_attributes, **(attributes or {})}
         if task_id is not None:
             decision_attributes['sub_agents.task_id'] = task_id
@@ -115,6 +115,25 @@ class TaskTelemetry:
             f'sub_agents {name}',
             attributes=decision_attributes,
             content={**name_content, **(content or {})},
+        )
+
+    def vetoed(self, event: ParentMessageEvent) -> None:
+        """Record that a listener vetoed `event`."""
+        self.decision(
+            'vetoed',
+            agent_name=event.agent_name,
+            task_id=event.task_id,
+            attributes={'sub_agents.event': event.kind},
+            content=veto_reason_content(event),
+        )
+
+    def backgrounded(self, event: TaskBackgroundedEvent) -> None:
+        """Record that a task moved to the background, and why."""
+        self.decision(
+            'task backgrounded',
+            agent_name=event.agent_name,
+            task_id=event.task_id,
+            attributes={'sub_agents.reason': event.reason},
         )
 
 
@@ -370,23 +389,12 @@ async def put_question(
                 content={'sub_agents.question': event.question, 'sub_agents.answer': answer.answer},
             )
             return answer
-        telemetry.decision(
-            'vetoed',
-            agent_name=record.agent_name,
-            task_id=record.id,
-            attributes={'sub_agents.event': answer.kind},
-            content=veto_reason_content(answer),
-        )
+        telemetry.vetoed(answer)
     if record.status == 'running' and not record.background:
         # The delegating model can only answer once the delegation tool call waiting for the task returns.
         backgrounded = TaskBackgroundedEvent(task_id=record.id, agent_name=record.agent_name, reason='question')
         await owner.publish(record, backgrounded)
-        telemetry.decision(
-            'task backgrounded',
-            agent_name=record.agent_name,
-            task_id=record.id,
-            attributes={'sub_agents.reason': 'question'},
-        )
+        telemetry.backgrounded(backgrounded)
         owner.background(record.id)
     text = await owner.ask(record.id, question_id=event.question_id, question=event.question)
     return TaskAnsweredEvent(
@@ -454,11 +462,7 @@ async def run_remote(
             if settled is None:
                 # The task is ending without its worker's report, so stop it rather than leave it running there.
                 # This is teardown, not a decision listeners could veto.
-                telemetry.decision(
-                    'remote task stopped',
-                    agent_name=record.agent_name,
-                    task_id=record.id,
-                )
+                telemetry.decision('remote task stopped', agent_name=record.agent_name, task_id=record.id)
                 try:
                     await transport.send(TaskForceCancelRequestedEvent(task_id=record.id, agent_name=record.agent_name))
                 except Exception:

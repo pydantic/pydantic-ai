@@ -100,7 +100,6 @@ from pydantic_ai_harness.sub_agents import (
     is_task_report,
     serialize_message,
 )
-from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness._rendering import sent_messages
 
 from .._deferred_tools import pending_agent
@@ -262,7 +261,7 @@ class TestSubAgentsTaskControl:
             scripted(call('delegate_task', agent_name='researcher', task='Find x.'), echo_last_return),
             capabilities=[controlled(), recorder],
         )
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         [assigned] = recorder.of(TaskAssignedEvent)
         assert result.output == f'Task {assigned.task_id} (ok):\nchild output'
@@ -297,7 +296,7 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(slow)), recorder],
         )
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         [receipt] = tool_returns(result.all_messages())
         assert 'is running in the background' in receipt
@@ -333,7 +332,7 @@ class TestSubAgentsTaskControl:
         )
         settings, exporter = traced(False)
         parent.instrument = settings
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'is running in the background' in tool_returns(result.all_messages())[0]
         assert [event.reason for event in recorder.of(TaskBackgroundedEvent)] == ['auto']
@@ -393,7 +392,7 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(asker)), recorder],
         )
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         returns = tool_returns(result.all_messages())
         assert 'is running in the background' in returns[0]
