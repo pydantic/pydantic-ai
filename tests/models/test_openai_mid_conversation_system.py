@@ -51,7 +51,8 @@ ANNOUNCEMENT = lookalike_note_announcement(system_role=False)
 
 
 def ping() -> str:
-    return 'pong'
+    """Declared so each request carries the tool its history calls; the history already holds the result."""
+    raise NotImplementedError
 
 
 def message_history() -> list[ModelMessage]:
