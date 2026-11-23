@@ -7,6 +7,7 @@ nor start a thread, so the check does both through units. These tests start a lo
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -33,6 +34,10 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation
 from tests.temporal_utils import temporal_dev_server_cache_dir
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
+
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
 

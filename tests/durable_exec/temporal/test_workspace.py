@@ -9,6 +9,7 @@ re-imports the scenario module and can construct a backend, but only an activity
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from datetime import timedelta
@@ -60,6 +61,10 @@ try:
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
+
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
 
 
 # The 3.14 durable-exec CI leg takes this skip; every other leg falls through.

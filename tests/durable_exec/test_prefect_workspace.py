@@ -8,6 +8,7 @@ adds what only Prefect has.
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,10 @@ try:
     from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
+
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
 
 
 pytestmark = [pytest.mark.xdist_group(name='prefect'), pytest.mark.usefixtures('prefect_test_server')]

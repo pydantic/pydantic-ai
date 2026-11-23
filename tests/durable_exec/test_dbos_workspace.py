@@ -8,6 +8,7 @@ adds what only DBOS has.
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -29,6 +30,10 @@ try:
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
+
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
 
 
 pytestmark = pytest.mark.xdist_group(name='dbos')

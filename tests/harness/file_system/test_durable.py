@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -28,6 +29,10 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
+
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 

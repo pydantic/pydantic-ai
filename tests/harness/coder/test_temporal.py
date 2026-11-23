@@ -5,6 +5,7 @@ These tests start a local Temporal dev server via `WorkflowEnvironment.start_loc
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
@@ -35,6 +36,10 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from tests.temporal_utils import temporal_dev_server_cache_dir
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
+
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
 

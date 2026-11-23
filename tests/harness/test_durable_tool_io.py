@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 import uuid
 from collections import Counter
@@ -59,6 +60,10 @@ try:
     from pydantic_ai.durable_exec.temporal import TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos, prefect, temporalio, exa-py or youdotcom not installed', allow_module_level=True)
+
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
 
 
 @pytest.fixture

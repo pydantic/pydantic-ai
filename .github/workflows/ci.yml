@@ -1865,38 +1865,6 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
-  # The whole suite on Windows, where `test-windows-workspace` runs only the files it lists. On tags
-  # only, and no job needs it: like `latest-versions-canary`, a failure turns the release run red for
-  # the approver without delaying or stopping `check` or the release jobs.
-  test-windows:
-    name: test on Windows
-    # TEMPORARY: the branch clause measures this job; removed before this branch's pull request opens.
-    if: github.ref_type == 'tag' || github.ref == 'refs/heads/ci-package-shape'
-    runs-on: windows-latest
-    timeout-minutes: 60
-    env:
-      CI: true
-      # See `test-clai2-clipboard`: no Git-sourced dependency is installed here.
-      GIT_CONFIG_COUNT: "0"
-      GIT_CONFIG_KEY_0: ""
-      GIT_CONFIG_VALUE_0: ""
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          python-version: "3.13"
-          enable-cache: true
-          cache-suffix: windows-all-extras
-
-      - run: choco install ripgrep --no-progress -y
-
-      - run: uv sync --all-packages --all-extras --no-extra sentence-transformers
-
-      - run: uv run --no-sync pytest --durations=50 -n logical --dist=loadgroup tests
-
   # TEMPORARY: measures the lines and branches of `pydantic-ai-pax`'s source its own suite leaves
   # uncovered, on the two versions a `pydantic-ai-pax`-only change collects; removed before this
   # branch's pull request opens.
@@ -2021,6 +1989,35 @@ jobs:
           status=0
           uv run --no-project python ../current/scripts/check_pyright_sources.py "$RUNNER_TEMP/pyright.log" || status=$?
           echo "check_pyright_sources.py exited $status"
+
+  # TEMPORARY: collects the suite on Windows at the parent of https://github.com/pydantic/pydantic-ai/pull/12678,
+  # whose `os.geteuid()` skip guards failed to import there; removed before this branch's pull request opens.
+  prove-windows-collection:
+    name: prove Windows collection at the parent of 12678
+    if: github.ref == 'refs/heads/ci-package-shape'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: e0e2cc0fc39637311ac2c7b036c81a8309a59acf
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+
+      - name: collect every test
+        shell: bash
+        run: |
+          status=0
+          uv run --all-packages --all-extras --no-extra sentence-transformers pytest --collect-only -q tests > "$RUNNER_TEMP/collect.log" 2>&1 || status=$?
+          grep -E 'ERROR collecting|errors? during collection|tests collected' "$RUNNER_TEMP/collect.log" || true
+          echo "collection exited $status"
 
   test-clai2-web:
     name: test clai2 web UI

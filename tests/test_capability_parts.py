@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -99,6 +100,10 @@ with try_import() as anthropic_available:
 with try_import() as ui_imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+
+if os.name != 'posix':  # pragma: lax no cover
+    pytest.skip('builds a `LocalWorkspaceBackend` at import, which needs a POSIX host', allow_module_level=True)
 
 
 @dataclass(kw_only=True)
