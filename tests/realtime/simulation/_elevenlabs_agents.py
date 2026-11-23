@@ -52,7 +52,7 @@ from pydantic_ai.realtime.settings import RealtimeModelSettings
 from ._machine import TICKS, SessionMachine
 from ._simulation import SessionOptions, Simulation, step
 from ._truth import GroundTruth, ToolCallTruth, TruthResponse
-from ._wire import FakeWebSocket, Network, SendFault
+from ._wire import ArmedFaults, FakeWebSocket, FrameFault, Network, SendFault, fault_tag
 
 AGENT_ID = 'agent_simulated'
 SPEECH = base64.b64encode(b'\x00\x10' * 1600).decode()
@@ -115,6 +115,9 @@ class ElevenLabsAgentsServer:
         self._next_event = 1
         self._next_usage = 1
         self._context_tokens = 100
+        self.faults = ArmedFaults()
+        self.unreadable_agent_responses = 0
+        """How many `agent_response`s a fault left unreadable."""
 
     # --- transport ---------------------------------------------------------------------------------
 
@@ -143,7 +146,29 @@ class ElevenLabsAgentsServer:
             # Something else comes: the reply's calls were all it had.
             self.calling = None
             frame = {**frame, '_simulation': {**frame.get('_simulation', {}), 'called': called.key}}
-        socket.emit(frame, immediately=immediately)
+        tags: dict[str, Any] = frame.get('_simulation', {})
+        truncated = False
+        # A reply's terminal: the `agent_response` with its whole text, or the frame that ends its audio or its calls.
+        if frame['type'] == 'agent_response' or 'voiced' in tags or 'called' in tags:
+            terminal_faults = (
+                ('unparsable', 'id_less_terminal') if frame['type'] == 'agent_response' else ('unparsable',)
+            )
+            fault = self.faults.take(*terminal_faults)
+            if fault == 'unparsable':
+                # Its payload is unreadable; what its type alone ends still ends.
+                frame = fault_tag(
+                    {key: value if key in ('type', '_simulation') else None for key, value in frame.items()}, fault
+                )
+                if tags.get('content'):
+                    self.truth.faulted.add(tags['response'])
+                self.unreadable_agent_responses += frame['type'] == 'agent_response'
+            elif fault == 'id_less_terminal':
+                event = {key: value for key, value in frame['agent_response_event'].items() if key != 'response_id'}
+                frame = fault_tag({**frame, 'agent_response_event': event}, fault)
+        elif frame['type'] == 'audio' and tags.get('content') and self.faults.take('truncated'):
+            truncated = True
+            self.truth.faulted.add(tags['response'])
+        socket.emit(frame, immediately=immediately, truncated=truncated)
 
     def on_client_frame(self, socket: FakeWebSocket, frame: dict[str, Any]) -> None:
         kind = frame.get('type')
@@ -197,6 +222,9 @@ class ElevenLabsAgentsServer:
         """The connection turned `frame` into codec events, which the session handles before anything else runs."""
         now = self.truth.tick()
         tags = frame.get('_simulation', {})
+        if tags.get('fault') == 'unparsable':
+            # The client reads only the type of an unreadable frame: what it ends, not what it says.
+            tags = {key: value for key, value in tags.items() if key in ('voiced', 'called')}
         response = self.truth.responses.get(tags.get('response', ''))
         if response is not None:
             if response.started_read is None:
@@ -430,6 +458,13 @@ class ElevenLabsAgentsServer:
 
     def ping(self) -> None:
         self._emit({'type': 'ping', 'ping_event': {'event_id': self._next_event, 'ping_ms': 50}})
+
+    def arm(self, fault: FrameFault) -> None:
+        """Damage the next frame `fault` applies to; an unknown frame goes out at once."""
+        if fault != 'unknown_type':
+            self.faults.pending.append(fault)
+        elif (socket := self.socket) is not None and socket.alive:
+            self._emit(fault_tag({'type': 'simulation_unknown_event'}, fault))
         self._next_event += 1
 
 
@@ -571,6 +606,9 @@ class ElevenLabsAgentsSimulation(Simulation):
     def ping(self, deliver: bool = True, ticks: int | None = None) -> None:
         self.server.ping()
         self._after_server(deliver, ticks)
+
+    def arm_fault(self, fault: FrameFault) -> None:
+        self.server.arm(fault)
 
     @step
     def fail_next_send(self, fault: SendFault = 'lost', ticks: int | None = None) -> None:

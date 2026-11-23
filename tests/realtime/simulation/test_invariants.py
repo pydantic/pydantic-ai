@@ -9,12 +9,19 @@ import pytest
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.messages import ModelResponse, SpeechPart, TextPart
-    from pydantic_ai.realtime.codec import ToolCall
+    from pydantic_ai.messages import (
+        ModelResponse,
+        RealtimeSessionErrorEvent,
+        SpeechPart,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+    from pydantic_ai.realtime.codec import ToolCall, TruncateOutput
 
     from . import _findings
     from ._invariants import is_cut_off_copy
-    from ._openai_simulation import OpenAISimulation
+    from ._openai_simulation import OpenAIOptions, OpenAISimulation
     from ._simulation import InvariantViolation, Operation
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs or hypothesis not installed')
@@ -124,6 +131,53 @@ def test_reconnect_without_replay_loses_the_history() -> None:
         assert first.conversation.isdisjoint(second.conversation)
 
 
+def test_a_failure_kept_from_the_provider_is_reported() -> None:
+    """A tool that raised has its failure sent like any result, so the model answers it rather than going silent."""
+    with OpenAISimulation(strict=True) as sim:
+        session = sim.session
+        assert session is not None
+
+        async def withheld(call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException) -> bool:
+            return False
+
+        # What a session that tells the model nothing of a call that raised would do.
+        session._send_failed_result = withheld  # pyright: ignore[reportPrivateUsage]
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool(outcome='error')
+        with pytest.raises(
+            InvariantViolation,
+            match=r"\[tool\.failure_unsent\] tool call '[^']+' raised, but its failure never reached the provider",
+        ):
+            sim.settle()
+
+
+def test_a_cut_no_truncation_records_is_reported() -> None:
+    """Where the provider can't truncate (xAI), only history records where the listener stopped, so it must."""
+    with OpenAISimulation(openai=OpenAIOptions(dialect='xai'), strict=True) as sim:
+        session = sim.session
+        assert session is not None
+
+        def nothing_to_cut(playhead: int) -> list[TruncateOutput]:
+            return []
+
+        # What a session that finds nothing to cut where the provider can't truncate would do.
+        session._truncations_at = nothing_to_cut  # pyright: ignore[reportPrivateUsage]
+        sim.send_text()
+        sim.speak(chunks=3)
+        sim.finish()
+        sim.settle()
+        sim.play(chunks=2)
+        sim.interrupt()
+        assert sim.untruncated_cuts == [('item_msg_2', 100)]
+        with pytest.raises(
+            InvariantViolation,
+            match=r'\[playback\.cut_not_recorded\] resp_1 was cut off at 100 ms, but history records it as complete',
+        ):
+            sim.settle()
+
+
 def test_findings_need_what_they_are_about() -> None:
     """A finding's trigger needs the input or response its violation names; a violation naming neither isn't one."""
     with OpenAISimulation(strict=True) as sim:
@@ -150,3 +204,20 @@ def test_a_cut_off_copy_only_marks_the_response_interrupted_and_moves_cuts_back(
     assert not is_cut_off_copy(cut, replace(cut, parts=[replace(recorded.parts[0], interrupted_at_ms=None)]))
     assert not is_cut_off_copy(recorded, replace(cut, parts=[SpeechPart(speaker='assistant', transcript='Bye.')]))
     assert not is_cut_off_copy(recorded, replace(recorded, parts=[TextPart('Hi.')]))
+
+
+def test_parse_error_no_damaged_frame_explains_is_the_simulators() -> None:
+    """A frame the connection can't parse is the simulator's bug, unless it is one the trace damaged on purpose."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.send_text()
+        sim.speak()
+        sim.corrupt_next_frame('unparsable')
+        sim.finish()
+        assert sim.truth.fault_frames_read == 1
+        sim.events.append(
+            RealtimeSessionErrorEvent(message='Failed to parse OpenAI realtime event: x', recoverable=True)
+        )
+        with pytest.raises(
+            InvariantViolation, match=r'\[simulator\.malformed_frame\] Failed to parse OpenAI realtime event: x'
+        ):
+            sim.check()

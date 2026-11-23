@@ -7,6 +7,8 @@
 - The `test_known_*` tests pin each known finding to a minimal scenario, as a strict expected failure:
   when the fix lands, the test starts passing and fails as `XPASS(strict)`, which is the prompt to remove
   the finding from `_findings.py` and drop the `xfail` mark, keeping the scenario as a regression test.
+- A new scenario that pins a fix runs on every provider, through `on_every_provider`, unless an exemption says
+  why that provider can't reach it: a fix that lands for one provider at a time leaves the rest unchecked.
 - The `test_baseline_*` tests are conversations every provider must get through without a single
   violation, strictly: they keep the simulator itself honest.
 - The `test_scenario_*` tests walk each simulated server through its faults and edge behaviors
@@ -16,7 +18,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 import pytest
@@ -34,7 +36,7 @@ with try_import() as imports_successful:
     )
 
     from ._elevenlabs_agents import ElevenLabsAgentsMachine, ElevenLabsAgentsOptions, ElevenLabsAgentsSimulation
-    from ._findings import FINDINGS_BY_ID, KNOWN_FINDINGS
+    from ._findings import ALL, FINDINGS_BY_ID, KNOWN_FINDINGS
     from ._gemini import GeminiBehavior, GeminiMachine, GeminiSimulation
     from ._live import LiveMachine, LiveSimulation
     from ._machine import KNOWN_HIT_COUNTS
@@ -48,7 +50,7 @@ with try_import() as imports_successful:
         XaiMachine,
     )
     from ._simulation import FindingReproduced, SessionOptions, Simulation
-    from ._wire import SendFault
+    from ._wire import FrameFault, SendFault
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs or hypothesis not installed')
 
@@ -67,19 +69,25 @@ def exploration_settings() -> settings:
     )
 
 
-@pytest.mark.parametrize(
-    'machine',
-    [
-        pytest.param(OpenAIMachine, id='openai'),
-        pytest.param(AzureMachine, id='azure'),
-        pytest.param(XaiMachine, id='xai'),
-        pytest.param(ElevenLabsMachine, id='elevenlabs'),
-        pytest.param(GeminiMachine, id='gemini'),
-        pytest.param(LiveMachine, id='gpt-live'),
-        pytest.param(ElevenLabsAgentsMachine, id='elevenlabs-agents'),
-    ]
+PROVIDERS: dict[str, tuple[type[RuleBasedStateMachine], Callable[[], Simulation]]] = (
+    {
+        'openai': (OpenAIMachine, lambda: OpenAISimulation(openai=OpenAIOptions(dialect='openai'))),
+        'azure': (AzureMachine, lambda: OpenAISimulation(openai=OpenAIOptions(dialect='azure'))),
+        'xai': (XaiMachine, lambda: OpenAISimulation(openai=OpenAIOptions(dialect='xai'))),
+        'elevenlabs': (ElevenLabsMachine, lambda: OpenAISimulation(openai=OpenAIOptions(dialect='elevenlabs'))),
+        'gemini': (GeminiMachine, GeminiSimulation),
+        'gpt-live': (LiveMachine, LiveSimulation),
+        'elevenlabs-agents': (ElevenLabsAgentsMachine, ElevenLabsAgentsSimulation),
+    }
     if imports_successful()
-    else [],
+    else {}
+)
+"""Each simulated provider, by the id known findings are scoped by: its exploration machine, and a fresh simulation."""
+assert not PROVIDERS or PROVIDERS.keys() == ALL, 'every provider a finding can be scoped to is simulated'
+
+
+@pytest.mark.parametrize(
+    'machine', [pytest.param(machine, id=provider) for provider, (machine, _) in PROVIDERS.items()]
 )
 @pytest.mark.slow(reason='explores 50 randomized sessions of up to 25 steps against each provider simulator')
 def test_exploration(machine: type[RuleBasedStateMachine]) -> None:
@@ -110,6 +118,33 @@ def reproduce(finding_id: str, sim: Simulation, scenario: Callable[[Any], object
     sim.strict = False
     with sim.enforcing(finding_id) as s:
         scenario(s)
+
+
+def on_every_provider(*, requires: str | None = None, exempt: Mapping[str, str] = {}) -> pytest.MarkDecorator:
+    """Run a scenario on every simulated provider, passing it `simulation`: a factory for a fresh one.
+
+    A provider sits the scenario out only with a reason: its model's profile lacks the capability `requires` names,
+    so the session refuses what the scenario does, or `exempt` maps it to why it can't reach the scenario.
+    """
+    assert exempt.keys() <= PROVIDERS.keys(), f'not simulated providers: {sorted(exempt.keys() - PROVIDERS.keys())}'
+    reasons = dict(exempt)
+    for provider, (_, simulation) in PROVIDERS.items():
+        if requires is not None and provider not in reasons:
+            sim = simulation()
+            if not sim.build_model().profile.get(requires, False):
+                reasons[provider] = f'its model has no `{requires}`'
+            sim.loop.close()
+    return pytest.mark.parametrize(
+        'simulation',
+        [
+            pytest.param(
+                simulation,
+                id=provider,
+                marks=[pytest.mark.skip(reason=reasons[provider])] if provider in reasons else [],
+            )
+            for provider, (_, simulation) in PROVIDERS.items()
+        ],
+    )
 
 
 def test_merged_requests_release_their_reservations() -> None:
@@ -146,27 +181,32 @@ def test_a_response_taken_for_ours_before_the_server_echoed_settles_nothing_twic
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
 
 
-@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai', 'elevenlabs'])
-def test_raising_tool_completes_the_turn_once(dialect: Dialect) -> None:
+@on_every_provider()
+def test_raising_tool_completes_the_turn_once(simulation: Callable[[], Simulation]) -> None:
     """A raising tool leaves nothing waiting (OR8, #8765): its failure goes out, and the model's answer ends the turn.
 
-    The turn completes once. A reply asked for afterwards completes a turn of its own.
+    The turn completes once, and `wait_for_reply()` waits for that answer rather than returning as the tool raises.
+    A reply asked for afterwards completes a turn of its own.
     """
 
-    def scenario(sim: OpenAISimulation) -> None:
+    def scenario(sim: Simulation) -> None:
         sim.send_text()
         sim.call_tool()
-        sim.finish()
         assert sim.turn_completes == []
+        waiter = sim.wait_for_reply()
         sim.finish_tool(outcome='error')
+        assert waiter.returned is None
         sim.settle()
+        assert waiter.returned is not None
         assert len(sim.turn_completes) == 1
         sim.send_text()
         sim.wait_for_reply()
         sim.settle()
         assert len(sim.turn_completes) == 2
 
-    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
+    sim = simulation()
+    run_clean(sim, scenario)
+    assert sim.exchanges_abandoned_at == []
 
 
 def test_pruned_tool_round_leaves_the_server_conversation_and_stays_in_history() -> None:
@@ -358,23 +398,6 @@ def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
         sim.settle()
 
     run_clean(OpenAISimulation(), scenario)
-
-
-def test_gemini_raising_tool_completes_the_turn_once() -> None:
-    """A tool that raises completes the turn once on Gemini Live too, and a later reply completes its own."""
-
-    def scenario(sim: GeminiSimulation) -> None:
-        sim.send_text()
-        sim.call_tools()
-        sim.finish_tool(outcome='error')
-        sim.settle()
-        assert len(sim.turn_completes) == 1
-        sim.send_text()
-        sim.wait_for_reply()
-        sim.settle()
-        assert len(sim.turn_completes) == 2
-
-    run_clean(GeminiSimulation(), scenario)
 
 
 def test_gemini_tool_batch_answer_lost_to_a_drop_is_settled() -> None:
@@ -1359,28 +1382,6 @@ def test_live_call_that_raises_is_answered_with_its_failure() -> None:
     assert len(sim.server.truth.usage_read) == 3
 
 
-def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
-    """A tool that raised still gets its failure sent, on GPT-Live as on every provider, so the exchange goes on.
-
-    `wait_for_reply()` waits for the reply that answers the failure, as it does for a result that succeeded, rather
-    than returning as the tool raises, with the answer then coming as a reply nobody asked for.
-    """
-
-    def scenario(sim: LiveSimulation) -> None:
-        sim.send_text()
-        sim.backend_call()
-        sim.backend_finish()
-        waiter = sim.wait_for_reply()
-        sim.finish_tool(outcome='error')
-        assert waiter.returned is None
-        sim.settle()
-        assert waiter.returned is not None
-
-    sim = LiveSimulation()
-    run_clean(sim, scenario)
-    assert sim.exchanges_abandoned_at == []
-
-
 def test_live_call_that_raises_after_its_siblings_answered_is_answered_with_its_failure() -> None:
     """The backend response has ended and the other results are out, waited for, when the last call raises (SIM-43)."""
 
@@ -2074,6 +2075,36 @@ def test_baseline_openai_barge_in_after_the_reply_finished_and_reconnect() -> No
     truncations: list[tuple[str, int]] = []
     run_clean(OpenAISimulation(), scenario)
     assert truncations == snapshot([('item_msg_2', 100)])
+    assert cuts == snapshot([('interrupted', [100]), ('complete', [None])])
+
+
+@on_every_provider(requires='supports_interruption')
+def test_barge_in_after_the_reply_finished_is_recorded_as_cut_off(simulation: Callable[[], Simulation]) -> None:
+    """Generation outruns playback: a reply the user cut off after it finished is recorded as cut off where they
+    stopped listening, whether or not the provider can truncate it (xAI can't), and stays so across a reconnect."""
+
+    def scenario(sim: Simulation) -> None:
+        sim.send_text()
+        sim.speak(chunks=3)
+        sim.finish()
+        sim.settle()
+        sim.play(chunks=2)
+        sim.interrupt(mode='played_bytes')
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        cuts.extend(
+            (message.state, [part.interrupted_at_ms for part in message.parts if isinstance(part, SpeechPart)])
+            for message in sim.history()
+            if isinstance(message, ModelResponse)
+        )
+
+    cuts: list[tuple[str, list[int | None]]] = []
+    run_clean(simulation(), scenario)
     assert cuts == snapshot([('interrupted', [100]), ('complete', [None])])
 
 
@@ -3186,18 +3217,14 @@ def test_elevenlabs_agents_barge_in_before_the_reply() -> None:
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
-@pytest.mark.parametrize('calls_ended', [False, True], ids=['reply-under-way', 'reply-ended'])
-def test_elevenlabs_agents_raising_tool_completes_the_turn_once(calls_ended: bool) -> None:
-    """A client tool that raises completes the turn once, whether or not the reply that called it had ended by then.
-
-    Its failure goes out like any result, so the agent's answer to it ends the turn.
-    """
+def test_elevenlabs_agents_tool_raising_after_its_reply_ended_completes_the_turn_once() -> None:
+    """A client tool raises after the reply that called it ended: its failure still goes out, and the agent's answer
+    completes the turn once."""
 
     def scenario(sim: ElevenLabsAgentsSimulation) -> None:
         sim.send_text()
         sim.call_tool()
-        if calls_ended:
-            sim.advance_time(2.0)
+        sim.advance_time(2.0)
         sim.finish_tool(outcome='error')
         sim.settle()
         assert len(sim.turn_completes) == 1
@@ -3325,3 +3352,169 @@ def test_scenario_vertex_cut_off_reply_is_taken_for_the_text_that_cut_it() -> No
         sim.finish()
         sim.settle()
         assert '8763c #3' in {finding_id for finding_id, _ in sim.checker.known_hits}
+
+
+# --- damaged frames ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize('fault', ['unparsable', 'id_less_terminal'])
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai', 'elevenlabs'])
+def test_a_tool_call_whose_terminal_arrives_damaged_is_answered(dialect: Dialect, fault: FrameFault) -> None:
+    """The `response.done` of a reply that called a tool can't be read, or names no response (#13701).
+
+    The tool's result still asks for the model's answer, and the wait for it returns.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.corrupt_next_frame(fault)
+        sim.finish()
+        sim.finish_tool()
+        sim.wait_for_reply()
+
+    sim = OpenAISimulation(openai=OpenAIOptions(dialect=dialect))
+    run_clean(sim, scenario)
+    assert sim.truth.fault_frames_read == 1
+
+
+@pytest.mark.parametrize('ending', ['report_usage', 'user_says'])
+def test_elevenlabs_agents_damaged_frame_still_ends_the_voiced_reply(ending: str) -> None:
+    """The frame that ends a reply still being voiced has a payload the connection can't parse (#13611).
+
+    What a frame ends follows from its type, so the reply still ends, and the next one is recorded on its own.
+    """
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.corrupt_next_frame('unparsable')
+        if ending == 'report_usage':
+            sim.report_usage()
+        else:
+            sim.send_audio()
+            sim.user_says()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+        sim.wait_for_reply()
+
+    sim = ElevenLabsAgentsSimulation()
+    run_clean(sim, scenario)
+    assert sim.truth.fault_frames_read == 1
+
+
+def test_elevenlabs_agents_agent_response_without_its_id_still_completes_the_reply() -> None:
+    """An `agent_response` arrives without its `response_id`: the reply it completes is still recorded on its own."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.corrupt_next_frame('id_less_terminal')
+        sim.finish()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+        sim.wait_for_reply()
+
+    sim = ElevenLabsAgentsSimulation()
+    run_clean(sim, scenario)
+    assert sim.truth.fault_frames_read == 1
+
+
+@known('SIM-44')
+def test_known_elevenlabs_agents_unreadable_agent_response_merges_the_next_reply() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.corrupt_next_frame('unparsable')
+        sim.finish()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+        sim.settle()
+
+    reproduce('SIM-44', ElevenLabsAgentsSimulation(), scenario)
+
+
+@known('SIM-45')
+@pytest.mark.parametrize('fault', ['unparsable', 'truncated', 'unknown_type'])
+def test_known_gemini_message_the_sdk_cant_parse_ends_the_session(fault: FrameFault) -> None:
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.corrupt_next_frame(fault)
+        sim.speak()
+        sim.finish()
+        sim.settle()
+
+    reproduce('SIM-45', GeminiSimulation(), scenario)
+
+
+@known('SIM-46')
+def test_known_live_unreadable_backend_terminal_leaves_the_reply_waiting() -> None:
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.delegate()
+        sim.backend_call()
+        sim.finish_tool()
+        sim.corrupt_next_frame('unparsable')
+        sim.backend_finish()
+        sim.speak()
+        sim.settle()
+
+    reproduce('SIM-46', LiveSimulation(), scenario)
+
+
+@pytest.mark.parametrize(
+    'simulation',
+    [
+        pytest.param(OpenAISimulation, id='openai'),
+        pytest.param(LiveSimulation, id='gpt-live'),
+        pytest.param(ElevenLabsAgentsSimulation, id='elevenlabs-agents'),
+    ]
+    if imports_successful()
+    else [],
+)
+@pytest.mark.parametrize('fault', ['unknown_type', 'truncated'])
+def test_a_frame_the_connection_cant_read_mid_reply_costs_only_that_frame(
+    simulation: Callable[[], Simulation], fault: FrameFault
+) -> None:
+    """A frame of a type the connection doesn't know, or a reply's speech cut off in transit, arrives mid-reply.
+
+    The session goes on: the reply still ends, and the wait for it returns. (Gemini raises on both instead: SIM-45.)
+    """
+
+    def scenario(sim: Simulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.corrupt_next_frame(fault)
+        sim.speak()
+        sim.wait_for_reply()
+
+    sim = simulation()
+    run_clean(sim, scenario)
+    assert sim.truth.fault_frames_read == 1
+
+
+def test_gemini_redial_without_a_handle_replays_the_typed_turns() -> None:
+    """The connection drops before Gemini issued a resumption handle, so the re-dial is a fresh session (#11074).
+
+    The session replays its conversation into it: the reply the new session gives holds the turn typed before the drop.
+    """
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text(respond=False)
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+
+    sim = GeminiSimulation()
+    run_clean(sim, scenario)
+    assert [(restoration.connection, restoration.before) for restoration in sim.truth.restorations] == [
+        (2, {'user:t1'})
+    ]

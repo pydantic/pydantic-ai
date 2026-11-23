@@ -179,7 +179,11 @@ class GroundTruth:
     merged_requests: int = 0
     """How many requests for a response the client folded into another one's single request."""
     restorations: list[Restoration] = field(default_factory=list[Restoration])
-    """Each re-dialed session's conversation as its first response started (OpenAI protocol only)."""
+    """Each re-dialed session's conversation as its first response started (OpenAI protocol and Gemini)."""
+    fault_frames_read: int = 0
+    """How many damaged frames the client read (`Simulation.corrupt_next_frame`): each may cost a parse error."""
+    faulted: set[str] = field(default_factory=set[str])
+    """Responses a damaged frame took content from: history doesn't owe what that frame said."""
 
     def tick(self) -> int:
         self.clock += 1

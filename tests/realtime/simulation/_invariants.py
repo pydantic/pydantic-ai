@@ -32,8 +32,13 @@ Checked after every step:
   (`_conformance.py`), checked on its lifecycle stream;
 - `api.unexpected_error`: a client call, or iterating the session, raised something other than the
   documented errors;
-- `simulator.malformed_frame`: the simulated server sent something the real connection can't parse (a
-  bug in the simulator, not the session).
+- `simulator.malformed_frame`: the simulated server sent something the real connection can't parse, other than a
+  frame the trace damaged on purpose (`corrupt_next_frame`): a bug in the simulator, not the session.
+
+A damaged frame is judged by everything that doesn't depend on what it said: it must not leave a wait hanging, mix
+two responses, or break the lifecycle contract. Only the content checks (`response.missing`, `response.truncated`)
+leave out a response a damaged frame took content from, and the usage checks count only reports the client could
+read.
 
 Checked at rest (`settle()`):
 
@@ -41,6 +46,9 @@ Checked at rest (`settle()`):
   to wait for;
 - `history.tool_pairing`: a tool call without exactly one return, a return without its call, or a
   return not directly after its call's response;
+- `tool.failure_unsent`: a tool that raised is recorded as failed, but its failure never reached the provider,
+  though the connection it was called on stayed up, the session went on, and no usage limit stopped the exchange
+  (every provider is told a call failed, so the model answers it rather than going silent);
 - `history.order`: a user input and a response recorded in the opposite order to the one the server
   saw them in, or two responses out of order. History follows the provider's conversation order; with
   history also append-only, a session can only satisfy both by holding a reply back until the user turn
@@ -66,8 +74,9 @@ Checked at rest (`settle()`):
   that reports its requests with usage, the number it reported);
 - `playback.cut_beyond_audio` / `playback.bad_truncate`: a reply is marked cut past the audio it had,
   or the provider had to refuse a truncation the session sent;
-- `playback.cut_not_recorded`: the provider truncated a reply's item, but history records the reply as heard
-  further than that (or as not interrupted at all), whether or not it had finished generating;
+- `playback.cut_not_recorded`: the provider truncated a reply's item (or, on a model without output truncation,
+  `interrupt(played_bytes=...)` cut it off partway: `Simulation.untruncated_cuts`), but history records the reply
+  as heard further than that (or as not interrupted at all), whether or not it had finished generating;
 - `wire.duplicate` / `wire.order`: the server got a send twice, or one caller's sends out of order;
 - `send.failed_across_reconnect`: a send failed on a dropped connection the session went on to replace;
 - `history.roundtrip` / `history.handoff`: history doesn't survive serialization, or a standard
@@ -256,6 +265,7 @@ class Checker:
         self._judged_truncations = 0
         self._judged_consumer_errors = 0
         self._codec_issues: list[ConformanceIssue] = []
+        self._parse_errors = 0
 
     def attach(self, session: RealtimeSession) -> None:
         """Observe the codec events the connection yields, on their way into the session."""
@@ -380,15 +390,19 @@ class Checker:
         self.report('obligation.misattributed', violations)
 
     def _check_simulator_frames(self) -> None:
-        """The simulated server must only send frames the real connection can parse; anything else is a harness bug."""
+        """The simulated server must only send frames the real connection can parse, unless the trace damaged them."""
         events, self._judged_events = self.sim.events[self._judged_events :], len(self.sim.events)
+        errors = [
+            event.message
+            for event in events
+            if isinstance(event, RealtimeSessionErrorEvent) and 'Failed to parse' in event.message
+        ]
+        self._parse_errors += len(errors)
+        # Each damaged frame the client read explains one parse error.
+        unexplained = min(len(errors), self._parse_errors - self.sim.truth.fault_frames_read)
         self.report(
             'simulator.malformed_frame',
-            [
-                (event.message, {})
-                for event in events
-                if isinstance(event, RealtimeSessionErrorEvent) and 'Failed to parse' in event.message
-            ],
+            [(error, {}) for error in errors[len(errors) - unexplained :]] if unexplained > 0 else [],
         )
 
     def _check_errors(self) -> None:
@@ -671,6 +685,7 @@ class Checker:
         if not session.closed:
             # Also once the event stream has ended: `wait_for_reply()` must never outlive the session's ability to reply.
             self._check_sends_survived()
+            self._check_failures_sent(messages)
             self._check_wait_liveness()
 
     def _check_transcripts(self, messages: list[ModelMessage]) -> None:
@@ -960,7 +975,10 @@ class Checker:
         completed = [
             (response, ' '.join(filter(None, recorded.get(response.number, []))) or None)
             for response in truth.responses.values()
-            if response.words and response.terminal_read is not None and response.status == 'completed'
+            if response.words
+            and response.terminal_read is not None
+            and response.status == 'completed'
+            and response.key not in truth.faulted
         ]
         self.report(
             'response.missing',
@@ -1080,7 +1098,7 @@ class Checker:
             ],
         )
         heard: dict[str, int] = {}
-        for item_id, audio_end_ms in truth.truncations:
+        for item_id, audio_end_ms in [*truth.truncations, *self.sim.untruncated_cuts]:
             heard[item_id] = min(audio_end_ms, heard.get(item_id, audio_end_ms))
         spoken = {
             (number, part.transcript): (message, part)
@@ -1104,7 +1122,7 @@ class Checker:
             if message.state != 'interrupted' or cut is None or cut > heard_ms:  # pragma: lax no cover (a violation)
                 not_recorded.append(
                     (
-                        f'{response.key} was truncated at {heard_ms} ms, but history records it as '
+                        f'{response.key} was cut off at {heard_ms} ms, but history records it as '
                         f'{message.state} with a cut at {cut}',
                         {'response': response.key},
                     )
@@ -1160,6 +1178,39 @@ class Checker:
                 )
                 for operation in self.sim.operations
                 if isinstance(operation.error, RealtimeError) and operation.error.message.startswith(_SEND_FAILED)
+            ],
+        )
+
+    def _check_failures_sent(self, messages: list[ModelMessage]) -> None:
+        """A tool that raised has its failure sent as its result, while anything can still carry it to the provider."""
+        sim = self.sim
+        truth = sim.truth
+        if (
+            sim.receive_ended
+            or sim.close_requested is not None
+            or any(isinstance(error, UsageLimitExceeded) for error in sim.consumer_errors)
+        ):
+            # The session ended or is closing, or the failure's request would pass a limit: it gives the round up.
+            return
+        failed = {
+            part.tool_call_id
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'failed'
+        }
+        self.report(
+            'tool.failure_unsent',
+            [
+                (f'tool call {call_id!r} raised, but its failure never reached the provider', {'call': call_id})
+                for call_id, outcome in sim.tools.settled.items()
+                if outcome == 'error'
+                and call_id in failed
+                and (call := truth.tool_calls.get(call_id)) is not None
+                and not (call.output_received or call.cancelled_by_server or call.abandoned_by is not None)
+                and (response := truth.responses.get(call.response)) is not None
+                # Connection `n` has dropped once there are `n` losses: the failure had nothing to go out on.
+                and len(truth.connection_losses) < response.connection
             ],
         )
 

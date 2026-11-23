@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ._truth import GroundTruth, Restoration, TruthResponse
-from ._wire import FakeWebSocket, Network
+from ._wire import ArmedFaults, FakeWebSocket, FrameFault, Network, fault_tag
 
 AUDIO_CHUNK = b'\x00\x10' * 2400
 """100 ms of 24 kHz PCM16 audio, audible (well above any silence floor)."""
@@ -198,6 +198,7 @@ class OpenAIServer:
         self._audio_delta = 'response.output_audio.delta'
         self._transcript_delta = 'response.output_audio_transcript.delta'
         self._transcript_done = 'response.output_audio_transcript.done'
+        self.faults = ArmedFaults()
 
     # --- transport hooks ------------------------------------------------------------------------
 
@@ -250,7 +251,9 @@ class OpenAIServer:
         now = self.truth.tick()
         frame_type = frame.get('type', '')
         response_object: dict[str, Any] = frame.get('response') or {}
-        response_id = frame.get('response_id') or response_object.get('id')
+        tags: dict[str, Any] = frame.get('_simulation', {})
+        # A damaged terminal names its response only in its tag.
+        response_id = frame.get('response_id') or response_object.get('id') or tags.get('response')
         response = self.truth.responses.get(response_id) if isinstance(response_id, str) else None
         if response is not None and response.started_read is None:
             response.started_read = now
@@ -326,7 +329,21 @@ class OpenAIServer:
         if 'event_id' not in frame:
             frame = {'event_id': f'evt_{self._next_event}', **frame}
             self._next_event += 1
-        session.socket.emit(frame)
+        truncated = False
+        if frame['type'] == 'response.done':
+            fault = self.faults.take('unparsable', 'id_less_terminal')
+            if fault is not None:
+                response = {**frame['response']}
+                key = response.pop('id')
+                if fault == 'unparsable':
+                    # The usage it reports is as unreadable as the rest, wherever the dialect puts it.
+                    frame = {name: value for name, value in frame.items() if name != 'usage'}
+                    response = {'id': key, **response, 'status': 7, 'usage': None}
+                frame = {**frame, 'response': response, '_simulation': {'fault': fault, 'response': key}}
+        elif frame['type'] in (self._audio_delta, self._transcript_delta) and self.faults.take('truncated'):
+            truncated = True
+            self.truth.faulted.add(frame['response_id'])
+        session.socket.emit(frame, truncated=truncated)
 
     def _refuse(self, session: ServerSession, frame: dict[str, Any], refused: list[str]) -> None:
         """Emit an `error` frame that refuses `refused` (input keys) once the client reads it."""
@@ -1054,6 +1071,13 @@ class OpenAIServer:
                 },
             )
         return key
+
+    def arm(self, fault: FrameFault) -> None:
+        """Damage the next frame `fault` applies to; an unknown frame goes out at once."""
+        if fault != 'unknown_type':
+            self.faults.pending.append(fault)
+        elif (session := self.session) is not None and session.socket.alive:
+            self._emit(session, fault_tag({'type': 'simulation.unknown_event'}, fault))
 
     def arm_rejection(self, kind: Literal['content', 'response']) -> None:
         """Refuse the next user content item, or the next response request, with an `error` naming it."""

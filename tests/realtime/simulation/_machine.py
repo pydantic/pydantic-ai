@@ -1,7 +1,7 @@
 """Hypothesis state machines that drive simulations through randomized interleavings.
 
-Each rule is one simulation step: a client operation, a provider behavior, a fault, or letting time
-pass. Rules take `ticks` (how long the event loop runs afterwards) and, for provider frames, whether
+Each rule is one simulation step: a client operation, a provider behavior, a fault (a failed send, a drop, a
+damaged frame), or letting time pass. Rules take `ticks` (how long the event loop runs afterwards) and, for provider frames, whether
 they are delivered at once, which is how the machine explores which task wins each race. Hypothesis
 shrinks a failure to a minimal sequence of steps, and the `InvariantViolation` it reports carries that
 sequence as a replayable trace.
@@ -22,6 +22,7 @@ from hypothesis import note, strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, precondition, rule
 
 from ._simulation import InvariantViolation, SessionOptions, Simulation, ToolOutcome
+from ._wire import FrameFault
 
 KNOWN_HIT_COUNTS: Counter[str] = Counter()
 """How many examples ran into each known finding, across the whole test process (for reports)."""
@@ -143,6 +144,11 @@ class SessionMachine(RuleBasedStateMachine):  # pragma: lax no cover (driven onl
     @rule(ticks=TICKS)
     def close(self, ticks: int | None) -> None:
         self.run(lambda: self.s.close(ticks=ticks))
+
+    @precondition(lambda self: self.live())
+    @rule(fault=st.runner().flatmap(lambda machine: st.sampled_from(machine.s.supported_faults)), ticks=TICKS)
+    def corrupt_next_frame(self, fault: FrameFault, ticks: int | None) -> None:
+        self.run(lambda: self.s.corrupt_next_frame(fault, ticks=ticks))
 
 
 class ManualTurnMachine(SessionMachine):  # pragma: lax no cover (driven only by randomized exploration)

@@ -30,10 +30,10 @@ import functools
 import random
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec, Self, TypeVar
+from typing import Any, ClassVar, Literal, ParamSpec, Self, TypeVar
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import BinaryImage, ModelMessage, ToolReturn
@@ -45,6 +45,7 @@ from . import _invariants
 from ._invariants import SimulatedToolError
 from ._loop import SimulatedLoop, SimulationStuck
 from ._truth import GroundTruth
+from ._wire import FRAME_FAULTS, FrameFault, SendFault
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -198,6 +199,11 @@ class Simulation(ABC):
         pass, a tool result that failed to send), on the shared clock: the moment the exchange ended, which is before
         the failure is raised from `async for`. Not a tool that raised, whose failure result goes out on every
         provider: the model answers it, so the exchange goes on."""
+        self.untruncated_cuts: list[tuple[str, int]] = []
+        """`(item id, ms heard)` for each reply an `interrupt(played_bytes=...)` cut off partway on a model without
+        output truncation: where the listener stopped, which no truncation tells the provider. Recorded only where the
+        position maps onto the audio the server generated as it stands: at the first interrupt, on the first
+        connection, with no barge-in handled by the session itself."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -207,6 +213,9 @@ class Simulation(ABC):
         self._caller_wakeups: dict[str, asyncio.Event] = {}
         self._close_event: asyncio.Event | None = None
         self._play_permits = 0
+        self._pulled_audio_bytes = 0
+        """How much audio the speaker has pulled from `stream_audio()`: one chunk ahead of `played_audio_bytes` while
+        the speaker waits to play more, and level with it once it has played everything there was."""
         self._player_wakeup: asyncio.Event | None = None
         self._text_counter = 0
         self._image_counter = 0
@@ -248,6 +257,41 @@ class Simulation(ABC):
     def expected_requests(self) -> int | None:
         """What `usage.requests` should be, if not one per recorded response (a model reporting requests with usage)."""
         return None
+
+    # --- provider behavior every simulated server has, as steps -------------------------------------
+
+    @abstractmethod
+    def deliver(self, count: int | None = None, ticks: int | None = None) -> None:
+        """Let up to `count` in-flight server frames (all by default) reach the client."""
+        ...
+
+    @abstractmethod
+    def speak(self, chunks: int = 1, deliver: bool = True, ticks: int | None = None) -> None:
+        """The model says a word, with `chunks` × 100 ms of audio."""
+        ...
+
+    # Each provider's own `call_tool`, `finish` and `drop` take more (what to call, how the reply ends, re-dials to
+    # refuse, how frames are delivered): the bare forms here are what a scenario on every provider can rely on.
+
+    @abstractmethod
+    def call_tool(self) -> object:
+        """The reply under way calls the `lookup` tool once (what the step returns is the provider's own)."""
+        ...
+
+    @abstractmethod
+    def finish(self) -> None:
+        """The reply under way ends, as the provider ends one."""
+        ...
+
+    @abstractmethod
+    def fail_next_send(self, fault: SendFault = 'lost', ticks: int | None = None) -> None:
+        """The next frame the client sends hits a dead socket."""
+        ...
+
+    @abstractmethod
+    def drop(self) -> None:
+        """The connection drops."""
+        ...
 
     # --- lifecycle ------------------------------------------------------------------------------
 
@@ -361,7 +405,7 @@ class Simulation(ABC):
                     self._player_wakeup.clear()
                     await self._player_wakeup.wait()
                 self._play_permits -= 1
-                await anext(view)
+                self._pulled_audio_bytes += len(await anext(view))
         except StopAsyncIteration:
             return
 
@@ -523,10 +567,27 @@ class Simulation(ABC):
     ) -> None:
         """Barge in: cancel, truncate at a playback position, or let the session map the played bytes."""
         session = self._require_session()
+        first = not any(operation.name.startswith('interrupt_') for operation in self.operations)
 
         async def interrupt() -> None:
             if mode == 'played_bytes':
-                await session.interrupt(played_bytes=session.played_audio_bytes)
+                played = session.played_audio_bytes
+                if (
+                    first
+                    and not self.options.handle_barge_in
+                    and not self.truth.connection_losses
+                    and not session.profile.get('supports_output_truncation', False)
+                    and played < self._pulled_audio_bytes
+                ):
+                    # The speaker holds audio it hasn't played, and nothing ahead of it has been discarded yet, so the
+                    # position falls in the replies' audio in the order the server generated it.
+                    start = 0
+                    for reply in sorted(self.truth.responses.values(), key=lambda r: r.number):
+                        if start < played < start + reply.audio_bytes and len(reply.items) == 1:
+                            (item_id,) = reply.items
+                            self.untruncated_cuts.append((item_id, (played - start) // self.output_bytes_per_ms))
+                        start += reply.audio_bytes
+                await session.interrupt(played_bytes=played)
             elif mode == 'played_ms':
                 await session.interrupt(played_ms=self._played_ms_of_latest_reply())
             else:
@@ -591,6 +652,26 @@ class Simulation(ABC):
         if self.close_requested is None:
             self.close_requested = self._now()
         self._close_event.set()
+        self._advance(ticks)
+
+    # --- damaged frames ---------------------------------------------------------------------------
+
+    unsupported_faults: ClassVar[Mapping[FrameFault, str]] = {}
+    """The faults this provider's frames can't carry, each with the reason."""
+
+    @property
+    def supported_faults(self) -> list[FrameFault]:
+        return [fault for fault in FRAME_FAULTS if fault not in self.unsupported_faults]
+
+    @abstractmethod
+    def arm_fault(self, fault: FrameFault) -> None:
+        """Have the simulated server damage the next frame `fault` applies to (see `FrameFault`)."""
+
+    @step
+    def corrupt_next_frame(self, fault: FrameFault, ticks: int | None = None) -> None:
+        """The provider's next frame of the kind `fault` names reaches the client damaged."""
+        assert fault not in self.unsupported_faults, self.unsupported_faults[fault]
+        self.arm_fault(fault)
         self._advance(ticks)
 
     # --- settling ---------------------------------------------------------------------------------

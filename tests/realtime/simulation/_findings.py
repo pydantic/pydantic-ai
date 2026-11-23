@@ -551,8 +551,68 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
 )
 
 
+UNREADABLE_AGENT_RESPONSE_MERGES_REPLIES = Finding(
+    id='SIM-44',
+    title=(
+        'an `agent_response` whose payload fails to parse leaves the reply it completes open: the next reply is '
+        'recorded into it, ahead of the user turn it answers, and the first reply loses its own message'
+    ),
+    tracked_by=(
+        'ending the reply an `agent_response` completes by its type alone, as a malformed frame that ends a voiced '
+        'reply already does; found by this simulator'
+    ),
+    evidence='simulated',
+    codes=frozenset(
+        {'history.order', 'response.mixed', 'response.duplicated', 'wait.early', 'turn_complete.while_owed'}
+    ),
+    providers=frozenset({'elevenlabs-agents'}),
+    matches=lambda sim, violation: getattr(getattr(sim, 'server', None), 'unreadable_agent_responses', 0) > 0,
+)
+
+
+SDK_PARSE_FAILURE_ENDS_THE_SESSION = Finding(
+    id='SIM-45',
+    title=(
+        "a Gemini Live message the SDK can't parse raises out of `AsyncSession.receive()`: text that isn't JSON "
+        '(`ValueError`), a payload `LiveServerMessage` rejects (`ValidationError`), or a message of only unknown '
+        "fields (`TypeError`, from `APIError.raise_error` given no status). The connection doesn't catch any of "
+        'them, so iterating the session raises it and the session ends, where the OpenAI protocol reports such a '
+        'frame as a recoverable error and keeps reading'
+    ),
+    tracked_by=(
+        "reporting a message the SDK can't parse as a recoverable error in `GoogleRealtimeConnection.frames`; found "
+        'by this simulator'
+    ),
+    evidence='simulated',
+    codes=frozenset({'api.unexpected_error'}),
+    providers=GEMINI,
+    matches=lambda sim, violation: sim.truth.fault_frames_read > 0,
+)
+
+
+UNREADABLE_BACKEND_TERMINAL_HOLDS_THE_REPLY = Finding(
+    id='SIM-46',
+    title=(
+        "a delegated backend's `response.completed` whose payload fails to parse never settles its delegation: the "
+        'connection holds the reply that called the tools open for it, so the reply never ends and `wait_for_reply()` '
+        'never returns, though the frame says by its type what it ends'
+    ),
+    tracked_by=(
+        'settling the delegation a backend terminal names from its type and `delegation_id` alone, as the Realtime '
+        'connection ends the active response after an unreadable `response.done`; found by this simulator'
+    ),
+    evidence='simulated',
+    codes=frozenset({'wait.hang', 'response.missing', 'response.truncated', 'history.tool_pairing'}),
+    providers=frozenset({'gpt-live'}),
+    matches=lambda sim, violation: getattr(getattr(sim, 'server', None), 'unreadable_backend_terminals', 0) > 0,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
+        UNREADABLE_BACKEND_TERMINAL_HOLDS_THE_REPLY,
+        UNREADABLE_AGENT_RESPONSE_MERGES_REPLIES,
+        SDK_PARSE_FAILURE_ENDS_THE_SESSION,
         FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,

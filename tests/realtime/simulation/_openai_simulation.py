@@ -28,7 +28,7 @@ from ._machine import TICKS, ManualTurnMachine
 from ._openai_server import Dialect, OpenAIServer, ServerSession
 from ._simulation import SessionOptions, Simulation, step
 from ._truth import GroundTruth
-from ._wire import SendFault
+from ._wire import FrameFault, SendFault
 
 
 @dataclass
@@ -235,6 +235,9 @@ class OpenAISimulation(Simulation):
         """The provider will refuse the next user content item, or the next response request."""
         self.server.arm_rejection(kind)
         self._advance(ticks)
+
+    def arm_fault(self, fault: FrameFault) -> None:
+        self.server.arm(fault)
 
     @step
     def fail_next_send(self, fault: SendFault = 'lost', ticks: int | None = None) -> None:

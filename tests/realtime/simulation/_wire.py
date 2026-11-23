@@ -21,7 +21,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, get_args
 from unittest import mock
 
 import websockets
@@ -37,6 +37,43 @@ SendFault = Literal['lost', 'ambiguous']
 socket dying while the frame is on the wire looks like to the client: it can't tell whether the frame
 arrived. Either way the connection is dropped, as a real socket error would.
 """
+
+FrameFault = Literal['unparsable', 'id_less_terminal', 'unknown_type', 'truncated']
+"""A provider frame the connection receives but can't fully read (`Simulation.corrupt_next_frame`).
+
+- `'unparsable'`: the next terminal frame, with a payload its typed model rejects;
+- `'id_less_terminal'`: the next terminal frame, without the id of the response it ends;
+- `'unknown_type'`: an extra frame of a type the connection doesn't know;
+- `'truncated'`: the next frame carrying what a response says (audio or transcript), cut off mid-text. Never a
+  terminal: a terminal cut off loses its type, so no connection can tell what it ended.
+
+A damaged frame is tagged (`_simulation.fault`, or text that isn't JSON), so a parse error it causes isn't taken for
+the simulator's own bug. What it does to the session is judged like any other frame: it must not leave a wait
+hanging, or mix two responses into one.
+"""
+
+FRAME_FAULTS: tuple[FrameFault, ...] = get_args(FrameFault)
+
+
+@dataclass
+class ArmedFaults:
+    """The faults the trace armed, each waiting for the next frame it damages."""
+
+    pending: list[FrameFault] = field(default_factory=list[FrameFault])
+
+    def take(self, *faults: FrameFault) -> FrameFault | None:
+        """The earliest armed fault among `faults`, the ones the frame about to be sent can take, if any."""
+        for fault in self.pending:
+            if fault in faults:
+                self.pending.remove(fault)
+                return fault
+        return None
+
+
+def fault_tag(frame: dict[str, Any], fault: FrameFault) -> dict[str, Any]:
+    """`frame` tagged as damaged by `fault`."""
+    return {**frame, '_simulation': {**frame.get('_simulation', {}), 'fault': fault}}
+
 
 _HANDSHAKE_FRAME_TYPES = frozenset({'session.update', 'session.start', 'conversation_initiation_client_data'})
 
@@ -136,9 +173,17 @@ class FakeWebSocket:
                 raise ConnectionClosedOK(close, None)
             raise ConnectionClosedError(close, None)
         self.inbox.popleft()
-        frame = json.loads(item)
-        self.received.append(frame)
-        self.network.server.on_client_read(self, frame)
+        truth = self.network.server.truth
+        try:
+            frame = json.loads(item)
+        except ValueError:
+            # A frame cut off in transit: the client reads text it can't parse, and nothing it says.
+            truth.fault_frames_read += 1
+        else:
+            if 'fault' in frame.get('_simulation', {}):
+                truth.fault_frames_read += 1
+            self.received.append(frame)
+            self.network.server.on_client_read(self, frame)
         return item.encode() if decode is False else item
 
     async def __aiter__(self) -> AsyncIterator[str]:
@@ -158,11 +203,16 @@ class FakeWebSocket:
 
     # --- server side --------------------------------------------------------------------------------
 
-    def emit(self, frame: dict[str, Any], *, immediately: bool = False) -> None:
-        """Queue a server frame; it reaches the client once the simulation delivers it."""
+    def emit(self, frame: dict[str, Any], *, immediately: bool = False, truncated: bool = False) -> None:
+        """Queue a server frame; it reaches the client once the simulation delivers it.
+
+        `truncated` cuts the frame's text off halfway, as a `'truncated'` fault does.
+        """
         if not self.alive:  # pragma: lax no cover (a race: the server answers a frame on a socket that just dropped)
             return
         text = json.dumps(frame)
+        if truncated:
+            text = text[: len(text) // 2]
         if immediately:
             self._push(text)
         else:

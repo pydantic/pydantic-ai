@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from unittest import mock
 
-from google.genai import types as gt
+from google.genai import errors as genai_errors, types as gt
 from google.genai.live import ConnectionClosed
 from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
@@ -53,8 +53,8 @@ from pydantic_ai.realtime.settings import RealtimeModelSettings
 
 from ._machine import TICKS, SessionMachine
 from ._simulation import SessionOptions, Simulation, step
-from ._truth import GroundTruth, ToolCallTruth, TruthResponse
-from ._wire import SendFault
+from ._truth import GroundTruth, Restoration, ToolCallTruth, TruthResponse
+from ._wire import ArmedFaults, FrameFault, SendFault
 
 AUDIO_CHUNK = b'\x00\x10' * 2400
 """100 ms of 24 kHz PCM16 output audio."""
@@ -65,6 +65,26 @@ class _Closed:
     pass
 
 
+@dataclass
+class _Damaged:
+    """A message the SDK can't turn into a `LiveServerMessage`: `receive()` raises what `AsyncSession._receive` does."""
+
+    fault: FrameFault
+
+    def raise_as_the_sdk_does(self) -> None:
+        """Raise what google-genai 2.32.0 raises from `AsyncSession._receive` for this message."""
+        if self.fault == 'truncated':
+            # Text that isn't JSON.
+            raise ValueError('Failed to parse response: b\'{"serverContent": {"modelTurn\'')
+        if self.fault == 'unparsable':
+            # JSON whose payload `LiveServerMessage` rejects.
+            gt.LiveServerMessage._from_response(response={'server_content': {'turn_complete': 'maybe'}}, kwargs={})  # pyright: ignore[reportPrivateUsage]
+        else:
+            # A message with only a key the SDK doesn't know maps to nothing, which it reports as an error with the
+            # message's `code`: none here, which `raise_error` can't compare with a status range.
+            genai_errors.APIError.raise_error(None, {'simulationUnknownEvent': {}}, None)  # pyright: ignore[reportArgumentType,reportUnknownMemberType]
+
+
 @dataclass(eq=False)
 class FakeGeminiSession:
     """One simulated Live connection, standing in for `google.genai.live.AsyncSession`."""
@@ -72,8 +92,10 @@ class FakeGeminiSession:
     server: GeminiServer
     index: int
     handle: str | None
-    inbox: deque[gt.LiveServerMessage | _Closed] = field(default_factory=deque[gt.LiveServerMessage | _Closed])
-    in_flight: deque[gt.LiveServerMessage] = field(default_factory=deque[gt.LiveServerMessage])
+    inbox: deque[gt.LiveServerMessage | _Closed | _Damaged] = field(
+        default_factory=deque[gt.LiveServerMessage | _Closed | _Damaged]
+    )
+    in_flight: deque[gt.LiveServerMessage | _Damaged] = field(default_factory=deque[gt.LiveServerMessage | _Damaged])
     broken: bool = False
     closed_by_client: bool = False
     _readable: asyncio.Event = field(default_factory=asyncio.Event)
@@ -130,6 +152,10 @@ class FakeGeminiSession:
             if isinstance(item, _Closed):
                 raise ConnectionClosed(Close(1006, 'simulated drop'), None)
             self.inbox.popleft()
+            if isinstance(item, _Damaged):
+                self.server.truth.fault_frames_read += 1
+                item.raise_as_the_sdk_does()
+            assert isinstance(item, gt.LiveServerMessage)
             self.server.on_client_read(self, item)
             yield item
             content = item.server_content
@@ -148,7 +174,7 @@ class FakeGeminiSession:
 
     # --- server side --------------------------------------------------------------------------------
 
-    def emit(self, message: gt.LiveServerMessage) -> None:
+    def emit(self, message: gt.LiveServerMessage | _Damaged) -> None:
         if self.alive:  # pragma: lax no cover (a race: the server answers a message on a socket that just dropped)
             self.in_flight.append(message)
 
@@ -166,7 +192,7 @@ class FakeGeminiSession:
         self._push(_Closed())
         self.server.on_disconnect(self)
 
-    def _push(self, item: gt.LiveServerMessage | _Closed) -> None:
+    def _push(self, item: gt.LiveServerMessage | _Closed | _Damaged) -> None:
         self.inbox.append(item)
         self._readable.set()
 
@@ -286,6 +312,10 @@ class _ServerSession:
     awaits_initial_history: bool = False
     """The setup asked to send initial history (`history_config`): the next content is that, which the model doesn't
     answer."""
+    conversation: set[str] = field(default_factory=set[str])
+    """The user's typed turns this session's conversation holds, keyed as `conversation_fingerprint`s (see
+    `Restoration`): a session dialed without a resumption handle starts empty."""
+    restoration_checked: bool = False
 
 
 class GeminiServer:
@@ -295,6 +325,7 @@ class GeminiServer:
         self.behavior = behavior
         self.truth = GroundTruth()
         self.sessions: list[_ServerSession] = []
+        self.faults = ArmedFaults()
         self.handles: dict[str, set[str]] = {}
         """Resumption handle -> the tool calls the server knew about when it was issued."""
         self.send_faults: deque[SendFault] = deque()
@@ -382,6 +413,11 @@ class GeminiServer:
             self.truth.add_input((video.data or b'')[-8:].decode(errors='replace'), 'image')
 
     def on_client_content(self, session: _ServerSession, turns: list[gt.Content], turn_complete: bool) -> None:
+        session.conversation |= {
+            f'user:{" ".join(text.split())}'
+            for turn in turns
+            if turn.role == 'user' and (text := ''.join(part.text or '' for part in turn.parts or []))
+        }
         # Reached by a replay with tool rounds, which only randomized exploration drives.
         if session.awaits_initial_history:  # pragma: lax no cover
             # The conversation, as the session's initial history: nothing new, and nothing for the model to answer.
@@ -488,11 +524,30 @@ class GeminiServer:
     def _emit(self, session: _ServerSession, message: gt.LiveServerMessage, **tags: Any) -> None:
         # Truth bookkeeping rides along on the message object (the connection never looks at it).
         object.__setattr__(message, '_simulation', tags)
-        session.socket.emit(message)
+        content = message.server_content
+        if content is not None and content.turn_complete:
+            fault = self.faults.take('unparsable')
+        elif content is not None and (content.model_turn is not None or content.output_transcription is not None):
+            fault = self.faults.take('truncated')
+        else:
+            fault = None
+        session.socket.emit(message if fault is None else _Damaged(fault))
 
     def _start_response(self, session: _ServerSession, *, answers: list[str]) -> TruthResponse:
         number = self.truth.next_response_number
         response = self.truth.new_response(f'gemini-r{number}', trigger='auto', answers=answers)
+        index = session.socket.index
+        if index > 0 and session.socket.handle is None and not session.restoration_checked:
+            # A fresh session, which the client replays its conversation into.
+            session.restoration_checked = True
+            self.truth.restorations.append(
+                Restoration(
+                    connection=index + 1,
+                    response=response.key,
+                    before={fingerprint for earlier in self.sessions[:index] for fingerprint in earlier.conversation},
+                    held=set(session.conversation),
+                )
+            )
         if session.turn is None:
             session.turn = _Turn(response=response)
             if self.behavior.handles_at_turn_start:
@@ -735,6 +790,13 @@ class GeminiServer:
         session.triggers.append(key)
         return key
 
+    def arm(self, fault: FrameFault) -> None:
+        """Damage the next message `fault` applies to; an unknown one goes out at once."""
+        if fault != 'unknown_type':
+            self.faults.pending.append(fault)
+        elif (session := self.session) is not None:
+            session.socket.emit(_Damaged(fault))
+
     def issue_handle(self) -> str:
         session = self.session
         assert session is not None
@@ -758,6 +820,9 @@ class GeminiSimulation(Simulation):
     """A session with a Gemini Live model over the simulated Gemini Live service."""
 
     provider = 'gemini'
+    unsupported_faults = {
+        'id_less_terminal': 'Gemini Live names no response: `turn_complete` ends whatever is under way'
+    }
 
     def __init__(
         self,
@@ -829,6 +894,13 @@ class GeminiSimulation(Simulation):
         return ids
 
     @step
+    def call_tool(self, deliver: bool = True, ticks: int | None = None) -> str:
+        """The model makes one tool call (`call_tools` makes a batch of them)."""
+        (call_id,) = self.server.call_tools(1)
+        self._after_server(deliver, ticks)
+        return call_id
+
+    @step
     def finish(self, in_progress: bool = False, deliver: bool = True, ticks: int | None = None) -> None:
         self.server.finish(in_progress=in_progress)
         self._after_server(deliver, ticks)
@@ -842,6 +914,9 @@ class GeminiSimulation(Simulation):
     def issue_handle(self, deliver: bool = True, ticks: int | None = None) -> None:
         self.server.issue_handle()
         self._after_server(deliver, ticks)
+
+    def arm_fault(self, fault: FrameFault) -> None:
+        self.server.arm(fault)
 
     @step
     def fail_next_send(self, fault: SendFault = 'lost', ticks: int | None = None) -> None:

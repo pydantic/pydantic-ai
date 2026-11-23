@@ -10,7 +10,9 @@ provider, against a simulated server over a fake socket:
   decides which task wins each race, and the same trace always runs the same way.
 - `_wire.py`: the fake WebSocket and network shared by the OpenAI-protocol and GPT-Live servers, with
   send latency, send faults (lost, or delivered but reported failed), drops, and refused re-dials.
-  Server frames stay in flight until the trace delivers them.
+  Server frames stay in flight until the trace delivers them. It also defines the damaged frames every
+  simulated server can send (`FrameFault`: unparsable, id-less terminal, unknown type, truncated), which
+  `Simulation.corrupt_next_frame` arms.
 - `_openai_server.py` (OpenAI Realtime, and the Azure OpenAI, xAI, and ElevenLabs dialects), `_gemini.py` (Gemini
   Live), `_live.py` (GPT-Live): small models of each provider's server, built from the recorded
   cassettes and the live stress runs. Each keeps `_truth.py`'s `GroundTruth`: what the provider
@@ -55,7 +57,10 @@ A new violation that's a real bug gets an entry in `_findings.py` (the invariant
 providers, and a predicate that recognizes its trigger, so it doesn't mask anything else) and a pinned
 `test_known_*` scenario in `test_simulation.py`: the shrunk trace, run with `sim.enforcing(<id>)` under a
 strict `xfail`. When the fix lands, the pinned scenario passes and fails as `XPASS(strict)`: delete the
-finding, drop the `xfail` mark, and keep the scenario as a regression test.
+finding, drop the `xfail` mark, and keep the scenario as a regression test. A new regression test runs on every
+provider, through `on_every_provider`, unless an exemption says why that provider can't reach it: written with
+the steps every simulation has (`speak`, `call_tool`, `finish`, `drop`, ...), it checks the fix on the providers
+the fix didn't touch too.
 
 A violation that's the simulator's fault (a server doing something the real provider doesn't) is fixed in
 the server model, ideally against a cassette that shows what the provider does.

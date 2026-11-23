@@ -24,7 +24,7 @@ from __future__ import annotations as _annotations
 import base64
 import json
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from unittest import mock
@@ -41,7 +41,7 @@ from pydantic_ai.realtime.settings import RealtimeModelSettings
 from ._machine import TICKS, SessionMachine
 from ._simulation import SessionOptions, Simulation, step
 from ._truth import GroundTruth, ToolCallTruth, TruthResponse
-from ._wire import FakeWebSocket, Network, SendFault
+from ._wire import ArmedFaults, FakeWebSocket, FrameFault, Network, SendFault, fault_tag
 
 VOICED = base64.b64encode(b'\x00\x10' * 2400).decode()
 """100 ms of 24 kHz speech."""
@@ -50,6 +50,7 @@ SILENT = base64.b64encode(b'\x00' * 4800).decode()
 TURN_SILENCE_MS = 500
 PAUSE_FRAMES = 5
 """How many 100 ms idle frames are a pause in the model's speech (the connection's `_MAX_FORWARDED_PAUSE_MS`)."""
+_IDLE_FRAMES_TO_END_A_REPLY = 4 * PAUSE_FRAMES
 _SPEECH_FRAMES = ('session.output_audio.delta', 'session.output_transcript.delta', 'session.usage.updated')
 """Frames a reply held open for the model to pause goes on through: anything else ends it."""
 BACKEND_MODEL = 'gpt-6-sol'
@@ -119,6 +120,11 @@ class LiveServer:
         self.backend_terminals_read = 0
         self.backends_failed = 0
         self._next_event = 1
+        self.faults = ArmedFaults()
+        self.unreadable_backend_terminals = 0
+        """How many backend terminals a fault left unreadable."""
+        self.idle_frames = 0
+        """How many idle frames the model sent since it last spoke."""
         self._next_delegation = 1
         self._next_backend = 1
         self._timeline_ms = 0
@@ -150,12 +156,30 @@ class LiveServer:
     def _emit(self, frame: dict[str, Any], *, immediately: bool = False) -> None:
         socket = self.socket
         assert socket is not None
-        if self._ends_tag is not None and frame['type'] not in _SPEECH_FRAMES:
+        # (An unknown frame is one the connection ignores: it ends nothing.)
+        if (
+            self._ends_tag is not None
+            and frame['type'] not in _SPEECH_FRAMES
+            and 'fault' not in frame.get('_simulation', {})
+        ):
             frame = {**frame, '_simulation': {**frame.get('_simulation', {}), 'ends': self._ends_tag}}
             self._ends_tag = None
         frame = {'event_id': f'event_{self._next_event}', **frame}
         self._next_event += 1
-        socket.emit(frame, immediately=immediately)
+        truncated = False
+        event: dict[str, Any] = frame.get('event', {})
+        if frame['type'] == 'response.event' and event.get('type') in ('response.completed', 'response.failed'):
+            if self.faults.take('unparsable'):
+                frame = fault_tag({**frame, 'event': {**event, 'response': None}}, 'unparsable')
+                self.unreadable_backend_terminals += 1
+        elif (
+            frame['type'] in _SPEECH_FRAMES
+            and frame.get('_simulation', {}).get('content')
+            and self.faults.take('truncated')
+        ):
+            truncated = True
+            self.truth.faulted.add(frame['_simulation']['response'])
+        socket.emit(frame, immediately=immediately, truncated=truncated)
 
     def _timeline(self) -> tuple[int, int]:
         start = self._timeline_ms
@@ -230,7 +254,8 @@ class LiveServer:
                 response.content_read = now
         for call_id in tags.get('calls', ()):
             self.truth.tool_calls[call_id].read = True
-        if (usage := tags.get('usage')) is not None:
+        # (The client can't read the usage an unreadable terminal reports.)
+        if (usage := tags.get('usage')) is not None and tags.get('fault') != 'unparsable':
             self.truth.usage_read.setdefault(tags['backend'], tuple(usage))
             self.backend_terminals_read += 1
         if (ended := tags.get('ends')) is not None and (spoken := self.truth.responses[ended]).terminal_read is None:
@@ -276,6 +301,7 @@ class LiveServer:
     def speak(self, chunks: int = 1) -> None:
         response = self._spoken_response()
         self._pause_frames = 0
+        self.idle_frames = 0
         for _ in range(chunks):
             self._emit(
                 {
@@ -308,7 +334,15 @@ class LiveServer:
         self._emit({'type': 'session.input_transcript.delta', 'start_ms': start, 'end_ms': end, 'delta': key})
         return key
 
+    def arm(self, fault: FrameFault) -> None:
+        """Damage the next frame `fault` applies to; an unknown frame goes out at once."""
+        if fault != 'unknown_type':
+            self.faults.pending.append(fault)
+        elif (socket := self.socket) is not None and socket.alive:
+            self._emit(fault_tag({'type': 'session.simulation_unknown_event'}, fault))
+
     def idle(self, frames: int = 1) -> None:
+        self.idle_frames += frames
         for _ in range(frames):
             self._pause_frames += 1
             frame: dict[str, Any] = {'type': 'session.output_audio.delta', 'delta': SILENT}
@@ -529,6 +563,12 @@ class LiveSimulation(Simulation):
     """A session with `gpt-live-1` over the simulated GPT-Live service."""
 
     provider = 'gpt-live'
+    unsupported_faults = {
+        'id_less_terminal': (
+            "a backend terminal's `response` needs its `id` (the Responses API `Response`), so one without it is "
+            'unparsable'
+        )
+    }
 
     def __init__(self, *, seed: int = 0, options: SessionOptions | None = None, strict: bool | None = None) -> None:
         super().__init__(seed=seed, options=options, strict=strict)
@@ -561,7 +601,8 @@ class LiveSimulation(Simulation):
         map_frame = connection._map_frame  # pyright: ignore[reportPrivateUsage]
 
         def mapped(raw: str | bytes) -> list[RealtimeCodecEvent]:
-            self.server.on_frame_handled(json.loads(raw))
+            with suppress(ValueError):  # (A truncated frame says nothing the server would note.)
+                self.server.on_frame_handled(json.loads(raw))
             return map_frame(raw)
 
         connection._map_frame = mapped  # pyright: ignore[reportPrivateUsage]
@@ -602,6 +643,17 @@ class LiveSimulation(Simulation):
         self._after_server(deliver, ticks)
 
     @step
+    def call_tool(self, deliver: bool = True, ticks: int | None = None) -> None:
+        """The running delegation's backend response makes one tool call (`backend_call` makes several)."""
+        self.server.backend_call(1)
+        self._after_server(deliver, ticks)
+
+    @step
+    def finish(self, ticks: int | None = None) -> None:
+        """The model goes quiet for the turn silence: the connection ends the reply then, unless a delegation holds it."""
+        self._pass_time(TURN_SILENCE_MS / 1000, ticks)
+
+    @step
     def backend_finish(
         self, status: Literal['completed', 'failed'] = 'completed', deliver: bool = True, ticks: int | None = None
     ) -> None:
@@ -621,12 +673,18 @@ class LiveSimulation(Simulation):
         they can on the other protocols: whatever is in flight is read first, and only then does the clock
         move, so the client sees the model's pauses as long as the model made them.
         """
+        self._pass_time(seconds, ticks)
+
+    def _pass_time(self, seconds: float, ticks: int | None) -> None:
         self.server.network.deliver()
         self.loop.run_until_idle()
         self.server.idle(min(5, max(1, round(seconds * 10))))
         self.server.network.deliver()
         self.loop.advance_clock(seconds)
         self._advance(ticks)
+
+    def arm_fault(self, fault: FrameFault) -> None:
+        self.server.arm(fault)
 
     @step
     def fail_next_send(self, fault: SendFault = 'lost', ticks: int | None = None) -> None:
@@ -655,6 +713,10 @@ class LiveSimulation(Simulation):
             # The model speaks to the text it took up in the reply under way (as it did live, every time).
             server.speak(1)
         elif server.speaking is not None and server.speaking.terminal_read is None:
+            if server.idle_frames >= _IDLE_FRAMES_TO_END_A_REPLY:
+                # The client never took the reply for over, however long the model stayed quiet: more silence won't end
+                # it, and the checks at rest judge what is left waiting.
+                return False
             # Let the model's silence end its reply (before it answers anything else).
             server.idle(1)
             server.network.deliver()
