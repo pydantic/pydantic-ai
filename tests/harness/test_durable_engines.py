@@ -331,6 +331,7 @@ class _InActivity(WrapperToolset[None]):
     copy: bool = False
     """Call it with a `dataclasses.replace` copy of that context instead, as code in the activity can make."""
 
+    # `Any`, as in the `WrapperToolset.call_tool` this overrides.
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
     ) -> Any:

@@ -15,7 +15,8 @@ Either way, a key hashes values: equal values give equal keys, whether or not th
 Not VCR tests: no model request goes out, and no Prefect server runs. `task` and `FlowRunContext.get` are replaced by
 a stand-in flow attempt, which keeps the counters a flow attempt keeps and computes each task run's key with
 `PrefectAgentInputs`. That is the part of the default cache policy that varies within a flow: the task's source and
-the flow run's ID, which it adds, are the same for every task run here.
+the flow run's ID, which it adds, are the same for every task run here. The projections and counters that build a
+key are internal, and no public API exposes a key without a Prefect server, so the property imports them.
 """
 
 from __future__ import annotations

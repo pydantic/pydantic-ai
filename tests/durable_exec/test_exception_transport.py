@@ -15,6 +15,9 @@ the engine calls it, and emulates the engine's own part:
   instead of sleeping.
 - Prefect: the `retry_condition_fn` that `PrefectDurability` gives every task decides. Prefect runs tasks in the
   flow's process, so the exception arrives as itself.
+
+The conversion at each boundary is internal, and no public API reaches it without an engine server, so the cells
+import the engines' private conversion functions and emulate the server's part.
 """
 
 from __future__ import annotations
