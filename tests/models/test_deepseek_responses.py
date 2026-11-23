@@ -1121,6 +1121,10 @@ async def test_deepseek_responses_replay_interleaved_settled_function_calls(
     )
 
 
+@pytest.mark.drops_replay_field(
+    reason="DeepSeek's profile leaves `openai_supports_encrypted_reasoning_content` unset, so its reasoning goes back "
+    'as the raw content it returned, without the `encrypted_content` it also returns'
+)
 async def test_deepseek_responses_replay_own_reasoning_history(
     allow_model_requests: None, deepseek_api_key: str
 ) -> None:

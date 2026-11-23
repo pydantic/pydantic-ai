@@ -435,6 +435,9 @@ async def test_snapshot_preserves_metadata_pin_across_inflight_segment() -> None
     assert snapshot.metadata == pin
 
 
+@pytest.mark.breaks_stream_contract(
+    reason="a replacing segment drops the earlier segment's later parts, which no event announces"
+)
 async def test_model_change_replaces_indices() -> None:
     """A segment from a different model *replaces* rather than accumulates, mirroring `merge_mode`.
 
@@ -476,6 +479,9 @@ async def test_model_change_replaces_indices() -> None:
     assert merged.state == 'complete'
 
 
+@pytest.mark.breaks_stream_contract(
+    reason="a replacing segment drops the earlier segment's later parts, which no event announces"
+)
 async def test_replace_new_after_accumulation_reindexes_from_zero() -> None:
     """A `replace-new` segment following *multiple* accumulate segments emits its parts from index 0.
 
@@ -551,6 +557,12 @@ async def test_get_state_transitions_incomplete_then_complete() -> None:
     assert stream.get().state == 'complete'
 
 
+SCRIPTED_GET_PAST_CANCEL = pytest.mark.breaks_stream_contract(
+    reason="the scripted segment's `get()` returns its whole scripted response, past the event it is cancelled at"
+)
+
+
+@SCRIPTED_GET_PAST_CANCEL
 async def test_cancel_stops_loop_and_cancels_suspended_response() -> None:
     """Cancelling mid-segment cancels the server-side job once and issues no further continuation."""
     model = _FakeModel(
@@ -704,6 +716,7 @@ async def test_segment_transport_error_propagates_when_not_cancelled() -> None:
             pass
 
 
+@SCRIPTED_GET_PAST_CANCEL
 async def test_cancel_suppresses_segment_transport_error() -> None:
     """When `cancel()` tears down an in-flight segment and the sub-stream raises a transport error, the guard suppresses it."""
 
@@ -1345,8 +1358,11 @@ async def test_cancel_during_between_segment_sleep_skips_next_request() -> None:
 
 @pytest.mark.parametrize(
     ('wrapped', 'cancel'),
-    [(False, True), (True, True), (True, False)],
-    ids=['raw', 'wrapped-in-model-api-error', 'wrapped-not-cancelled'],
+    [
+        pytest.param(False, True, id='raw', marks=SCRIPTED_GET_PAST_CANCEL),
+        pytest.param(True, True, id='wrapped-in-model-api-error', marks=SCRIPTED_GET_PAST_CANCEL),
+        pytest.param(True, False, id='wrapped-not-cancelled'),
+    ],
 )
 async def test_cancel_suppresses_non_httpx_segment_error(wrapped: bool, cancel: bool) -> None:
     """`cancel()` tearing down a non-httpx sub-stream suppresses the sub's own transport error type.

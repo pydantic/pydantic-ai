@@ -7299,6 +7299,9 @@ async def test_completed_streamed_response_replay_events(
     assert [event async for event in buffered_stream] == replayed_events
 
 
+@pytest.mark.breaks_stream_contract(
+    reason='replays hand-built events at index 7 to show replay keys a part by its event index, not its position'
+)
 @pytest.mark.parametrize('read_each', [False, True])
 @pytest.mark.parametrize('details', [None, {}, {'initial': 1}], ids=['no-details', 'empty-details', 'details'])
 async def test_replay_text_preserves_snapshots(read_each: bool, details: dict[str, Any] | None) -> None:

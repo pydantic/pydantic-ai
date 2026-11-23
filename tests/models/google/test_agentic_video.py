@@ -105,6 +105,10 @@ async def _stream_response_parts(
 
 
 @pytest.mark.vcr
+@pytest.mark.drops_replay_field(
+    reason='Gemini rejects replayed media-processing steps, so the follow-up omits them and their thought signatures: '
+    'https://github.com/pydantic/pydantic-ai/issues/10226'
+)
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
 async def test_agentic_video_processing(
     stream: bool,
@@ -400,6 +404,10 @@ def test_untyped_tool_call_with_a_payload_is_not_media_processing() -> None:
 
 
 @pytest.mark.vcr
+@pytest.mark.drops_replay_field(
+    reason='Vertex AI sends each media-processing step as a part holding only a thought signature, which history '
+    "doesn't keep, so the follow-up carries only the final text's signature"
+)
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
 async def test_agentic_video_processing_vertex(
     stream: bool,

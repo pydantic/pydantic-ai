@@ -76,6 +76,8 @@ from ._ports import reserve_loopback_port
 from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
+from .replay_fidelity import check_replay_fidelity
+from .stream_contract import check_stream_contract, observe_stream_contract
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
 # (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
@@ -144,6 +146,16 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
+    )
+    config.addinivalue_line(
+        'markers',
+        'breaks_stream_contract(reason): the test streams events the contract in `tests/stream_contract.py` forbids, '
+        'on purpose; reason required',
+    )
+    config.addinivalue_line(
+        'markers',
+        'drops_replay_field(reason): the recorded conversation deliberately does not echo a provider field '
+        '`tests/replay_fidelity.py` expects back; reason required',
     )
     config.addinivalue_line(
         'markers',
@@ -1317,6 +1329,38 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
         return
     # Playback never records, so the interactions cassetter loaded are exactly the file's contents.
     check_cache_prefix_stability(request.node, vcr)
+
+
+@pytest.fixture(autouse=True)
+def fail_replay_fidelity_violations(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    """Check that each played response's provider fields come back in the request the code sends next."""
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE:
+        return
+    check_replay_fidelity(request.node, vcr)
+
+
+@pytest.fixture(autouse=True)
+def fail_stream_contract_violations(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Check the events of every `StreamedResponse` the test iterates against `tests/stream_contract.py`."""
+    if request.node.get_closest_marker('benchmark') is not None:
+        yield
+        return
+    violations = observe_stream_contract(monkeypatch)
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    check_stream_contract(request.node, violations)
 
 
 @pytest.fixture(autouse=True)

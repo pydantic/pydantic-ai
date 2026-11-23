@@ -1547,6 +1547,9 @@ async def test_native_tool_calls_and_returns_are_tool_events(
     ]
 
 
+@pytest.mark.breaks_stream_contract(
+    reason='replaces the streamed native tool call part, the shape whose recording is under test'
+)
 async def test_native_tool_part_replacement_is_recorded_once_per_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_output: _RecorderCapture
 ) -> None:

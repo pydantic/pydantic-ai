@@ -4631,6 +4631,10 @@ async def test_bedrock_thinking_openai_responses_variant(
     assert any(isinstance(part, ThinkingPart) for part in response.parts) is (thinking is not False)
 
 
+@pytest.mark.drops_replay_field(
+    reason="GPT-5.6's profile on Bedrock leaves `bedrock_send_back_thinking_parts` unset, so its redacted reasoning "
+    'stays out of the next request'
+)
 async def test_bedrock_thinking_openai_responses_variant_keeps_tool_output(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ) -> None:

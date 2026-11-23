@@ -316,6 +316,9 @@ class TestStreamGuardrail:
             ('guardrail blocked stream', {'guardrail.direction': 'stream', 'guardrail.action': 'block', **message}),
         ]
 
+    @pytest.mark.breaks_stream_contract(
+        reason='streams a fragment of the first call after the second call started, the interleaving under test'
+    )
     async def test_tool_call_args_streamed_after_another_part_started_are_screened(self):
         async def interleaved(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             yield {0: DeltaToolCall(name='weather', json_args='{"city": ', tool_call_id='call-1')}

@@ -1069,6 +1069,9 @@ def test_stream_restorer_restores_dict_arg_deltas():
     assert restored.delta.args_delta == {'q': '<|end|>'}
 
 
+@pytest.mark.breaks_stream_contract(
+    reason='streams a fragment of the first call after the second call started, the interleaving under test'
+)
 async def test_parallel_tool_call_args_keep_a_token_split_across_another_calls_start():
     seen: list[str] = []
 
