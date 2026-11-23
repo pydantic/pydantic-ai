@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path, PurePath
-from typing import ClassVar, Self, cast
+from typing import ClassVar, Literal, Self, cast
 
 import anyio
 from rich.cells import cell_len, set_cell_size
@@ -79,25 +79,24 @@ class Status:
     subagent: 'Callable[[], Status | None]' = lambda: None
     """The running subagent whose figures replace these on the row until it settles; see `Tasks.focused`."""
 
-    FIT_ORDER: ClassVar[tuple[FooterField, ...]] = (
-        'workspace',
-        'assistant_age',
-        'output',
-        'cost',
-        'queued',
-        'updates',
-        'live',
-        'workspace',
-        'plugins',
-        'context',
-        'model',
+    FIT_STEPS: ClassVar[tuple[tuple[Literal['shorten', 'hide'], FooterField], ...]] = (
+        ('shorten', 'workspace'),
+        ('hide', 'assistant_age'),
+        ('hide', 'output'),
+        ('hide', 'cost'),
+        ('hide', 'queued'),
+        ('hide', 'updates'),
+        ('hide', 'live'),
+        ('hide', 'workspace'),
+        ('hide', 'plugins'),
+        ('shorten', 'context'),
+        ('hide', 'model'),
     )
     """How a footer too wide for the terminal gives way, first step first.
 
-    The first step on a field shortens it, as `workspace` to its last folder and `context` to its bare
-    figure; a step on a field with no shorter form left hides it. `activity` is never hidden, nor is
-    `context`'s figure: they say whether CLAI is working and how full the conversation is. `model` goes
-    last because it names a focused subagent whose figures are shown.
+    `workspace` shortens to its last folder and `context` to its bare figure. `activity` is never
+    hidden, nor is `context`'s figure: they say whether CLAI is working and how full the conversation
+    is. `model` goes last because it names a focused subagent whose figures are shown.
     """
 
     def clear_conversation(self) -> None:
@@ -188,7 +187,7 @@ class Status:
     def _fields(self) -> tuple[dict[FooterField, list[tuple[str, str]]], dict[FooterField, list[tuple[str, str]]]]:
         """Style each field by meaning, before applying the main conversation's layout.
 
-        Also returns the shorter form of each field `FIT_ORDER` shortens before hiding it.
+        Also returns the shorter form of each field a `FIT_STEPS` step shortens.
         """
         shown = self.subagent() or self
         estimated = '~' if shown.context_estimated else ''
@@ -258,17 +257,17 @@ class Status:
     def toolbar(self, *, width: int | None = None) -> list[tuple[str, str]]:
         """Apply visibility and ordering without tying any field's style to its position.
 
-        With `width`, take `FIT_ORDER`'s steps until the row fits in that many cells, keeping the
+        With `width`, take `FIT_STEPS` in turn until the row fits in that many cells, keeping the
         configured order of what is left; a row that still does not fit is the painter's to cut.
         """
         (fields, shorter), order = self._fields(), self.fields()
         row = _join(fields, order)
         if width is None:
             return row
-        for name in self.FIT_ORDER:
+        for step, name in self.FIT_STEPS:
             if sum(cell_len(text) for _, text in row) <= width:
                 break
-            fields[name] = shorter.pop(name, [])
+            fields[name] = shorter[name] if step == 'shorten' else []
             row = _join(fields, order)
         return row
 

@@ -205,9 +205,11 @@ async def test_editor_queue_respects_layout_without_duplicate_counts(visible: bo
         live.submit('queued user input')
         footer = Text.from_ansi(live.frame()[-1]).plain
         assert footer.count('queued: 1') == int(visible)
-        live.notice = 'A notice replaces the toolbar'
+        live.notice = 'A notice replaces the toolbar ' * 10
         footer = Text.from_ansi(live.frame()[-1]).plain
-        assert 'A notice replaces the toolbar' in footer
+        assert footer.startswith('A notice replaces the toolbar')
+        # A notice wider than the row is cut before the queue count, not the count itself.
+        assert footer.endswith(' | queued: 1') is visible
         assert footer.count('queued: 1') == int(visible)
         assert status.last_text_at is None
 

@@ -607,7 +607,7 @@ class LivePrompt:
         rows.append(muted + '─' * width + reset)
         if pinned:
             rows.append(truncate(pinned, width) + reset)
-        rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
+        rows.append(muted + truncate(self._footer(width, muted=muted), width) + reset)
         return tuple(rows)
 
     def _working_title(self, width: int, *, muted: str) -> str:
@@ -633,11 +633,14 @@ class LivePrompt:
             title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
         return title
 
-    def _footer(self, *, muted: str) -> str:
+    def _footer(self, width: int, *, muted: str) -> str:
         """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""
         if self.buffer.search is not None:
             return f'reverse-i-search: {self.buffer.search}'
         notice = self.notice or self.images.notice or self._completion_error
+        queued = ''
+        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
+            queued = f'{muted} | queued: {len(self.queued_messages)}'
         footer = (
             ' '.join(terminal_text(notice).split())
             if notice
@@ -646,9 +649,8 @@ class LivePrompt:
                 for style, text in self.toolbar()
             )
         )
-        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
-            footer += f' | queued: {len(self.queued_messages)}'
-        return footer
+        # Cut the notice or toolbar, not the queue count after it.
+        return truncate(footer, max(0, width - visible_length(queued))) + queued
 
     def paint(self) -> None:
         """Draw only when the editor owns the terminal."""

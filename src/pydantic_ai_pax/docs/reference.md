@@ -1215,11 +1215,9 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
-While a turn or command runs, the rule above the draft shows the working animation,
-the time it has run, and that Esc interrupts it (`─ Working ⠋ 12s · Esc to interrupt`).
-Ctrl-C interrupts too, and a second Ctrl-C within two seconds quits; Esc never quits.
-With a draft or a queued message, the rule adds `Enter to queue` and the steer key,
-which take the Esc hint's place when the row is too narrow for both.
+While a turn or command runs, the rule above the draft shows how long it has run
+and that Esc interrupts it; with a draft or a queued message it also shows the
+queue and steer keys, which keep their place first on a narrow terminal.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold. This keeps your prompts apart from
 answers. Steering messages, commands entered during a turn, and prompts restored by
@@ -1758,23 +1756,11 @@ Every field is independently selectable and reorderable:
 Reordering preserves each field's colours and conditional visibility. Plugin
 fragments move and hide together through `plugins`, not as individual fields.
 
-When the row is wider than the terminal, fields give way in this order until it
-fits, and the rest keep their configured order:
-
-1. `workspace` shortens to its last folder (`…/jsonrc`).
-2. `assistant_age`, `output`, `cost`, `queued`, `updates`, and `live` are hidden, in that order.
-3. `workspace` is hidden, then `plugins`.
-4. `context` drops its labels and keeps the figure (`61k/1m`).
-5. `model` is hidden.
-
-Fitting never hides `activity` or the context figure: they say whether CLAI is
-working and how full the conversation is. A row that still does not fit, such as
-one with a very long tool name, is cut at the terminal's edge; it never wraps
-onto a second row. At 80 columns the default layout reads:
-
-```text
-claude-code:claude-opus-5-5 | …/jsonrc | context: 61k/1m tokens | ready
-```
+When the row is wider than the terminal, `workspace` shortens to its last folder
+(`…/jsonrc`), then fields are hidden, least important first, until it fits:
+`assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
+`plugins`, the `context` labels, then `model`. `activity` and the context figure
+always stay. The row is cut at the edge rather than wrapped if it still does not fit.
 
 To set the list directly, keep the JSON in one quoted argument:
 
