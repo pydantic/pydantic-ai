@@ -46,7 +46,9 @@ EXEMPT: dict[tuple[str, str], Exempt] = {
     ('coverage', 'clai'): Exempt(_LAUNCHER),
     ('coverage', 'pydantic_ai_examples'): Exempt(_EXAMPLES),
     ('coverage', 'pydantic_ai_pax'): Exempt(
-        'left outside the 100% gate since https://github.com/pydantic/pydantic-ai/pull/9654'
+        'kept outside the 100% gate on purpose: https://github.com/pydantic/pydantic-ai/pull/9654 says'
+        ' `pydantic-clai2` stays outside the gate, and the rename in https://github.com/pydantic/pydantic-ai/pull/13885'
+        ' kept the coverage `include` unchanged'
     ),
     ('coverage', 'pydantic_clai2'): Exempt(_SHIM),
     ('complexipy', 'clai'): Exempt(_LAUNCHER),
