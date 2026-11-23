@@ -27,9 +27,9 @@ The summary's wording can change between releases;
 [`ComputerResult`][pydantic_ai.computer_use.ComputerResult], in the result's `metadata`, does not.
 
 A call with a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] must not run until a person
-approves it, and the runner asks for that approval while it validates the call's arguments, before anything else can
-fail. A model adapter then reads the person's decision from the call's result: a denial, or a refusal of the call's
-arguments, means nobody approved it, and any other result means a person did.
+approves it. A runner that ran it after a person approved it sets
+[`confirmed`][pydantic_ai.computer_use.ComputerResult.confirmed] on the result. A model adapter tells the provider that
+a person confirmed the call only when it is set, and otherwise says nobody did.
 
 In the message history, the tool's calls and results become
 [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
@@ -506,6 +506,10 @@ class ComputerResult(TypedDict):
     changed them. A model adapter then sends the summary instead of reporting the model's actions as the ones that
     ran."""
 
+    confirmed: NotRequired[Literal[True]]
+    """Set by the runner when a person approved this call; providers that need an acknowledgement send one only when it
+    is set."""
+
 
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
@@ -513,7 +517,10 @@ COMPUTER_KIND = ToolKind(
 """The tool kind that marks a tool as the `computer` tool.
 
 When a request includes a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], the provider's own computer tool is
-sent to the model in place of the tool of this kind, which still runs the calls."""
+sent to the model in place of the tool of this kind, which still runs the calls.
+
+A runner must set [`confirmed`][pydantic_ai.computer_use.ComputerResult.confirmed] on the result of a call with a
+[`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] that a person approved."""
 
 
 class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
