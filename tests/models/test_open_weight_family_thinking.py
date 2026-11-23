@@ -167,14 +167,32 @@ class OpenRouterCase:
 
 
 OPENROUTER_CASES = [
-    OpenRouterCase('nemotron-3', 'nvidia/nemotron-3-super-120b-a12b', True, snapshot()),
-    OpenRouterCase('nemotron-3.5', 'nvidia/nemotron-3.5-lightning', True, snapshot()),
-    OpenRouterCase('inkling', 'thinkingmachines/inkling', True, snapshot()),
-    OpenRouterCase('mimo', 'xiaomi/mimo-v2.6-flash', True, snapshot()),
-    OpenRouterCase('step-5', 'stepfun/step-5-preview', True, snapshot()),
-    OpenRouterCase('step-5-off', 'stepfun/step-5-preview', False, snapshot()),
-    OpenRouterCase('hy3', 'tencent/hy3', True, snapshot()),
-    OpenRouterCase('ling-3', 'inclusionai/ling-3.1-flash', True, snapshot()),
+    OpenRouterCase(
+        'nemotron-3',
+        'nvidia/nemotron-3-super-120b-a12b',
+        True,
+        snapshot({'reasoning_effort': 'medium', 'reasoned': True}),
+    ),
+    OpenRouterCase(
+        'nemotron-3.5',
+        'nvidia/nemotron-3.5-lightning',
+        True,
+        snapshot({'reasoning_effort': 'medium', 'reasoned': True}),
+    ),
+    OpenRouterCase(
+        'inkling', 'thinkingmachines/inkling', True, snapshot({'reasoning_effort': 'medium', 'reasoned': True})
+    ),
+    OpenRouterCase('mimo', 'xiaomi/mimo-v2.6-flash', True, snapshot({'reasoning_effort': 'medium', 'reasoned': True})),
+    OpenRouterCase(
+        'step-5', 'stepfun/step-5-preview', True, snapshot({'reasoning_effort': 'medium', 'reasoned': True})
+    ),
+    OpenRouterCase(
+        'step-5-off', 'stepfun/step-5-preview', False, snapshot({'reasoning_effort': None, 'reasoned': True})
+    ),
+    OpenRouterCase('hy3', 'tencent/hy3', True, snapshot({'reasoning_effort': 'medium', 'reasoned': True})),
+    OpenRouterCase(
+        'ling-3', 'inclusionai/ling-3.1-flash', True, snapshot({'reasoning_effort': 'medium', 'reasoned': True})
+    ),
 ]
 
 
