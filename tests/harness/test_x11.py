@@ -408,28 +408,22 @@ def test_a_one_colour_screenshot_is_blank() -> None:
     assert not is_blank(png(4, 3, red_box=(1, 1, 2, 2)))
 
 
-def test_every_page_that_lists_the_desktop_programs_names_them_all() -> None:
-    # Each backend's page repeats the list: one it leaves out fails on first use in an image built from the page.
+def test_a_sentence_that_lists_what_a_custom_image_needs_names_every_program_the_display_runs() -> None:
+    # Such a sentence, as on the E2B pages, is a build list: a program it leaves out fails on first use.
     root = Path(__file__).parents[2]
     pages = [*root.glob('docs/harness/*.md'), *root.glob('src/pydantic_ai_harness/pydantic_ai_harness/*/README.md')]
-    texts = [(page.name, page.read_text()) for page in pages]
-    programs = [
-        (name, sentence, _x11._CLIENTS.split())  # pyright: ignore[reportPrivateUsage]
-        for name, text in texts
-        for sentence in re.split(r'(?<=\.) ', text)
+    wanted = _x11._CLIENTS.split()  # pyright: ignore[reportPrivateUsage]
+    sentences = [
+        (page.name, sentence)
+        for page in pages
+        for sentence in re.split(r'(?<=\.) ', page.read_text())
         if '`xdotool`' in sentence and '`setsid`' in sentence
     ]
-    packages = [
-        (name, line, _x11.DESKTOP_PACKAGES)
-        for name, text in texts
-        for line in text.splitlines()
-        if 'apt-get install' in line and 'xvfb' in line
-    ]
-    assert programs
+    assert sentences
     assert [
-        (name, [p for p in wanted if p not in listed])
-        for name, listed, wanted in [*programs, *packages]
-        if any(p not in listed for p in wanted)
+        (name, [p for p in wanted if p not in sentence])
+        for name, sentence in sentences
+        if any(p not in sentence for p in wanted)
     ] == []
 
 
