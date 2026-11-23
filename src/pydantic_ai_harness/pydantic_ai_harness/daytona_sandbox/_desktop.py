@@ -48,6 +48,7 @@ from pydantic_ai.computer_use import (
     MouseDown,
     MouseMove,
     MouseUp,
+    NamedKey,
     Point,
     PressKeys,
     Region,
@@ -102,33 +103,12 @@ _SCROLLED_PER_REQUEST = 500
 
 _MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'cmd'})
 
-_RENAMED_KEYS = {'super': 'cmd', **{f'numpad{n}': f'num{n}' for n in range(10)}, 'numlock': 'num_lock'}
+_RENAMED_KEYS: dict[NamedKey, str] = {'super': 'cmd', 'numlock': 'num_lock'}
 """`ComputerUse` key names that Daytona spells differently."""
 
-_REFUSED_KEYS = frozenset(
-    {
-        *(f'f{n}' for n in range(13, 25)),
-        'numpad_enter',
-        'numpad_add',
-        'numpad_subtract',
-        'numpad_multiply',
-        'numpad_divide',
-        'numpad_decimal',
-        'printscreen',
-        'pause',
-        'scrolllock',
-        'menu',
-        'mediaplay',
-        'mediaprev',
-        'medianext',
-        'volumeup',
-        'volumedown',
-        'volumemute',
-    }
-)
-"""`ComputerUse` key names that Daytona gets wrong or refuses. `f13` to `f24` crash its desktop, its keypad operator
-and Enter keys type other characters, and it answers the rest with an error that doesn't prove nothing was pressed.
-They are refused before they're sent, because a sent key counts as possibly held until its release is confirmed."""
+_REFUSED_KEYS: frozenset[NamedKey] = frozenset({'printscreen', 'pause', 'scrolllock', 'menu'})
+"""`ComputerUse` key names that Daytona refuses, with an error that doesn't prove nothing was pressed. They are refused
+before they're sent, because a sent key counts as possibly held until its release is confirmed."""
 
 _BUTTONS = frozenset({'left', 'right', 'middle'})
 """The mouse buttons Daytona has; it refuses the side buttons."""
@@ -196,8 +176,10 @@ def _keys(keys: Sequence[str]) -> list[str]:
             raise UnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
         if key in _SHIFTED:
             names += ['shift', _SHIFTED[key]]
+        elif key in _RENAMED_KEYS:
+            names.append(_RENAMED_KEYS[key])
         else:
-            names.append(_RENAMED_KEYS.get(key, key))
+            names.append(key)
     return list(dict.fromkeys(names))
 
 
