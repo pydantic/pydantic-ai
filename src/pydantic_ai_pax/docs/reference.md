@@ -1698,7 +1698,8 @@ after the snapshot; those future lines are not included in its count.
 Read headers show the path, zero-based offset, and effective line limit (Coder
 default and maximum: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
-ripgrep and honor ignore rules. These displayed defaults describe Coder tools. Read and listing calls add no result row on success.
+ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
+Read and listing calls add no result row on success.
 
 File-write/edit headers include the path on the same line as the tool name.
 Shell headers include the command on that line. Arguments use cyan, with no
