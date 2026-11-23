@@ -114,7 +114,9 @@ async def assert_rechunked_streams_match(
     rechunked: dict[str, Mapping[str, object]] = {}
     recorded: dict[str, Mapping[str, object]] = {}
     applied: set[Strategy] = set()
+    names: set[str] = set()
     for name, recording in recordings:
+        names.add(name)
         wire = driver.wire(recording)
         built = driver.comparable(await driver.replay(recording, wire))
         for strategy in driver.strategies:
@@ -126,6 +128,8 @@ async def assert_rechunked_streams_match(
                     applied.add(strategy)
     # Guards against a wire format change leaving a strategy nothing to re-chunk.
     assert applied == set(driver.strategies), f'strategies with nothing to re-chunk: {set(driver.strategies) - applied}'
+    stale = {key for key in known or {} if key.rsplit(' ', 2)[0] in names} - recorded.keys()
+    assert not stale, f'{stale} name no re-chunking of these recordings: remove them from `known`'
     for key in (known or {}).keys() & recorded.keys():
         assert rechunked.pop(key) != recorded.pop(key), (
             f'{key} builds what it built as recorded: remove it from `known`'

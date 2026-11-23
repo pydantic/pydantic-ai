@@ -18,11 +18,12 @@ hands its consumer, through `StreamedResponse.__aiter__`, and fails the test whe
   returns.
 
 A start may name an index past the next one: an adapter can hold a part's slot and start the part once it's complete,
-as `GeminiStreamedResponse` does for returns its grounding metadata fills. A resumed stream starts after the parts it
+as `GeminiStreamedResponse` does for a return it holds back until its grounding metadata arrives. A resumed stream starts after the parts it
 carries in from an earlier run, so the parts before its first start aren't compared. A part or delta of a class
 defined outside `pydantic_ai` is not folded, so the check never builds a user's part subclass a test counts.
 
-A violation an adapter is known to cause goes in `KNOWN`, with the issue that tracks its fix. A test that streams a
+A violation an adapter is known to cause goes in `KNOWN`, with the issue that tracks its fix and the test that
+streams it, which fails once it no longer does, so a fixed entry can't stay. A test that streams a
 shape the contract forbids on purpose takes `@pytest.mark.breaks_stream_contract(reason=...)`.
 """
 
@@ -89,7 +90,7 @@ class Known:
     tracked_by: str
     """The issue tracking the fix."""
     repro: str
-    """A test that streams the violation."""
+    """The node id of a test that streams the violation."""
 
 
 KNOWN: dict[ViolationKey, Known] = {
@@ -97,7 +98,7 @@ KNOWN: dict[ViolationKey, Known] = {
         'A tool search call streams its raw input JSON, then is replaced at its block stop with the normalized '
         '`ToolSearchArgs`, so its end event carries args its deltas never built',
         tracked_by='to open: anthropic-tool-search-replaces-streamed-call',
-        repro='tests/models/anthropic/test_tool_search.py::test_anthropic_native_tool_search_streaming',
+        repro='tests/test_tool_search.py::test_anthropic_native_tool_search_streaming',
     ),
     ('MistralStreamedResponse', 'end-differs-from-stream', 'ToolCallPart'): Known(
         'Each chunk replaces the tool call with the whole call so far, under a new generated id when the chunk has '
@@ -109,7 +110,7 @@ KNOWN: dict[ViolationKey, Known] = {
         'When the provider interleaves the fragments of parallel tool calls, a fragment of an earlier call arrives '
         'after the next call started, and so after the earlier call ended',
         tracked_by='to open: mistral-interleaved-tool-call-deltas',
-        repro='tests/models/test_mistral.py::test_stream_tool_call_deltas',
+        repro='tests/models/test_mistral.py::test_stream_tool_call_deltas[interleaved_fragments]',
     ),
     ('OpenAIResponsesStreamedResponse', 'delta-after-end', 'ThinkingPart'): Known(
         "A reasoning item's signature arrives with `response.output_item.done`, after its later summary parts "
@@ -127,7 +128,7 @@ KNOWN: dict[ViolationKey, Known] = {
         'Citations and native tool results are set on parts already handed out, with no event, so a consumer that '
         'copies the events misses them',
         tracked_by='to open: xai-mutates-streamed-parts-in-place',
-        repro='tests/test_citations.py::test_web_citations',
+        repro='tests/models/test_citations.py::test_web_citations[xai-stream]',
     ),
 }
 
@@ -357,9 +358,9 @@ def _subclasses(cls: type[StreamedResponse]) -> list[type[StreamedResponse]]:
     return found
 
 
-def check_stream_contract(node: pytest.Item, violations: dict[ViolationKey, str]) -> None:
-    """Fail `node` for each violation `KNOWN` doesn't hold, or for a `breaks_stream_contract` marker with none."""
-    marker = node.get_closest_marker('breaks_stream_contract')
+def check_stream_contract(marker: pytest.Mark | None, nodeid: str, violations: dict[ViolationKey, str]) -> None:
+    """Fail the test `nodeid` names for each violation `KNOWN` doesn't hold, for a `KNOWN` entry it repros but no
+    longer streams, or for its `breaks_stream_contract` `marker` with none."""
     if marker is not None:
         reason = marker.kwargs.get('reason')
         if not (isinstance(reason, str) and reason.strip()):
@@ -378,5 +379,12 @@ def check_stream_contract(node: pytest.Item, violations: dict[ViolationKey, str]
             'stream. If an adapter causes it on `main` and an issue tracks the fix, add a `KNOWN` entry in '
             '`tests/stream_contract.py`; if this test streams such a shape on purpose, add '
             '@pytest.mark.breaks_stream_contract(reason=...)',
+            pytrace=False,
+        )
+    stale = [key for key, known in KNOWN.items() if known.repro == nodeid and key not in violations]
+    if stale:
+        pytest.fail(
+            f'`KNOWN` entries {stale} in `tests/stream_contract.py` name this test as their repro, but it no longer '
+            'streams their violation: remove them, and close the issue that tracks the fix',
             pytrace=False,
         )

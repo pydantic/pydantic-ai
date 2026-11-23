@@ -8,6 +8,7 @@ applies the same checks to every cassette the rest of the suite replays.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import get_args
@@ -23,6 +24,7 @@ from .replay_fidelity import (
     EchoName,
     ReplayFidelityCode,
     WireShape,
+    check_replay_fidelity,
     iter_echo_checks,
     replay_fidelity_violations,
 )
@@ -121,6 +123,39 @@ CASES = [
 def test_violation_codes(case: Case):
     interactions, requests = case.conversation
     assert [violation.code for violation in replay_fidelity_violations(interactions, requests)] == case.codes
+
+
+MARKED = pytest.mark.drops_replay_field(reason='continues history on a model that cannot take the field').mark
+
+
+@dataclass(frozen=True)
+class CheckCase:
+    id: str
+    marker: pytest.Mark | None
+    conversation: tuple[list[HttpInteraction], list[RecordedRequest]]
+    fails_with: str | None
+
+
+CHECK_CASES = [
+    CheckCase(
+        'marker-without-reason', pytest.mark.drops_replay_field.mark, cached_conversation(read=0), 'requires reason'
+    ),
+    CheckCase('stale-marker', MARKED, cached_conversation(read=2000), 'is stale'),
+    CheckCase('marked', MARKED, cached_conversation(read=0), None),
+    CheckCase('violation', None, cached_conversation(read=0), 'cache-not-read'),
+    CheckCase('no-violation', None, cached_conversation(read=2000), None),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CHECK_CASES])
+def test_check_replay_fidelity(case: CheckCase):
+    """The autouse fixture reaches these outcomes only when a conversation drops a field or a marker is wrong."""
+    violations = replay_fidelity_violations(*case.conversation)
+    if case.fails_with is None:
+        check_replay_fidelity(case.marker, 'cassette.yaml', violations)
+    else:
+        with pytest.raises(pytest.fail.Exception, match=re.escape(case.fails_with)):
+            check_replay_fidelity(case.marker, 'cassette.yaml', violations)
 
 
 def test_every_wire_shape_is_classified():

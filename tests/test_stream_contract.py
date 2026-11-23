@@ -6,6 +6,10 @@ These are unit tests because no provider streams most of these shapes on demand;
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
 import pytest
 
 from pydantic_ai.messages import (
@@ -21,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
 )
 
-from .stream_contract import KNOWN, StreamContractCode, check_stream_events
+from .stream_contract import KNOWN, StreamContractCode, ViolationKey, check_stream_contract, check_stream_events
 
 CALL = ToolCallPart('get_weather', '{"city": ', tool_call_id='call_1')
 CALL_DONE = ToolCallPart('get_weather', '{"city": "Paris"}', tool_call_id='call_1')
@@ -148,4 +152,42 @@ def test_known_entries_name_a_tracking_issue_and_a_repro() -> None:
     for (stream, _code, _part), known in KNOWN.items():
         assert stream.endswith('StreamedResponse')
         assert known.reason.strip() and known.tracked_by.strip()
-        assert known.repro.startswith('tests/') and '::' in known.repro
+        path, _, function = known.repro.partition('::')
+        assert path.startswith('tests/') and function, known.repro
+        source = (Path(__file__).parent.parent / path).read_text()
+        assert re.search(rf'^(async )?def {function.partition("[")[0]}\(', source, re.MULTILINE), known.repro
+
+
+UNKNOWN_VIOLATION: ViolationKey = ('FunctionStreamedResponse', 'delta-before-start', None)
+(KNOWN_VIOLATION, KNOWN_ENTRY), *_ = KNOWN.items()
+NODE = 'tests/test_example.py::test_example'
+MARKED = pytest.mark.breaks_stream_contract(reason='streams a forbidden shape on purpose').mark
+
+
+@dataclass(frozen=True)
+class CheckCase:
+    id: str
+    marker: pytest.Mark | None
+    nodeid: str
+    violations: dict[ViolationKey, str]
+    fails_with: str | None
+
+
+CHECK_CASES = [
+    CheckCase('marker-without-reason', pytest.mark.breaks_stream_contract.mark, NODE, {}, 'requires reason=...'),
+    CheckCase('stale-marker', MARKED, NODE, {}, 'is stale'),
+    CheckCase('marked', MARKED, NODE, {UNKNOWN_VIOLATION: 'delta 0'}, None),
+    CheckCase('unknown-violation', None, NODE, {UNKNOWN_VIOLATION: 'delta 0'}, 'add a `KNOWN` entry'),
+    CheckCase('known-violation', None, KNOWN_ENTRY.repro, {KNOWN_VIOLATION: 'end 0'}, None),
+    CheckCase('stale-known-entry', None, KNOWN_ENTRY.repro, {}, 'no longer streams their violation'),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CHECK_CASES])
+def test_check_stream_contract(case: CheckCase) -> None:
+    """The autouse fixture reaches these outcomes only when a test breaks the contract or a marker or entry is wrong."""
+    if case.fails_with is None:
+        check_stream_contract(case.marker, case.nodeid, case.violations)
+    else:
+        with pytest.raises(pytest.fail.Exception, match=re.escape(case.fails_with)):
+            check_stream_contract(case.marker, case.nodeid, case.violations)

@@ -76,7 +76,7 @@ from ._ports import reserve_loopback_port
 from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
-from .replay_fidelity import check_replay_fidelity
+from .replay_fidelity import check_replay_fidelity, replay_fidelity_violations
 from .stream_contract import check_stream_contract, observe_stream_contract
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
@@ -1343,7 +1343,11 @@ def fail_replay_fidelity_violations(request: pytest.FixtureRequest, vcr: Cassett
         return
     if vcr is None or vcr.record_mode != RecordMode.NONE:
         return
-    check_replay_fidelity(request.node, vcr)
+    check_replay_fidelity(
+        request.node.get_closest_marker('drops_replay_field'),
+        vcr.path,
+        replay_fidelity_violations(vcr.interactions, vcr.sent_requests),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -1360,7 +1364,7 @@ def fail_stream_contract_violations(request: pytest.FixtureRequest, monkeypatch:
         getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
     ):
         return
-    check_stream_contract(request.node, violations)
+    check_stream_contract(request.node.get_closest_marker('breaks_stream_contract'), request.node.nodeid, violations)
 
 
 @pytest.fixture(autouse=True)

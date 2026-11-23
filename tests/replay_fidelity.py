@@ -23,7 +23,8 @@ fails it on:
 
 `ECHO_FIELDS` classifies every wire shape the check knows: the fields its responses carry that the next request sends
 back, each with the adapter function that does it, or `Exempt` with the reason the shape is left out. The comment
-above it lists the opaque fields left out of the table on purpose.
+above it lists the opaque fields left out of the table on purpose. A request to an endpoint `_wire_shape` doesn't map
+to a shape isn't checked, so a new provider API needs a shape there as well as its `ECHO_FIELDS` entry.
 
 A test whose conversation drops a field or loses a cache read on purpose, for example by continuing history on a model
 that can't take the field, takes `@pytest.mark.drops_replay_field(reason=...)`. A marked test whose conversation has
@@ -41,7 +42,7 @@ from typing import Literal
 from urllib.parse import unquote, urlparse
 
 import pytest
-from cassetter import Body, Cassette, HttpInteraction, RecordedRequest
+from cassetter import Body, HttpInteraction, RecordedRequest
 
 from pydantic_ai._utils import is_list, is_str_dict
 from pydantic_ai.models._tool_call_ids import hashed_tool_call_id
@@ -954,10 +955,13 @@ def replay_fidelity_violations(
     return violations
 
 
-def check_replay_fidelity(node: pytest.Item, cassette: Cassette) -> None:
-    """Fail when a played conversation drops a provider field it must echo, or loses a cache read."""
-    violations = replay_fidelity_violations(cassette.interactions, cassette.sent_requests)
-    marker = node.get_closest_marker('drops_replay_field')
+def check_replay_fidelity(
+    marker: pytest.Mark | None, cassette_path: str, violations: Sequence[ReplayFidelityViolation]
+) -> None:
+    """Fail when the conversation the cassette played drops a provider field it must echo, or loses a cache read.
+
+    `marker` is the test's `drops_replay_field` marker, if it has one.
+    """
     if marker is not None:
         reason = marker.kwargs.get('reason')
         if not (isinstance(reason, str) and reason.strip()):
@@ -973,7 +977,7 @@ def check_replay_fidelity(node: pytest.Item, cassette: Cassette) -> None:
         return
     if violations:
         details = '\n'.join(
-            f'{cassette.path} [{violation.shape}] interaction {violation.interaction}, {violation.code}: '
+            f'{cassette_path} [{violation.shape}] interaction {violation.interaction}, {violation.code}: '
             f'{violation.detail}'
             for violation in violations
         )

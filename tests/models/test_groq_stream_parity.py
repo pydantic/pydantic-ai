@@ -167,3 +167,8 @@ async def test_rechunked_streams_match_the_rendered_stream(
     await assert_rechunked_streams_match(
         DRIVER, itertools.islice(recorded_completions.items(), offset, None, _STRIDE), _KNOWN
     )
+
+
+def test_known_rechunkings_name_recordings(recorded_completions: dict[str, dict[str, Any]]) -> None:
+    """Each test above sees only its share of the recordings, so this checks a renamed one can't leave `_KNOWN` stale."""
+    assert {key.rsplit(' ', 2)[0] for key in _KNOWN} <= recorded_completions.keys()

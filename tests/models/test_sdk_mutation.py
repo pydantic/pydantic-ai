@@ -136,7 +136,7 @@ DRIVERS: dict[str, MutationDriver | Exempt] = {
 """How each model class whose `request` or `request_stream` calls its SDK gets its responses mutated, by class name."""
 
 
-def test_every_chat_adapter_has_a_driver():
+def test_every_sdk_adapter_has_a_driver():
     _, skipped = shipped_model_classes()
     adapters = {cell.model_class.__name__ for cell in sdk_cells() if cell.entry_point in ENTRY_POINTS}
     assert_classified(adapters, DRIVERS, complete_walk=not skipped, table_name='DRIVERS')
