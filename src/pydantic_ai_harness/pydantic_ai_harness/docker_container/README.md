@@ -210,7 +210,7 @@ container = DockerContainer(
 
 - The mount is the only part of your machine's files the commands can change.
 - For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`. Docker refuses a second `--network` next to `--network none`.
-- With `desktop`, a container on the host's network (such as `--network host`) is refused, since programs in it could control your screen through your machine's X server.
+- With `desktop`, don't put the container on the host's network (such as `--network host`). Programs in it could reach an X server on your machine through Linux's abstract socket and control your screen.
 - `docker_args` can't change the container's name, label or entrypoint.
 - A new container gets `--pids-limit 2048`, so a runaway fork loop can't exhaust the process table of the machine running Docker. A command that hits the limit fails with `Cannot fork` or `Resource temporarily unavailable`. Pass your own `--pids-limit` in `docker_args`, or `-1` to remove it.
 
