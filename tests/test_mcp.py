@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import itertools
 import json
+import os
 import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -68,6 +71,7 @@ from pydantic_ai.usage import RunUsage
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
+from .harness._regex_steps import linearity_failure
 
 with try_import() as logfire_imports_successful:
     import logfire
@@ -108,6 +112,7 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp_compat
     from pydantic_ai._mcp_compat import wire_name
     from pydantic_ai.mcp import (
+        _ENV_VAR_PATTERN,  # pyright: ignore[reportPrivateUsage]
         MCPError,
         MCPToolset,
         Prompt,
@@ -117,6 +122,7 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        _expand_env_vars,  # pyright: ignore[reportPrivateUsage]
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
@@ -3014,6 +3020,37 @@ class TestLoadMCPToolsets:
             config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         assert len(toolsets) == 1
+
+    def test_env_var_expansion_expands_exactly_the_closed_references(self, monkeypatch: pytest.MonkeyPatch):
+        """On every short string, expansion gives what substituting each closed `${...}` reference gives, so `$`, `{` and
+        `:` in a name or default, an undefined variable and `${VAR:-}` behave as before, and an unclosed one stays as is."""
+        monkeypatch.setenv('a', 'A')
+        closed_reference = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
+
+        def substitute(match: re.Match[str]) -> str:
+            name, separator, default = match.groups()
+            if name in os.environ:
+                return os.environ[name]
+            if separator is None:
+                raise ValueError(f'Environment variable ${{{name}}} is not defined')
+            return default
+
+        def outcome(expand: Callable[[str], object], value: str) -> object:
+            try:
+                return expand(value)
+            except ValueError as error:
+                return error.args
+
+        for length in range(7):
+            for characters in itertools.product('${}:-a', repeat=length):
+                value = ''.join(characters)
+                assert outcome(_expand_env_vars, value) == outcome(partial(closed_reference.sub, substitute), value), (
+                    value
+                )
+
+    def test_env_var_expansion_takes_linear_time(self):
+        """A `${` that's never closed doesn't make each `${` after it rescan the rest of the string."""
+        assert linearity_failure(_ENV_VAR_PATTERN.pattern, _ENV_VAR_PATTERN.flags) is None
 
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
