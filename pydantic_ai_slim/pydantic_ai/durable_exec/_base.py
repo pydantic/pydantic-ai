@@ -49,7 +49,10 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import (
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.external_events import _refuse_unsupported_external_events  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -2004,9 +2007,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     params.messages, params.model_settings, params.model_request_parameters
                 )
             except NotImplementedError as error:
-                # A `UserError` that is also a `NotImplementedError`, as a provider that serves no token counting
-                # raises, is recorded as the `UserError` it is, so it fails the run instead of being retried.
-                if isinstance(error, UserError):
+                # A provider that serves no token counting raises a `UserError` that is also a `NotImplementedError`:
+                # it's recorded as the `UserError` it's documented as, so it fails the run instead of being retried.
+                # Any other error with both bases is recorded as a `NotImplementedError`.
+                if isinstance(error, _TokenCountingUnavailableError):
                     return CountTokensResult(error=('UserError', str(error)))
                 return CountTokensResult(error=('NotImplementedError', str(error)))
             except UserError as error:

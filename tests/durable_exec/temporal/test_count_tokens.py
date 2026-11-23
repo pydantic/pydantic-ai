@@ -180,6 +180,15 @@ class _MisconfiguredCountModel(_RejectedCountModel):
     error = _CountConfigError('The app is misconfigured.')
 
 
+class _OwnCannotCountError(UserError, NotImplementedError):
+    """A third-party model's own error with both bases, which is recorded as the `NotImplementedError` it also is."""
+
+
+class _OwnCannotCountModel(_RejectedCountModel):
+    kind = 'own_cannot_count_error'
+    error = _OwnCannotCountError('This model cannot count.')
+
+
 _sent_requests: list[str] = []
 """Each request the no-count-endpoint model's client was asked to send. Its transport sends none of them."""
 
@@ -222,6 +231,11 @@ _misconfigured_count_agent = Agent(
     name='count_tokens_user_error_subclass',
     capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
 )
+_own_cannot_count_agent = Agent(
+    _OwnCannotCountModel(_reply),
+    name='count_tokens_own_cannot_count_error',
+    capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
+)
 _no_count_endpoint_agent = Agent(
     _NoCountEndpointModel(
         'gpt-5.5',
@@ -238,6 +252,7 @@ _count_error_agents = {
     'not_implemented': _cannot_count_agent,
     'user_error': _rejected_count_agent,
     'user_error_subclass': _misconfigured_count_agent,
+    'own_cannot_count_error': _own_cannot_count_agent,
     'no_count_endpoint': _no_count_endpoint_agent,
 }
 
@@ -267,6 +282,7 @@ class CountTokensErrorWorkflow:
         ),
         ('user_error', 'UserError: This request cannot be counted.'),
         ('user_error_subclass', 'ActivityError: _CountConfigError: The app is misconfigured.'),
+        ('own_cannot_count_error', 'NotImplementedError: This model cannot count.'),
         (
             'no_count_endpoint',
             "UserError: Server-side token counting is not available for openai-codex models ('gpt-5.5'); "
@@ -282,7 +298,8 @@ async def test_count_tokens_errors_fail_the_count_once(
     `NotImplementedError` is what Pydantic AI Harness falls back on when a nested agent's model can't count. A
     `UserError` subclass carries more than its message, so it fails the activity as it would fail a model request's.
     A model whose provider serves no token counting raises a `UserError` that is also a `NotImplementedError`, and
-    the workflow sees it as a `UserError`, which fails the workflow instead of its task.
+    the workflow sees it as a `UserError`, which fails the workflow instead of its task. Any other error with both
+    bases reaches the workflow as a `NotImplementedError`.
     """
     _count_attempts.clear()
     _sent_requests.clear()

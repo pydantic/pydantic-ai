@@ -67,7 +67,13 @@ from ..._utils import (
     number_to_datetime,
 )
 from ...durable_exec._operation_backend import in_durable_unit
-from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
+from ...exceptions import (
+    ModelConnectionError,
+    SuspendedResponseExpired,
+    UnsupportedSettingWarning,
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -260,14 +266,6 @@ _WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
 
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
-
-
-class _TokenCountingUnavailableError(UserError, NotImplementedError):
-    """Raised by `count_tokens` when the provider serves no input-token counting.
-
-    It is a `NotImplementedError`, as `Model.count_tokens` raises for a model that can't count, so a caller that
-    falls back for such a model, like Pydantic AI Harness running a nested agent, falls back here too.
-    """
 
 
 class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
