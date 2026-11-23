@@ -98,12 +98,16 @@ async def nameable_working_dir(workspace: Workspace) -> str | None:
     asked: a local workspace answers itself, durable execution answers from its journal, and a remote
     sandbox attached by `ref` without a configured directory is woken if it was stopped. A sandbox no
     tool has created yet gives `None`: its first tool call creates it, and the next request names it.
+    So does one that is gone, so a run that calls no tool doesn't fail on it.
     """
     if (known := workspace.known_working_dir) is not None:
         return known
     if workspace.ref is None:
         return None
-    return await workspace.working_dir()
+    try:
+        return await workspace.working_dir()
+    except WorkspaceUnavailableError:
+        return None
 
 
 def is_unattached(workspace: Workspace) -> bool:

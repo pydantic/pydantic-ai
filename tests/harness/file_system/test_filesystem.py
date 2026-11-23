@@ -109,7 +109,7 @@ class CountingWorkspace(LocalWorkspaceBackend):
 class KnownDirCountingWorkspace(CountingWorkspace, SupportsKnownWorkingDir):
     """A `CountingWorkspace` whose instructions name the directory without asking, so only the boundary counts.
 
-    On a plain local workspace the instructions also ask `working_dir()` on each request, which its cache answers.
+    On a plain local workspace the instructions also call `working_dir()` once per request.
     """
 
     def __init__(self, working_dir: Path) -> None:
@@ -537,6 +537,10 @@ class TestRootDir:
         read: tuple[str, dict[str, object]] = ('read_file', {'path': 'a.txt'})
         await call_tools([FileSystem[None]()], [read, read], workspace=workspace)
         assert workspace.working_dir_calls == 1
+        # A plain backend can't name its directory without asking: one boundary ask plus one per request (three here).
+        plain = CountingWorkspace(tmp_path)
+        await call_tools([FileSystem[None]()], [read, read], workspace=plain)
+        assert plain.working_dir_calls == 4
 
     async def test_each_run_resolves_the_boundary_in_its_own_workspace(self, tmp_path: Path) -> None:
         # One toolset serves every run, so durable execution sees the toolset it registered.

@@ -88,10 +88,15 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
     async def test_a_sticky_cd_is_mentioned(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
         await Agent(model, capabilities=[Shell(persist_cwd=True)]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert (
-            'Shell commands start in `<dir>`. A `cd` carries over to later `run_command` and `start_command` calls.'
-            in (_instructions(model, tmp_path))
+        assert 'Shell commands start in `<dir>`. A `cd` in one command carries over to later commands.' in (
+            _instructions(model, tmp_path)
         )
+
+    async def test_a_sandbox_that_is_gone_gets_the_path_free_line(self, tmp_path: Path) -> None:
+        """A run that calls no tool doesn't fail because its attached sandbox expired; a tool call would report it."""
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Shell()]).run('go', workspace=LocalWorkspaceBackend(tmp_path / 'gone'))
+        assert 'Shell commands start in the working directory;' in _instructions(model, tmp_path)
 
     async def test_a_configured_sandbox_is_named_without_starting_it(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
