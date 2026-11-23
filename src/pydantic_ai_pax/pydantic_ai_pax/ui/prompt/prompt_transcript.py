@@ -363,8 +363,12 @@ class MarkdownBlock(io.StringIO):
     def freeze(self) -> None:
         """Keep only what was shown, as an aborted stream never rendered the rest of its source."""
         self.source = None
-        self._stream.keep_preview()
         self._changed()
+
+    def abort(self) -> None:
+        """Freeze a cancelled part, keeping its preview: nothing will replace it now."""
+        self._stream.keep_preview()
+        self.freeze()
 
     def _lines(self, *, width: int) -> list[_Line]:
         key = (width, theme.name())

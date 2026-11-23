@@ -328,8 +328,20 @@ def test_a_preview_left_by_an_aborted_part_counts_against_the_budget() -> None:
     for _ in range(4):
         block = _block(buffer)
         block.write(f'{PREVIEW}{"p" * 9}')
-        block.freeze()
+        block.abort()
     assert plain(buffer, width=40) == ['p' * 9, 'p' * 9, '']
+
+
+def test_a_part_over_the_budget_still_replaces_its_preview() -> None:
+    """Dropping the source to stay in budget must not keep the preview, or its replacement shows it twice."""
+    buffer = TranscriptBuffer(max_chars=20)
+    block = _block(buffer)
+    block.extend('hello')
+    block.write(f'{PREVIEW}hello')
+    block.extend(' ' * 20)
+    assert block.source is None
+    block.write(f'{DROP}hello\n')
+    assert plain(buffer, width=40) == ['hello', '']
 
 
 def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
