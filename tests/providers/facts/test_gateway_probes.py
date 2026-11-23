@@ -9,8 +9,9 @@ behaves as the set says. A member the gateway can't reach is `Exempt`, with the 
 exemption, and a probe whose member left its set fails as stale. `test_the_fact_still_holds` makes the paid requests,
 and runs only under `--run-gateway-live`, each Monday in `.github/workflows/provider-facts-health.yml`.
 
-A probe sends a minimal prompt and caps no output: `max_tokens` stays unset. It asserts what the provider answers, not
-what the library sends: the recorded test each check names pins the request.
+A probe sends a minimal prompt and sets no `max_tokens`. Claude, on the Anthropic API and on Bedrock, still gets the
+model's maximum, which those APIs require. A probe asserts what the provider answers, not what the library sends: the
+recorded test each check names pins the request.
 """
 
 from __future__ import annotations as _annotations
@@ -102,11 +103,11 @@ def _gateway(route: GatewayRoute, model: str) -> Model:
 
 
 async def _rejects(request: Awaitable[object], *, mentions: str | None = None, status: int = 400) -> None:
-    """Fail unless the provider rejects `request` with `status`, and with a body that names `mentions`."""
+    """Fail unless the provider rejects `request` with `status`, and with a body that names `mentions`, in any case."""
     with pytest.raises(ModelHTTPError) as exc_info:
         await request
     assert exc_info.value.status_code == status, exc_info.value
-    assert mentions is None or mentions in str(exc_info.value.body), exc_info.value.body
+    assert mentions is None or mentions.lower() in str(exc_info.value.body).lower(), exc_info.value.body
 
 
 async def _request(model: Model, history: list[ModelRequest | ModelResponse], params: ModelRequestParameters) -> None:
@@ -227,7 +228,7 @@ async def _openai_reasoning_off_as_profiled(model_name: str) -> None:
     if supports_reasoning_effort_none(model.profile):
         await request
     else:
-        await _rejects(request, mentions='effort')
+        await _rejects(request, mentions='reasoning.effort')
 
 
 async def _openai_does_not_serve(model_name: str) -> None:
@@ -249,14 +250,15 @@ async def _bedrock_accepts_one_hour_cache(model_name: str) -> None:
 
 
 async def _bedrock_rejects_native_output(model_name: str) -> None:
-    """Turns on the structured output the set turns off, after a plain request shows the model answers at all."""
+    """Turns on the structured output the set turns off, after a plain request shows the model answers at all.
+
+    No recording holds this rejection, so the probe checks only that it names the output format.
+    """
     model = BedrockConverseModel(
-        model_name,
-        provider=gateway_provider('bedrock'),
-        profile=BedrockModelProfile(supports_json_schema_output=True, bedrock_supports_strict_tool_definition=True),
+        model_name, provider=gateway_provider('bedrock'), profile=BedrockModelProfile(supports_json_schema_output=True)
     )
     await Agent(model).run(_PROMPT)
-    await _rejects(Agent(model, output_type=NativeOutput(_Answer)).run(_PROMPT))
+    await _rejects(Agent(model, output_type=NativeOutput(_Answer)).run(_PROMPT), mentions='output')
 
 
 async def _bedrock_answers(model_name: str) -> None:
@@ -294,7 +296,7 @@ async def _google_thinking_levels_as_profiled(model_name: str) -> None:
     for level in GOOGLE_THINKING_LEVEL_SCALE:
         if level in GOOGLE_THINKING_LEVELS and level not in levels:
             settings = GoogleModelSettings(google_thinking_config={'thinking_level': ThinkingLevel(level)})
-            await _rejects(agent.run(_PROMPT, model_settings=settings))
+            await _rejects(agent.run(_PROMPT, model_settings=settings), mentions='thinking')
     lowest = next(level for level in GOOGLE_THINKING_LEVEL_SCALE if level in levels)
     await agent.run(
         _PROMPT, model_settings=GoogleModelSettings(google_thinking_config={'thinking_level': ThinkingLevel(lowest)})
