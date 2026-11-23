@@ -74,11 +74,27 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     provider = GitHubProvider(api_key='ghp_test_token')  # pyright: ignore[reportDeprecated]
 
     ns = 'pydantic_ai.providers.github'
-    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-    cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
-    grok_model_profile_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
+    meta_model_profile_mock = mocker.MagicMock(wraps=meta_model_profile)
+    deepseek_model_profile_mock = mocker.MagicMock(wraps=deepseek_model_profile)
+    mistral_model_profile_mock = mocker.MagicMock(wraps=mistral_model_profile)
+    cohere_model_profile_mock = mocker.MagicMock(wraps=cohere_model_profile)
+    grok_model_profile_mock = mocker.MagicMock(wraps=grok_model_profile)
+    microsoft_model_profile_mock = mocker.MagicMock(wraps=openai_model_profile)
+    family_profiles = 'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES'
+    mocker.patch.dict(
+        family_profiles,
+        {
+            'xai': grok_model_profile_mock,
+            'meta': meta_model_profile_mock,
+            'cohere': cohere_model_profile_mock,
+            'deepseek': deepseek_model_profile_mock,
+        },
+    )
+    mocker.patch.dict(
+        f'{ns}._GITHUB_VENDOR_PROFILES',
+        {'microsoft': microsoft_model_profile_mock, 'mistral-ai': mistral_model_profile_mock},
+    )
+    # Bare model names (no `/`) call the module-level `openai_model_profile` by name
     openai_model_profile_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
     meta_profile = provider.model_profile('meta/Llama-3.2-11B-Vision-Instruct')
@@ -112,7 +128,7 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     microsoft_profile = provider.model_profile('microsoft/Phi-3.5-mini-instruct')
-    openai_model_profile_mock.assert_called_with('phi-3.5-mini-instruct')
+    microsoft_model_profile_mock.assert_called_with('phi-3.5-mini-instruct')
     assert microsoft_profile is not None
     assert microsoft_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 

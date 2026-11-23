@@ -179,12 +179,22 @@ def test_huggingface_provider_model_profile(mocker: MockerFixture):
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
 
-    ns = 'pydantic_ai.providers.huggingface'
-    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
-    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+    deepseek_model_profile_mock = mocker.MagicMock(wraps=deepseek_model_profile)
+    meta_model_profile_mock = mocker.MagicMock(wraps=meta_model_profile)
+    qwen_model_profile_mock = mocker.MagicMock(wraps=qwen_model_profile)
+    mistral_model_profile_mock = mocker.MagicMock(wraps=mistral_model_profile)
+    google_model_profile_mock = mocker.MagicMock(wraps=google_model_profile)
+    family_profiles = 'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES'
+    mocker.patch.dict(
+        family_profiles,
+        {
+            'deepseek-ai': deepseek_model_profile_mock,
+            'meta-llama': meta_model_profile_mock,
+            'qwen': qwen_model_profile_mock,
+            'mistralai': mistral_model_profile_mock,
+            'google': google_model_profile_mock,
+        },
+    )
 
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')

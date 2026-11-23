@@ -6,14 +6,10 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._family import ModelProfileFunc, split_vendor_model_id, vendor_family_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
-from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
@@ -28,6 +24,19 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+
+
+_CRUSOE_VENDORS = frozenset({'meta-llama', 'deepseek-ai', 'qwen', 'google', 'moonshotai'})
+"""The vendors in the shared family map whose profile Crusoe ids get."""
+
+_CRUSOE_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
+    # Used for gpt-oss models on Crusoe.
+    'openai': harmony_model_profile,
+    # Crusoe serves GLM-5.3 as `zai-org/GLM-5.3`; earlier GLM releases were `zai/GLM-5.x`. Both get Z.AI's own profile.
+    'zai': zai_model_profile,
+    'zai-org': zai_model_profile,
+}
+"""Vendors whose profile on Crusoe differs from the shared family map."""
 
 
 class CrusoeProvider(_OpenAISDKProvider):
@@ -47,25 +56,10 @@ class CrusoeProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        vendor_to_profile = {
-            'meta-llama': meta_model_profile,
-            'deepseek-ai': deepseek_model_profile,
-            'qwen': qwen_model_profile,
-            'google': google_model_profile,
-            'openai': harmony_model_profile,  # used for gpt-oss models on Crusoe
-            'moonshotai': moonshotai_model_profile,
-            'zai': zai_model_profile,
-            # Crusoe serves GLM-5.3 as `zai-org/GLM-5.3`; earlier GLM releases were `zai/GLM-5.x`.
-            'zai-org': zai_model_profile,
-        }
-
-        profile = None
-
-        model_name = model_name.lower()
-        if '/' in model_name:
-            vendor, model_name = model_name.split('/', 1)
-            if vendor in vendor_to_profile:
-                profile = vendor_to_profile[vendor](model_name)
+        # The special-token setting reads the model name after the vendor.
+        vendor, model_name = split_vendor_model_id(model_name.lower()) or ('', model_name.lower())
+        family_profile = vendor_family_profile(vendor, overrides=_CRUSOE_VENDOR_PROFILES, vendors=_CRUSOE_VENDORS)
+        profile = family_profile(model_name) if family_profile else None
 
         # `json_schema_transformer` is a fallback (the model family's profile wins if it sets one), as
         # `CrusoeProvider` is always used with `OpenAIChatModel`, which used to unconditionally use

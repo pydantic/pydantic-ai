@@ -65,13 +65,28 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     ns = 'pydantic_ai.providers.crusoe'
 
     # Mock all profile functions
-    meta_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    qwen_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
-    zai_mock = mocker.patch(f'{ns}.zai_model_profile', wraps=zai_model_profile)
-    google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
-    harmony_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
-    moonshotai_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
+    meta_mock = mocker.MagicMock(wraps=meta_model_profile)
+    deepseek_mock = mocker.MagicMock(wraps=deepseek_model_profile)
+    qwen_mock = mocker.MagicMock(wraps=qwen_model_profile)
+    zai_mock = mocker.MagicMock(wraps=zai_model_profile)
+    google_mock = mocker.MagicMock(wraps=google_model_profile)
+    harmony_mock = mocker.MagicMock(wraps=harmony_model_profile)
+    moonshotai_mock = mocker.MagicMock(wraps=moonshotai_model_profile)
+    family_profiles = 'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES'
+    mocker.patch.dict(
+        family_profiles,
+        {
+            'meta-llama': meta_mock,
+            'deepseek-ai': deepseek_mock,
+            'qwen': qwen_mock,
+            'google': google_mock,
+            'moonshotai': moonshotai_mock,
+        },
+    )
+    mocker.patch.dict(
+        f'{ns}._CRUSOE_VENDOR_PROFILES',
+        {'openai': harmony_mock, 'zai': zai_mock, 'zai-org': zai_mock},
+    )
 
     # Test meta provider
     meta_profile = provider.model_profile('meta-llama/Llama-3.3-70B-Instruct')

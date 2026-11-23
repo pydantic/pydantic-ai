@@ -6,28 +6,17 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._family import ModelProfileFunc, split_vendor_model_id, vendor_family_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
-from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_cloud_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     OpenAIReasoningEffort,
     openai_model_profile,
 )
-from pydantic_ai.profiles.stepfun import stepfun_model_profile
-from pydantic_ai.profiles.tencent import tencent_model_profile
-from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
-from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
-from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -50,6 +39,32 @@ _NONE_TO_HIGH_WITH_MINIMAL: frozenset[OpenAIReasoningEffort] = frozenset({'none'
 _EVERY_EFFORT: frozenset[OpenAIReasoningEffort] = frozenset(
     {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
 )
+
+_VERCEL_VENDORS = frozenset(
+    {
+        'anthropic',
+        'cohere',
+        'deepseek',
+        'mistral',
+        'moonshotai',
+        'nvidia',
+        'stepfun',
+        'tencent',
+        'thinkingmachines',
+        'xai',
+        'xiaomi',
+        'zai',
+    }
+)
+"""The vendors in the shared family map whose profile Vercel ids get."""
+
+_VERCEL_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
+    'bedrock': amazon_model_profile,
+    'groq': groq_model_profile,
+    'openai': openai_model_profile,
+    'vertex': google_cloud_model_profile,
+}
+"""Vendors whose profile on Vercel differs from the shared family map."""
 
 _OPEN_WEIGHT_THINKING_VENDORS = frozenset({'nvidia', 'stepfun', 'tencent', 'thinkingmachines', 'xiaomi'})
 
@@ -97,37 +112,14 @@ class VercelProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
-            'anthropic': anthropic_model_profile,
-            'bedrock': amazon_model_profile,
-            'cohere': cohere_model_profile,
-            'deepseek': deepseek_model_profile,
-            'groq': groq_model_profile,
-            'mistral': mistral_model_profile,
-            'moonshotai': moonshotai_model_profile,
-            'nvidia': nvidia_model_profile,
-            'openai': openai_model_profile,
-            'stepfun': stepfun_model_profile,
-            'tencent': tencent_model_profile,
-            'thinkingmachines': thinkingmachines_model_profile,
-            'vertex': google_cloud_model_profile,
-            'xai': grok_model_profile,
-            'xiaomi': xiaomi_model_profile,
-            'zai': _glm_5_3_schema_profile,
-        }
-
-        profile = None
-
         route_profile = special_token_route_profile('vercel', model_name)
 
-        if '/' not in model_name:
-            return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), route_profile)
-
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            profile = provider_to_profile[provider](model_name)
-        if provider in _OPEN_WEIGHT_THINKING_VENDORS and profile is not None:
-            reasoning_efforts = _OPEN_WEIGHT_REASONING_EFFORTS.get(f'{provider}/{model_name}', frozenset())
+        # Vercel matches the vendor case-sensitively, unlike the shared family map.
+        vendor, model_name = split_vendor_model_id(model_name) or ('', model_name)
+        family_profile = vendor_family_profile(vendor, overrides=_VERCEL_VENDOR_PROFILES, vendors=_VERCEL_VENDORS)
+        profile = family_profile(model_name) if family_profile else None
+        if vendor in _OPEN_WEIGHT_THINKING_VENDORS and profile is not None:
+            reasoning_efforts = _OPEN_WEIGHT_REASONING_EFFORTS.get(f'{vendor}/{model_name}', frozenset())
             profile = merge_profile(profile, OpenAIModelProfile(openai_reasoning_efforts=reasoning_efforts))
 
         # As VercelProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,

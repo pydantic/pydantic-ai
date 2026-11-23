@@ -63,15 +63,30 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     ns = 'pydantic_ai.providers.vercel'
 
     # Mock all profile functions
-    anthropic_mock = mocker.patch(f'{ns}.anthropic_model_profile', wraps=anthropic_model_profile)
-    amazon_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
-    cohere_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
-    deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    google_mock = mocker.patch(f'{ns}.google_cloud_model_profile', wraps=google_cloud_model_profile)
-    grok_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
-    groq_mock = mocker.patch(f'{ns}.groq_model_profile', wraps=groq_model_profile)
-    mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-    openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
+    anthropic_mock = mocker.MagicMock(wraps=anthropic_model_profile)
+    amazon_mock = mocker.MagicMock(wraps=amazon_model_profile)
+    cohere_mock = mocker.MagicMock(wraps=cohere_model_profile)
+    deepseek_mock = mocker.MagicMock(wraps=deepseek_model_profile)
+    google_mock = mocker.MagicMock(wraps=google_cloud_model_profile)
+    grok_mock = mocker.MagicMock(wraps=grok_model_profile)
+    groq_mock = mocker.MagicMock(wraps=groq_model_profile)
+    mistral_mock = mocker.MagicMock(wraps=mistral_model_profile)
+    openai_mock = mocker.MagicMock(wraps=openai_model_profile)
+    family_profiles = 'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES'
+    mocker.patch.dict(
+        family_profiles,
+        {
+            'anthropic': anthropic_mock,
+            'cohere': cohere_mock,
+            'deepseek': deepseek_mock,
+            'mistral': mistral_mock,
+            'xai': grok_mock,
+        },
+    )
+    mocker.patch.dict(
+        f'{ns}._VERCEL_VENDOR_PROFILES',
+        {'bedrock': amazon_mock, 'groq': groq_mock, 'openai': openai_mock, 'vertex': google_mock},
+    )
 
     # Test openai provider
     profile = provider.model_profile('openai/gpt-4o')

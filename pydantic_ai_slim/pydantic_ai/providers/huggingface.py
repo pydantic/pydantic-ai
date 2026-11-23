@@ -9,14 +9,9 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._family import split_vendor_model_id, vendor_family_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import _GptOssInlineDefsJsonSchemaTransformer  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
@@ -33,6 +28,9 @@ except ImportError as _import_error:
 from httpx import AsyncClient
 
 from . import Provider
+
+_HUGGINGFACE_VENDORS = frozenset({'deepseek-ai', 'google', 'qwen', 'meta-llama', 'mistralai', 'moonshotai'})
+"""The vendors in the shared family map whose profile Hugging Face ids get."""
 
 
 class HuggingFaceProvider(Provider[AsyncInferenceClient]):
@@ -65,24 +63,14 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
-            'deepseek-ai': deepseek_model_profile,
-            'google': google_model_profile,
-            'qwen': qwen_model_profile,
-            'meta-llama': meta_model_profile,
-            'mistralai': mistral_model_profile,
-            'moonshotai': moonshotai_model_profile,
-        }
-
         profile: ModelProfile | None = None
         recognized = False
         route_profile = special_token_route_profile('huggingface', model_name)
-        if '/' in model_name:
-            model_name = model_name.lower()
-            provider, model_name = model_name.split('/', 1)
-            if provider in provider_to_profile:
+        if parts := split_vendor_model_id(model_name.lower()):
+            provider, model_name = parts
+            if family_profile := vendor_family_profile(provider, vendors=_HUGGINGFACE_VENDORS):
                 recognized = True
-                profile = provider_to_profile[provider](model_name)
+                profile = family_profile(model_name)
             elif provider == 'zai-org':
                 # Only GLM-5.3's schema fix: every other GLM id only gets the route's special-token setting.
                 return merge_profile(_glm_5_3_schema_profile(model_name), route_profile)

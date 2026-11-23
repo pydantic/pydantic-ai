@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 
 from . import ModelProfile
 from .amazon import amazon_model_profile
@@ -75,17 +75,50 @@ _VENDOR_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
 profile for the model after the `/`. Only families with a profile function have an entry."""
 
 
-def vendor_family_model_profile(
-    model_name: str, *, overrides: Mapping[str, ModelProfileFunc] | None = None
-) -> ModelProfile | None:
-    """The family profile for a `vendor/model` id, matching the vendor case-insensitively.
+def split_vendor_model_id(model_name: str) -> tuple[str, str] | None:
+    """The vendor and the model of a `vendor/model` id, split at the first `/`, or `None` for a name without one.
 
-    The family function gets the lowercased model name after the first `/`. `overrides` are a provider's own
-    vendor names, or its own profile for a vendor in the shared map, keyed in lowercase; they apply only to that
-    provider. Returns `None` for a name without a `/`, an unknown vendor, or a model the family doesn't describe.
+    The one place a gateway's model id is split into its vendor and model, so every route reads it the same way.
     """
     if '/' not in model_name:
         return None
-    vendor, family_model_name = model_name.lower().split('/', 1)
-    family_profile = (overrides or {}).get(vendor) or _VENDOR_FAMILY_PROFILES.get(vendor)
+    vendor, family_model_name = model_name.split('/', 1)
+    return vendor, family_model_name
+
+
+def vendor_family_profile(
+    vendor: str,
+    *,
+    overrides: Mapping[str, ModelProfileFunc] | None = None,
+    vendors: Collection[str] | None = None,
+) -> ModelProfileFunc | None:
+    """The family profile function for `vendor`, matching it exactly.
+
+    `overrides` are a route's own vendor names, or its own profile for a vendor in the shared map; they apply only to
+    that route. `vendors` limits the shared map to the vendor names a route serves; `None` means all of them.
+    """
+    if overrides and (family_profile := overrides.get(vendor)):
+        return family_profile
+    if vendors is not None and vendor not in vendors:
+        return None
+    return _VENDOR_FAMILY_PROFILES.get(vendor)
+
+
+def vendor_family_model_profile(
+    model_name: str,
+    *,
+    overrides: Mapping[str, ModelProfileFunc] | None = None,
+    vendors: Collection[str] | None = None,
+) -> ModelProfile | None:
+    """The family profile for a `vendor/model` id, matching the vendor case-insensitively.
+
+    The family function gets the lowercased model name after the first `/`. `overrides` and `vendors` are as in
+    `vendor_family_profile`. Returns `None` for a name without a `/`, a vendor the route doesn't serve, or a model the
+    family doesn't describe.
+    """
+    parts = split_vendor_model_id(model_name.lower())
+    if parts is None:
+        return None
+    vendor, family_model_name = parts
+    family_profile = vendor_family_profile(vendor, overrides=overrides, vendors=vendors)
     return family_profile(family_model_name) if family_profile else None

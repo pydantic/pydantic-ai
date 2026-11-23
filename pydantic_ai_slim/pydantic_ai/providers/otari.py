@@ -9,6 +9,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._family import (
     ModelProfileFunc,
     _openai_family_profile,  # pyright: ignore[reportPrivateUsage]
+    split_vendor_model_id,
     vendor_family_model_profile,
 )
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -84,7 +85,8 @@ class OtariProvider(_OpenAISDKProvider):
         profile = vendor_family_model_profile(vendor_model_name, overrides=_OTARI_VENDOR_PROFILES)
         if profile is None:
             # A host of many vendors' models names the vendor after it, as in `together:qwen/qwen3.8-27b`.
-            profile = vendor_family_model_profile(vendor_model_name.partition('/')[2])
+            _, hosted_model_name = split_vendor_model_id(vendor_model_name) or ('', '')
+            profile = vendor_family_model_profile(hosted_model_name)
 
         # `OpenAIJsonSchemaTransformer` is the fallback for the OpenAI-compatible API; a family's own transformer wins.
         return merge_profile(

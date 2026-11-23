@@ -9,22 +9,13 @@ from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._family import ModelProfileFunc, split_vendor_model_id, vendor_family_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
-from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import (
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES as _ANTHROPIC_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
-    anthropic_model_profile,
 )
-from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -139,6 +130,19 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     if profile is None:  # pragma: no cover
         return None
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
+
+
+_OPENROUTER_VENDORS = frozenset(
+    {'anthropic', 'mistralai', 'qwen', 'x-ai', 'cohere', 'amazon', 'deepseek', 'meta-llama', 'moonshotai', 'z-ai'}
+)
+"""The vendors in the shared family map whose profile OpenRouter ids get. `z-ai` gets only GLM-5.3's schema fix,
+without Z.AI's native thinking settings."""
+
+_OPENROUTER_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
+    'google': _openrouter_google_model_profile,
+    'openai': openai_model_profile,
+}
+"""Vendors whose profile on OpenRouter differs from the shared family map."""
 
 
 _MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -287,41 +291,25 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
-            'google': _openrouter_google_model_profile,
-            'openai': openai_model_profile,
-            'anthropic': anthropic_model_profile,
-            'mistralai': mistral_model_profile,
-            'qwen': qwen_model_profile,
-            'x-ai': grok_model_profile,
-            'cohere': cohere_model_profile,
-            'amazon': amazon_model_profile,
-            'deepseek': deepseek_model_profile,
-            'meta-llama': meta_model_profile,
-            'moonshotai': moonshotai_model_profile,
-        }
-
-        profile = None
-
-        # OpenRouter identifies models as `provider/model`.
-        if '/' not in model_name:
+        # OpenRouter identifies models as `provider/model`, and exposes latest-model aliases as `~provider/model`;
+        # the alias marker is stripped before using the provider prefix for profile selection.
+        parts = split_vendor_model_id(model_name.removeprefix('~'))
+        if parts is None:
             raise UserError(
                 f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
                 f'{("openai/" + model_name)!r}, not {model_name!r}. '
                 'See https://openrouter.ai/models for the available model names.'
             )
 
-        # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
-        # alias marker before using the provider prefix for profile selection.
-        provider, model_name = model_name.removeprefix('~').split('/', 1)
+        provider, model_name = parts
         model_name, *_ = model_name.split(':', 1)  # drop tags
-        if provider in provider_to_profile:
-            if provider == 'anthropic':
-                model_name = model_name.replace('.', '-')
-            profile = provider_to_profile[provider](model_name)
-        elif provider == 'z-ai':
-            # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
-            profile = _glm_5_3_schema_profile(model_name)
+        if provider == 'anthropic':
+            model_name = model_name.replace('.', '-')
+        # OpenRouter matches the vendor case-sensitively, unlike the shared family map.
+        family_profile = vendor_family_profile(
+            provider, overrides=_OPENROUTER_VENDOR_PROFILES, vendors=_OPENROUTER_VENDORS
+        )
+        profile = family_profile(model_name) if family_profile else None
 
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             low_floor = model_name.lower().startswith(_LOW_REASONING_FLOOR_MODEL_PREFIXES.get(provider, ()))

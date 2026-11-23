@@ -11,10 +11,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles._family import ModelProfileFunc, split_vendor_model_id, vendor_family_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
@@ -29,6 +26,16 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the GitHub Models provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+_GITHUB_VENDORS = frozenset({'xai', 'meta', 'cohere', 'deepseek'})
+"""The vendors in the shared family map whose profile GitHub Models ids get."""
+
+_GITHUB_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
+    'microsoft': openai_model_profile,
+    'mistral-ai': mistral_model_profile,
+}
+"""GitHub Models' own vendor names."""
 
 
 @deprecated(
@@ -57,25 +64,14 @@ class GitHubProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
-            'xai': grok_model_profile,
-            'meta': meta_model_profile,
-            'microsoft': openai_model_profile,
-            'mistral-ai': mistral_model_profile,
-            'cohere': cohere_model_profile,
-            'deepseek': deepseek_model_profile,
-        }
-
-        profile = None
-
+        parts = split_vendor_model_id(model_name.lower())
         # If the model name does not contain a provider prefix, we assume it's an OpenAI model
-        if '/' not in model_name:
+        if parts is None:
             return openai_model_profile(model_name)
 
-        provider, model_name = model_name.lower().split('/', 1)
-        if provider in provider_to_profile:
-            model_name, *_ = model_name.split(':', 1)  # drop tags
-            profile = provider_to_profile[provider](model_name)
+        vendor, model_name = parts
+        family_profile = vendor_family_profile(vendor, overrides=_GITHUB_VENDOR_PROFILES, vendors=_GITHUB_VENDORS)
+        profile = family_profile(model_name.split(':', 1)[0]) if family_profile else None  # drop tags
 
         # As GitHubProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly

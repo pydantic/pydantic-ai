@@ -129,17 +129,34 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     provider = OpenRouterProvider(api_key='api-key')
 
     ns = 'pydantic_ai.providers.openrouter'
+    # `_openrouter_google_model_profile` calls the module-level `google_model_profile` by name
     google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
-    openai_model_profile_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
-    anthropic_model_profile_mock = mocker.patch(f'{ns}.anthropic_model_profile', wraps=anthropic_model_profile)
-    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
-    grok_model_profile_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
-    cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
-    amazon_model_profile_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
-    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
+    openai_model_profile_mock = mocker.MagicMock(wraps=openai_model_profile)
+    anthropic_model_profile_mock = mocker.MagicMock(wraps=anthropic_model_profile)
+    mistral_model_profile_mock = mocker.MagicMock(wraps=mistral_model_profile)
+    qwen_model_profile_mock = mocker.MagicMock(wraps=qwen_model_profile)
+    grok_model_profile_mock = mocker.MagicMock(wraps=grok_model_profile)
+    cohere_model_profile_mock = mocker.MagicMock(wraps=cohere_model_profile)
+    amazon_model_profile_mock = mocker.MagicMock(wraps=amazon_model_profile)
+    deepseek_model_profile_mock = mocker.MagicMock(wraps=deepseek_model_profile)
+    meta_model_profile_mock = mocker.MagicMock(wraps=meta_model_profile)
+    moonshotai_model_profile_mock = mocker.MagicMock(wraps=moonshotai_model_profile)
+    family_profiles = 'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES'
+    mocker.patch.dict(
+        family_profiles,
+        {
+            'anthropic': anthropic_model_profile_mock,
+            'mistralai': mistral_model_profile_mock,
+            'qwen': qwen_model_profile_mock,
+            'x-ai': grok_model_profile_mock,
+            'cohere': cohere_model_profile_mock,
+            'amazon': amazon_model_profile_mock,
+            'deepseek': deepseek_model_profile_mock,
+            'meta-llama': meta_model_profile_mock,
+            'moonshotai': moonshotai_model_profile_mock,
+        },
+    )
+    mocker.patch.dict(f'{ns}._OPENROUTER_VENDOR_PROFILES', {'openai': openai_model_profile_mock})
 
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
