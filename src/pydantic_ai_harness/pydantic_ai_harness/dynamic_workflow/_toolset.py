@@ -611,6 +611,8 @@ WorkflowErrorKind = Literal['type_check', 'syntax', 'runtime', 'resource_limit',
 
 def _record_sandbox_failure(span: Span, error: MontyRuntimeError | MontyCrashedError) -> None:
     """Record a script the sandbox stopped: at a resource limit, or on an uncaught error or a dead worker."""
+    if not span.is_recording():
+        return
     failure = MontyFailure.from_error(error)
     assert failure is not None, 'a Monty error always describes a failure'
     if (limit := exceeded_sandbox_limit(failure)) is not None:
