@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -13,7 +14,13 @@ from typing_extensions import TypedDict, override
 from .. import _model_errors, usage
 from .._run_context import RunContext
 from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelRequestRejectedError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -463,6 +470,25 @@ class _OpenRouterError(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+def _openrouter_metadata_raw_message(metadata: Mapping[str, Any] | None) -> str | None:
+    if metadata is None:
+        return None
+    raw = metadata.get('raw')
+    if not isinstance(raw, str):
+        return None
+    try:
+        raw_error = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if not isinstance(raw_error, dict):
+        return None
+    nested_error = raw_error.get('error')
+    if not isinstance(nested_error, dict):
+        return None
+    message = nested_error.get('message')
+    return message if isinstance(message, str) else None
+
+
 def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream: bool = False) -> ModelHTTPError:
     """Map an error OpenRouter sent inside a 200 response or stream.
 
@@ -470,6 +496,12 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
+    if category is ModelRequestRejectedError:
+        nested_message = _openrouter_metadata_raw_message(error.metadata)
+        if nested_message is not None:
+            nested_category = _model_errors.openai_compatible_category(error.code, None, None, nested_message)
+            if nested_category is ModelContextWindowExceededError:
+                category = nested_category
     if error.code == 403 and flags_input(error.metadata):
         # A 403 for flagged input is a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
@@ -1187,7 +1219,38 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         messages, model_settings = self._effort_delta_request(messages, model_settings, model_request_parameters)
-        return await super().request(messages, model_settings, model_request_parameters)
+        try:
+            return await super().request(messages, model_settings, model_request_parameters)
+        except ModelRequestRejectedError as error:
+            if isinstance(error, ModelContextWindowExceededError):
+                raise
+
+            body = error.body
+            error_body = body.get('error', body) if isinstance(body, Mapping) else None
+            metadata = error_body.get('metadata') if isinstance(error_body, Mapping) else None
+            nested_message = _openrouter_metadata_raw_message(metadata if isinstance(metadata, Mapping) else None)
+            if nested_message is None:
+                raise
+
+            category = _model_errors.openai_compatible_category(
+                error.status_code, error.provider_error_code, error.provider_error_type, nested_message
+            )
+            if category is not ModelContextWindowExceededError:
+                raise
+
+            cause = error.__cause__ if error.__cause__ is not None else error
+            raise ModelHTTPError.for_category(
+                ModelContextWindowExceededError,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                body=error.body,
+                headers=error.headers,
+                suggested_model_id=error.suggested_model_id,
+                provider_error_code=error.provider_error_code,
+                provider_error_type=error.provider_error_type,
+                retry_after=error.retry_after,
+                in_stream=error.in_stream,
+            ) from cause
 
     @override
     @asynccontextmanager

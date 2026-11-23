@@ -19,6 +19,7 @@ from pydantic_ai import (
     DocumentUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
@@ -550,6 +551,40 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
     assert str(exc_info.value) == snapshot(
         "status_code: 429, model_name: google/gemini-2.0-flash-exp:free, body: {'code': 429, 'message': 'Provider returned error', 'metadata': {'provider_name': 'Google', 'raw': 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations'}}"
     )
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_context_window_exceeded_via_metadata_raw(allow_model_requests: None) -> None:
+    raw_json_string = json.dumps(
+        {
+            'error': {
+                'message': "Input length (100000) exceeds the model's maximum context length (8192).",
+                'type': 'BadRequestError',
+                'param': None,
+                'code': 400,
+            }
+        }
+    )
+    outer_body = {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': raw_json_string}}
+    response_body = {'error': outer_body}
+
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, json=response_body)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = OpenRouterProvider(
+            api_key='test', base_url='https://openrouter.example/api/v1', http_client=http_client
+        )
+        model = OpenRouterModel('openai/gpt-oss-120b', provider=provider)
+        with pytest.raises(ModelContextWindowExceededError) as exc_info:
+            await Agent(model).run('test')
+
+    error = exc_info.value
+    assert error.status_code == 400
+    assert error.provider_error_code == '400'
+    cause = error.__cause__
+    assert isinstance(cause, APIError)
+    assert error.body == cause.body
 
 
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -3235,6 +3270,39 @@ async def test_openrouter_stream_error_without_integer_code_raises_model_api_err
     assert error.provider_error_code == 'server_error'
     assert isinstance(error.__cause__, APIError)
     assert error.__cause__.body == snapshot({'code': 'server_error', 'message': 'upstream failed'})
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_model_requests: None) -> None:
+    outer_error = {
+        'code': 400,
+        'message': 'Provider returned error',
+        'metadata': {'raw': "Input length (100000) exceeds the model's maximum context length (8192)."},
+    }
+    error_chunk = f'data: {json.dumps({"error": outer_error})}\n\n'.encode()
+    error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
+
+    assert isinstance(error, ModelContextWindowExceededError)
+    assert error.status_code == 400
+    assert error.body == 'Provider returned error'
+    assert error.provider_error_code == '400'
+    assert error.in_stream is True
+    cause = error.__cause__
+    assert isinstance(cause, APIError)
+    assert cause.body == outer_error
+
+    nested_raw_without_message = json.dumps({'error': {'type': 'BadRequestError', 'code': 400}})
+    error_without_message = {
+        'code': 400,
+        'message': 'Provider returned error',
+        'metadata': {'raw': nested_raw_without_message},
+    }
+    error_chunk_without_message = f'data: {json.dumps({"error": error_without_message})}\n\n'.encode()
+    rejected_error = await _run_openrouter_stream(
+        httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk_without_message)
+    )
+    assert isinstance(rejected_error, ModelRequestRejectedError)
+    assert not isinstance(rejected_error, ModelContextWindowExceededError)
 
 
 async def test_openrouter_streaming_malformed_chunk_stays_fatal(allow_model_requests: None) -> None:
