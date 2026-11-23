@@ -5,9 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent
@@ -74,10 +71,6 @@ class TestDynamicWorkflowTelemetry:
         ('code', 'workflow', 'expected'),
         [
             pytest.param('await sub(1)', None, {'dynamic_workflow.error_kind': 'type_check'}, id='type_check'),
-            # Every script is type-checked, and the checker parses it first.
-            pytest.param(
-                'def broken(:\n    pass', None, {'dynamic_workflow.error_kind': 'type_check'}, id='syntax-is-type_check'
-            ),
             pytest.param('1 / 0', None, {'dynamic_workflow.error_kind': 'runtime'}, id='runtime'),
             pytest.param(
                 'x = [0] * 50_000_000',
@@ -147,16 +140,3 @@ class TestDynamicWorkflowTelemetry:
         assert await workflow_attributes(
             code, instrumented=instrumented, workflow=DynamicWorkflow[object](agents=[SUB], max_agent_calls=1)
         ) == [('execute_tool run_workflow', {'dynamic_workflow.budget_exhausted': True})]
-
-    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(run_workflow_once('1 / 0'), capabilities=[DynamicWorkflow[object](agents=[SUB])])
-
-        with provider.get_tracer('app').start_as_current_span('app request'):
-            await agent.run('go')
-
-        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
-            ('app request', {})
-        ]

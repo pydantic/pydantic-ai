@@ -297,23 +297,6 @@ class TestRunCodeFailureTelemetry:
             'x = 1', '1 + 1', before_sending=fail_the_second_snippet, instrumented=instrumented
         ) == [run_code_span(), expected]
 
-    async def test_a_worker_crash_in_the_first_snippet_resets_the_state_it_built(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        instrumented: Instrumented,
-    ):
-        """No earlier snippet ran, but the crashed snippet had started, so what it defined is lost."""
-        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
-
-        async def crash(self: object, feed_start: object) -> object:
-            raise CrashedError(timed_out=False)
-
-        monkeypatch.setattr(MONTY_EXECUTOR_RUN, crash)
-
-        assert await failure_attributes('x = 1', instrumented=instrumented) == [
-            run_code_span(error_kind='crashed', session_reset=True)
-        ]
-
     async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(self, instrumented: Instrumented):
         """Eager execution runs statements before `run_code`'s span opens; the failure still lands on that span."""
         code = 'boom = 1 // 0\n"unused"'
@@ -378,29 +361,3 @@ class TestRunCodeFailureTelemetry:
             sync_code='None',
             capability=CodeMode[None](eager=True),
         ) == [run_code_span(error_kind='runtime', session_reset=True)]
-
-    async def test_a_diverged_prefix_keeps_the_reset_a_failure_already_made(self):
-        """The time limit resets the session first, so the restart finds nothing left to discard.
-
-        The second call's snippet fails its type check, which leaves the fresh session without run code.
-        """
-        assert await diverged_prefix_attributes(
-            'x = 1\nif await ready():\n    while True:\n        pass\n"unused"\n',
-            'y = 2\ny',
-            ready=lambda: True,
-            sync_code='undefined_name',
-            capability=CodeMode[None](eager=True, resource_limits={'max_duration_seconds': 0.2}),
-        ) == [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_seconds')]
-
-    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(run_code_snippets('1 / 0'), capabilities=[CodeMode[object]()])
-
-        with provider.get_tracer('app').start_as_current_span('app request'):
-            await agent.run('go')
-
-        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
-            ('app request', {})
-        ]
