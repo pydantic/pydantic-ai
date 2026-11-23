@@ -86,8 +86,9 @@ paths, and verify that resources created inside a durable unit do not escape it.
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.
 
-`tests/durable_exec/test_exception_transport.py` gives each durable boundary a row and each public
-exception a column; a new boundary or exception class gets its verdicts there.
+`tests/durable_exec/test_exception_transport.py` (core) and `tests/harness/test_exception_transport.py`
+(Harness) give each durable boundary a row and each public exception a column; a new boundary or
+exception class gets its verdicts there.
 
 ## Core changes that engines depend on
 
