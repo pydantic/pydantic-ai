@@ -4,16 +4,19 @@ import json
 import sys
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
+from types import NoneType
 from typing import Any, cast
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -33,7 +36,7 @@ try:
     from temporalio import workflow
     from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
     from temporalio.contrib.pydantic import pydantic_data_converter
-    from temporalio.contrib.workflow_streams import WorkflowStreamItem
+    from temporalio.contrib.workflow_streams import WorkflowStreamItem, WorkflowStreamState
     from temporalio.exceptions import ApplicationError
     from temporalio.service import RPCError, RPCStatusCode
     from temporalio.testing import ActivityEnvironment
@@ -756,6 +759,140 @@ async def test_replay_does_not_duplicate_events(client: Client) -> None:
     # The workflow-side handler ran again, and publishing from it was a no-op rather than a failure
     # or a second copy of the run on the topic.
     assert _replay_handler_runs > 0
+
+
+# --- Continue-as-new ------------------------------------------------------------------------------
+#
+# Content enqueued mid-run is delivered by the next model request, which is also where `continue_as_new`
+# gets its turn. The workflow steers the run after the model's first response; by the second request, the
+# lowered `suggestContinueAsNew` threshold in `conftest.py` has Temporal suggesting continue-as-new.
+
+
+@dataclass
+class SteeredRun:
+    continue_as_new: bool
+    message_history: list[ModelMessage] | None = None
+    stream_state: WorkflowStreamState | None = None
+
+
+_steered_events: list[AgentStreamEvent] = []
+
+
+async def _record_steered_events(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _steered_events.append(event)
+
+
+async def _continue_steered_run_as_new(ctx: RunContext[None]) -> None:
+    steered = workflow.instance()
+    assert isinstance(steered, SteeredWorkflow)
+    if steered.run_input.continue_as_new and workflow.info().continued_run_id is None:
+        await steered.events.stream.continue_as_new(
+            lambda state: [replace(steered.run_input, message_history=ctx.messages, stream_state=state)]
+        )
+
+
+_steered_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC, continue_as_new=_continue_steered_run_as_new
+)
+_steered_agent = Agent(
+    _model,
+    name='steered_stream_agent',
+    deps_type=NoneType,
+    tools=[get_answer],
+    capabilities=[ProcessEventStream(_record_steered_events), _steered_durability],
+)
+
+
+@workflow.defn
+class SteeredWorkflow:
+    @workflow.init
+    def __init__(self, run_input: SteeredRun) -> None:
+        self.run_input = run_input
+        self.events = AgentEventStream(prior_state=run_input.stream_state)
+
+    @workflow.run
+    async def run(self, run_input: SteeredRun) -> bool:
+        history = run_input.message_history
+        steered = history is not None
+        async with (
+            self.events,
+            _steered_agent.iter('Hello' if history is None else None, message_history=history) as run,
+        ):
+            async for node in run:
+                if not steered and Agent.is_call_tools_node(node):
+                    run.enqueue('Keep it short')
+                    steered = True
+        return workflow.info().continued_run_id is not None
+
+
+@pytest.mark.parametrize('continue_as_new', [True, False], ids=['continued', 'declined'])
+async def test_enqueued_messages_event_reaches_the_topic_once_around_continue_as_new(
+    client: Client, continue_as_new: bool
+) -> None:
+    """The `EnqueuedMessagesEvent` of the model request `continue_as_new` is called at reaches the topic once.
+
+    When the handler continues the workflow, the run ends inside that request's `before_model_request`, before the
+    request's stream delivers the events buffered so far. When it declines, the run goes on, and the topic gets the
+    event once, in the order the run's other consumers see it.
+    """
+    _steered_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SteeredWorkflow],
+        plugins=[AgentPlugin(_steered_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            SteeredWorkflow.run,
+            args=[SteeredRun(continue_as_new=continue_as_new)],
+            id=f'{SteeredWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        events = _steered_durability.stream_agent_events(
+            client, handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+        )
+        received = await _collect(events)
+        continued = await handle.result()
+
+    assert continued is continue_as_new
+    assert _kinds(received) == snapshot(
+        [
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
+            'EnqueuedMessagesEvent',
+            'PartStartEvent',
+            'FinalResultEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'AgentRunResultEvent',
+        ]
+    )
+    [delivered] = [event for event in received if isinstance(event, EnqueuedMessagesEvent)]
+    assert events.result is not None
+    history_parts = [part for message in events.result.all_messages() for part in message.parts]
+    assert [part for message in delivered.messages for part in message.parts if part not in history_parts] == []
+    if not continue_as_new:
+        # The events published from workflow code reach the topic once, in the order a workflow-side consumer sees
+        # them. Model events reach that consumer replayed from the finished response, so they're left out.
+        not_workflow_side = {
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'FinalResultEvent',
+            'AgentRunResultEvent',
+        }
+        topic_kinds = [kind for kind in _kinds(received) if kind not in not_workflow_side]
+        consumer_kinds = [kind for kind in _kinds(_steered_events) if kind not in not_workflow_side]
+        assert (
+            topic_kinds
+            == consumer_kinds
+            == ['FunctionToolCallEvent', 'FunctionToolResultEvent', 'EnqueuedMessagesEvent']
+        )
 
 
 # --- Guards and validation ------------------------------------------------------------------------

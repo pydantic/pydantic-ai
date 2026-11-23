@@ -56,6 +56,7 @@ from ._event_stream import (
     WorkflowStreamTopic,
     _coerce_workflow_stream_topic,  # pyright: ignore[reportPrivateUsage]
     publish_agent_event,
+    publish_agent_event_ahead,
     publish_agent_result,
     stream_agent_events,
     workflow_stream_event_handler,
@@ -149,6 +150,11 @@ It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including th
 arguments the workflow's run method needs to resume. Returning without calling it defers the
 continuation to the next model request.
 """
+
+
+def _published_from_workflow(topic: WorkflowStreamTopic, event: AgentStreamEvent) -> bool:
+    """Whether workflow code publishes `event` to `topic`: model events go out from the activity that produced them."""
+    return not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (topic.events is None or topic.events(event))
 
 
 def _replaying_history() -> bool:
@@ -680,9 +686,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # free (no activity, no signal) and replay-safe, as replay rebuilds the log identically.
         try:
             async for event in events:
-                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
-                    topic.events is None or topic.events(event)
-                ):
+                if _published_from_workflow(topic, event):
                     publish_agent_event(topic.name, event)
                 yield event
         finally:
@@ -756,6 +760,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             and self.continue_as_new is not None
             and workflow.info().is_continue_as_new_suggested()
         ):
+            # Continuing raises out of the run before this request's stream delivers the events buffered so far, such
+            # as an `EnqueuedMessagesEvent` from the drain that ran first, and snapshots the topic's log for the
+            # successor before raising. So they go out to the topic now. If the handler declines, the topic skips
+            # them at their stream position.
+            if (topic := self._event_stream_topic) is not None:
+                buffered = ctx._event_stream_buffer or ()  # pyright: ignore[reportPrivateUsage]
+                for event in [event for event in buffered if _published_from_workflow(topic, event)]:
+                    publish_agent_event_ahead(topic.name, event)
             await await_maybe(self.continue_as_new(ctx))
         return await super().before_model_request(ctx, request_context)
 

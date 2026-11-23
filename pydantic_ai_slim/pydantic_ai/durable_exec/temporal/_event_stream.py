@@ -164,6 +164,8 @@ class AgentEventStream:
         self._drain_timeout = drain_timeout
         self._pending_drains: set[str] = set()
         self._next_drain_token = 0
+        # Keyed by `id(event)`, and holding the event so its id can't be reused while it's here.
+        self._published_ahead: dict[tuple[str, int], NativeEvent] = {}
         workflow.set_signal_handler(_DRAINED_SIGNAL, self._on_drained)  # pyright: ignore[reportUnknownMemberType]
         _streams[workflow.info().run_id] = self
 
@@ -180,9 +182,22 @@ class AgentEventStream:
         """Append an event to the log from workflow code.
 
         Workflow-side publishing costs nothing beyond the workflow task that is already running, and
-        replay rebuilds the log identically, so these events are delivered exactly once.
+        replay rebuilds the log identically, so these events are delivered exactly once. An event
+        already published ahead of its stream position is skipped.
+        """
+        if self._published_ahead.pop((topic, id(event)), None) is not None:
+            return
+        self._stream.topic(topic).publish(event)
+
+    def _publish_ahead(self, topic: str, event: NativeEvent) -> None:
+        """Append a buffered event to the log before the run's event stream reaches it.
+
+        A continue-as-new ends the run before its buffered events reach the stream, and snapshots the
+        log before ending it. When the run goes on instead, `_publish` skips the event at its stream
+        position, so the log still holds it once.
         """
         self._stream.topic(topic).publish(event)
+        self._published_ahead[(topic, id(event))] = event
 
     def _publish_result(self, topic: str, result: AgentRunResult[Any]) -> None:
         """Append a terminal event and raise its execution-scoped drain barrier."""
@@ -229,6 +244,15 @@ def publish_agent_event(topic: str, event: NativeEvent) -> None:
     """
     stream = _get_agent_event_stream()
     stream._publish(topic, event)  # pyright: ignore[reportPrivateUsage]
+
+
+def publish_agent_event_ahead(topic: str, event: NativeEvent) -> None:
+    """Publish one buffered event to `topic` before the run's event stream reaches it.
+
+    Called before a continue-as-new handler runs; the event is then skipped at its stream position.
+    """
+    stream = _get_agent_event_stream()
+    stream._publish_ahead(topic, event)  # pyright: ignore[reportPrivateUsage]
 
 
 def publish_agent_result(topic: str, result: AgentRunResult[Any]) -> None:
