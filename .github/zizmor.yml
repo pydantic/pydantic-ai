@@ -38,7 +38,6 @@ rules:
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-community-demand.lock.yml
       - pydantic-ai-feature-digest.lock.yml
-      - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-roundtrip-sweep.lock.yml
       - pydantic-ai-stale-issues-finder.lock.yml
@@ -68,7 +67,6 @@ rules:
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-community-demand.lock.yml
       - pydantic-ai-feature-digest.lock.yml
-      - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-roundtrip-sweep.lock.yml
       - pydantic-ai-stale-issues-finder.lock.yml

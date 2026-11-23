@@ -1,4 +1,4 @@
-"""Execute review eligibility, publication checks and close-out with a recording gh fake."""
+"""Execute the PR Bots concurrency rule and the bot-review close-out helper with a recording gh fake."""
 
 from __future__ import annotations
 
@@ -6,48 +6,15 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import NotRequired
-from urllib.parse import quote
 
 import pytest
 import yaml
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
 
 ROOT = Path(__file__).parents[2]
 REPO = 'pydantic/pydantic-ai'
 PULL = f'repos/{REPO}/pulls/123'
 HEAD = '1' * 40
-RUN_URL = f'https://github.com/{REPO}/actions/runs/456'
-WORKFLOWS: list[str] = ['pydantic-ai-pr-review']
-
-
-class Step(TypedDict, total=False):
-    name: str
-    run: str
-    env: dict[str, str]
-    uses: str
-
-
-class Job(TypedDict):
-    steps: list[Step]
-
-
-Workflow = TypedDict('Workflow', {'jobs': dict[str, Job], 'safe-outputs': NotRequired[dict[str, object]]})
-
-
-def workflow_frontmatter(workflow: str) -> Workflow:
-    source = (ROOT / '.github/workflows' / f'{workflow}.md').read_text()
-    frontmatter = source.removeprefix('---\n').split('\n---\n', 1)[0]
-    return TypeAdapter(Workflow).validate_python(yaml.safe_load(frontmatter))
-
-
-def workflow_script(workflow: str, job: str, step_name: str | None = None) -> str:
-    data = workflow_frontmatter('shared/review-publication' if job == 'flag_failed_review' else workflow)
-    step = next(step for step in data['jobs'][job]['steps'] if step_name is None or step.get('name') == step_name)
-    script = step.get('run')
-    assert script is not None
-    return script
 
 
 GH_STUB = r"""
@@ -78,8 +45,6 @@ gh() {
   elif [ "$endpoint" = "$PULL/reviews/101/dismissals" ] && [ "$method" = PUT ]; then
     cat > "$DISMISS_BODY"
     payload='{"state":"DISMISSED"}'
-  elif [[ "$endpoint" = "repos/$REPO/issues/123/labels"* ]]; then
-    payload='{}'
   else
     echo "unexpected gh request: $*" >&2
     return 91
@@ -94,242 +59,14 @@ def run_shell(script: str, tmp_path: Path, **overrides: str) -> subprocess.Compl
         **os.environ,
         'REPO': REPO,
         'PULL': PULL,
-        'PR': PULL,
-        'LABELS': f'repos/{REPO}/issues/123/labels',
         'SHA': HEAD,
-        'RUN_URL': RUN_URL,
-        'FAILED': 'false',
-        'FAILURE_LABEL': 'ci-review-failed',
-        'REVIEW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
-        'WORKFLOW_CALL_ID': f'{REPO}/pydantic-ai-pr-review',
-        'EVENT_NAME': 'pull_request',
-        'LABEL_NAME': 'final-review',
-        'EVENT_HEAD_REPO': REPO,
-        'EVENT_PR_NUMBER': '123',
         'REVIEW_PAGES': '[[]]',
         'PULL_JSON': json.dumps({'state': 'open', 'head': {'sha': HEAD}}),
-        'GITHUB_OUTPUT': str(tmp_path / 'outputs'),
-        'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary'),
         'CALLS': str(tmp_path / 'calls'),
         'DISMISS_BODY': str(tmp_path / 'dismiss-body'),
         **overrides,
     }
     return subprocess.run(['bash', '-c', GH_STUB + '\n' + script], text=True, capture_output=True, env=env)
-
-
-def check(name: str = 'check', conclusion: str = 'SUCCESS', required: bool = True) -> dict[str, object]:
-    return {'name': name, 'conclusion': conclusion, 'isRequired': required}
-
-
-def pr_page(checks: list[dict[str, object]], *, head: str = HEAD) -> dict[str, object]:
-    return {
-        'data': {
-            'repository': {
-                'pullRequest': {
-                    'state': 'OPEN',
-                    'isDraft': False,
-                    'reviewDecision': 'REVIEW_REQUIRED',
-                    'isCrossRepository': False,
-                    'baseRefName': 'main',
-                    'headRefName': 'feature',
-                    'headRefOid': head,
-                    'commits': {'nodes': [{'commit': {'statusCheckRollup': {'contexts': {'nodes': checks}}}}]},
-                }
-            }
-        }
-    }
-
-
-@pytest.mark.parametrize(
-    ('checks', 'eligible'),
-    [
-        ([], False),
-        ([check(conclusion='FAILURE')], False),
-        ([check(conclusion='NEUTRAL')], False),
-        ([check(conclusion='SKIPPED')], False),
-        ([check(required=False)], False),
-        ([check()], True),
-        ([check(), check('optional', 'FAILURE', False)], True),
-        ([check(), check('another', 'SKIPPED')], True),
-        ([check(), check('another', 'NEUTRAL')], True),
-        ([check(), check('another', 'IN_PROGRESS')], False),
-    ],
-    ids=[
-        'missing',
-        'failed',
-        'neutral',
-        'skipped',
-        'not-required',
-        'passed',
-        'optional-failure',
-        'other-skipped',
-        'other-neutral',
-        'other-required',
-    ],
-)
-def test_eligibility_requires_positive_required_check(tmp_path: Path, checks: list[dict[str, object]], eligible: bool):
-    result = run_shell(
-        workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
-        tmp_path,
-        GRAPHQL_PAGES=json.dumps([pr_page(checks)]),
-    )
-    assert result.returncode == 0, result.stderr
-    assert f'eligible={str(eligible).lower()}' in (tmp_path / 'outputs').read_text()
-
-
-@pytest.mark.parametrize('second_head', [HEAD, '2' * 40])
-def test_eligibility_checks_later_pages_and_head_consistency(tmp_path: Path, second_head: str):
-    pages = [pr_page([check()]), pr_page([check('required-on-page-2', 'FAILURE')], head=second_head)]
-    result = run_shell(
-        workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
-        tmp_path,
-        GRAPHQL_PAGES=json.dumps(pages),
-    )
-    assert result.returncode == 0, result.stderr
-    outputs = (tmp_path / 'outputs').read_text()
-    assert 'eligible=false' in outputs
-    if second_head == HEAD:
-        assert 'required-on-page-2' in (tmp_path / 'outputs').read_text()
-    else:
-        assert 'reason=PR #123 moved while reading required checks' in outputs
-    assert 'graphql paginate=true slurp=true' in (tmp_path / 'calls').read_text()
-
-
-def test_required_check_after_first_hundred_contexts_is_seen(tmp_path: Path):
-    pages = [pr_page([check(f'optional-{i}', required=False) for i in range(100)]), pr_page([check()])]
-    result = run_shell(
-        workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
-        tmp_path,
-        GRAPHQL_PAGES=json.dumps(pages),
-    )
-    assert result.returncode == 0, result.stderr
-    assert 'eligible=true' in (tmp_path / 'outputs').read_text()
-
-
-@pytest.mark.parametrize(
-    'pages', ['[]', '[{"errors":[{"message":"denied"}]}]', '[{"data":{"repository":{"pullRequest":null}}}]']
-)
-def test_eligibility_refuses_incomplete_api_data(tmp_path: Path, pages: str):
-    result = run_shell(
-        workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
-        tmp_path,
-        GRAPHQL_PAGES=pages,
-    )
-    assert result.returncode != 0
-
-
-@pytest.mark.parametrize('workflow', WORKFLOWS)
-@pytest.mark.parametrize('reference', [False, True], ids=['html', 'reference'])
-@pytest.mark.parametrize(
-    'receipt', ['current', 'none', 'old-head', 'old-run', 'missing-run', 'other-workflow', 'human', 'dismissed']
-)
-def test_publication_requires_this_runs_review(tmp_path: Path, workflow: str, reference: bool, receipt: str):
-    # GitHub REST read-back examples for these two marker forms:
-    # https://api.github.com/repos/pydantic/pydantic-ai/pulls/11151/reviews/5631437278
-    # https://api.github.com/repos/pydantic/pydantic-ai/pulls/10347/reviews/5540079394
-    caller_id = f'{REPO}/{workflow}'
-    marker = (
-        f'[gh-aw-workflow-call-id]: # "{quote(caller_id, safe="")}"'
-        if reference
-        else f'<!-- gh-aw-workflow-call-id: {caller_id} -->'
-    )
-    body = f'<!-- gh-aw-agentic-workflow: Test Review, workflow_id: {workflow}, run: {RUN_URL} -->\n\n{marker}'
-    review: dict[str, object] = {
-        'user': {'type': 'Bot'},
-        'commit_id': HEAD,
-        'state': 'COMMENTED',
-        'body': body,
-    }
-    if receipt == 'old-head':
-        review['commit_id'] = '2' * 40
-    elif receipt == 'old-run':
-        review['body'] = body.replace(RUN_URL, f'{RUN_URL}0')
-    elif receipt == 'missing-run':
-        review['body'] = marker
-    elif receipt == 'other-workflow':
-        review['body'] = body.replace(marker, marker.replace(workflow, 'other'))
-    elif receipt == 'human':
-        review['user'] = {'type': 'User'}
-    elif receipt == 'dismissed':
-        review['state'] = 'DISMISSED'
-    result = run_shell(
-        workflow_script(workflow, 'flag_failed_review'),
-        tmp_path,
-        WORKFLOW_CALL_ID=caller_id,
-        REVIEW_PAGES=json.dumps([[] if receipt == 'none' else [review]]),
-    )
-    assert result.returncode == (0 if receipt == 'current' else 1), result.stderr
-    calls = (tmp_path / 'calls').read_text()
-    assert '/labels' in calls
-    assert ('DELETE' in calls) == (receipt == 'current')
-
-
-@pytest.mark.parametrize('workflow', WORKFLOWS)
-def test_compiled_publication_job_binds_each_workflow(workflow: str):
-    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
-        yaml.safe_load((ROOT / '.github/workflows' / f'{workflow}.lock.yml').read_text())
-    )
-    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
-    job = jobs['flag_failed_review']
-    steps = TypeAdapter(list[Step]).validate_python(job['steps'])
-    step = next(step for step in steps if 'FAILED' in step.get('env', {}))
-    env = step.get('env')
-    assert env is not None
-    pr_number = '${{ needs.eligibility.outputs.pr_number }}'
-    head_sha = '${{ needs.eligibility.outputs.head_sha }}'
-    assert env['PR'] == 'repos/${{ github.repository }}/pulls/' + pr_number
-    assert env['LABELS'] == 'repos/${{ github.repository }}/issues/' + pr_number + '/labels'
-    assert env['SHA'] == head_sha
-    assert env['WORKFLOW_CALL_ID'] == '${{ github.repository }}/' + workflow
-    assert env['FAILURE_LABEL'] == 'ci-review-failed'
-    assert env['GH_TOKEN'] == '${{ github.token }}'
-    assert env['RUN_URL'] == '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-    assert job['needs'] == ['agent', 'detection', 'eligibility', 'safe_outputs']
-    assert job['if'] == "(!cancelled()) && needs.agent.result != 'skipped'"
-    assert job['permissions'] == {'pull-requests': 'write'}
-    assert job['runs-on'] == 'ubuntu-slim'
-    assert job['timeout-minutes'] == 5
-    assert not any('actions/checkout' in step.get('uses', '') for step in steps)
-    script = step.get('run')
-    assert script is not None
-    assert script.rstrip('\n') == workflow_script(workflow, 'flag_failed_review').rstrip('\n')
-    assert 'flag_failed_review' not in workflow_frontmatter(workflow)['jobs']
-
-
-def test_compiled_stale_pr_skip_precedes_the_pr_head_checkout():
-    """Under `pull_request*` the base-restored config dirties the tree, and checking out a moved head then fails."""
-    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
-        yaml.safe_load((ROOT / '.github/workflows/pydantic-ai-pr-review.lock.yml').read_text())
-    )
-    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
-    steps = TypeAdapter(list[dict[str, object]]).validate_python(jobs['agent']['steps'])
-    names = [step.get('name') for step in steps]
-    skip = steps[names.index('Skip a PR that closed or moved on while queued')]
-    checkout_index = names.index('Check out the PR head')
-    assert names.index(skip['name']) < checkout_index
-    assert skip['id'] == 'stale-pr'
-    assert 'echo \'skipped=true\' >> "$GITHUB_OUTPUT"' in str(skip['run'])
-    assert steps[checkout_index]['if'] == "steps.stale-pr.outputs.skipped != 'true'"
-
-
-@pytest.mark.parametrize(
-    'live', [{'state': 'closed', 'head': {'sha': HEAD}}, {'state': 'open', 'head': {'sha': '2' * 40}}]
-)
-def test_publication_preserves_host_verified_skips(tmp_path: Path, live: dict[str, object]):
-    result = run_shell(
-        workflow_script('shared/review-publication', 'flag_failed_review'),
-        tmp_path,
-        FAILED='true',
-        PULL_JSON=json.dumps(live),
-    )
-    assert result.returncode == 0, result.stderr
-    assert 'Review no longer required' in (tmp_path / 'summary').read_text()
-    assert '/labels' not in (tmp_path / 'calls').read_text()
-
-
-def test_missing_pr_data_is_not_a_legitimate_skip(tmp_path: Path):
-    result = run_shell(workflow_script('shared/review-publication', 'flag_failed_review'), tmp_path, PULL_JSON='{}')
-    assert result.returncode != 0
 
 
 def evaluate_expression(expression: str, values: dict[str, str | bool | int]) -> object:
@@ -364,34 +101,6 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
     suffix = concurrency['group'].split('}}', 1)[1]
     assert evaluate_expression(suffix, values) == ('-noop-456' if isolated else '')
     assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
-
-
-@pytest.mark.parametrize(
-    'agent,safe,failed,expected',
-    [
-        ('success', 'success', '0', False),
-        ('failure', 'success', '0', True),
-        ('success', 'failure', '0', True),
-        ('success', 'success', '1', True),
-        ('success', 'skipped', '', True),
-    ],
-)
-def test_failed_stage_cannot_be_reported_as_success(agent: str, safe: str, failed: str, expected: bool):
-    data = workflow_frontmatter('shared/review-publication')
-    env = data['jobs']['flag_failed_review']['steps'][0].get('env')
-    assert env is not None
-    expression = env['FAILED']
-    assert (
-        evaluate_expression(
-            expression,
-            {
-                'needs.agent.result': agent,
-                'needs.safe_outputs.result': safe,
-                'needs.safe_outputs.outputs.process_safe_outputs_items_failed': failed,
-            },
-        )
-        == expected
-    )
 
 
 def threads_page(
@@ -524,11 +233,3 @@ def test_invalid_closeout_inputs_cannot_dismiss_a_review(tmp_path: Path, case: s
     assert result.returncode == 2
     assert result.stderr.strip()
     assert not (tmp_path / 'calls').exists()
-
-
-@pytest.mark.parametrize('workflow', WORKFLOWS)
-def test_review_receipt_metadata_is_retained(workflow: str):
-    safe_outputs = workflow_frontmatter(workflow).get('safe-outputs')
-    assert safe_outputs is not None
-    review = TypeAdapter(dict[str, object]).validate_python(safe_outputs['submit-pull-request-review'])
-    assert review['footer'] == 'always'

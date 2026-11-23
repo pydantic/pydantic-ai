@@ -1,6 +1,6 @@
 """`scripts/durable_exec_contract.py --touched` names the manifest entries a pull request's changed lines touch.
 
-CI labels a pull request `needs-durable-exec-review` and gives CI Review the entries when the set is not empty. The
+CI labels a pull request `needs-durable-exec-review` and gives douwebot the entries when the set is not empty. The
 classifier reads the pull request through `gh api`; these tests pass the files listing and the sources it would
 fetch, so they are not VCR tests.
 """

@@ -1390,62 +1390,6 @@ def test_ordinary_workflow_accepts_unconfigured_safe_output_sink(monkeypatch: py
     assert shim.require_safe_output('done') == 'done'
 
 
-@pytest.mark.parametrize('workflow', sorted(shim.REVIEW_WORKFLOWS))
-@pytest.mark.parametrize(
-    'output_type', ['noop', 'missing_data', 'report_incomplete', 'create_pull_request_review_comment']
-)
-def test_review_requires_formal_output(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workflow: str, output_type: str
-):
-    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
-    sink = tmp_path / 'outputs.jsonl'
-    sink.write_text(json.dumps({'type': output_type, 'message': 'placeholder'}) + '\n', encoding='utf-8')
-    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
-    assert shim.safe_output_pending()
-    with pytest.raises(ModelRetry, match='Submit the formal pull-request review'):
-        shim.require_safe_output('done')
-    with sink.open('a', encoding='utf-8') as handle:
-        handle.write(
-            '\nnot-json\n' + json.dumps({'type': 'submit_pull_request_review', 'body': 'Coverage incomplete'}) + '\n'
-        )
-    assert not shim.safe_output_pending()
-    assert shim.require_safe_output('done') == 'done'
-
-
-@pytest.mark.parametrize('workflow', sorted(shim.REVIEW_WORKFLOWS))
-def test_review_refuses_unconfigured_sink(monkeypatch: pytest.MonkeyPatch, workflow: str):
-    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
-    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
-    assert shim.safe_output_pending()
-    with pytest.raises(ValueError, match='Review safe-output sink is not configured'):
-        shim.require_safe_output('done')
-
-
-@pytest.mark.parametrize('workflow', sorted(shim.REVIEW_WORKFLOWS))
-def test_review_recovers_from_placeholder_to_formal_output(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workflow: str
-):
-    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
-    sink = tmp_path / 'outputs.jsonl'
-    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
-    calls = 0
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(parts=[ToolCallPart('noop', {'message': 'placeholder'})])
-        if calls == 2:
-            return ModelResponse(parts=[TextPart('done')])
-        if calls == 3:
-            return ModelResponse(parts=[ToolCallPart('submit_pull_request_review', {'body': 'Review complete'})])
-        return ModelResponse(parts=[TextPart('published')])
-
-    assert _run_shim(respond, sink) == 0
-    assert calls == 4
-    assert 'submit_pull_request_review' in sink.read_text(encoding='utf-8')
-
-
 @pytest.mark.parametrize('sink_configured', [True, False])
 def test_attention_run_fails_when_immutable_completion_artifact_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sink_configured: bool
@@ -1680,60 +1624,6 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     # The in-flight request's tool call still ran.
     assert len(glob_returns) == 1
     assert 'module.py' in glob_returns[0]
-
-
-@pytest.mark.parametrize(
-    ('inside_reserve', 'withheld', 'args'),
-    [(False, 'mcp__safeoutputs__noop', {'message': 'progress note'}), (True, 'mcp__safeoutputs__probe', {})],
-)
-def test_ci_review_withholds_noop_and_non_publishing_outputs_in_the_reserve(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inside_reserve: bool, withheld: str, args: dict[str, object]
-):
-    """CI Review's model spent its one `noop` on progress notes, and looped on non-publishing outputs in the reserve.
-
-    The model can still call a withheld tool from memory, and each call is answered without spending a retry.
-    """
-    monkeypatch.setenv('GITHUB_WORKFLOW', shim.CI_REVIEW_WORKFLOW)
-    sink = tmp_path / 'outputs.jsonl'
-    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
-    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    seconds_left = shim.RUN_TIME_RESERVE_SECS + (-1 if inside_reserve else 60)
-    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + seconds_left)
-    offered: list[set[str]] = []
-    withheld_returns: list[str] = []
-
-    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        offered.append({tool_def.name for tool_def in info.function_tools})
-        withheld_returns.extend(
-            str(part.content)
-            for part in messages[-1].parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == withheld
-        )
-        if sink.exists():
-            return ModelResponse(parts=[TextPart('done')])
-        if len(withheld_returns) < 2:
-            return ModelResponse(parts=[ToolCallPart(withheld, args)])
-        return ModelResponse(
-            parts=[ToolCallPart('mcp__safeoutputs__submit_pull_request_review', {'body': 'Review complete'})]
-        )
-
-    assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
-    assert (
-        withheld_returns
-        == [
-            'error: this tool is not available to CI Review now. Finish by submitting your review with '
-            '`submit_pull_request_review`, as a COMMENT review if coverage is incomplete.'
-        ]
-        * 2
-    )
-    assert [entry['type'] for entry in map(json.loads, sink.read_text(encoding='utf-8').splitlines())] == [
-        'submit_pull_request_review'
-    ]
-    if inside_reserve:
-        assert offered == [{'mcp__safeoutputs__submit_pull_request_review'}] * 4
-    else:
-        assert {'Glob', 'Task', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'} <= offered[0]
-        assert all('mcp__safeoutputs__noop' not in tools for tools in offered)
 
 
 def test_safe_output_past_its_limit_does_not_spend_the_tool_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

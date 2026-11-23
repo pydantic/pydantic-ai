@@ -56,9 +56,8 @@ class only in a signature does not depend on it at runtime, so an entry whose on
 `--touched` prints the gating entries a pull request touches, in the manifest's shape, reading the
 pull request through `gh api` and only parsing what it reads (`touched_entries` has the rules).
 `.github/workflows/bots.yml` labels a pull request that touches any of them
-`needs-durable-exec-review`, and `scripts/gather-pydantic-ai-review-context.sh` hands them to CI
-Review. Both run this file and the manifest as the base branch has them, never the pull request's
-copies.
+`needs-durable-exec-review`, and `scripts/gather-review-context.sh` hands them to douwebot. Both
+run this file and the manifest as the base branch has them, never the pull request's copies.
 
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale

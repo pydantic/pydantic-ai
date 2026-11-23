@@ -9,7 +9,6 @@ on:
       - Pydantic AI Bug Hunter
       - Pydantic AI Community Demand
       - Pydantic AI Feature Digest
-      - CI Review
       - Pydantic AI Provider Mapping Sweep
       - Pydantic AI Round-Trip Sweep
       - Pydantic AI Stale Issues Finder

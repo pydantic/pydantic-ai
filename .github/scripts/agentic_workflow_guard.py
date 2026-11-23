@@ -1817,8 +1817,7 @@ def run_checks(
     locks = sorted(workflows_dir.glob('*.lock.yml'))
     # Resolve `shared/` under the caller's `workflows_dir`, not the module global, so a
     # custom root scans its own fragments rather than whatever sits under the cwd.
-    # `rglob`, not `glob`: the F3 defect this scan exists to catch lived in
-    # `shared/prompts/pydantic-ai-pr-review.md`. Those prompts are fetched at run time
+    # `rglob`, not `glob`: the prompts under `shared/prompts/` are fetched at run time
     # rather than compiled in, so they change with no lock diff and are the least
     # reviewed files here — the last ones a path check should skip.
     shared_dir = workflows_dir / 'shared'

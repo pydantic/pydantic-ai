@@ -9,9 +9,7 @@ shapes. The final test asserts the live repository is clean.
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -56,91 +54,6 @@ from agentic_workflow_guard import (
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 WORKFLOWS_DIR = REPO_ROOT / '.github' / 'workflows'
-
-
-def test_ci_review_compiled_membership_admits_installed_app_without_widening_roles():
-    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
-    steps = lock['jobs']['pre_activation']['steps']
-    check_membership = next(step for step in steps if step.get('id') == 'check_membership')
-
-    assert check_membership['env'] == {
-        'GH_AW_REQUIRED_ROLES': 'admin,maintainer,write',
-        'GH_AW_ALLOWED_BOTS': 'pydantic-docs',
-    }
-
-
-@pytest.mark.parametrize(
-    'body,commit_id,expected',
-    [
-        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'current-head', 1),
-        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-pr-review"', 'current-head', 1),
-        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-ui-security-review -->', 'current-head', 0),
-        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-ui-security-review"', 'current-head', 0),
-        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'older-head', 0),
-        ('[gh-aw-workflow-call-id]: # "pydantic%2Fpydantic-ai%2Fpydantic-ai-pr-review"', 'older-head', 0),
-        ('No findings.', 'current-head', 0),
-        (None, 'current-head', 0),
-    ],
-)
-def test_ci_review_deduplicates_both_footer_formats(body: str | None, commit_id: str, expected: int):
-    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
-    gate = next(step for step in lock['jobs']['eligibility']['steps'] if step.get('id') == 'gate')
-    query = re.search(
-        r"""jq --arg sha "\$HEAD_SHA" --arg caller "\$REVIEW_CALL_ID" '(.+?)'\)""", gate['run'], re.DOTALL
-    )
-    assert query is not None
-    caller = gate['env']['REVIEW_CALL_ID'].replace('${{ github.repository }}', 'pydantic/pydantic-ai')
-    # `$REVIEWS`: every page of reviews, already flattened by `jq 'add // []'`.
-    reviews: list[dict[str, object]] = [
-        {'commit_id': commit_id, 'body': body, 'user': {'login': 'github-actions[bot]'}},
-        {'commit_id': 'current-head', 'body': 'Another review from the same bot.'},
-    ]
-    # Exercise the compiled jq program with its production interpreter.
-    result = subprocess.run(
-        ['jq', '--arg', 'sha', 'current-head', '--arg', 'caller', caller, query.group(1)],
-        input=json.dumps(reviews),
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert int(result.stdout) == expected
-
-
-def test_ci_review_stale_preflight_writes_noop_before_safe_outputs_setup(tmp_path: Path):
-    """The host preflight runs before safe-output setup, outside the model/VCR path."""
-    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
-    steps = lock['jobs']['agent']['steps']
-    preflight = next(step for step in steps if step.get('name') == 'Skip a PR that closed or moved on while queued')
-    prepare = next(step for step in steps if step.get('name') == 'Prepare Safe Outputs Directories')
-    safe_outputs = tmp_path / 'gh-aw' / 'safeoutputs' / 'outputs.jsonl'
-    assert not safe_outputs.parent.exists()
-
-    gh = tmp_path / 'gh'
-    gh.write_text('#!/bin/sh\nprintf "closed at new-head\\n"\n', encoding='utf-8')
-    gh.chmod(0o755)
-    search_path = os.environ['PATH']
-    env: dict[str, str] = {
-        **os.environ,
-        'PATH': f'{tmp_path}:{search_path}',
-        'RUNNER_TEMP': str(tmp_path),
-        'SAFE_OUTPUTS': str(safe_outputs),
-        'PR': 'repos/pydantic/pydantic-ai/pulls/10450',
-        'HEAD_SHA': 'old-head',
-        'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary.md'),
-        'GITHUB_OUTPUT': str(tmp_path / 'github-output'),
-    }
-    result = subprocess.run(['bash', '-c', preflight['run']], env=env, text=True, capture_output=True, check=True)
-    assert safe_outputs.exists(), result.stdout + result.stderr
-    original = safe_outputs.read_bytes()
-    assert json.loads(original) == {
-        'type': 'noop',
-        'message': 'Not reviewing old-head: the PR is now closed at new-head.',
-    }
-    # Gates `Check out the PR head`, which would refuse a head the branch has moved past.
-    assert (tmp_path / 'github-output').read_text(encoding='utf-8') == 'skipped=true\n'
-
-    subprocess.run(['bash', '-c', prepare['run']], env=env, check=True)
-    assert safe_outputs.read_bytes() == original
 
 
 def _write(path: Path, text: str) -> Path:

@@ -117,7 +117,6 @@ from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT
 
 from . import (
     CLAUDE_CODE_TOOL_NAMES,
@@ -321,20 +320,10 @@ REQUEST_LIMIT = 400
 ATTENTION_REQUEST_LIMIT = 50
 SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
-CI_REVIEW_WORKFLOW = 'CI Review'
-REVIEW_WORKFLOWS = frozenset({CI_REVIEW_WORKFLOW})
 
 
 def _is_attention_run() -> bool:
     return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
-
-
-def _is_review_run() -> bool:
-    return os.environ.get('GITHUB_WORKFLOW') in REVIEW_WORKFLOWS
-
-
-def _is_ci_review_run() -> bool:
-    return os.environ.get('GITHUB_WORKFLOW') == CI_REVIEW_WORKFLOW
 
 
 def run_request_limit() -> int:
@@ -385,21 +374,14 @@ def _safe_output_entries(contents: str) -> Iterator[dict[str, object]]:
 def _safe_output_status() -> tuple[bool, list[int] | None]:
     """Return whether output is pending and any Attention candidate IDs still missing decisions."""
     is_attention = _is_attention_run()
-    is_review = _is_review_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        if is_attention or is_review:
-            workflow_kind = 'Attention' if is_attention else 'Review'
-            raise ValueError(f'{workflow_kind} safe-output sink is not configured')
+        if is_attention:
+            raise ValueError('Attention safe-output sink is not configured')
         return False, None
     sink = pathlib.Path(path)
     contents = sink.read_text(encoding='utf-8') if sink.is_file() else ''
     sink_empty = not contents.strip()
-    if is_review:
-        review_submitted = any(
-            entry.get('type') == 'submit_pull_request_review' for entry in _safe_output_entries(contents)
-        )
-        return not review_submitted, None
     if not is_attention or sink_empty:
         return sink_empty, None
 
@@ -438,7 +420,7 @@ def safe_output_pending() -> bool:
     try:
         output_pending, _ = _safe_output_status()
     except (KeyError, OSError, ValueError):
-        if _is_attention_run() or _is_review_run():
+        if _is_attention_run():
             return True
         raise
     return output_pending
@@ -457,12 +439,6 @@ def require_safe_output(output: str) -> str:
         )
     if not output_pending:
         return output
-    if _is_review_run():
-        raise ModelRetry(
-            'Submit the formal pull-request review with `submit_pull_request_review`. '
-            'A noop, inline comment, or missing-data/incomplete signal does not finish a review. '
-            'If coverage is incomplete, submit a COMMENT review explaining the missing coverage; do not approve.'
-        )
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
         'You ended your turn without emitting a safe output, so nothing has been posted. '
@@ -617,8 +593,7 @@ SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 
 # The run's last minutes belong to the parent: sub-agents are cut off before they start,
-# and the parent is then told to emit its safe output. Successful `CI Review` runs need
-# up to about 4 min between their last sub-agent returning and their posted review.
+# and the parent is then told to emit its safe output.
 RUN_TIME_RESERVE_SECS = 5 * 60
 TIME_BUDGET_NOTICE = (
     '## Time budget nearly spent\n\n'
@@ -678,14 +653,6 @@ def time_budget_notice() -> str | None:
 # named by their safe-output type through `_safe_output_type`, never by prefixed name.
 SAFE_OUTPUT_TOOL_PREFIXES = ('mcp__safeoutputs__', 'safeoutputs_')
 
-# The safe outputs that publish CI Review's review. Inside the time reserve CI Review is offered only
-# these: offered `report_incomplete` or `missing_tool` there, the model called them in a loop until
-# the deadline and never submitted.
-CI_REVIEW_RESERVE_SAFE_OUTPUTS = frozenset({'submit_pull_request_review', 'create_pull_request_review_comment'})
-
-# The shell tool of the CLAI 2 engine's `Coder`, which runs foreground commands for `MAX_FOREGROUND_WAIT` by default.
-CODER_SHELL_TOOL = 'shell'
-
 
 def _safe_output_type(tool_name: str) -> str | None:
     """The safe-output type a `safeoutputs` tool writes, or `None` for any other tool."""
@@ -707,16 +674,6 @@ def hold_time_reserve_for_safe_output(
     if time_budget_notice() is None:
         return tool_defs
     return [tool_def for tool_def in tool_defs if _safe_output_type(tool_def.name) is not None]
-
-
-def _withheld_from_ci_review(tool_name: str) -> bool:
-    """Whether `CIReviewToolPolicy` keeps this tool from CI Review's model now."""
-    safe_output = _safe_output_type(tool_name)
-    if safe_output is None:
-        return False
-    return safe_output == 'noop' or (
-        time_budget_notice() is not None and safe_output not in CI_REVIEW_RESERVE_SAFE_OUTPUTS
-    )
 
 
 class RunTimeLimitExceeded(Exception):
@@ -754,9 +711,8 @@ INSTRUCTIONS = (
     'run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list `gh api` '
     'request from inside the agent. Narrow per-item reads may still be used '
     'after the local corpus identifies a specific item. If required prefetched '
-    'context is missing or unreadable, report the missing data instead of attempting '
-    'a list request through gh-proxy. CI Review must submit a COMMENT '
-    'review explaining incomplete coverage; other workflows may use `mcp__safeoutputs__noop`.'
+    'context is missing or unreadable, call `mcp__safeoutputs__noop` and report that '
+    'missing data instead of attempting a list request through gh-proxy.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.
@@ -1492,60 +1448,6 @@ def _subagent_time_limit() -> float:
     return min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
 
 
-@dataclass
-class CIReviewToolPolicy(AbstractCapability[object]):
-    """Keep CI Review's model on the way to a submitted review.
-
-    - `noop` is withheld. gh-aw allows one per run and the model spent it on progress notes; CI
-      Review's only `noop` is the one its stale-PR skip step writes before the model starts.
-    - Inside the time reserve only the safe outputs that publish the review are offered.
-    - Each foreground `shell` command returns to the model when the reserve starts, as `task` stops
-      sub-agents; a command still running then continues in the background. The reserve takes effect
-      between model requests, and runs that waited on long `uv` commands posted no review.
-
-    Withheld tools leave the request, not the run's tools: a call to a tool the run does not have
-    counts against the model's single tool retry, so a second one would end the run. A call the
-    model makes anyway is answered here instead.
-    """
-
-    async def before_model_request(
-        self, ctx: RunContext[object], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if not _is_ci_review_run():
-            return request_context
-        parameters = request_context.model_request_parameters
-        offered = [tool_def for tool_def in parameters.function_tools if not _withheld_from_ci_review(tool_def.name)]
-        return dataclasses.replace(
-            request_context, model_request_parameters=dataclasses.replace(parameters, function_tools=offered)
-        )
-
-    async def wrap_tool_execute(
-        self,
-        ctx: RunContext[object],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        handler: WrapToolExecuteHandler,
-    ) -> object:
-        if not _is_ci_review_run():
-            return await handler(args)
-        if _withheld_from_ci_review(tool_def.name):
-            return (
-                'error: this tool is not available to CI Review now. Finish by submitting your review with '
-                '`submit_pull_request_review`, as a COMMENT review if coverage is incomplete.'
-            )
-        seconds_left = _run_seconds_left()
-        if tool_def.name != CODER_SHELL_TOOL or seconds_left is None:
-            return await handler(args)
-        before_reserve = math.floor(seconds_left - RUN_TIME_RESERVE_SECS)
-        if before_reserve <= 0:
-            return TIME_BUDGET_REFUSAL
-        requested = args.get('timeout')
-        timeout = requested if isinstance(requested, int | float) and requested > 0 else MAX_FOREGROUND_WAIT
-        return await handler({**args, 'timeout': min(timeout, before_reserve)})
-
-
 def _recorded_noops() -> int:
     """How many `noop` entries the safe-outputs sink holds."""
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
@@ -1561,7 +1463,7 @@ class EndRunAfterReserveNoop(AbstractCapability[object]):
 
     Still offered tools after that `noop`, a model can call safe outputs with no per-run limit, such as
     `missing_data`, until the run's deadline. With no tools offered, its next text answer ends the run. A call it
-    still makes is answered without running, as `CIReviewToolPolicy` answers its withheld tools. A `noop` before
+    still makes is answered without running. A `noop` before
     the reserve changes nothing: some runs post one early as a progress note, and some workflows record several
     outputs.
     """
@@ -1769,7 +1671,6 @@ async def run(
             ProcessEventStream(_stream_events),
             MarkTimedOutSpans(),
             RecordRunTotals(),
-            CIReviewToolPolicy(),
             EndRunAfterReserveNoop(),
             PrepareTools(hold_time_reserve_for_safe_output),
         ],

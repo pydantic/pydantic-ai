@@ -176,8 +176,10 @@ done > "$CTX/related-issues.txt"
 echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
+BASE_SHA=""
 if [ -n "$BASE_REF" ]; then
   if git -C "$PR_HEAD_DIR" fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
+    BASE_SHA=$(git -C "$PR_HEAD_DIR" rev-parse FETCH_HEAD 2>/dev/null || echo "")
     MERGE_BASE=$(git -C "$PR_HEAD_DIR" merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
   fi
 fi
@@ -401,7 +403,45 @@ gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
     fi
   done > "$CTX/changed-files.txt"
 
-# Gather directory-specific AGENTS.md files for changed directories.
+# Core definitions the durable engines depend on that this PR changes, found as the
+# `durable-exec-label` job in `.github/workflows/bots.yml` finds them: with the base branch's
+# classifier and manifest, never the PR's copies, so a PR's edits to either take effect only
+# once merged. Written only when there are any. Non-fatal: without it the reviewer has less context.
+echo "  - Durable-exec contract entries"
+DURABLE_EXEC_AGENTS_MD=pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md
+DURABLE_EXEC_GATE=$(mktemp -d)
+durable_exec_touched() {
+  local path
+  [ -n "$BASE_SHA" ] || return 1
+  mkdir -p "$DURABLE_EXEC_GATE/scripts" || return 1
+  for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
+    gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" \
+      > "$DURABLE_EXEC_GATE/$path" || return 1
+  done
+  python3 -I "$DURABLE_EXEC_GATE/scripts/durable_exec_contract.py" \
+    --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$(git -C "$PR_HEAD_DIR" rev-parse HEAD)"
+}
+if ! TOUCHED=$(durable_exec_touched); then
+  echo "    Could not classify the PR against the durable-exec contract (skipping)"
+elif [ "$(jq '[.[] | length] | add // 0' <<<"$TOUCHED")" -gt 0 ]; then
+  {
+    echo "# Durable-exec contract entries this PR touches"
+    echo ""
+    echo "The base branch's \`scripts/durable_exec_contract.py --touched\` placed this PR's changed lines in"
+    echo "these entries of \`scripts/durable_exec_contract.json\`: core definitions a durable engine"
+    echo "depends on, each with its kinds, its engines and the engine sites that depend on it."
+    echo "\`agents-md.txt\` carries \`${DURABLE_EXEC_AGENTS_MD}\`, whose section \"Core changes that"
+    echo "engines depend on\" says what to check."
+    echo ""
+    jq -r 'to_entries[] | .key as $file | .value | to_entries[]
+      | "- `\($file)::\(.key)`: \(.value.kinds | join(", ")); engines: \(.value.engines | join(", "))",
+        (.value.sites[] | "  - `\(.)`")' <<<"$TOUCHED"
+  } > "$CTX/durable-exec-contract.md"
+fi
+rm -rf "$DURABLE_EXEC_GATE"
+
+# Gather directory-specific AGENTS.md files for changed directories, and the durable_exec one
+# when the PR touches a contract entry.
 # These are read as guidance the reviewer must enforce, so they must come from
 # the tree this script runs in -- never from $PR_HEAD_DIR, whose copies the PR
 # author controls. When that is a subdirectory, prune it.
@@ -413,7 +453,9 @@ if [ "$PR_HEAD_DIR" != "." ]; then
 fi
 for agents_file in $(find "${find_args[@]}" | sed 's|^\./||' | sort); do
   dir=$(dirname "$agents_file")
-  if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
+  if { grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null \
+       || { [ "$agents_file" = "$DURABLE_EXEC_AGENTS_MD" ] && [ -f "$CTX/durable-exec-contract.md" ]; }; } \
+    && [ -f "$agents_file" ]; then
     echo "=== ${agents_file} ==="
     cat "$agents_file"
     echo ""

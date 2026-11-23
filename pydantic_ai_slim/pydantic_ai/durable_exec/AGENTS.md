@@ -104,10 +104,11 @@ CI labels a pull request `needs-durable-exec-review` while its changed lines tou
 `gates` holds, and removes the label once a push no longer does. A changed line counts for the
 innermost definition around it, a comment, docstring or blank line for none, and a removed or renamed
 core file for all of its entries; `touched_entries` in the generator has the rules. For such a pull
-request, CI Review gets this file and the touched entries with their engine sites, and checks each
-site. The label job (`durable-exec-label` in `.github/workflows/bots.yml`) and CI Review run the
-generator and the manifest from the base branch, never the pull request's copies, so an edit to
-either takes effect only once merged. To list the touched entries yourself, run
+request, douwebot gets this file and the touched entries with their engine sites, and checks each
+site. The label job (`durable-exec-label` in `.github/workflows/bots.yml`) and douwebot's context
+gatherer (`scripts/gather-review-context.sh`) run the generator and the manifest from the base
+branch, never the pull request's copies, so an edit to either takes effect only once merged. To
+list the touched entries yourself, run
 `uv run python scripts/durable_exec_contract.py --touched <owner/repo> <pr> <base sha> <head sha>`.
 
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
