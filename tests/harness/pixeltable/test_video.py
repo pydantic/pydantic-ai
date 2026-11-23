@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests.conftest import try_import
 from tests.harness._rendering import sent_messages
+from tests.harness.conftest import IGNORE_PIXELTABLE_RUNTIME_LOOPS
 
 with try_import() as imports_successful:
     import pixeltable as pxt
@@ -41,7 +42,10 @@ with try_import() as imports_successful:
         return {'choices': [{'message': {'content': _POLICY}}]}
 
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed'),
+    IGNORE_PIXELTABLE_RUNTIME_LOOPS,
+]
 
 _PROVIDER_CALLS: list[str] = []
 _POLICY = 'Meals during business travel are reimbursed up to 35 EUR per day.'

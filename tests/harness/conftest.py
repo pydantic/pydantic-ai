@@ -82,6 +82,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             )
 
 
+IGNORE_PIXELTABLE_RUNTIME_LOOPS = pytest.mark.filterwarnings('ignore:unclosed event loop:ResourceWarning')
+"""Mark a test that runs `PixeltableMemoryStore`, which calls Pixeltable on anyio's worker threads.
+
+Pixeltable gives each thread a runtime of its own, whose event loop stays open when the thread exits, so the collector
+finalizes the loop open.
+"""
+
+
 @pytest.fixture(scope='session', autouse=True)
 def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Keep Pixeltable's catalog out of `~/.pixeltable`; it reads the variable once per process."""

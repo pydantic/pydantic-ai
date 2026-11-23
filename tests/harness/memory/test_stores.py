@@ -50,6 +50,7 @@ from pydantic_ai_harness.memory import (
     SearchableMemoryStore,
     SqliteMemoryStore,
 )
+from tests.harness.conftest import IGNORE_PIXELTABLE_RUNTIME_LOOPS
 
 
 class Store(ChildListingMemoryStore, SearchableMemoryStore, Protocol):
@@ -94,7 +95,11 @@ def _start_pixeltable_before_its_store(request: pytest.FixtureRequest) -> None:
 
 
 _PIXELTABLE = pytest.param(
-    _PIXELTABLE_INDEX, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra')
+    _PIXELTABLE_INDEX,
+    marks=[
+        pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'),
+        IGNORE_PIXELTABLE_RUNTIME_LOOPS,
+    ],
 )
 _STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
 _VERSION_INDEXES = (0, 2, _PIXELTABLE)

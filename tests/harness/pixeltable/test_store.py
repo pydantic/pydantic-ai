@@ -17,6 +17,7 @@ import anyio.from_thread
 import pytest
 
 from tests.conftest import try_import
+from tests.harness.conftest import IGNORE_PIXELTABLE_RUNTIME_LOOPS
 
 with try_import() as imports_successful:
     import pixeltable as pxt
@@ -41,7 +42,10 @@ with try_import() as imports_successful:
         'existed': pxt.Bool | None,
     }
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='pixeltable not installed'),
+    IGNORE_PIXELTABLE_RUNTIME_LOOPS,
+]
 
 Around = Callable[[Callable[[], object]], object]
 """Runs around one intercepted table call; receives the real call as a thunk."""
