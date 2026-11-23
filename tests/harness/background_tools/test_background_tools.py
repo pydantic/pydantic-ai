@@ -2655,7 +2655,13 @@ class TestTelemetry:
                     'background_tools.outcome': 'interrupted',
                 },
                 'status': 'UNSET',
-                'events': [],
+                'events': [
+                    {
+                        'name': 'exception',
+                        'exception.type': 'asyncio.exceptions.CancelledError',
+                        'exception.escaped': 'False',
+                    }
+                ],
             }
         )
 
@@ -2675,4 +2681,7 @@ class TestTelemetry:
 
         span = _span(exporter, 'background_tools execute fatal')
         assert (span.attributes or {})['background_tools.outcome'] == 'error'
-        assert (span.status.status_code.name, span.status.description) == ('ERROR', 'FatalBackgroundError')
+        assert span.status.status_code.name == 'ERROR'
+        assert [(event.attributes or {}).get('exception.type') for event in span.events] == [
+            f'{__name__}.{FatalBackgroundError.__qualname__}'
+        ]

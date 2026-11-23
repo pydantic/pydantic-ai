@@ -14,7 +14,6 @@ import anyio.abc
 import anyio.lowlevel
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from opentelemetry.trace import StatusCode
 from pydantic import ValidationError
 
 from pydantic_ai._telemetry import current_span, open_span
@@ -197,7 +196,11 @@ async def _execute_traced(
     cannot defer the call, so they fail it.
     """
     attributes = {'gen_ai.tool.name': call.tool_name, 'gen_ai.tool.call.id': call.tool_call_id}
-    with open_span(ctx, f'background_tools execute {call.tool_name}', attributes=attributes) as span:
+    # A cancellation is `interrupted`: the run ended around the call, which did not fail.
+    not_errors = (anyio.get_cancelled_exc_class(),)
+    with open_span(
+        ctx, f'background_tools execute {call.tool_name}', attributes=attributes, not_errors=not_errors
+    ) as span:
         try:
             result = await handler(args)
         except BaseException as error:
@@ -206,9 +209,6 @@ async def _execute_traced(
             if outcome == 'retried' and (cause := _retry_cause(error)) is not None:
                 # Core's `RetryInfo.cause` values, which a foreground call records as `pydantic_ai.tool.retry.cause`.
                 span.set_attribute('background_tools.retry_cause', cause)
-            if outcome == 'error' and not isinstance(error, Exception):
-                # `open_span` marks only an `Exception` as an error. The type alone, as the message can quote content.
-                span.set_status(StatusCode.ERROR, type(error).__name__)
             raise
         span.set_attribute('background_tools.outcome', 'success')
         return result
