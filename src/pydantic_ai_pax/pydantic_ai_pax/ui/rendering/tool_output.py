@@ -152,7 +152,6 @@ class DisplayArgs(BaseModel):
     offset: int = 0
     limit: int | None = None
     glob: str | None = None
-    recursive: bool = True
 
 
 @dataclass
@@ -274,21 +273,19 @@ class ToolOutput:
         return True
 
     def _inspection_header(self, tool_call_id: str, name: str, args: DisplayArgs) -> bool:
+        """Name what is read or listed, with only the arguments the model set."""
         if name == 'read_file':
             if args.path is None:
                 return False
-            limit = min(args.limit, 2000) if args.limit is not None else 2000
-            details = f'offset={args.offset} limit={limit} lines'
-            if args.limit is not None and args.limit > 2000:
-                details += f' (requested {args.limit})'
-            path = args.path
+            details = ''
+            if args.limit is not None:
+                details = f' lines {args.offset + 1}-{args.offset + args.limit}'
+            elif args.offset:
+                details = f' from line {args.offset + 1}'
+            argument = args.path + details
         else:
-            path = args.path or '.'
-            limit = args.limit if args.limit is not None else 200
-            details = f'recursive={str(args.recursive).lower()} limit={limit}'
-            if args.glob is not None:
-                details += f' glob={args.glob!r}'
-        self.header(tool_call_id, name=name, argument=f'{path!r} {details}')
+            argument = ' '.join(part for part in (args.path or '.', args.glob) if part)
+        self.header(tool_call_id, name=name, argument=argument)
         return True
 
     def render_result(self, event: FunctionToolResultEvent) -> None:

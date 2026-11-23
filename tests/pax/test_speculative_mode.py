@@ -916,9 +916,9 @@ class TestSandboxCallDisplay:
             '\u25cf run_code code="text = await read_file(path=\\"a.py\\")\\\u2026',
         )
         assert headers[1:] == [
-            "\u25cf read_file 'a.py' offset=0 limit=2000 lines",
-            "\u25cf read_file 'b.py' offset=0 limit=2000 lines",
-            "\u25cf read_file 'missing.py' offset=0 limit=2000 lines",
+            "\u25cf read_file a.py",
+            "\u25cf read_file b.py",
+            "\u25cf read_file missing.py",
             '\u25cf flaky',
             '\u25cf broken',
         ]

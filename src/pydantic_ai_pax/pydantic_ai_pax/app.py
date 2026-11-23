@@ -182,7 +182,7 @@ async def chat(
     worktree: Worktree | None = None,
     web: WebHandoff | None = None,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
-) -> None:
+) -> str | None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
     Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
@@ -200,6 +200,8 @@ async def chat(
     `settings_for` gives the settings of a session the web UI opens in another directory, beside that one's
     project file; without it, such a session starts with `settings`. The terminal shows one session at a
     time: `/resume` of one the web UI has open shows that one, and the other stays live.
+
+    Returns the ID of the conversation shown last, for `--resume`; `None` when it was never saved.
     """
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
@@ -319,6 +321,8 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
+            summary = last.session.summary
+            return summary.id if summary.revision else None
 
 
 def _terminal_background(console: Console) -> str | None:

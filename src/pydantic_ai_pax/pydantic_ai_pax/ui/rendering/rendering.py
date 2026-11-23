@@ -177,12 +177,11 @@ class MarkdownRenderer(Renderer):
             return f'{_URL_START}{url}{_URL_END}{rest}'
 
         formatted = _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
-        if theme.current() is None and theme.light_background() is not None:
-            # Termflow dims inline code, which leaves black text near 3:1 on white; paint it muted instead,
-            # then restore a heading's colour, as after a link.
-            muted = theme.sgr(theme.MUTED)
-            formatted = _CODE_SPAN_SGR_RE.sub(lambda code: f'{muted}{code[1]}\x1b[39m{self._enclosing}', formatted)
-        return formatted
+        # Termflow dims inline code, the faintest text on screen (near 3:1 on white), though file and function
+        # names are what readers look for; paint it in the accent colour instead, then restore a heading's
+        # colour, as after a link.
+        accent = theme.sgr(theme.LITHIUM)
+        return _CODE_SPAN_SGR_RE.sub(lambda code: f'{accent}{code[1]}\x1b[39m{self._enclosing}', formatted)
 
     def _link(self, match: re.Match[str]) -> str:
         url = match[1]

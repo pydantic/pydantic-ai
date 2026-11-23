@@ -3,6 +3,7 @@
 import asyncio
 import math
 import sys
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
@@ -120,6 +121,7 @@ from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.screen import Screen
 from pydantic_ai_pax.ui.prompt.terminal import Terminal
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.history import render_history
 from pydantic_ai_pax.ui.rendering.rendering import StreamRenderer, print_prompt
 from pydantic_ai_pax.ui.rendering.spinners import Spinner, Spinners
@@ -1531,6 +1533,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             ended = await self.run_turn(start, images=images, automated=automated)
 
         previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
+        started = time.monotonic()
         completed = await self.interrupts.run(run_turn())
         if not completed:
             for record in self.tasks.records():
@@ -1543,7 +1546,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.sessions.namer.submit(self.session.summary.id, client=self.sessions.naming)
         if self.editor is not None:
             await self.editor.output.drain()
-        _report_interrupt(completed, self.console)
+        if not completed:
+            _report_muted('Interrupted. Type what to do instead.', self.console)
+        elif ended is not None and ended.outcome == 'completed':
+            _report_muted(f'Done in {format_duration(time.monotonic() - started)}', self.console)
         if not completed and (cancelled := self.forks.cancel_running()):
             self.console.print(
                 f'Cancelled {cancelled} running fork(s) with the turn.',
@@ -1652,10 +1658,9 @@ def _last_context_tokens(messages: Sequence[ModelMessage]) -> int | None:
     return None if response is None else context_tokens(response) or None
 
 
-def _report_interrupt(completed: bool, console: Console) -> None:
-    if not completed:
-        console.print('Turn cancelled. Use /exit to quit.', style=theme.color(theme.MUTED), highlight=False)
-        console.print()
+def _report_muted(text: str, console: Console) -> None:
+    console.print(text, style=theme.color(theme.MUTED), highlight=False)
+    console.print()
 
 
 async def _execute_command(commands: Commands, text: str, *, console: Console) -> CommandEnd:

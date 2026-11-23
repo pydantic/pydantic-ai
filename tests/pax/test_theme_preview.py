@@ -279,7 +279,7 @@ async def test_default_theme_reads_on_a_light_background(background: str, monkey
         colours[f'{role} 256'] = Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex
     assert {role: colour for role, colour in colours.items() if _contrast(colour, background) < 4.5} == {}
     painted = _hex_colours(rendered)
-    assert (colours[theme.MUTED].upper(), '') in painted and '\x1b[2m' not in rendered  # Inline code, not dim.
+    assert (colours[theme.ACCENT].upper(), '') in painted and '\x1b[2m' not in rendered  # Inline code, not dim.
     heading, console = Text.from_ansi(rendered).split()[0], Console()
     after = heading.get_style_at_offset(console, heading.plain.index('after'))
     assert after.color == heading.get_style_at_offset(console, 0).color  # Its colour comes back after the code.

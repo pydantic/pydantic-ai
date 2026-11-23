@@ -226,7 +226,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
         with relay_stderr():
             # Before the session, so commits made during it count as changes on exit.
             launched = worktree or _launched_worktree(relaunched=relaunched)
-            asyncio.run(
+            saved = asyncio.run(
                 chat(
                     create_agent() if agent is None else agent,
                     deps=None,
@@ -246,6 +246,8 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                 )
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
+            if saved is not None:
+                print(f'Resume this conversation with: pax --resume {saved}')
     except Relaunch as relaunch:
         _relaunch(args, relaunch, launched=launched)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:

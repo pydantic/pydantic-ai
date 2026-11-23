@@ -77,7 +77,7 @@ deploy: staging ok
 
 ● lint path="a.py"
 
-● read_file 'a.py' offset=0 limit=2000 lines
+● read_file a.py
 
 The new code:
 

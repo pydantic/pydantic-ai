@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.text import Text
 from termflow import Parser, Renderer
 
+from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import markdown_style, render_markdown
 
 ERRORS = r"""| Variant | Meaning | Example | Fix |
@@ -31,11 +32,12 @@ def test_table_cells_keep_their_words_whole(*, width: int, stacked: bool) -> Non
             assert any(word in line.split() or f'{word}:' in line.split() for line in lines), word
     # A code span keeps its style wherever the layout moves it.
     code = text.plain.index('InvalidHexDigit(char)', text.plain.index('Keep'))
-    assert text.get_style_at_offset(Console(), code).dim
+    accent = Text.from_ansi(f'{theme.sgr(theme.LITHIUM)}x').get_style_at_offset(Console(), 0).color
+    assert text.get_style_at_offset(Console(), code).color == accent
 
 
 def test_a_table_that_fits_is_drawn_as_before() -> None:
-    source = '| Variant | Meaning |\n|:---|---:|\n| `UnexpectedEof` | Input **ends** early |'
+    source = '| Variant | Meaning |\n|:---|---:|\n| UnexpectedEof | Input **ends** early |'
     output = io.StringIO()
     renderer = Renderer(output=output, width=80, style=markdown_style())
     parser = Parser()
