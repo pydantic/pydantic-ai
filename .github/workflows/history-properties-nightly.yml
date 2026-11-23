@@ -1,0 +1,94 @@
+# description: Draws 1,000 randomized histories per history property nightly on main and keeps one issue open while a property fails.
+name: History properties nightly
+
+# The history properties (`tests/AGENTS.md`, "Property tests") draw 50 derandomized examples per property on every
+# pull request, so a run is reproducible and fits the per-test budget. This run sets `HISTORY_PROPERTY_EXAMPLES=1000`,
+# which draws 1,000 randomized examples per property and prints a `@reproduce_failure` blob for each failure, to find
+# inputs the pull request batch never reaches. A scheduled failure opens one issue, or comments on the one already
+# open. A manual run reports nothing; its result is on its own page.
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: history-properties-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HISTORY_PROPERTY_EXAMPLES: '1000'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-suffix: history-properties
+
+      - name: Install the test dependencies
+        run: uv sync --all-extras --all-packages
+
+      - name: Draw 1,000 histories per property
+        run: >-
+          uv run --no-sync pytest
+          tests/test_history_properties.py
+          tests/test_ui_history_round_trip.py
+          tests/harness/compaction/test_edited_part_item_ids.py
+          tests/harness/step_persistence/test_history_round_trip.py
+          -p no:randomly -n logical
+
+  report:
+    needs: [properties]
+    # Only the scheduled run files an issue; a manual run's result is on its own page.
+    if: ${{ failure() && github.event_name == 'schedule' && github.repository == 'pydantic/pydantic-ai' }}
+    # Filing lists the open issues and then creates one, so two reports at once, such as a re-run beside the next
+    # night's run, could open the issue twice.
+    concurrency:
+      group: history-properties-nightly-report
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the nightly failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='History properties nightly is failing'
+          # `--search` matches words rather than the phrase, so it narrows the listing and
+          # the exact title is compared here.
+          number="$(gh issue list --state open --search "${title} in:title" \
+            --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: ${RUN_URL}"
+            exit 0
+          fi
+
+          cat > "${RUNNER_TEMP}/nightly.md" <<EOF
+          The nightly history properties drew an input that fails on \`main\`: ${RUN_URL}
+
+          Each failing test prints the input as a \`Failing test case:\` block and a \`@reproduce_failure\` blob. Fix the
+          defect, or record it as a known finding as the "Property tests" section of \`tests/AGENTS.md\` says: open an
+          issue for the defect, then add a \`KNOWN_FINDINGS\` entry that links it.
+
+          Close this issue once a nightly run passes.
+          EOF
+          # The alert goes to the owner of the property suite. `pydanty:skip` keeps pydanty from
+          # triaging it: the run page already shows the failing input.
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/nightly.md" \
+            --assignee dsfaccini --label pydanty:skip
