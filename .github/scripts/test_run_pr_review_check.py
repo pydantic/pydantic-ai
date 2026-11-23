@@ -799,40 +799,6 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
     assert str(error.value) == f'The review answer was rejected: {reason}'
 
 
-@pytest.mark.parametrize(
-    'text',
-    [
-        pytest.param(_result('a.py'), id='bare-json'),
-        pytest.param(f'```json\n{_result("a.py")}\n```', id='fence-around-the-answer'),
-        pytest.param(f'```\n{_result("a.py")}\n```', id='fence-without-a-language'),
-        pytest.param(f'\n  ```json\n{_result("a.py", indent=2)}\n```\n', id='indented-fence'),
-        pytest.param(
-            f'**Summary**\n\n- Read `a.py`.\n- Traced its callers.\n\n```json\n{_result("a.py", indent=2)}\n```',
-            id='bulleted-prose-before-the-fence',
-        ),
-        pytest.param(
-            f'**Checks**\n\n1. Read `a.py`.\n\n2. Read its tests.\n\n```json\n{_result("a.py")}\n```',
-            id='numbered-prose-before-the-fence',
-        ),
-        pytest.param(
-            f'I read `a.py` and its callers.\n\n```json\n{_result("a.py", indent=2)}\n```',
-            id='paragraph-before-the-fence',
-        ),
-        pytest.param(
-            f'The caller:\n\n```python\nf()\n```\n\n```json\n{_result("a.py", indent=2)}\n```',
-            id='code-block-before-the-fence',
-        ),
-        pytest.param(f"I've read the files.\n\n{_result('a.py')}", id='text-before-bare-json'),
-        pytest.param(f"I've read the files.\n\n```json\n{_result('a.py')}", id='unterminated-fence'),
-        pytest.param(f'`a.py` reads `${{{{ inputs.ref }}}}`.\n\n{_result("a.py")}', id='prose-holding-braces'),
-    ],
-)
-def test_accepted_answer_completes_the_review(tmp_path: Path, text: str) -> None:
-    """An answer that ends with the JSON object, bare or in a Markdown code fence, completes the review after any prose."""
-    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
-    assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
-
-
 @pytest.mark.parametrize('fenced', [pytest.param(False, id='bare-json'), pytest.param(True, id='fenced-json')])
 def test_code_fence_inside_a_json_string_stays_in_the_answer(tmp_path: Path, fenced: bool) -> None:
     """Only a fence on its own lines delimits the answer, so a fence quoted in a JSON string stays in it."""

@@ -1,6 +1,7 @@
 # The gate scripts start every command through `_commands.py`, so their tests can replay what the real command
-# printed (R45). The ban lives here, not in the root `banned-api`, because library and test code outside this
-# directory starts processes on purpose.
+# printed (R45), and read every OpenCode answer through `parse_answer`, so every runner accepts the same answers (R53).
+# The bans live here, not in the root `banned-api`, because library and test code outside this directory starts
+# processes on purpose.
 extend = "../../pyproject.toml"
 # The root's default `src`, so imports sort as they do under the root configuration.
 src = ["../..", "../../src"]
@@ -44,3 +45,4 @@ src = ["../..", "../../src"]
 "os.popen".msg = "Start commands through `_commands`, so tests can replay what they print."
 "asyncio.create_subprocess_exec".msg = "Start commands through `_commands`, so tests can replay what they print."
 "asyncio.create_subprocess_shell".msg = "Start commands through `_commands`, so tests can replay what they print."
+"douwebot_opencode_result.final_text".msg = "Read the answer with `parse_answer`, so every runner accepts the same answers."

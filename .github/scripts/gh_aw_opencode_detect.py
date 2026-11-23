@@ -9,7 +9,9 @@ import time
 from pathlib import Path
 from typing import Annotated
 
-from douwebot_opencode_result import final_text, rejection_reason
+# The detector's answer is a `THREAT_DETECTION_RESULT:` line, not one JSON object, and it retries a stream with no final
+# text, so it reads the text itself.
+from douwebot_opencode_result import final_text, rejection_reason  # noqa: TID251
 from douwebot_opencode_run import Attempt, check_symlinks, run_read_only
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 

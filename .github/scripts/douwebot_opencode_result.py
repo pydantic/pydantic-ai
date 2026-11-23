@@ -7,9 +7,12 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import TypeVar
 
 from publish_douwebot_review import ReviewResult
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
+
+AnswerT = TypeVar('AnswerT', bound=BaseModel)
 
 _EVENT = TypeAdapter(dict[str, object])
 # Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
@@ -96,15 +99,15 @@ def rejection_reason(error: ValueError) -> str:
     return str(error) if type(error) is ValueError else type(error).__name__
 
 
-def review_result(path: Path) -> ReviewResult:
-    """Return the final assistant result only after a normal completed stream."""
-    return ReviewResult.model_validate_json(unfenced(final_text(path)))
+def parse_answer(model: type[AnswerT], stream: Path) -> AnswerT:
+    """Return the `model` object that ends the final assistant text, only after a normal completed stream."""
+    return model.model_validate_json(unfenced(final_text(stream)))
 
 
 def main() -> None:
     """Publish one compact validated result as a GitHub Actions output."""
     try:
-        result = review_result(Path(sys.argv[1]))
+        result = parse_answer(ReviewResult, Path(sys.argv[1]))
     except ValueError as exc:
         sys.exit(f'OpenCode returned an invalid review: {rejection_reason(exc)}')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:

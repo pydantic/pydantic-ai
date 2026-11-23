@@ -1,0 +1,155 @@
+[
+  {
+    "id": "bare-json",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13220",
+    "observed": false,
+    "accepted": true,
+    "before": "",
+    "after": "",
+    "indent": null
+  },
+  {
+    "id": "fence-around-the-answer",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": true,
+    "accepted": true,
+    "before": "```json\n",
+    "after": "\n```",
+    "indent": null
+  },
+  {
+    "id": "fence-without-a-language",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": true,
+    "before": "```\n",
+    "after": "\n```",
+    "indent": null
+  },
+  {
+    "id": "indented-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": true,
+    "before": "\n  ```json\n",
+    "after": "\n```\n",
+    "indent": 2
+  },
+  {
+    "id": "line-before-the-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": true,
+    "before": "Here is the review:\n```json\n",
+    "after": "\n```",
+    "indent": null
+  },
+  {
+    "id": "paragraph-before-the-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13220",
+    "observed": true,
+    "accepted": true,
+    "before": "I read `a.py` and its callers.\n\n```json\n",
+    "after": "\n```",
+    "indent": 2
+  },
+  {
+    "id": "bulleted-prose-before-the-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13220",
+    "observed": true,
+    "accepted": true,
+    "before": "**Summary**\n\n- Read `a.py`.\n- Traced its callers.\n\n```json\n",
+    "after": "\n```",
+    "indent": 2
+  },
+  {
+    "id": "numbered-prose-before-the-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13220",
+    "observed": true,
+    "accepted": true,
+    "before": "**Checks**\n\n1. Read `a.py`.\n\n2. Read its tests.\n\n```json\n",
+    "after": "\n```",
+    "indent": null
+  },
+  {
+    "id": "code-block-before-the-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13220",
+    "observed": false,
+    "accepted": true,
+    "before": "The caller:\n\n```python\nf()\n```\n\n```json\n",
+    "after": "\n```",
+    "indent": 2
+  },
+  {
+    "id": "paragraph-before-bare-json",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13286",
+    "observed": true,
+    "accepted": true,
+    "before": "I've completed a thorough review of the changed files.\n\n",
+    "after": "",
+    "indent": null
+  },
+  {
+    "id": "line-before-bare-json-on-the-same-line",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13286",
+    "observed": false,
+    "accepted": true,
+    "before": "I've completed a thorough review of the changed files. ",
+    "after": "",
+    "indent": null
+  },
+  {
+    "id": "unterminated-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13305",
+    "observed": false,
+    "accepted": true,
+    "before": "I've read the files.\n\n```json\n",
+    "after": "",
+    "indent": null
+  },
+  {
+    "id": "prose-holding-braces",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13305",
+    "observed": false,
+    "accepted": true,
+    "before": "The workflow reads `${{ github.sha }}`, not `{}`.\n\n",
+    "after": "",
+    "indent": null
+  },
+  {
+    "id": "text-after-the-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": false,
+    "before": "```json\n",
+    "after": "\n```\nLet me know if you need more.",
+    "indent": null
+  },
+  {
+    "id": "text-after-the-object",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": false,
+    "before": "",
+    "after": "\nLet me know if you need more.",
+    "indent": null
+  },
+  {
+    "id": "nested-fence",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": false,
+    "before": "```json\n```json\n",
+    "after": "\n```\n```",
+    "indent": null
+  },
+  {
+    "id": "fence-on-the-same-line",
+    "source": "https://github.com/pydantic/pydantic-ai/pull/13172",
+    "observed": false,
+    "accepted": false,
+    "before": "```json ",
+    "after": " ```",
+    "indent": null
+  }
+]

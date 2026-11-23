@@ -21,7 +21,7 @@ from typing import Literal, TextIO
 from urllib.parse import quote
 
 import _commands
-from douwebot_opencode_result import final_text, rejection_reason, unfenced
+from douwebot_opencode_result import parse_answer, rejection_reason
 from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback, step_tokens
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
@@ -212,7 +212,7 @@ def check_result(
         coverage = f'Review stopped at its time budget of {check.max_minutes} minutes.'
     else:
         try:
-            result = ModelResult.model_validate_json(unfenced(final_text(stream)))
+            result = parse_answer(ModelResult, stream)
         except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.

@@ -6,8 +6,8 @@ A `per-file-ignores` entry turns off a rule for the whole file, so a `TID251` en
 exempted file, and that each entry still exempts a file that uses an `asyncio` primitive.
 
 `.github/scripts/ruff.toml` repeats the root bans and adds bans on starting a process, which only `_commands.py` may
-do there. These tests also check that it holds every root ban, and that each of its `TID251` exemptions still exempts
-a file that starts a process.
+do there, and on reading an OpenCode answer other than through `parse_answer`. These tests also check that it holds
+every root ban, and that each of its `TID251` exemptions still exempts a file that starts a process.
 """
 
 from __future__ import annotations
@@ -39,6 +39,8 @@ EXEMPTIBLE = frozenset(
         'asyncio.Condition',
     }
 )
+# The ban `.github/scripts/ruff.toml` adds besides the process bans.
+ANSWER_BAN = 'douwebot_opencode_result.final_text'
 
 
 class _Ban(BaseModel):
@@ -85,7 +87,7 @@ def _scripts_banned_api() -> dict[str, str]:
 
 
 def _process_bans() -> frozenset[str]:
-    return frozenset(_scripts_banned_api().keys() - _banned_api().keys())
+    return frozenset(_scripts_banned_api().keys() - _banned_api().keys() - {ANSWER_BAN})
 
 
 def _scripts_exemptions() -> list[str]:
@@ -161,7 +163,8 @@ def test_the_gate_scripts_hold_every_root_ban():
     assert {name: _scripts_banned_api().get(name) for name in _banned_api()} == _banned_api()
 
 
-def test_the_gate_scripts_add_only_bans_on_starting_a_process():
+def test_the_gate_scripts_add_only_bans_on_starting_a_process_and_on_reading_an_answer():
+    assert ANSWER_BAN in _scripts_banned_api()
     assert _process_bans()
     assert all(name.startswith(('subprocess.', 'os.', 'asyncio.create_subprocess_')) for name in _process_bans())
 
