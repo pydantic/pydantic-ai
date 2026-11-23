@@ -34,7 +34,7 @@ runtimes:
 # Pricing here measures API-equivalent usage, not Coding Plan quota or charges.
 max-ai-credits: -1
 models:
-  # USD per million tokens. Z.ai publishes no GLM-5.4 API price yet (https://docs.z.ai/guides/llm/glm-5.4),
+  # USD per million tokens. Z.ai published no GLM-5.4 API price as of 2026-11-23 (https://docs.z.ai/guides/llm/glm-5.4),
   # so these are GLM-5.3's: https://docs.z.ai/guides/overview/pricing (2026-11-23). GLM-5.4 succeeds GLM-5.3,
   # and the Coding Plan's credit multipliers rate it below GLM-5.3: https://docs.z.ai/devpack/overview.
   default-ai-credits-pricing:

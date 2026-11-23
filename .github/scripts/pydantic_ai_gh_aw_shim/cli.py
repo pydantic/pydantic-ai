@@ -141,15 +141,18 @@ TaskCallable: TypeAlias = Callable[[RunContext[object], str, str], Awaitable[str
 PROXY_BEARER_PLACEHOLDER = 'gh-aw-proxy-injected'
 
 
+def _is_anthropic(base_url: str | None) -> bool:
+    """Whether `base_url`, an `ANTHROPIC_BASE_URL` value, is real Anthropic: empty or unset means the SDK default."""
+    return not base_url or urlparse(base_url).hostname == 'api.anthropic.com'
+
+
 def _anthropic_native_capabilities() -> list[NativeTool]:
     """`NativeTool(WebFetchTool())` for real Anthropic only.
 
     Anthropic-compatible endpoints may not implement Anthropic's
-    `web_fetch_20250910` server-side tool. Detect via `ANTHROPIC_BASE_URL` —
-    empty/unset means the Anthropic SDK default (real Anthropic).
+    `web_fetch_20250910` server-side tool.
     """
-    base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
-    if not base_url or urlparse(base_url).hostname == 'api.anthropic.com':
+    if _is_anthropic(os.environ.get('ANTHROPIC_BASE_URL')):
         return [NativeTool(WebFetchTool())]
     return []
 
@@ -1169,12 +1172,11 @@ def build_model(args: Args) -> tuple[Model, str]:
     # `output_config.effort` to its own effort levels, and any enabled `thinking`, a token budget included,
     # to its default `max`: https://docs.z.ai/devpack/latest-model. Unified `thinking` sends a budget to a
     # model its profile does not know, so the effort is set directly. Real Anthropic keeps its default.
-    zai = bool(anthropic_base) and urlparse(anthropic_base).hostname != 'api.anthropic.com'
     return (
         AnthropicModel(
             model_name,
             provider=AnthropicProvider(anthropic_client=client),
-            settings=AnthropicModelSettings(anthropic_effort='low') if zai else None,
+            settings=None if _is_anthropic(anthropic_base) else AnthropicModelSettings(anthropic_effort='low'),
         ),
         f'anthropic:{model_name}',
     )

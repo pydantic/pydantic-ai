@@ -503,7 +503,11 @@ def _douwebot_review(
                     16, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-zai'
                 )
             )
-            | {'body': zai['body'].replace(REVIEW_ENGINES['opencode-zai'], EARLIER_REVIEW_ATTRIBUTIONS['opencode-zai'][0])},
+            | {
+                'body': zai['body'].replace(
+                    REVIEW_ENGINES['opencode-zai'], EARLIER_REVIEW_ATTRIBUTIONS['opencode-zai'][0]
+                )
+            },
             False,
             '',
             id='clean-opencode-zai-on-an-earlier-model',
