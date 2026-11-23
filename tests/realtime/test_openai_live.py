@@ -185,6 +185,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_system_messages=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=True,
         # A server relays the offer and attaches a sideband; there are no client secrets.
         supports_webrtc=True,
         async_tool_call_mode='always',
