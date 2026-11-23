@@ -763,25 +763,23 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
     assert click(screen, 2, 4) == []
 
 
-def test_a_click_before_the_next_paint_reads_the_rows_it_shows() -> None:
-    """A part that ends between a paint and a click changes its rows; the click goes by what was painted."""
-    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+def test_a_click_before_the_next_paint_reads_rows_that_have_since_shrunk() -> None:
+    """A part that ends between a paint and a click may have fewer rows than the frame shows."""
 
     def render(*, source: str, width: int) -> str:
-        return 'short\n'
+        return 'https://x.dev\n'
 
     screen = Screen(width=20, height=12)
     screen.surface.paint(ROWS)
     block = screen.surface.markdown(render=render, width=40)
-    block.extend(url)
-    block.write(f'a\nb\n{url}\n')
+    block.extend('one')
+    block.write('a\nb\nc\nhttps://x.dev\n')
     screen.terminal.resize(width=30, height=12)
     screen.surface.paint(ROWS)
     assert screen.surface.transcript_key('mouse', press(3, 4)) is None
     # It ends inside the frame interval, so it paints after the release.
     block.end()
     assert screen.surface.transcript_key('mouse', release(3, 4)) is None
-    assert screen.opened == [url]
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:

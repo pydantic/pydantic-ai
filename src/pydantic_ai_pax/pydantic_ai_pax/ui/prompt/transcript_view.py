@@ -29,7 +29,6 @@ class TranscriptView(Widget):
         self._memo: dict[int, tuple[str, ...]] = {}
         self._shown: list[_Position] = []
         """The rows the last `window` returned, top to bottom."""
-        self._joins: tuple[bool, ...] = (False,)
 
     def follow(self) -> None:
         """Show the newest rows again."""
@@ -108,7 +107,6 @@ class TranscriptView(Widget):
             position = self._before(position)
         shown.reverse()
         self._shown = shown
-        self._joins = self._wraps()
         return [self._rows(item)[row] for item, row in shown]
 
     def joins(self) -> tuple[bool, ...]:
@@ -116,17 +114,16 @@ class TranscriptView(Widget):
 
         One more entry follows: whether the row after the last one, off screen, wraps on from it.
         The first entry says whether the top row wraps on from a row scrolled out above.
-        Taken with the rows, as a part can change its layout between a paint and a click.
         """
-        return self._joins
-
-    def _wraps(self) -> tuple[bool, ...]:
         if not self._shown:
             return (False,)
         after = self._after(self._shown[-1])
+        # A part can change its rows between a paint and a click (one that ends renders again),
+        # so a shown row may no longer exist; it joins nothing until the next paint.
         return tuple(
-            self.transcript.continued(item, width=self._width)[row]
+            row < len(flags) and flags[row]
             for item, row in (*self._shown, *((after,) if after is not None else ()))
+            for flags in (self.transcript.continued(item, width=self._width),)
         ) + ((False,) if after is None else ())
 
     def draw(self, region: Region, focused: bool) -> None:
