@@ -266,7 +266,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
 
 
 # The network options `_x11` gives apt, so a mirror it can't reach fails the install quickly.
-_APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=0'
+_APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1'
 _UPDATE = f'update -qq {_APT_NETWORK}'
 _INSTALL_ONLY = f'install -y -qq --no-install-recommends {_APT_NETWORK}'
 _INSTALL = f'{_INSTALL_ONLY} xvfb xdotool x11-utils scrot util-linux'

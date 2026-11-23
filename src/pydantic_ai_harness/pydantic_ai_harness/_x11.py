@@ -243,19 +243,19 @@ _CLIENTS = 'xdotool xwininfo scrot setsid'
 _PACKAGES = 'xdotool x11-utils scrot util-linux'
 """The Debian packages that have `_CLIENTS`."""
 
-_APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=0'
+_APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1'
 """Options that make an `apt-get` that can't reach its mirrors fail soon, so the start reports the missing programs.
 
 A network that drops packets, such as a Render sandbox's without internet, otherwise runs out `_START_TIMEOUT`: there,
 live, each DNS lookup took 80 seconds, and apt looks up its host again for each list and each of its 4 tries. With
-these options and `_APT_DNS`, `apt-get update` gave up in 49 seconds, and a sandbox with internet still installed the
-packages. The 20 seconds are for connecting and for each wait for data, not for a whole download, so a slow mirror that
-keeps sending still works.
+these options and `_APT_DNS`, the start gave up in 50 seconds, and a sandbox with internet still installed the
+packages. One retry keeps a single mirror error from failing the install. The 20 seconds are for connecting and for
+each wait for data, not for a whole download, so a slow mirror that keeps sending still works.
 """
 
-_APT_DNS = 'RES_OPTIONS="timeout:2 attempts:1"'
-"""Asks each DNS server once, for at most 2 seconds, instead of glibc's 5 seconds twice. A working server answers in
-milliseconds."""
+_APT_DNS = 'RES_OPTIONS="timeout:2 attempts:2"'
+"""Asks each DNS server at most twice, for 2 seconds each, instead of glibc's 5 seconds twice, so one dropped reply
+doesn't fail the lookup. A working server answers in milliseconds."""
 
 _DESKTOP_PROGRAMS = 'fluxbox tint2 xterm'
 """The window manager, panel and terminal, each in the Debian package of the same name. `xprop`, used to wait for the
