@@ -116,9 +116,13 @@ from .._special_tokens import (
     restore_special_tokens_in_response,
     restore_special_tokens_in_stream,
 )
-from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
+from .._unsupported_settings import (
+    DEPRECATED_MODEL_WARNING_SUPPRESSED,
+    SUPPRESSED_WARNINGS,
+    warn_unsupported_settings,
+)
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -1835,6 +1839,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 ]
             )
         model_settings = merge_model_settings(self.settings, model_settings)
+        self._warn_if_deprecated()
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
         customized_params = self.customize_request_parameters(model_request_parameters)
@@ -1946,6 +1951,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         return model_settings, params
+
+    def _warn_if_deprecated(self) -> None:
+        """Warn when the profile has a `deprecation`, unless framework code prepares the request without sending it."""
+        deprecation = self.profile.get('deprecation')
+        if deprecation is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get():
+            return
+        retirement = f', with a retirement date of {deprecation.retirement_date}' if deprecation.retirement_date else ''
+        replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
+        # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
+        warnings.warn(
+            f'Model {self.model_id!r} is deprecated by its provider{retirement}.{replacement} '
+            f'See {deprecation.source_url}',
+            DeprecatedModelWarning,
+            stacklevel=1,
+        )
 
     def _unsupported_settings(self) -> frozenset[str]:
         """The settings this model ignores: its class's `unsupported_settings`, plus any its profile adds."""
@@ -4168,7 +4188,7 @@ def _supported_native_tools(
             for t in unsupported_natives
             if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
         ]
-        supported_names = [t.__name__ for t in supported_types]
+        supported_names = sorted(t.__name__ for t in supported_types)
         raise UserError(
             f'Native tool(s) {unsupported_names} not supported by this model. '
             f'Supported: {supported_names}. '

@@ -53,11 +53,11 @@ if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
-CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_clai2'
+CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_ai_pax'
 
 requires_clai2 = pytest.mark.skipif(
-    importlib.util.find_spec('pydantic_clai2') is None,
-    reason='running the launcher requires pydantic-clai2',
+    importlib.util.find_spec('pydantic_ai_pax') is None,
+    reason='running the launcher requires pydantic-ai-pax',
 )
 
 # The first `node` start on a runner is slow; `started_node` pays it outside every test's budget.
@@ -1081,6 +1081,27 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert 'GITHUB_COPILOT_INTEGRATION_ID' not in invocation.env
 
 
+@pytest.mark.parametrize(
+    ('endpoint', 'logged'),
+    [
+        ('https://canary-user:canary-token@endpoint.example/v1', 'https://endpoint.example'),
+        ('https://endpoint.example/v1?key=canary-query', 'https://endpoint.example'),
+        ('endpoint.example/v1?key=canary-query', '(unparsable)'),
+    ],
+    ids=['userinfo', 'query', 'unparsable'],
+)
+def test_the_startup_log_names_only_endpoint_origins(tmp_path: Path, endpoint: str, logged: str) -> None:
+    """Workflow run logs are public, and an endpoint's userinfo or query string can carry a credential."""
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_BASE_URL': endpoint, 'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint},
+    )
+
+    assert f'provider=(PAI_BASE_URL) model=gpt-5 baseUrl={logged} otlp={logged}\n' in invocation.stdout
+    assert 'canary' not in invocation.stdout + invocation.capture
+    assert invocation.env['OPENAI_BASE_URL'] == endpoint
+
+
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_output: _RecorderCapture
 ) -> None:
@@ -1788,11 +1809,11 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
 
 
 def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
-    """CLI arguments that point CLAI at a settings database with code mode off.
+    """CLI arguments that point Pax at a settings database with code mode off.
 
-    CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
+    Pax folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
     """
-    from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_ai_pax.config.settings_store import SettingsStore
 
     database = tmp_path / 'clai2.db'
     SettingsStore(database).set('run.code_mode', False)

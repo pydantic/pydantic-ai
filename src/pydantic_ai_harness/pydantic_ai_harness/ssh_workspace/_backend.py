@@ -100,7 +100,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
 
     Authentication, host keys, ports and jump hosts come from your SSH configuration (`~/.ssh/config`)
     and agent; `ssh` never prompts, so a missing key fails instead of waiting for a password. File
-    operations run as shell commands on the host (see [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    operations run as shell commands on the host (see [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     which needs a POSIX `sh` there.
     The remote directory is the environment: the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing or

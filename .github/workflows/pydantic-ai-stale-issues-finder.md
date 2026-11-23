@@ -1,7 +1,7 @@
 ---
 emoji: "🔍"
 name: "Pydantic AI Stale Issues Finder"
-description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the public Pydantic AI CLAI 2 engine; the task prompt is iterable from a Logfire managed variable."
+description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the public Pydantic AI Pax engine; the task prompt is iterable from a Logfire managed variable."
 # Weekly on Monday: gh-aw scatters the run and auto-adds workflow_dispatch.
 # Adjust to 'daily' or another weekly schedule to change frequency.
 on:

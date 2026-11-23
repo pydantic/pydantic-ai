@@ -1,4 +1,4 @@
-"""Capability events that report what `SpendLimits`, `ReportContextUsage`, `SystemReminders` and `Planning` did."""
+"""Capability events replacing deprecated constructor callbacks."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 import pydantic
+import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, CapabilityEvent
@@ -17,42 +18,53 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent, ReportContextUsage
+from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.compaction import ContextUsage, ContextUsageMeasuredEvent, ReportContextUsage
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCreatedEvent,
+    PlanEvent,
+    PlanEventEmitter,
     PlanItem,
     Planning,
 )
-from pydantic_ai_harness.spend_limits import SpendLimits, SpendRecordedEvent
+from pydantic_ai_harness.spend_limits import SpendLimits, SpendRecordedEvent, SpendSnapshot
 from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent, SystemReminders
 
 
-async def test_spend_event() -> None:
+async def test_spend_event_and_legacy_callback() -> None:
     events: list[SpendRecordedEvent] = []
+    legacy: list[SpendSnapshot] = []
     hooks = Hooks[Any]()
 
     @hooks.on.event(SpendRecordedEvent)
     async def record(ctx: RunContext[Any], event: SpendRecordedEvent) -> None:
         events.append(event)
 
-    capability = SpendLimits[Any](price=lambda response: Decimal('1.25'))
+    with pytest.warns(HarnessDeprecationWarning, match=r'SpendLimits\.on_spend.*SpendRecordedEvent.*on_event'):
+        capability = SpendLimits[Any](on_spend=legacy.append, price=lambda response: Decimal('1.25'))
     result = await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
 
+    assert len(legacy) == 1
     assert len(events) == 1
     assert events[0].usd == Decimal('1.25')
     assert events[0].usage == result.response.usage
+    assert legacy[0].usage == result.response.usage
 
 
-async def test_context_usage_event() -> None:
+async def test_context_usage_event_and_legacy_callback() -> None:
     events: list[ContextUsageMeasuredEvent] = []
+    legacy: list[ContextUsage] = []
     hooks = Hooks[Any]()
 
     @hooks.on.event(ContextUsageMeasuredEvent)
     async def record(ctx: RunContext[Any], event: ContextUsageMeasuredEvent) -> None:
         events.append(event)
 
-    capability = ReportContextUsage(context_window=1_000)
+    with pytest.warns(
+        HarnessDeprecationWarning, match=r'ReportContextUsage\.on_usage.*ContextUsageMeasuredEvent.*on_event'
+    ):
+        capability = ReportContextUsage(on_usage=legacy.append, context_window=1_000)
     # pydantic-ai 2.41 derives a run-local synthetic id for anonymous capabilities, so pin one
     # rather than asserting on whichever derivation policy the installed core uses.
     capability.id = 'report_context_usage'
@@ -60,6 +72,7 @@ async def test_context_usage_event() -> None:
         'Summarize the open pull requests for this repository.'
     )
 
+    assert [(usage.used_tokens, usage.fraction) for usage in legacy] == snapshot([(13, 0.013)])
     assert events == snapshot(
         [
             ContextUsageMeasuredEvent(
@@ -69,17 +82,20 @@ async def test_context_usage_event() -> None:
     )
 
 
-async def test_reminder_event() -> None:
+async def test_reminder_event_and_legacy_callback() -> None:
     events: list[ReminderFiredEvent] = []
+    legacy: list[str] = []
     hooks = Hooks[Any]()
 
     @hooks.on.event(ReminderFiredEvent)
     async def record(ctx: RunContext[Any], event: ReminderFiredEvent) -> None:
         events.append(event)
 
-    capability = SystemReminders(reminders=[Reminder('focus', tag=None)])
+    with pytest.warns(HarnessDeprecationWarning, match=r'SystemReminders\.on_fire.*ReminderFiredEvent.*on_event'):
+        capability = SystemReminders(reminders=[Reminder('focus', tag=None)], on_fire=legacy.append)
     await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
 
+    assert legacy == ['focus']
     assert [event.text for event in events] == ['focus']
 
 
@@ -94,24 +110,30 @@ async def _add_then_text(messages: list[ModelMessage], info: AgentInfo) -> Async
         yield 'done'
 
 
-async def test_plan_event() -> None:
+async def test_plan_event_and_legacy_emitter() -> None:
     events: list[PlanCreatedEvent] = []
+    legacy: list[PlanEvent] = []
     hooks = Hooks[Any]()
 
     @hooks.on.event(PlanCreatedEvent)
     async def record(ctx: RunContext[Any], event: PlanCreatedEvent) -> None:
         events.append(event)
 
-    store = InMemoryPlanStore()
+    with pytest.warns(HarnessDeprecationWarning, match=r'PlanEventEmitter.*on_event.*PlanCreatedEvent'):
+        emitter = PlanEventEmitter()
+    emitter.on_created(legacy.append)
+    with pytest.warns(HarnessDeprecationWarning, match=r'event_emitter.*on_event.*PlanCreatedEvent'):
+        store = InMemoryPlanStore(event_emitter=emitter)
 
     await Agent(FunctionModel(stream_function=_add_then_text), capabilities=[Planning(store=store), hooks]).run('go')
 
+    assert len(legacy) == 1
     assert [event.item.content for event in events] == ['ship']
 
 
-def test_default_construction_does_not_warn() -> None:
+def test_new_construction_paths_do_not_warn() -> None:
     with warnings.catch_warnings():
-        warnings.simplefilter('error')
+        warnings.simplefilter('error', HarnessDeprecationWarning)
         SpendLimits()
         ReportContextUsage()
         SystemReminders(reminders=[Reminder('focus', tag=None)])

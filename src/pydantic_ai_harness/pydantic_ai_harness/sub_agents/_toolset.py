@@ -43,8 +43,20 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ObjectJsonSchema,
+    RunContext,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+
+# Private import: pydantic-ai has no public way to tell capability-contributed
+# toolsets apart from the agent's own in `agent.toolsets`.
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness._code_tools import reserve_nested_call
@@ -70,6 +82,12 @@ from pydantic_ai_harness.sub_agents._control import (
     run_remote,
     task_group,
     validate_agent_name,
+)
+from pydantic_ai_harness.sub_agents._deferred import (
+    DeferredStateStore,
+    InMemoryDeferredStateStore,
+    deferral_metadata,
+    resume_state,
 )
 from pydantic_ai_harness.sub_agents._events import (
     AgentCreatedEvent,
@@ -322,6 +340,14 @@ RecordDelegation = Callable[
 delegating run's level in its delegation tree, and whether it is a task, under an owner's usage rules."""
 
 
+@dataclass(frozen=True)
+class _Forwarding:
+    """The delegation a child's deferred tool calls are saved for when they go to the parent run's caller."""
+
+    task: str
+    tool_call_id: str | None
+
+
 @dataclass(frozen=True, kw_only=True)
 class _Ended:
     """How one delegation settled, before the parent hears about it."""
@@ -331,9 +357,13 @@ class _Ended:
     """What the parent model receives: the child's output, or a steering or retry message."""
     cause: Exception | None = None
     """Set when `output` is raised to the parent as a `ModelRetry` rather than returned."""
+    deferral: dict[str, Any] | None = None
+    """Set when the child's deferred tool calls go to the parent's caller: the metadata of the `ApprovalRequired` raised."""
 
     def result(self) -> str:
-        """The output, raised as a `ModelRetry` when `cause` is set."""
+        """The output, raised as a `ModelRetry` when `cause` is set, or as `ApprovalRequired` when `deferral` is."""
+        if self.deferral is not None:
+            raise ApprovalRequired(metadata=self.deferral)
         if self.cause is not None:
             raise ModelRetry(self.output) from self.cause
         return self.output
@@ -420,6 +450,11 @@ def _tree_has(toolset: AbstractToolset[AgentDepsT], predicate: Callable[[Abstrac
 
     toolset.apply(visit)
     return found
+
+
+def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+    return _tree_has(toolset, lambda node: isinstance(node, CapabilityOwnedToolset))
 
 
 def _exposes(name: str, original: str) -> bool:
@@ -517,7 +552,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
     Each delegation runs the child agent in a fresh run with its own message
     history, so the sub-agent never sees the parent conversation. The parent's
-    `deps` are forwarded; its `usage` is shared when enabled; any `shared_capabilities` are applied to every
+    `deps` are forwarded; its `usage` is shared when enabled; its tools are
+    inherited when enabled; any `shared_capabilities` are applied to every
     sub-agent run; and sub-agent events are streamed to `event_stream_handler`
     when one is set. Per-delegate run controls come from each `SubAgent`.
 
@@ -531,6 +567,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         *,
         agents: Mapping[str, SubAgent[AgentDepsT]],
         forward_usage: bool,
+        inherit_tools: bool,
         shared_capabilities: Sequence[AgentCapability[AgentDepsT]],
         event_stream_handler: EventStreamHandler[AgentDepsT] | None,
         tool_name: str,
@@ -545,6 +582,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         dynamic_agents: DynamicAgents[AgentDepsT] | None = None,
         created: dict[str, dict[str, tuple[DynamicAgentSpec, SubAgent[AgentDepsT]]]] | None = None,
         workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
+        forward_deferred_calls: bool = False,
+        deferred_state_store: DeferredStateStore | None = None,
         _record_delegation: RecordDelegation | None = None,
     ) -> None:
         super().__init__(id=id)
@@ -571,10 +610,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._creating: dict[str, set[str]] = {}
         self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
         self._forward_usage = forward_usage
+        self._inherit_tools = inherit_tools
         self._shared_capabilities = list(shared_capabilities)
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
         self._contain_errors = contain_errors
+        self._forward_deferred_calls = forward_deferred_calls
+        self._deferred_state_store: DeferredStateStore = (
+            deferred_state_store if deferred_state_store is not None else InMemoryDeferredStateStore()
+        )
         self._workspace_resolver = workspace_resolver
         self._models: dict[str, ModelOption] = dict(models or {})
         self._include_self = include_self
@@ -651,6 +695,33 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             properties.pop('resume', None)
         schema['properties'] = properties
         return replace(tool_def, parameters_json_schema=schema)
+
+    def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
+        """The parent agent's own toolsets, excluding capability-contributed ones.
+
+        Capability toolsets are bound to capability instances registered in the
+        parent run; carrying them into the sub-agent's run (where their owner is
+        not registered) fails `CapabilityOwnedToolset`'s ownership resolution, and
+        the tools would arrive without the hooks and instructions that make them
+        work. Use `shared_capabilities` to share a capability with sub-agents.
+        The delegate tool itself is also filtered out by name, so delegation
+        cannot recurse. When this toolset was registered via the `SubAgents`
+        capability the capability filter already drops it; the name filter covers
+        direct registration in `Agent(toolsets=[...])`, where nothing wraps it in
+        `CapabilityOwnedToolset`.
+        """
+        agent = ctx.agent
+        if agent is None:  # pragma: no cover - the running agent is always set during a run
+            return None
+        # Capability toolsets surface as `CombinedToolset(CapabilityOwnedToolset(...))`
+        # entries, so ownership is detected by walking each tree. Only core's capability
+        # assembly constructs `CapabilityOwnedToolset`, so a tree containing one is
+        # capability-contributed in its entirety.
+        return [
+            toolset.filtered(lambda _ctx, tool_def: tool_def.name != self._tool_name)
+            for toolset in agent.toolsets
+            if not _is_capability_contributed(toolset)
+        ]
 
     def _call_budget_message(
         self, ctx: RunContext[AgentDepsT], agent_name: str, sub_agent: SubAgent[AgentDepsT]
@@ -784,8 +855,46 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             )
         ended = await self._delegate_recorded(ctx, agent_name, task, key)
         if ended is None:
-            ended = await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
+            ended = await self._run_foreground(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
         return ended.result()
+
+    async def _run_foreground(
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        sub_agent: SubAgent[AgentDepsT],
+        *,
+        task: str,
+        key: str | None,
+        workspace: Workspace,
+    ) -> _Ended:
+        """Run a delegation outside an owner, resuming a child the caller answered with `forward_deferred_calls`."""
+        forward = self._forward_deferred_calls
+        # A call approved without a child's state, such as through an approval gate on the delegate tool, runs the
+        # task afresh: it approves none of the child's calls, which it passes on again.
+        resumed = (
+            await resume_state(
+                self._deferred_state_store,
+                ctx.tool_call_metadata,
+                agent_name=agent_name,
+                task=task,
+                tool_call_id=ctx.tool_call_id,
+            )
+            if forward and ctx.tool_call_approved
+            else None
+        )
+        # The state was taken out of the store, so these answers resume the child at most once: if the delegation
+        # fails after an approved call ran, running it again on a retry would act twice on one approval.
+        return await self._run_delegation(
+            ctx,
+            agent_name,
+            sub_agent,
+            task=task,
+            key=key,
+            workspace=workspace,
+            resume=(resumed.messages, resumed.results) if resumed is not None else None,
+            forward_deferred=forward,
+        )
 
     def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject options that need the parent run when the delegate tool runs as a child workflow."""
@@ -797,6 +906,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return
         if (
             self._include_self
+            or self._inherit_tools
             or self._models
             or self._shared_capabilities
             or self._event_stream_handler is not None
@@ -806,7 +916,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         ):
             raise UserError(
                 'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
-                '`models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
+                '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
                 "`task_control`, or a delegate's `max_calls`."
             )
 
@@ -1357,12 +1467,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         record: DelegationTask | None = None,
         extra_capabilities: Sequence[AbstractCapability[Any]] = (),
         managed: bool = False,
+        resume: tuple[list[ModelMessage], DeferredToolResults] | None = None,
+        forward_deferred: bool = False,
     ) -> _Ended:
         """Run one accepted delegation, announcing its start and how it ended.
 
-        `managed` applies an owner's usage rules to a task recorded in a durable unit, which has no owner.
+        `managed` applies an owner's usage rules to a task recorded in a durable unit, which has no owner. `resume`
+        continues a child that stopped on deferred tool calls from its history, with the caller's answers, and
+        `forward_deferred` passes a child's deferred tool calls to the parent's caller.
         """
+        # A delegation to the running agent already carries the parent's tools, so inheriting them
+        # again would register every tool twice.
         is_self = self._is_self(agent_name)
+        inherit_tools = self._inherit_tools and not is_self
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
         owner = DelegationTasks.current() if record is not None else None
@@ -1371,9 +1488,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         if emits:
             text, truncated = bounded_text(task)
-            await emit(DelegationStartedEvent(agent_name=agent_name, task=text, truncated=truncated, model=key))
+            await emit(
+                DelegationStartedEvent(
+                    agent_name=agent_name, task=text, truncated=truncated, model=key, inherits_tools=inherit_tools
+                )
+            )
         started = time.perf_counter()
 
+        toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
         serving_model = ServingModelRecorder()
         capabilities = self._child_capabilities(ctx, owner, record, serving_model, extra_capabilities)
         own_budget, child_usage, usage_limits = self._child_budget(ctx, sub_agent, managed=managed or owner is not None)
@@ -1388,16 +1510,24 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             settings=settings,
             usage=ctx.usage if child_usage is None else child_usage,
             usage_limits=usage_limits,
+            toolsets=toolsets,
             capabilities=capabilities,
             workspace=workspace,
             owner=owner,
             record=record,
             messages=messages,
+            resume=resume,
         )
         token = _depth.set(_depth.get() + 1)
         try:
             ended = await self._settle(
-                agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model, messages=messages
+                agent_name,
+                sub_agent,
+                run,
+                own_budget=own_budget,
+                serving_model=serving_model,
+                messages=messages,
+                forwarding=_Forwarding(task, ctx.tool_call_id) if forward_deferred else None,
             )
         except BaseException as exc:
             outcome: DelegationOutcome = (
@@ -1517,20 +1647,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         settings: ModelSettings | None,
         usage: RunUsage,
         usage_limits: UsageLimits | None,
+        toolsets: list[AbstractToolset[AgentDepsT]] | None,
         capabilities: list[AgentCapability[AgentDepsT]],
         workspace: Workspace,
         owner: DelegationTasks | None,
         record: DelegationTask | None,
         messages: list[ModelMessage],
+        resume: tuple[list[ModelMessage], DeferredToolResults] | None = None,
     ) -> Coroutine[Any, Any, AgentRunResult[Any]]:
         """The child run, dropping token counting inherited from the parent if the child's model can't count.
 
         Token counting the delegate asks for in its own `usage_limits` is kept, as on a top-level run.
         `messages` receives the messages the run that counts added, also when it raises or is cancelled.
+        `resume` continues the child from its history with answers to the deferred calls it stopped on.
         """
-        # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
-        # the resumed run adds a new prompt, so close them out as interrupted first.
-        message_history = repair_messages(record.messages) if record is not None else None
+        prompt, message_history, deferred_tool_results = _child_inputs(task, record, resume)
         attempted = False
 
         async def start(limits: UsageLimits | None) -> AgentRunResult[Any]:
@@ -1544,18 +1675,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             with capture_run_messages() as captured:
                 try:
                     return await sub_agent.agent.run(
-                        task,
+                        prompt,
                         deps=ctx.deps,
                         model=model,
                         model_settings=settings,
                         usage=usage,
                         usage_limits=limits,
+                        toolsets=toolsets,
                         capabilities=capabilities,
                         workspace=ReadOnlyWorkspace(workspace) if sub_agent.read_only else workspace,
                         event_stream_handler=partial(self._stream_child, owner=owner, record=record)
                         if record is not None
                         else self._event_stream_handler,
                         message_history=message_history,
+                        deferred_tool_results=deferred_tool_results,
                         conversation_id=record.id if record is not None else None,
                         run_id=record.run_id if record is not None else None,
                     )
@@ -1564,9 +1697,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     if record is not None and captured:
                         record.messages = captured
 
-        if sub_agent.usage_limits is not None and sub_agent.usage_limits.count_tokens_before_request:
-            return start(usage_limits)
-        return run_with_count_tokens_fallback(start, usage_limits, usage)
+        return _start_child(start, sub_agent, usage_limits, usage, resumed=resume is not None)
 
     async def _stream_child(
         self,
@@ -1608,17 +1739,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         own_budget: bool,
         serving_model: ServingModelRecorder,
         messages: Sequence[ModelMessage],
+        forwarding: _Forwarding | None = None,
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
         Soft outcomes (timeout, own usage budget, a child run that ended with
         `DeferredToolRequests` or `PendingModelResponse`) become a steering message the parent reads as a normal
         tool result; a child's soft failure or contained crash becomes a `ModelRetry`
+        the caller raises. With `forwarding`, a child's `DeferredToolRequests` instead become an `ApprovalRequired`
         the caller raises. Everything else propagates and aborts the delegation.
         """
         timeout = sub_agent.timeout_seconds
         try:
-            result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
+            result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             if timeout is None or isinstance(exc, HookTimeoutError):
                 # The child itself timed out: a hook overran its own budget, or no
@@ -1649,6 +1782,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
+        if forwarding is not None and isinstance(result.output, DeferredToolRequests):
+            return _Ended(
+                outcome='failed',
+                output=f'Sub-agent {agent_name!r} is waiting for answers to its deferred tool calls.',
+                deferral=await deferral_metadata(
+                    self._deferred_state_store,
+                    agent_name=agent_name,
+                    task=forwarding.task,
+                    tool_call_id=forwarding.tool_call_id,
+                    requests=result.output,
+                    messages=result.all_messages(),
+                ),
+            )
         if (reason := resumable_output_reason(result.output)) is not None:
             # The parent cannot resume the child run, and delegating the same task again would most
             # likely stop the same way, so this is a soft outcome rather than a retry. Nobody will check
@@ -1712,6 +1858,37 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _start_child(
+    start: Callable[[UsageLimits | None], Coroutine[Any, Any, AgentRunResult[Any]]],
+    sub_agent: SubAgent[AgentDepsT],
+    usage_limits: UsageLimits | None,
+    usage: RunUsage,
+    *,
+    resumed: bool,
+) -> Coroutine[Any, Any, AgentRunResult[Any]]:
+    """Start a child run, dropping token counting inherited from the parent if the child's model can't count."""
+    if sub_agent.usage_limits is not None and sub_agent.usage_limits.count_tokens_before_request:
+        return start(usage_limits)
+    if resumed and usage_limits is not None:
+        # A resumed child runs its approved calls before its first model request, so the fallback, which starts the
+        # run again when counting fails before a request, would run them twice: drop inherited counting instead.
+        return start(replace(usage_limits, count_tokens_before_request=False))
+    return run_with_count_tokens_fallback(start, usage_limits, usage)
+
+
+def _child_inputs(
+    task: str, record: DelegationTask | None, resume: tuple[list[ModelMessage], DeferredToolResults] | None
+) -> tuple[str | None, list[ModelMessage] | None, DeferredToolResults | None]:
+    """The prompt, history and deferred tool results a child run starts with."""
+    if resume is not None:
+        # Answers to the deferred calls the child stopped on continue its run, without a new prompt.
+        messages, results = resume
+        return None, messages, results
+    # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
+    # the resumed run adds a new prompt, so close them out as interrupted first.
+    return task, repair_messages(record.messages) if record is not None else None, None
 
 
 def _last_text(messages: Sequence[ModelMessage], output_tools: Container[str]) -> str | None:

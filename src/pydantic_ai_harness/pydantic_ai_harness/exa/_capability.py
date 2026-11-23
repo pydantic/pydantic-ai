@@ -13,6 +13,7 @@ from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, Tool
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.exa._toolset import (
     EXA_DEFAULT_MAX_RESULTS,
@@ -145,8 +146,16 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     id: str | None = 'exa_search'
     """Stable identity for durable execution, which records each Exa request under it."""
 
+    num_results: int | None = None
+    """Deprecated: renamed to `max_results`."""
+
     def __post_init__(self) -> None:
         """Validate configuration against the Exa API's documented bounds."""
+        if self.num_results is not None:
+            if self.max_results != EXA_DEFAULT_MAX_RESULTS:
+                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
+            warn_argument_renamed('ExaSearch', 'num_results', 'max_results', stacklevel=4)
+            self.max_results, self.num_results = self.num_results, None
         if not 1 <= self.max_results <= EXA_MAX_NUM_RESULTS:
             raise ValueError(f'max_results must be between 1 and {EXA_MAX_NUM_RESULTS}, got {self.max_results}')
         if not 1 <= self.max_text_chars <= EXA_MAX_PAGE_TEXT_CHARS:
@@ -244,6 +253,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         id: str | None = 'exa_search',
         description: str | None = None,
         defer_loading: bool = False,
+        num_results: int | None = None,
     ) -> ExaSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -262,4 +272,5 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             id=id,
             description=description,
             defer_loading=defer_loading,
+            num_results=num_results,
         )

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
+from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.file_system._content import require_pillow
 from pydantic_ai_harness.file_system._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
@@ -61,9 +63,11 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     access patterns still match a symlink's target.
     """
 
-    # Keyword-only since the positional `cwd` was removed, so an old positional call fails instead of
-    # shifting its access patterns onto the wrong field.
-    _: KW_ONLY
+    cwd: str | Path | None = None
+    """Deprecated and ignored: relative paths resolve from the workspace's working directory.
+
+    Set the working directory on the workspace instead, e.g. `LocalWorkspace('./repo')`.
+    """
 
     allowed_patterns: Sequence[str] = field(default_factory=list[str])
     """If non-empty, only paths matching at least one glob pattern are accessible."""
@@ -99,6 +103,15 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     smaller than the header and hint themselves cannot be met; the result still carries them.
     """
 
+    max_image_side: int | None = field(default=None, kw_only=True)
+    """Longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to fit.
+
+    The copy keeps the aspect ratio and the file's format, and is never upscaled.
+    `None` (the default) sends images at their full size; `Coder` sets 1024.
+    Downscaling needs Pillow, which the `coder` extra installs: setting this
+    without it raises an `ImportError`.
+    """
+
     max_list_results: int = 1000
     """Maximum number of entries returned by `list_directory`."""
 
@@ -132,17 +145,27 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
     """
 
-    max_retries: int | None = None
+    max_retries: int | None = field(default=None, kw_only=True)
     """How many consecutive retries each file tool allows before the run fails.
 
     A denied path, a missing parent, or an edit whose `old_text` no longer matches asks the model
     to retry; a success resets the count. `None` (the default) uses the agent's tool retry budget.
     """
 
+    protected_patterns: Sequence[str] | None = field(default=None, kw_only=True)
+    """Deprecated: renamed to `read_only_patterns`."""
+
     _toolset: FileSystemToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one toolset, built on first use; it resolves the boundary per workspace on its first operation there."""
 
     def __post_init__(self) -> None:
+        if self.cwd is not None:
+            warn_argument_ignored('FileSystem', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
+        if self.protected_patterns is not None:
+            if self.read_only_patterns is not _DEFAULT_READ_ONLY:
+                raise TypeError('Pass `read_only_patterns` only: `protected_patterns` is its deprecated name.')
+            warn_argument_renamed('FileSystem', 'protected_patterns', 'read_only_patterns', stacklevel=4)
+            self.read_only_patterns, self.protected_patterns = self.protected_patterns, None
         root_spelling(None if self.root_dir is None else Path(self.root_dir))
         # Runtime validation: dataclass field annotations are advisory, not enforced.
         # A config-driven caller could pass a string that would otherwise propagate.
@@ -154,9 +177,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         }
         if self.max_read_chars is not None:
             values['max_read_chars'] = self.max_read_chars
+        if self.max_image_side is not None:
+            values['max_image_side'] = self.max_image_side
         for name, value in values.items():
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
+        if self.max_image_side is not None:
+            require_pillow()
         retries: object = self.max_retries
         if retries is not None and (not isinstance(retries, int) or isinstance(retries, bool) or retries < 0):
             raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
@@ -188,5 +215,6 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 content_hashes=self.content_hashes,
                 tools=self.tools,
                 max_retries=self.max_retries,
+                max_image_side=self.max_image_side,
             )
         return self._toolset

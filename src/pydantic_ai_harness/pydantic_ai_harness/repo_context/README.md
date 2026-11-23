@@ -194,6 +194,12 @@ the workspace, so there is no nested context to surface. Each directory in the
 chain must itself resolve inside the working directory, so a symlinked directory
 in the path can't surface an instruction file from outside it.
 
+`traversal_tool_names` and `traversal_path_arg` are deprecated. Setting either
+to a non-default value emits `HarnessDeprecationWarning` and keeps the old
+tool-name and argument sniffing path active for hosts that do not emit events.
+With the defaults, sniffing is disabled, so a `FileSystem` event cannot deliver
+the same note twice.
+
 ## Trust
 
 Walk-up files become part of the agent's instructions, so the model gives them
@@ -261,7 +267,7 @@ files not in `accepted` keep the workspace's level. Files are compared when
 
 The lower level changes what reaches the model only in capabilities that check
 `authority_of` (see
-[Files you didn't write](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority)).
+[Marking who wrote the files](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority)).
 `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they
 still load a changed file as before.
 
@@ -296,9 +302,13 @@ RepoContext(
     nested_inject='contents',       # 'contents' | 'pointer'
     nested_exclude=('node_modules', '.venv', 'venv', 'site-packages'),  # fnmatch patterns Strategy 3 skips
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
+    traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
+    traversal_path_arg='path',                                       # deprecated fallback
     asset_roots=('.claude', '.agents', '.codex', '.grok'),
 )
 ```
+
+`workspace_dir=` is deprecated and ignored: the working directory comes from the workspace.
 
 ## Scope
 

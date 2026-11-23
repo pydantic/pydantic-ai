@@ -19,6 +19,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Concatenate, ParamSpec, TypeVar
 
 import anyio
+import anyio.to_thread
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -35,21 +36,27 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._events import event_ctx
+from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands, workspace_path
 from pydantic_ai_harness.file_system._access import AccessPatterns
 from pydantic_ai_harness.file_system._changes import Change, count_lines, skip_lines, split_lines
 from pydantic_ai_harness.file_system._command_search import run_posix_search
 from pydantic_ai_harness.file_system._content import (
+    MAX_DECODE_PIXELS,
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
+    PIL_FORMATS,
     Replacement,
+    TooLargeToDecode,
     apply_replacements,
     bytes_hash,
     check_expected_hash,
+    downscale_image,
     format_lines,
     hex_preview,
     is_binary,
     normalize_replacements,
+    require_pillow,
     sniff_media_type,
 )
 from pydantic_ai_harness.file_system._events import (
@@ -578,9 +585,19 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         id: str | None = None,
         content_hashes: bool = True,
         tools: Sequence[str] = DEFAULT_TOOL_NAMES,
+        protected_patterns: Sequence[str] | None = None,
+        cwd: Path | None = None,
         max_retries: int | None = None,
+        max_image_side: int | None = None,
     ) -> None:
         super().__init__(id=id, max_retries=max_retries)
+        if cwd is not None:
+            warn_argument_ignored('FileSystemToolset', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)
+        if protected_patterns is not None:
+            if read_only_patterns is not None:
+                raise TypeError('Pass `read_only_patterns` only: `protected_patterns` is its deprecated name.')
+            warn_argument_renamed('FileSystemToolset', 'protected_patterns', 'read_only_patterns')
+            read_only_patterns = protected_patterns
         # A workspace path, absolute or relative to the workspace's working directory, resolved
         # against the workspace a call acts on; `None` bounds calls by the working directory itself.
         self._root_spelling = root_spelling(root_dir)
@@ -600,6 +617,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self._max_search_results = max_search_results
         self._max_find_results = max_find_results
         self._content_hashes = content_hashes
+        if max_image_side is not None:
+            require_pillow()
+        self._max_image_side = max_image_side
         self._tools = tuple(tools)
         if unknown := sorted(set(self._tools) - set(FILE_SYSTEM_TOOL_NAMES)):
             raise ValueError(
@@ -947,7 +967,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         media_type = sniff_media_type(raw)
         if media_type is not None or is_binary(raw):
             await self._emit_read(scope, ctx, resolved, content_hash)
-            return self._read_binary(path, raw, media_type, content_hash)
+            return await self._read_binary(path, raw, media_type, content_hash)
 
         total = count_lines(raw)
         header = self._read_header(path, total, content_hash)
@@ -968,16 +988,36 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if ctx is not None:
             await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
 
-    def _read_binary(
+    async def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """An image or PDF as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
+        """An image or PDF as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text.
+
+        An image larger than `max_image_side` is downscaled first; the header still
+        reports the size and hash of the file in the workspace.
+        """
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
         if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + hex_preview(raw, self._body_budget(header + intro))
+        if self._max_image_side is not None and media_type in PIL_FORMATS:
+            downscaled = await anyio.to_thread.run_sync(
+                downscale_image, raw, media_type, self._max_image_side, abandon_on_cancel=True
+            )
+            if isinstance(downscaled, TooLargeToDecode):
+                if downscaled.size is None:
+                    return f'{header}Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
+                width, height = downscaled.size
+                return (
+                    f'{header}Too large to view: {width}x{height} pixels is over the {MAX_DECODE_PIXELS:,}-pixel '
+                    'limit for downscaling.\n'
+                )
+            if downscaled is not None:
+                (width, height), (shown_width, shown_height) = downscaled.original, downscaled.shown
+                header += f'Shown downscaled from {width}x{height} to {shown_width}x{shown_height} pixels.\n'
+                raw = downscaled.data
         if len(raw) <= MAX_MEDIA_BYTES:
             return [header, BinaryContent(data=raw, media_type=media_type)]
         return f'{header}Too large to view: the limit is {MAX_MEDIA_BYTES} bytes.\n'

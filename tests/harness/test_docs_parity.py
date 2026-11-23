@@ -19,9 +19,18 @@ from tests.docs_model_aliases import resolve_model_aliases
 _ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
-# The `experimental` package is a namespace for ACP, not a capability, so it
+# The `experimental` package is a namespace/warning shim, not a capability, so it
 # has no standalone README and is not listed in the top-level tables.
 _NAMESPACE_PACKAGES = {_PACKAGE / 'experimental'}
+
+
+def _is_deprecation_shim(package: Path) -> bool:
+    """A package left at a moved or renamed capability's old path re-exports it and warns.
+
+    Such shims carry no docs of their own, so they are excluded from the capability tables.
+    """
+    source = (package / '__init__.py').read_text(encoding='utf-8')
+    return 'warn_moved(' in source or 'warn_module_renamed(' in source
 
 
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
@@ -41,7 +50,7 @@ def _capability_packages() -> list[Path]:
             # A non-package dir under the capability roots does not occur in a clean tree, so this guard stays uncovered.
             if not (child / '__init__.py').exists():  # pragma: no cover
                 continue
-            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES:
+            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES or _is_deprecation_shim(child):
                 continue
             candidates.append(child)
     return candidates
@@ -561,18 +570,18 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
     assert readme == docs
 
 
-_PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
-_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+_PACKAGES_HEADING = '## Pydantic AI, the Harness, and Pax'
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
 def test_package_comparison_matches_across_surfaces(surface: str) -> None:
-    """The Harness docs index and the Harness and CLAI READMEs compare the three packages the same way."""
+    """The Harness docs index and the Harness and Pax READMEs compare the three packages the same way."""
     canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
-        '| [CLAI] (`pydantic-clai2`)',
+        '| [Pax] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
 

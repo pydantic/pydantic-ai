@@ -75,7 +75,7 @@ flowchart TB
 - The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
   reads `evals.log`. Omit `evals` when using this engine.
 - The workflow summary is the canonical success/failure report. MCP startup and
-  request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
+  request-limit errors keep their Pax diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -204,13 +204,13 @@ def label_catalog() -> list[str]:
 - **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
-- **No third-party imports.** The engine installs `pydantic-clai2` and
+- **No third-party imports.** The engine installs `pydantic-ai-pax` and
   `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
   `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
 
-The engine resolves and imports the module once, then gives the agent to CLAI 2 with
+The engine resolves and imports the module once, then gives the agent to Pax with
 `-a`, the workflow model with `-m`, and the prompt with `-p`. Module-level work therefore
 runs once. An import error fails the step with its Python traceback.
 
@@ -411,7 +411,7 @@ steps. Your install therefore runs against the same interpreter the engine later
 
 A step can also end a run that has nothing to do by appending
 `{"type":"noop","message":"..."}` to `$GH_AW_SAFE_OUTPUTS`. The engine reads that file
-before it starts CLAI 2 and exits with status 0 when it finds a `noop`, so no model request
+before it starts Pax and exits with status 0 when it finds a `noop`, so no model request
 is made. gh-aw's
 [cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
 documents the pattern. When a search query can express the condition, `skip-if-match` or
@@ -614,7 +614,7 @@ event structure, status, or usage.
 
 ### What a working run looks like
 
-The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
+The agent step starts `pax -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
 and usage. Repository Python imported through

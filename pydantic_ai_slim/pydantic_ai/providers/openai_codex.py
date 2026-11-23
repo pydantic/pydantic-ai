@@ -340,7 +340,13 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
         # Codex inherits selected first-party flags that compatible endpoints may not implement. Its schema
         # transformer is an exception: OpenAIProvider's tuple and string-length handling has not been verified
         # against the Codex backend, so Codex keeps the shared transformer while layering its wire dialect on top.
-        return merge_profile(OpenAIProvider.model_profile(model_name), openai_codex_model_profile(model_name))
+        # The OpenAI API's deprecation dates are left out too: the Codex backend serves its own set of models.
+        openai_profile = OpenAIProvider.model_profile(model_name)
+        return merge_profile(
+            openai_profile,
+            openai_codex_model_profile(model_name),
+            ModelProfile(deprecation=None) if openai_profile and 'deprecation' in openai_profile else None,
+        )
 
     def __init__(
         self,
