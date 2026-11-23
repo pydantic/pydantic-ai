@@ -88,11 +88,11 @@ COMPARED: dict[str, Compared] = {
     ),
     'by_user': Compared("whether a `run_code` cell is shown as the user's own"),
     'images': Compared("the prompt's images"),
+    'exit_code': Compared('whether the `shell` card shows its command as failed'),
     'run_id': Compared('the run Edit and Retry rewind to'),
 }
 KNOWN_LIVE_ONLY: dict[str, LiveOnly] = {
     'output': LiveOnly("a shell command's printout as it ran; the saved result holds what the model got back"),
-    'exit_code': LiveOnly("a shell command's exit; the saved result holds what the model got back"),
     'calls': LiveOnly("the tools a `run_code` cell called from its sandbox; the saved history holds the cell's result"),
     'diffs': LiveOnly(
         'the saved history holds no file content from before a write, so a reload cannot rebuild its diff',
@@ -114,7 +114,7 @@ SCRIPTED: dict[type, Scripted] = {
     ArgsDelta: Scripted("the `run_code` cell's code streams in chunks"),
     ToolArgs: Scripted("the streamed cell's complete arguments arrive with its call"),
     ToolOutput: Scripted('the `shell` command prints'),
-    ShellDone: Scripted('the `shell` command exits'),
+    ShellDone: Scripted('the `shell` commands exit, one of them with a failure'),
     DiffAdded: Scripted('the edits and the write'),
     ToolDone: Scripted('every tool returns or fails'),
     SubCallAdded: Scripted('the cell calls `lookup` and `shell` from its sandbox'),
@@ -158,6 +158,7 @@ async def turns(
             *[('edit_file', {'path': path, **args}) for path, args in EDITS.items()],
             ('write_file', {'path': 'new.py', 'content': 'new\n'}),
             ('shell', {'command': 'echo hi'}),
+            ('shell', {'command': 'exit 3'}),
         ]
         yield {
             index: DeltaToolCall(name=name, json_args=json.dumps(args), tool_call_id=f'call{index}')
@@ -227,11 +228,21 @@ def test_a_reload_shows_what_the_turns_showed_live(make_web: MakeWeb) -> None:
     assert COMPARED.keys() & KNOWN_LIVE_ONLY.keys() == partly_live, (
         'a field live-only for every tool is not compared: remove it from COMPARED'
     )
+    unclassified = {field.name for field in fields(Item)} - COMPARED.keys() - KNOWN_LIVE_ONLY.keys()
+    assert not unclassified, (
+        f'`Item` fields {sorted(unclassified)} are unclassified: add each to `COMPARED` with what the browser shows '
+        'from it, or to `KNOWN_LIVE_ONLY` with why a reload cannot show it'
+    )
     assert_classified(
         (field.name for field in fields(Item)),
         {**COMPARED, **KNOWN_LIVE_ONLY},
         complete_walk=True,
         table_name='COMPARED | KNOWN_LIVE_ONLY',
+    )
+    unlisted = union_members(ItemMessage) - SCRIPTED.keys()
+    assert not unlisted, (
+        f'`ItemMessage` members {sorted(kind.__name__ for kind in unlisted)} are not in `SCRIPTED`: add each with '
+        'what in the session sends it, and make `turns` send it'
     )
     assert_classified(union_members(ItemMessage), SCRIPTED, complete_walk=True, table_name='SCRIPTED')
     # The pax conftest runs each test in a fresh working directory, which is the session's workspace.
@@ -269,14 +280,22 @@ def test_a_reload_shows_what_the_turns_showed_live(make_web: MakeWeb) -> None:
 
     unscripted = SCRIPTED.keys() - {type(message) for message in messages}
     assert not unscripted, (
-        f'the session sends no {sorted(kind.__name__ for kind in unscripted)}: script a turn that does'
+        f'the session sends no {sorted(kind.__name__ for kind in unscripted)}: make `turns` send each, as its '
+        '`SCRIPTED` entry says'
     )
     live = live_transcript(messages)
     reload = snapshot.items
-    assert {entry.kind for entry in reload if isinstance(entry, Item)} == set(get_args(ItemKind))
+    missing_kinds = set(get_args(ItemKind)) - {entry.kind for entry in reload if isinstance(entry, Item)}
+    assert not missing_kinds, f'the reload shows no {sorted(missing_kinds)} item: make `turns` produce one'
     [entry_types] = get_args(get_type_hints(history_entries)['return'])
-    assert {type(entry) for entry in reload} == union_members(entry_types)
-    assert [compared(entry) for entry in live] == [compared(entry) for entry in reload]
+    missing_types = union_members(entry_types) - {type(entry) for entry in reload}
+    assert not missing_types, (
+        f'the reload has no {sorted(kind.__name__ for kind in missing_types)} entry: make `turns` produce one'
+    )
+    assert [compared(entry) for entry in live] == [compared(entry) for entry in reload], (
+        'the reload differs from what the turns showed live: fix whichever of `EventTranslator` and '
+        '`history_entries` drifted, or add the field to `KNOWN_LIVE_ONLY` with why a reload cannot show it'
+    )
 
     # Each known difference still is one: a fix that lets the reload show it must drop its entry.
     pairs = [
@@ -289,4 +308,7 @@ def test_a_reload_shows_what_the_turns_showed_live(make_web: MakeWeb) -> None:
             if (live_only.tools is None or seen.name in live_only.tools)
             and getattr(seen, name) != getattr(loaded, name)
         ]
-        assert differs, f'`KNOWN_LIVE_ONLY[{name!r}]` no longer differs: remove it and compare the field'
+        assert differs, (
+            f'`KNOWN_LIVE_ONLY[{name!r}]` no longer differs: remove it, and give the field a `COMPARED` entry with '
+            'what the browser shows from it if it has none'
+        )
