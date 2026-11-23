@@ -27,7 +27,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._display import LazyDisplay, png_from_base64
+from pydantic_ai_harness._display import RELEASE_TIMEOUT, LazyDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
@@ -140,10 +140,6 @@ _SCROLL_TICK_DELAY_MS = '20'
 
 _SCROLL_TICK_SECONDS = int(_SCROLL_TICK_DELAY_MS) / 1000
 """The pause one wheel click adds to the timeout."""
-
-_RELEASE_TIMEOUT = 5
-"""Maximum time spent releasing held keys and buttons after a failed or cancelled action. The slowest release
-measured took under a second."""
 
 _PRINT_SCREEN_SIZE = ['xwininfo', '-root']
 """Prints the size of the root window, X's name for the whole screen. It spans every monitor, as a screenshot does.
@@ -570,7 +566,7 @@ class X11DisplayDriver:
     async def _stop_input_and_release(self, release_chains: list[list[str]]) -> list[str]:
         """Stop the input command, then run each of `release_chains`. Return what failed or didn't run in time."""
         failures: list[str] = []
-        with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True) as releasing:
+        with anyio.move_on_after(RELEASE_TIMEOUT, shield=True) as releasing:
             # Stopping comes before letting go, or the command could press again what was just released.
             for cleanup in [['sh', '-c', _STOP_INPUT], *(['xdotool', *chain] for chain in release_chains if chain)]:
                 try:
@@ -580,7 +576,7 @@ class X11DisplayDriver:
                 except Exception as e:
                     failures.append(str(e))
         if releasing.cancelled_caught:
-            failures.append(f'releasing took longer than {_RELEASE_TIMEOUT} seconds')
+            failures.append(f'releasing took longer than {RELEASE_TIMEOUT} seconds')
         return failures
 
     async def _screenshot_png(self, *scrot_args: str) -> bytes:
