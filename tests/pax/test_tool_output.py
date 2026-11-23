@@ -641,11 +641,11 @@ async def test_a_live_command_expands_to_what_the_shell_tool_returned_without_it
         Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
     )
 
-    async def render(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+    async def render(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in events:
             await renderer.on_stream_event(event)
 
-    shell = Shell[None](tools=['shell'], denied_commands=[])
+    shell = Shell[object](tools=['shell'], denied_commands=[])
     await Agent(streamed(respond), capabilities=[LocalWorkspace(tmp_path), shell]).run(
         'go', event_stream_handler=render
     )
