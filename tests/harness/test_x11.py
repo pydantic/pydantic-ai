@@ -128,10 +128,12 @@ class ScriptedDesktop(DockerContainerBackend):
         (
             Drag(path=(Point(x=0, y=0), Point(x=500, y=0), Point(x=500, y=10))),
             # Each leg is moved along in steps of at most 200 pixels, and at least two.
-            ['xdotool', 'mousemove', '0', '0', 'mousedown', '1', 'sleep', '0.1']
+            # It ends 1 pixel past the end and back, so a browser's drag-and-drop takes the drop.
+            ['xdotool', 'mousemove', '0', '0', 'mousedown', '1']
             + ['sleep', '0.05', 'mousemove', '166', '0', 'sleep', '0.05', 'mousemove', '333', '0']
             + ['sleep', '0.05', 'mousemove', '500', '0', 'sleep', '0.05', 'mousemove', '500', '5']
-            + ['sleep', '0.05', 'mousemove', '500', '10', 'sleep', '0.1', 'mouseup', '1'],
+            + ['sleep', '0.05', 'mousemove', '500', '10', 'sleep', '0.05', 'mousemove', '501', '10']
+            + ['sleep', '0.05', 'mousemove', '500', '10', 'sleep', '0.05', 'mouseup', '1'],
         ),
         (MouseDown(button='middle'), ['xdotool', 'mousedown', '2']),
         (MouseUp(), ['xdotool', 'mouseup', '1']),
@@ -142,7 +144,7 @@ class ScriptedDesktop(DockerContainerBackend):
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
         (
             TypeText(text='-n "hi"'),
-            ['xdotool', 'key', '--delay', '12', '--', 'U002D', 'U006E', 'U0020', 'U0022', 'U0068', 'U0069', 'U0022'],
+            ['xdotool', 'key', '--', 'U002D', 'U006E', 'U0020', 'U0022', 'U0068', 'U0069', 'U0022'],
         ),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('pagedown', 'f5', 'up')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
@@ -158,7 +160,7 @@ class ScriptedDesktop(DockerContainerBackend):
         # Enter and Tab for newlines and tabs in typed text.
         (
             TypeText(text='l\n\tx\n'),
-            ['xdotool', 'key', '--delay', '12', '--', 'U006C', 'Return', 'Tab', 'U0078', 'Return'],
+            ['xdotool', 'key', '--', 'U006C', 'Return', 'Tab', 'U0078', 'Return'],
         ),
     ],
 )
@@ -168,25 +170,22 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayA
     assert desktop.calls == [(['sh', '-c', INPUT, 'sh', *argv], {'DISPLAY': ':1'})]
 
 
-async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Each command's `xdotool` arguments stay under the size limit, lowered here so short input crosses it."""
-    monkeypatch.setattr(_x11, '_MAX_CHAIN_BYTES', 200)
+async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the_size_limit() -> None:
+    """Each command's `xdotool` arguments stay under 100,000 bytes, well below Linux's 128 KiB limit on one argument."""
     desktop = ScriptedDesktop()
 
-    await desktop.screen.act(TypeText(text='a' * 40))
+    await desktop.screen.act(TypeText(text='a' * 20_000))
     typed = desktop.argvs
     assert len(typed) == 2
-    assert all(len(shlex.join(argv[5:])) < 200 for argv in typed)
-    assert [argv[4:9] for argv in typed] == [['xdotool', 'key', '--delay', '12', '--']] * 2
-    assert sum(argv.count('U0061') for argv in typed) == 40
+    assert all(len(shlex.join(argv[5:])) < 100_000 for argv in typed)
+    assert [argv[4:7] for argv in typed] == [['xdotool', 'key', '--']] * 2
+    assert sum(argv.count('U0061') for argv in typed) == 20_000
 
     # Held keys go down in the first command and come up in the last, so they stay held in between.
-    await desktop.screen.act(Drag(path=tuple(Point(x=n % 2, y=0) for n in range(5)), modifiers=('alt',)))
+    await desktop.screen.act(Drag(path=tuple(Point(x=n % 2, y=0) for n in range(2_500)), modifiers=('alt',)))
     dragged = desktop.argvs[2:]
     assert len(dragged) == 2
-    assert all(len(shlex.join(argv[5:])) < 200 for argv in dragged)
+    assert all(len(shlex.join(argv[5:])) < 100_000 for argv in dragged)
     assert dragged[0][4:7] == ['xdotool', 'keydown', 'alt']
     assert dragged[-1][-4:] == ['mouseup', '1', 'keyup', 'alt']
 
@@ -199,8 +198,8 @@ async def test_x11_computer_splits_long_typing_and_drags_into_commands_under_the
         (PressKeys(keys=('a',), repeat=1_000), 162),
         (PressKeys(keys=('ctrl', 'shift', 'a'), repeat=1_000), 186),
         (TypeText(text='a' * 1_000), 162),
-        # 0.1 s before the first move and after the last, and 0.05 s before each of the 2 moves.
-        (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.3),
+        # 0.05 s before each of the 2 moves, the 2 moves past the end and back, and letting go.
+        (Drag(path=(Point(x=0, y=0), Point(x=10, y=0))), 150.25),
         (Click(x=1, y=1), 150.1),
         # xdotool waits 0.1 s between the clicks of a repeated click.
         (Click(count=3), 150.3),
@@ -296,7 +295,7 @@ async def test_x11_computer_says_what_may_still_be_held_when_releasing_runs_out_
     # As if stopping the failed command had used up all the time for releasing.
     monkeypatch.setattr(anyio, 'move_on_after', no_time_left)
     desktop = ScriptedDesktop(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
-    with pytest.raises(WorkspaceError, match='may still be held: releasing took longer than 10 seconds'):
+    with pytest.raises(WorkspaceError, match='may still be held: releasing took longer than 5 seconds'):
         await desktop.screen.act(Click(x=1, y=2))
 
 
@@ -412,7 +411,7 @@ def test_a_sentence_that_lists_what_a_custom_image_needs_names_every_program_the
     # Such a sentence, as on the E2B pages, is a build list: a program it leaves out fails on first use.
     root = Path(__file__).parents[2]
     pages = [*root.glob('docs/harness/*.md'), *root.glob('src/pydantic_ai_harness/pydantic_ai_harness/*/README.md')]
-    wanted = _x11._CLIENTS.split()  # pyright: ignore[reportPrivateUsage]
+    wanted = [*_x11._DISPLAY_PROGRAMS.split(), 'Xvfb']  # pyright: ignore[reportPrivateUsage]
     sentences = [
         (page.name, sentence)
         for page in pages
@@ -427,23 +426,22 @@ def test_a_sentence_that_lists_what_a_custom_image_needs_names_every_program_the
     ] == []
 
 
-async def test_a_desktop_display_starts_xvfb_and_puts_display_under_the_commands_env() -> None:
+async def test_an_x11_display_starts_xvfb_at_its_size() -> None:
     argvs: list[list[str]] = []
 
     async def run(argv: list[str], /, *, env: Mapping[str, str], timeout: float) -> CommandResult:
         argvs.append(argv)
         return CommandResult(exit_code=0, stdout='', stderr='')
 
-    assert _x11.desktop_display(run, None, {'DISPLAY': ':9'}, str) == (None, {'DISPLAY': ':9'})
-    display, env = _x11.desktop_display(run, (8, 6), {'A': '1'}, str)
-    assert env == {'DISPLAY': _x11.DISPLAY, 'A': '1'}
+    assert _x11.x11_display(run, None, str) is None
+    display = _x11.x11_display(run, (8, 6), str)
     assert display is not None
     await display.start()
     assert 'Xvfb' in argvs[0][2] and argvs[0][-1] == '8x6'
 
 
-async def test_a_reset_display_is_started_again_on_its_next_use() -> None:
-    # A backend resets its display when the sandbox restarted, which stops the X server, as Daytona's and boxd's do.
+async def test_a_display_marked_stopped_is_started_again_on_its_next_use() -> None:
+    # A backend marks its display stopped when the sandbox restarted, which stops the X server, as Daytona's and boxd's do.
     sandbox = FakeDisplay()
 
     async def run(argv: list[str], /, *, env: Mapping[str, str], timeout: float) -> CommandResult:
@@ -452,11 +450,11 @@ async def test_a_reset_display_is_started_again_on_its_next_use() -> None:
         stdout, stderr, exit_code = sandbox(command, timeout)
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
-    display, _ = _x11.desktop_display(run, (1280, 800), {}, str)
+    display = _x11.x11_display(run, (1280, 800), str)
     assert display is not None
     assert await display.display_size() == (1280, 800)
     await display.act(Click(x=1, y=2))
-    display.reset()
+    display.mark_stopped()
     assert await display.screenshot() == FAKE_SCREENSHOT
 
     assert len(sandbox.starts) == 2

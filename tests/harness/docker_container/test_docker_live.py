@@ -22,7 +22,7 @@ from pydantic_ai_harness.computer_use import Display
 from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
 from ..display_contract_live import check_display_contract, is_blank
-from ..display_fakes import screen
+from ..display_fakes import full_display
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
@@ -170,7 +170,7 @@ class TestLiveDockerDesktop:
             await _destroy(backend)
 
     async def test_display_contract(self, backend: WorkspaceBackend) -> None:
-        await check_display_contract(screen(backend))
+        await check_display_contract(full_display(backend))
 
     async def test_the_first_screenshot_shows_the_desktop(self, backend: DockerContainerBackend) -> None:
         assert backend.display is not None
@@ -231,6 +231,7 @@ class TestLiveDockerDesktop:
         # The keys are let go of last, Control_L after `a`.
         logged = await _xev_events(backend, lambda events: _logged(events, 'KeyRelease', 'Control_L') == 1)
         events = [(kind, detail) for kind, detail, _ in logged if kind != 'MotionNotify']
+        # real-wait: a stray press after the cancel would reach the real X server later, with no event to wait on
         await anyio.sleep(2)
         # Nothing is pressed after the cancel, and each press has its release.
         assert [(kind, detail) for kind, detail, _ in await _xev_log(backend) if kind != 'MotionNotify'] == events
@@ -328,6 +329,7 @@ async def _xev_events(
 ) -> list[tuple[str, str, int]]:
     """The events `xev` logged, read again until `done` holds for them or 10 seconds pass."""
     deadline = time.monotonic() + 10
+    # real-wait: `xev` in the real container writes its log with no event to wait on
     while not done(events := await _xev_log(backend)) and time.monotonic() < deadline:
         await anyio.sleep(0.1)
     return events

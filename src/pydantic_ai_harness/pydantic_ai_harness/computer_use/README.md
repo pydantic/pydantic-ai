@@ -67,6 +67,9 @@ them to your image so the first use doesn't wait for the install. If one of the 
 ends with a `WorkspaceUnavailableError` naming what's missing. Without the last three, the screen works without the
 panel. To give the agent a browser, install one in your image, such as `firefox-esr`.
 
+Drags move the pointer in steps with short pauses, so a web page's drag-and-drop sees them. Now and then a
+page still misses one.
+
 ## Safety
 
 The model controls a real screen, and anything it clicks or types happens. Run it in a sandbox that holds only what
