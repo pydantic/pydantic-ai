@@ -382,8 +382,11 @@ def _applies(fault: _HttpFault | _XaiFault, cell: SdkCell) -> bool:
     return isinstance(cell.case.transport, XaiTransport)
 
 
-_GAVE_UP_ESCAPES = 'a status a retrying transport gave up on escapes as the raw `httpx2.HTTPStatusError`'
-_RAW_DECODE_ERROR = "a 200 whose body isn't the JSON the SDK expects escapes as the raw decode or validation error"
+_DECISIONS_INVALID_RESPONSE = (
+    "a 200 that isn't JSON raises `UnexpectedModelBehavior`, as the decision models raise for any body that doesn't "
+    'answer the questions, and as `test_invalid_response` in `tests/models/test_openai_decisions.py` and '
+    '`tests/models/test_google_decisions.py` pins; raising a `ModelAPIError` instead changes the type a caller catches'
+)
 _STREAMED_INTERNALLY = (
     "the request is streamed under the hood, so a 200 that isn't an event stream ends as `UnexpectedModelBehavior`, "
     'or with no error at all'
@@ -391,9 +394,6 @@ _STREAMED_INTERNALLY = (
 _CHAT_COMPLETIONS_TEXT = (
     'a text 200 raises `UnexpectedModelBehavior`, as `test_text_response` in `tests/models/test_openai.py` pins; '
     'raising a `ModelAPIError` instead changes the type a caller catches'
-)
-_UNREAD_STREAM_ERROR = (
-    "`_map_api_errors` reads the body of a streamed error response that wasn't read, so `httpx.ResponseNotRead` escapes"
 )
 _CHAT_COMPLETIONS = (
     'BedrockMantleChatModel',
@@ -410,26 +410,10 @@ _NOT_JSON = ('non-json-200', 'text-plain-200')
 
 KNOWN_FAULT_GAPS: dict[tuple[str, str], str] = {
     **{
-        (f'SystemOneModel.{entry_point}', f'gave-up-{status}'): _GAVE_UP_ESCAPES
-        for entry_point in ('request', 'request_stream')
-        for status in (429, 503, 400)
-    },
-    **{
-        (f'{model}.request', fault): _RAW_DECODE_ERROR
+        (f'{model}.request', fault): _DECISIONS_INVALID_RESPONSE
         for model in ('GoogleDecisionsModel', 'OpenAIDecisionsModel', 'SystemOneModel', 'TypeSafeModel')
         for fault in _NOT_JSON
     },
-    **{
-        (f'{model}.{entry_point}', fault): _RAW_DECODE_ERROR
-        for model, entry_points in (
-            ('AnthropicModel', ('batch_create', 'batch_status', 'batch_results', 'batch_cancel')),
-            ('GoogleModel', ('batch_create', 'batch_status', 'batch_results', 'batch_cancel')),
-            ('OpenAIResponsesModel', ('batch_create', 'batch_status', 'batch_results', 'batch_cancel')),
-        )
-        for entry_point in entry_points
-        for fault in _NOT_JSON
-    },
-    ('OpenAIEmbeddingModel.embed', 'text-plain-200'): _RAW_DECODE_ERROR,
     **{
         (f'{model}.request', fault): _STREAMED_INTERNALLY
         for model in ('AnthropicModel', 'OpenAICodexModel')
@@ -437,10 +421,6 @@ KNOWN_FAULT_GAPS: dict[tuple[str, str], str] = {
     },
     ('BedrockConverseModel.request', 'non-json-200'): _STREAMED_INTERNALLY,
     **{(f'{model}.request', 'text-plain-200'): _CHAT_COMPLETIONS_TEXT for model in _CHAT_COMPLETIONS},
-    **{
-        ('HuggingFaceModel.request_stream', fault): _UNREAD_STREAM_ERROR
-        for fault in ('status-429', 'status-503', 'status-400', 'error-body-breaks-off', 'error-body-times-out')
-    },
 }
 """Faults an entry point doesn't raise as its `ModelAPIError` on `main` yet, each pinned as a strict expected failure."""
 

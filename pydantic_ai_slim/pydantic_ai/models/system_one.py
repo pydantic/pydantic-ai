@@ -133,6 +133,9 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         http_request = self._build_request(body, model_settings)
         try:
             response = await self.client.send(http_request)
+        except httpx2.HTTPStatusError as e:
+            # A retrying transport raises this for a status it gave up on, before the status is checked below.
+            raise _model_errors.transport_status_error(self._model_name, e.response) from e
         except httpx2.TransportError as e:
             raise _model_errors.connection_error(
                 self._model_name, f'{type(e).__name__}: {e}', e, timeout=isinstance(e, httpx2.TimeoutException)

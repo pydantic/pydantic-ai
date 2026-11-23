@@ -465,19 +465,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return await batch_module().batch_encode(self, request)
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
-        with map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await batch_module().batch_create(self, requests)
 
     async def batch_status(self, batch: Batch) -> Batch:
-        with map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await batch_module().batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
-        with map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await batch_module().batch_results(self, batch)
 
     async def batch_cancel(self, batch: Batch) -> Batch:
-        with map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await batch_module().batch_cancel(self, batch)
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:

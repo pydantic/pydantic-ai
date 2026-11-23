@@ -99,8 +99,8 @@ _UNTRACED = Exempt(
     'sends a request the wrapper records no span for; pinned by `test_instrumented_model_traces_count_tokens`'
 )
 _UNLIMITED = Exempt(
-    'takes no concurrency slot, unlike `request` and `count_tokens`; whether a batch API call or the cancel of a '
-    'suspended response should is undecided'
+    'takes no concurrency slot, unlike `request` and `count_tokens`; open question for the maintainers: should a '
+    'batch API call or `cancel_suspended_response` take one?'
 )
 
 KNOWN_GAPS: dict[tuple[str, str], Exempt] = {

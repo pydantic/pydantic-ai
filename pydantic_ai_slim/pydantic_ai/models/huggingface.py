@@ -330,24 +330,31 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
         with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
-            return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
-                model=self._model_name,
-                messages=hf_messages,  # pyright: ignore[reportArgumentType]
-                tools=tools,
-                tool_choice=tool_choice or None,
-                stream=stream,
-                max_tokens=model_settings.get('max_tokens', None),
-                stop=model_settings.get('stop_sequences', None),
-                temperature=model_settings.get('temperature', None),
-                top_p=model_settings.get('top_p', None),
-                seed=model_settings.get('seed', None),
-                presence_penalty=model_settings.get('presence_penalty', None),
-                frequency_penalty=model_settings.get('frequency_penalty', None),
-                logit_bias=model_settings.get('logit_bias', None),  # pyright: ignore[reportArgumentType]
-                logprobs=model_settings.get('huggingface_logprobs', None),
-                top_logprobs=model_settings.get('huggingface_top_logprobs', None),
-                extra_body=model_settings.get('extra_body'),  # pyright: ignore[reportArgumentType]
-            )
+            try:
+                return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
+                    model=self._model_name,
+                    messages=hf_messages,  # pyright: ignore[reportArgumentType]
+                    tools=tools,
+                    tool_choice=tool_choice or None,
+                    stream=stream,
+                    max_tokens=model_settings.get('max_tokens', None),
+                    stop=model_settings.get('stop_sequences', None),
+                    temperature=model_settings.get('temperature', None),
+                    top_p=model_settings.get('top_p', None),
+                    seed=model_settings.get('seed', None),
+                    presence_penalty=model_settings.get('presence_penalty', None),
+                    frequency_penalty=model_settings.get('frequency_penalty', None),
+                    logit_bias=model_settings.get('logit_bias', None),  # pyright: ignore[reportArgumentType]
+                    logprobs=model_settings.get('huggingface_logprobs', None),
+                    top_logprobs=model_settings.get('huggingface_top_logprobs', None),
+                    extra_body=model_settings.get('extra_body'),  # pyright: ignore[reportArgumentType]
+                )
+            except (HfHubHTTPError, httpx.HTTPStatusError) as e:
+                # `huggingface_hub` raises a streamed request's error status before it reads the body, which
+                # `_map_api_errors` maps. A retrying transport that gave up on a status may have closed it unread.
+                if not e.response.is_closed:
+                    await e.response.aread()
+                raise
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
