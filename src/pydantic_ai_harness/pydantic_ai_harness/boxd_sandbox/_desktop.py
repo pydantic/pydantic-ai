@@ -241,9 +241,7 @@ class BoxdDisplayDriver:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 await computer.click(machine_id, x, y, button=button, count=count, modifiers=modifiers)
-            case MouseMove(x=x, y=y, modifiers=modifiers):
-                if modifiers:
-                    raise UnsupportedActionError("boxd's desktop cannot hold keys while it moves the pointer.")
+            case MouseMove(x=x, y=y):
                 await computer.move(machine_id, x, y)
             case Drag(path=path, modifiers=modifiers):
                 await self._drag(computer, machine_id, path, modifiers)

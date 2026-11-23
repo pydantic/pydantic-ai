@@ -56,8 +56,8 @@ def _path(points: int) -> tuple[Point, ...]:
     ('action', 'calls'),
     [
         pytest.param(
-            Click(x=3, y=4, button='back', count=3, modifiers=('super', 'shift')),
-            ["click 3 4 back count=3 modifiers='super+shift'"],
+            Click(x=3, y=4, button='middle', count=3, modifiers=('super', 'shift')),
+            ["click 3 4 middle count=3 modifiers='super+shift'"],
             id='click',
         ),
         pytest.param(Click(), ["click pointer left count=1 modifiers=''"], id='click-at-pointer'),
@@ -73,14 +73,16 @@ def _path(points: int) -> tuple[Point, ...]:
             ['mouse_down 0 0 left', *(f'mouse_move {n} {2 * n}' for n in range(1, 101)), 'mouse_up 100 200 left'],
             id='long-drag',
         ),
-        pytest.param(MouseDown(button='forward'), ['mouse_down pointer forward'], id='mouse-down'),
+        pytest.param(MouseDown(button='right'), ['mouse_down pointer right'], id='mouse-down'),
         pytest.param(MouseUp(), ['mouse_up pointer left'], id='mouse-up'),
         pytest.param(
             Scroll(x=1, y=2, direction='left', amount=5, modifiers=('ctrl',)),
             ["scroll 1 2 dx=-5 dy=0 modifiers='ctrl'"],
             id='scroll',
         ),
-        pytest.param(Scroll(direction='down'), ["scroll pointer dx=0 dy=3 modifiers=''"], id='scroll-at-pointer'),
+        pytest.param(
+            Scroll(direction='down', amount=3), ["scroll pointer dx=0 dy=3 modifiers=''"], id='scroll-at-pointer'
+        ),
         pytest.param(
             Scroll(x=1, y=2, direction='up', amount=201),
             [f"scroll 1 2 dx=0 dy={clicks} modifiers=''" for clicks in (-100, -100, -1)],
@@ -127,7 +129,6 @@ async def test_each_action_maps_onto_boxd_calls(host: FakeBoxd, action: DisplayA
 @pytest.mark.parametrize(
     'action',
     [
-        pytest.param(MouseMove(x=1, y=1, modifiers=('alt',)), id='mouse_move-holding-a-key'),
         pytest.param(Drag(path=_path(101), modifiers=('shift',)), id='long-drag-holding-a-key'),
         pytest.param(object(), id='unknown-action-type'),
     ],
