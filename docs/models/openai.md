@@ -367,24 +367,23 @@ Web search, Code interpreter, Image generation, and File search are natively sup
 
 #### Computer use {#computer-use}
 
-To let a model use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability.
-These models get OpenAI's own computer tool on `OpenAIResponsesModel` with `OpenAIProvider` or
-`BedrockMantleProvider`:
+To let a model use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+`OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`, these models get OpenAI's own computer tool:
 
 - GPT-5.4, except GPT-5.4 nano
 - GPT-5.5
 - GPT-5.6
 - GPT-6
 
-OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the
-pointer position. Other models and providers, including Azure, and any model with `ComputerUse(native=False)`, get a
-regular function tool with all the actions.
+Other models and providers, including Azure, and any model with `ComputerUse(native=False)`, get a regular function
+tool. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the
+pointer position; the function tool can.
 
 Pydantic AI picks the tool by provider class, not by the server it calls. If `OpenAIProvider(base_url=...)` points at
 a server without the computer tool, remove it in the model's `profile=` argument:
 `profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Use
-`| {ComputerTool}` instead to send it through another provider whose server supports it. Set it in the model's `profile=`;
-setting it in the provider's profile has no effect.
+`| {ComputerTool}` instead to send it through another provider whose server supports it. Setting it in the provider's
+profile has no effect.
 
 #### Referencing earlier responses
 

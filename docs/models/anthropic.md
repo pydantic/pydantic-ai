@@ -983,8 +983,12 @@ each Claude model the computer use tool it was trained on, as a [`ComputerTool`]
 | Claude Haiku 4.5 | `computer_20250124` |
 
 Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
-model with `ComputerUse(native=False)` get a regular function tool named `computer` instead. For screen sizes, see
-[Screen size](../harness/computer-use.md#screen-size).
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead.
+
+Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+`computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
+token per 28x28 pixels), and the request fails with a `ModelHTTPError`. The older tools, and the function tool, shrink
+a larger screenshot without saying so, so Claude's clicks miss.
 
 To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
 [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own

@@ -854,11 +854,9 @@ _(This example is complete, it can be run "as is")_
 
 ## Computer Tool
 
-The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. The provider doesn't run the calls: the agent's `computer` tool does.
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds the `computer` tool and the `ComputerTool` for you.
 
-Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds both the `computer` tool and the `ComputerTool` for you. With `ComputerUse(native=False)`, the model gets `computer` as a regular function tool.
-
-The native tool is sent only when the request has exactly one `computer` tool the model can call. If there is none, an `optional` `ComputerTool` is left out, and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]. If there is more than one, the request raises `UserError`.
+A request needs exactly one `computer` tool the model can call. With none, an `optional` `ComputerTool` is left out and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]; with more than one, the request raises `UserError`.
 
 ### Provider Support
 
@@ -875,18 +873,6 @@ The native tool is sent only when the request has exactly one `computer` tool th
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-
-### Usage
-
-This example runs the desktop in a Docker container:
-
-```py {title="computer_tool.py" test="skip"}
-from pydantic_ai_harness import ComputerUse, DockerContainer
-
-from pydantic_ai import Agent
-
-agent = Agent('{{ openai:medium }}', capabilities=[DockerContainer(desktop=True), ComputerUse()])
-```
 
 ## Advisor Tool
 
