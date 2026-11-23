@@ -1295,7 +1295,11 @@ async def _answer_fails(request: AskUserRequest) -> AskUserResponse:
 
 
 def _second_status_read_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sequence[AbstractCapability[None]]:
-    """A foreground command whose second status read raises, after the call announced the command."""
+    """A foreground command whose second status read raises, after the call announced the command.
+
+    `Shell` has no public setting that makes a started command's status read fail, so this patches the private
+    `Job.status`, as `tests/harness/shell/test_shell.py` does.
+    """
     status = Job.status
     reads = 0
 
