@@ -1,20 +1,26 @@
 """Unit tests for the realtime examples' own helpers.
 
 `test_examples.py` runs the documented snippets; these cover the parts of the runnable examples that
-no snippet reaches — the voice assistant's barge-in accounting and the camera server's origin check —
-because both are load-bearing and neither is exercised by simply importing the module.
+no snippet reaches — the voice assistant's barge-in accounting, the camera server's origin check, and
+the Twilio bridge's call handling — because they are load-bearing and none is exercised by simply
+importing the module.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
+import base64
+import threading
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
+from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
+
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .conftest import try_import
 from .realtime_connections import InferredConnection
@@ -25,7 +31,16 @@ with try_import() as imports_successful:
     with patch('logfire.configure'), patch('logfire.instrument_pydantic_ai'):
         from examples.pydantic_ai_examples import realtime_voice
         from examples.pydantic_ai_examples.realtime_camera import app as realtime_camera
-    from pydantic_ai.messages import BinaryAudio, RealtimeInputSpeechStartEvent
+        from examples.pydantic_ai_examples.realtime_twilio import app as realtime_twilio
+    from fastapi.testclient import TestClient
+    from starlette.testclient import WebSocketTestSession
+    from starlette.websockets import WebSocketDisconnect
+    from twilio.request_validator import RequestValidator
+
+    from examples.pydantic_ai_examples.realtime_twilio.audio import mulaw_to_pcm16, pcm16_to_mulaw
+    from pydantic_ai.messages import BinaryAudio, ModelMessage, RealtimeInputSpeechStartEvent
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.realtime._utils import session_instructions
     from pydantic_ai.realtime.codec import (
         AudioDelta,
         CancelResponse,
@@ -85,6 +100,33 @@ with try_import() as imports_successful:
             else:
                 yield RealtimeInputSpeechStartEvent()
             yield ResponseDone()
+
+    class TwilioCallConnection(InferredConnection):
+        """Speaks two chunks of a reply, then reports the caller talking once their audio arrives.
+
+        The session runs on the app's event loop, in `TestClient`'s thread, so the test waits for the
+        cancel on a `threading.Event`.
+        """
+
+        def __init__(self) -> None:
+            self.sent: list[RealtimeInput] = []
+            self.instructions: str | None = None
+            self.cancelled = threading.Event()
+            self._caller_spoke = asyncio.Event()
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            if isinstance(content, BinaryAudio):
+                self._caller_spoke.set()
+            elif isinstance(content, CancelResponse):
+                self.cancelled.set()
+
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield AudioDelta(data=REPLY_CHUNK)
+            yield AudioDelta(data=REPLY_CHUNK)
+            await self._caller_spoke.wait()
+            yield RealtimeInputSpeechStartEvent()
+            await asyncio.Event().wait()
 
 
 pytestmark = [
@@ -280,3 +322,201 @@ async def test_camera_defaults_are_safe_to_embed_in_script(monkeypatch: pytest.M
 
     assert '</script><script>alert(1)</script>' not in html
     assert r'\u003c/script\u003e\u003cscript\u003ealert(1)\u003c/script\u003e' in html
+
+
+# 100 ms of the model's speech at gpt-realtime's 24 kHz.
+REPLY_CHUNK = b'\x10\x00' * 2400
+STREAM_SID = 'MZ1'
+TWILIO_TOKEN = 'test-auth-token'
+
+
+def _twilio_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
+    monkeypatch.setattr(realtime_twilio, 'validator', RequestValidator(TWILIO_TOKEN))
+    monkeypatch.setattr(realtime_twilio, 'public_url', 'https://bridge.example')
+    monkeypatch.setattr(realtime_twilio, 'answered_calls', set[str]())
+    return TestClient(realtime_twilio.app)
+
+
+def _answer(client: TestClient, call_sid: str) -> str:
+    """Call the webhook as Twilio does for an incoming call, signed, returning the TwiML."""
+    params = {'CallSid': call_sid, 'From': '+15551234567'}
+    signature = RequestValidator(TWILIO_TOKEN).compute_signature('https://bridge.example/twiml', params)  # pyright: ignore[reportUnknownMemberType]
+    response = client.post('/twiml', data=params, headers={'X-Twilio-Signature': signature})
+    assert response.status_code == 200
+    return response.text
+
+
+def _connect_to(mocker: MockerFixture, connection: TwilioCallConnection) -> None:
+    @asynccontextmanager
+    async def connect(
+        self: OpenAIRealtimeModel,
+        *,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        **kwargs: Any,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        connection.instructions = session_instructions(messages, model_request_parameters)
+        yield connection
+
+    mocker.patch.object(OpenAIRealtimeModel, 'connect', new=connect)
+
+
+def _start(call_sid: str) -> dict[str, Any]:
+    return {
+        'event': 'start',
+        'sequenceNumber': '1',
+        'streamSid': STREAM_SID,
+        'start': {
+            'accountSid': 'AC1',
+            'callSid': call_sid,
+            'streamSid': STREAM_SID,
+            'tracks': ['inbound'],
+            'mediaFormat': {'encoding': 'audio/x-mulaw', 'sampleRate': 8000, 'channels': 1},
+            'customParameters': {'caller': '+15551234567'},
+        },
+    }
+
+
+def _caller_audio() -> dict[str, Any]:
+    # 20 ms of the caller, as Twilio sends it.
+    payload = base64.b64encode(pcm16_to_mulaw(b'\x00\x01' * 160, rate=8000)).decode()
+    return {'event': 'media', 'streamSid': STREAM_SID, 'media': {'track': 'inbound', 'payload': payload}}
+
+
+def _until_closed(twilio: WebSocketTestSession) -> list[str]:
+    """The events the bridge sends until it closes the socket."""
+    events: list[str] = []
+    with pytest.raises(WebSocketDisconnect):
+        while True:
+            events.append(twilio.receive_json()['event'])
+    return events
+
+
+def test_twilio_webhook_connects_only_the_calls_it_answers(mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
+    """A signed webhook gets TwiML that streams the call, with per-call context as a `<Parameter>`, as the
+    stream URL takes no query string. An unsigned webhook is refused, and so is a stream for a call the
+    webhook didn't answer."""
+    client = _twilio_client(monkeypatch)
+    connection = TwilioCallConnection()
+    _connect_to(mocker, connection)
+
+    assert _answer(client, 'CA1') == snapshot(
+        '<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="wss://bridge.example/media-stream"><Parameter name="caller" value="+15551234567"/></Stream></Connect></Response>'
+    )
+    assert client.post('/twiml', data={'CallSid': 'CA2', 'From': '+1'}).status_code == 403
+
+    with client.websocket_connect('/media-stream') as twilio:
+        twilio.send_json({'event': 'connected', 'protocol': 'Call', 'version': '1.0.0'})
+        twilio.send_json(_start('CA2'))
+        with pytest.raises(WebSocketDisconnect) as closed:
+            twilio.receive_json()
+    assert closed.value.code == 1008
+    assert connection.instructions is None
+
+
+def test_twilio_bridge_interrupts_at_what_the_caller_heard(mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
+    """When the caller talks over the reply, the bridge clears Twilio's buffer and interrupts the session at
+    the audio Twilio confirmed playing: the first chunk's mark came back before the caller spoke, the
+    second's only as `clear` dropped it."""
+    client = _twilio_client(monkeypatch)
+    connection = TwilioCallConnection()
+    _connect_to(mocker, connection)
+    _answer(client, 'CA1')
+
+    with client.websocket_connect('/media-stream') as twilio:
+        twilio.send_json({'event': 'connected', 'protocol': 'Call', 'version': '1.0.0'})
+        twilio.send_json(_start('CA1'))
+        reply = [twilio.receive_json() for _ in range(4)]
+        assert [message['event'] for message in reply] == ['media', 'mark', 'media', 'mark']
+        # 100 ms at the line's 8 kHz, in mu-law's byte per sample.
+        assert len(base64.b64decode(reply[0]['media']['payload'])) == 800
+        first_mark, second_mark = reply[1]['mark'], reply[3]['mark']
+        twilio.send_json({'event': 'mark', 'streamSid': STREAM_SID, 'mark': first_mark})
+        twilio.send_json(_caller_audio())
+
+        assert twilio.receive_json() == {'event': 'clear', 'streamSid': STREAM_SID}
+        twilio.send_json({'event': 'mark', 'streamSid': STREAM_SID, 'mark': second_mark})
+        assert connection.cancelled.wait(READINESS_WAIT_TIMEOUT)
+        twilio.send_json({'event': 'stop', 'streamSid': STREAM_SID})
+        assert _until_closed(twilio) == []
+
+    assert [content for content in connection.sent if isinstance(content, (TruncateOutput, CancelResponse))] == [
+        TruncateOutput(audio_end_ms=100),
+        CancelResponse(),
+    ]
+    assert (
+        BinaryAudio(
+            data=mulaw_to_pcm16(pcm16_to_mulaw(b'\x00\x01' * 160, rate=8000), rate=24000), media_type='audio/pcm'
+        )
+        in connection.sent
+    )
+
+
+def test_twilio_bridge_passes_the_call_context_and_key_presses(mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
+    """The caller's number reaches the agent's instructions through the stream's custom parameters, a key
+    press reaches the model as text, and `stop` ends the session and closes the socket."""
+    client = _twilio_client(monkeypatch)
+    connection = TwilioCallConnection()
+    _connect_to(mocker, connection)
+    _answer(client, 'CA1')
+
+    with client.websocket_connect('/media-stream') as twilio:
+        twilio.send_json({'event': 'connected', 'protocol': 'Call', 'version': '1.0.0'})
+        twilio.send_json(_start('CA1'))
+        assert [twilio.receive_json()['event'] for _ in range(4)] == ['media', 'mark', 'media', 'mark']
+        twilio.send_json({'event': 'dtmf', 'streamSid': STREAM_SID, 'dtmf': {'track': 'inbound', 'digit': '5'}})
+        twilio.send_json({'event': 'stop', 'streamSid': STREAM_SID})
+        assert _until_closed(twilio) == []
+
+    assert connection.instructions is not None
+    assert 'The caller is calling from +15551234567.' in connection.instructions
+    assert 'The caller pressed 5 on their keypad.' in connection.sent
+
+
+def test_twilio_bridge_leaves_barge_in_to_a_model_that_handles_it(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """A model without interruption, like OpenAI GPT-Live, stops talking over the caller by itself: the
+    bridge sends no `clear` and interrupts nothing."""
+    client = _twilio_client(monkeypatch)
+    monkeypatch.setattr(
+        realtime_twilio, 'MODEL', OpenAIRealtimeModel('gpt-realtime', profile={'supports_interruption': False})
+    )
+    connection = TwilioCallConnection()
+    _connect_to(mocker, connection)
+    _answer(client, 'CA1')
+
+    with client.websocket_connect('/media-stream') as twilio:
+        twilio.send_json({'event': 'connected', 'protocol': 'Call', 'version': '1.0.0'})
+        twilio.send_json(_start('CA1'))
+        assert [twilio.receive_json()['event'] for _ in range(4)] == ['media', 'mark', 'media', 'mark']
+        twilio.send_json(_caller_audio())
+        twilio.send_json({'event': 'stop', 'streamSid': STREAM_SID})
+        assert _until_closed(twilio) == []
+
+    assert not any(isinstance(content, (TruncateOutput, CancelResponse)) for content in connection.sent)
+
+
+def test_twilio_marks_echoed_by_clear_are_not_played():
+    """`clear` makes Twilio echo every pending mark, for audio the caller never heard."""
+    marks = realtime_twilio.PlaybackMarks()
+    first, second = marks.sent(4800), marks.sent(4800)
+    marks.played(first)
+    marks.discard_pending()
+    marks.played(second)
+    assert marks.played_bytes == 4800
+
+
+def test_twilio_audio_converts_between_the_line_and_the_session():
+    """Each mu-law code at the line's 8 kHz becomes PCM16 at the session's rate and back.
+
+    Both zero codes decode to silence, which encodes as the positive one.
+    """
+    for rate in (16000, 24000):
+        for code in range(256):
+            pcm = mulaw_to_pcm16(bytes([code]), rate=rate)
+            assert len(pcm) == rate // 8000 * 2
+            assert pcm16_to_mulaw(pcm, rate=rate) == (b'\xff' if code == 0x7F else bytes([code]))
+    with pytest.raises(ValueError, match='11025 Hz is not a whole multiple of 8000 Hz'):
+        mulaw_to_pcm16(b'\xff', rate=11025)
