@@ -174,6 +174,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -20891,11 +20892,26 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
 # OAuth/credential unit tests stay in `tests/providers/codex/`.
 
 
-async def test_codex_count_tokens_raises_user_error(allow_model_requests: None):
-    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
-    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UserError, match='Server-side token counting is not available'):
+@pytest.mark.parametrize('provider', ['openai-codex', 'openai-chatgpt'])
+async def test_codex_and_chatgpt_count_tokens_raise_user_error(
+    allow_model_requests: None, provider: Literal['openai-codex', 'openai-chatgpt']
+):
+    """Neither provider serves `responses/input_tokens`, so `count_tokens` raises before any request.
+
+    The error is a `UserError` that is also a `NotImplementedError`, the error a caller that falls back when a model
+    can't count catches, as Pydantic AI Harness does for a nested agent's run.
+    """
+    mock_client = MockOpenAIResponses()
+    client = cast(AsyncOpenAI, mock_client)
+    match provider:
+        case 'openai-codex':
+            model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=client))
+        case 'openai-chatgpt':
+            model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIChatGPTProvider(openai_client=client))
+    with pytest.raises(UserError, match='Server-side token counting is not available') as exc_info:
         await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    assert isinstance(exc_info.value, NotImplementedError)
+    assert mock_client.count_kwargs == []
 
 
 _MINIMAL_RESPONSE: dict[str, Any] = {

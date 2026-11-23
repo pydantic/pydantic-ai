@@ -262,6 +262,14 @@ _WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
 
+class _TokenCountingUnavailableError(UserError, NotImplementedError):
+    """Raised by `count_tokens` when the provider serves no input-token counting.
+
+    It is a `NotImplementedError`, as `Model.count_tokens` raises for a model that can't count, so a caller that
+    falls back for such a model, like Pydantic AI Harness running a nested agent, falls back here too.
+    """
+
+
 class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
     """Provider details for OpenAI Responses API continuation."""
 
@@ -999,7 +1007,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> usage.RequestUsage:
         check_allow_model_requests()
         if not self.profile.get('openai_supports_input_token_counting', True):
-            raise UserError(
+            raise _TokenCountingUnavailableError(
                 f'Server-side token counting is not available for {self.system} models '
                 f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
             )

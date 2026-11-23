@@ -2004,6 +2004,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     params.messages, params.model_settings, params.model_request_parameters
                 )
             except NotImplementedError as error:
+                # A `UserError` that is also a `NotImplementedError`, as a provider that serves no token counting
+                # raises, is recorded as the `UserError` it is, so it fails the run instead of being retried.
+                if isinstance(error, UserError):
+                    return CountTokensResult(error=('UserError', str(error)))
                 return CountTokensResult(error=('NotImplementedError', str(error)))
             except UserError as error:
                 # A subclass carries more than its message, so it fails the unit as the engine fails any error.
