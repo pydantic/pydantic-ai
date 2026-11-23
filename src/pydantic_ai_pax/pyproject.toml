@@ -69,6 +69,7 @@ dependencies = [
     "keyring>=25.6",
     # Encrypts saved credentials with the one key kept in keyring, so a session prompts for keychain access once.
     "cryptography>=42",
+    # 13.0.0 is the first release patched for GHSA-g4qv-2jxx-769h.
     "pillow>=13.0.0",
     # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
     "logfire[httpx]>=4.31.0",
