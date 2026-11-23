@@ -28,15 +28,20 @@ Body checkers, over a body's messages projected to `WireMessage`s by the functio
 - `wire.empty_message`: a message with no blocks, other than an assistant turn where `empty_assistant_turns_pass`
   or a user turn where `empty_user_turns_pass`;
 - `wire.empty_text`: a text block with no text, or one outside an assistant turn with only whitespace;
-- `wire.body_changed`: two mappings that should agree, such as mapping the same history twice, don't.
+- `wire.body_changed`: two mappings that should agree, such as mapping the same history twice, don't;
+- `wire.empty_frame`: a text block holds a tag with nothing between its opening and closing, as an empty part
+  rendered in its frame does, such as an empty `ThinkingPart` as `<think>\n\n</think>`;
+- `wire.call_field_lost`: a call the body sends with a name or arguments the history doesn't hold for its id;
+- `wire.stale_reference`: the body holds, as a value or a key, a server reference that no longer applies.
 """
 
 from __future__ import annotations as _annotations
 
+import re
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Literal, assert_never
 
 import pydantic_core
@@ -50,6 +55,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -140,6 +146,11 @@ class WireBlock:
     kind: Literal['text', 'call', 'result', 'other']
     value: str = ''
     """The text of a `'text'` block, or the call id of a `'call'` or `'result'` block."""
+    name: str = field(default='', compare=False)
+    """The tool name of a `'call'` block, for `call_field_violations`. Left out of equality, so a projection's
+    baseline names only the blocks."""
+    arguments: JsonValue = field(default=None, compare=False)
+    """The parsed arguments of a `'call'` block, for `call_field_violations`."""
 
 
 @dataclass(frozen=True)
@@ -175,6 +186,24 @@ def _content_blocks(content: JsonValue) -> list[WireBlock]:
     ]
 
 
+def _arguments(value: JsonValue) -> JsonValue:
+    """Call arguments as the JSON they encode, when a body sends them as a string."""
+    if isinstance(value, str):
+        try:
+            return pydantic_core.from_json(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _function_call(call_id: JsonValue, function: JsonValue) -> WireBlock:
+    """A call block from an id and an object carrying its `name` and `arguments`."""
+    fields = _fields(function)
+    return WireBlock(
+        'call', _text(call_id), name=_text(fields.get('name')), arguments=_arguments(fields.get('arguments'))
+    )
+
+
 def chat_completions_wire(messages: JsonValue) -> list[WireMessage]:
     """OpenAI Chat Completions messages, and those of the APIs shaped like it: Groq, Mistral, Cohere, Hugging Face.
 
@@ -186,7 +215,10 @@ def chat_completions_wire(messages: JsonValue) -> list[WireMessage]:
         blocks = (
             [WireBlock('result', _text(call_id))] if call_id is not None else _content_blocks(fields.get('content'))
         )
-        blocks += [WireBlock('call', _text(_fields(call).get('id'))) for call in _items(fields.get('tool_calls'))]
+        blocks += [
+            _function_call(_fields(call).get('id'), _fields(call).get('function'))
+            for call in _items(fields.get('tool_calls'))
+        ]
         wire.append(WireMessage(_text(fields.get('role')), blocks))
     return wire
 
@@ -197,7 +229,7 @@ def openai_responses_wire(items: JsonValue) -> list[WireMessage]:
     for fields in map(_fields, _items(items)):
         item_type = _text(fields.get('type', 'message'))
         if item_type == 'function_call':
-            wire.append(WireMessage(item_type, [WireBlock('call', _text(fields.get('call_id')))]))
+            wire.append(WireMessage(item_type, [_function_call(fields.get('call_id'), fields)]))
         elif item_type == 'function_call_output':
             wire.append(WireMessage(item_type, [WireBlock('result', _text(fields.get('call_id')))]))
         elif item_type == 'message':
@@ -218,9 +250,14 @@ def anthropic_wire(messages: JsonValue) -> list[WireMessage]:
         blocks = _content_blocks(fields.get('content'))
         for index, block in enumerate(map(_fields, _items(fields.get('content')))):
             if block.get('type') == 'tool_use':
-                blocks[index] = WireBlock('call', _text(block.get('id')))
+                blocks[index] = WireBlock(
+                    'call', _text(block.get('id')), name=_text(block.get('name')), arguments=block.get('input')
+                )
             elif block.get('type') == 'tool_result':
                 blocks[index] = WireBlock('result', _text(block.get('tool_use_id')))
+        if 'output_config' in fields:
+            # A mid-conversation change of the thinking effort: a `system` entry whose setting is its content.
+            blocks.append(WireBlock('other'))
         role = _text(fields.get('role'))
         if wire and wire[-1].role == role:
             wire[-1].blocks.extend(blocks)
@@ -238,7 +275,15 @@ def bedrock_wire(messages: JsonValue) -> list[WireMessage]:
             if 'text' in block:
                 blocks.append(WireBlock('text', _text(block['text'])))
             elif 'toolUse' in block:
-                blocks.append(WireBlock('call', _text(_fields(block['toolUse']).get('toolUseId'))))
+                tool_use = _fields(block['toolUse'])
+                blocks.append(
+                    WireBlock(
+                        'call',
+                        _text(tool_use.get('toolUseId')),
+                        name=_text(tool_use.get('name')),
+                        arguments=tool_use.get('input'),
+                    )
+                )
             elif 'toolResult' in block:
                 blocks.append(WireBlock('result', _text(_fields(block['toolResult']).get('toolUseId'))))
             else:
@@ -254,7 +299,15 @@ def google_wire(contents: JsonValue) -> list[WireMessage]:
         blocks: list[WireBlock] = []
         for part in map(_fields, _items(fields.get('parts'))):
             if 'function_call' in part:
-                blocks.append(WireBlock('call', _text(_fields(part['function_call']).get('id'))))
+                function_call = _fields(part['function_call'])
+                blocks.append(
+                    WireBlock(
+                        'call',
+                        _text(function_call.get('id')),
+                        name=_text(function_call.get('name')),
+                        arguments=function_call.get('args'),
+                    )
+                )
             elif 'function_response' in part:
                 blocks.append(WireBlock('result', _text(_fields(part['function_response']).get('id'))))
             elif 'text' in part and not part.get('thought'):
@@ -262,6 +315,33 @@ def google_wire(contents: JsonValue) -> list[WireMessage]:
             else:
                 blocks.append(WireBlock('other'))
         wire.append(WireMessage(_text(fields.get('role')), blocks))
+    return wire
+
+
+_CLIENT_SIDE = 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL'
+
+
+def xai_wire(messages: JsonValue) -> list[WireMessage]:
+    """xAI chat messages, as the JSON form of the protobuf messages its SDK sends: roles are `ROLE_*` names, and a
+    tool message names the call it answers in `toolCallId`."""
+    wire: list[WireMessage] = []
+    for fields in map(_fields, _items(messages)):
+        role = _text(fields.get('role')).removeprefix('ROLE_').lower()
+        calls = list(map(_fields, _items(fields.get('toolCalls'))))
+        if (call_id := fields.get('toolCallId')) is not None:
+            # A server-side tool's return is replayed with its call and `encryptedContent`, and answers no client call.
+            server_side = any(call.get('type', _CLIENT_SIDE) != _CLIENT_SIDE for call in calls)
+            blocks = [WireBlock('other' if server_side else 'result', _text(call_id))]
+        else:
+            blocks = [
+                WireBlock('text', _text(content['text'])) if 'text' in content else WireBlock('other')
+                for content in map(_fields, _items(fields.get('content')))
+            ]
+        for call in calls:
+            block = _function_call(call.get('id'), call.get('function'))
+            # A server-side tool's call ran on xAI's side, and takes no client result.
+            blocks.append(block if call.get('type', _CLIENT_SIDE) == _CLIENT_SIDE else replace(block, kind='other'))
+        wire.append(WireMessage(role, blocks))
     return wire
 
 
@@ -353,3 +433,79 @@ def empty_text_violations(messages: Sequence[WireMessage]) -> list[str]:
 def body_changes(first: object, second: object) -> list[str]:
     """`wire.body_changed`: two mappings that should give the same request body didn't."""
     return ['wire.body_changed'] if first != second else []
+
+
+_EMPTY_FRAME = re.compile(r'<([A-Za-z][\w:.-]*)(?:\s[^<>]*)?>\s*</\1>')
+
+
+def empty_frame_violations(messages: Sequence[WireMessage]) -> list[str]:
+    """`wire.empty_frame`: no text block holds a tag with nothing between its opening and closing.
+
+    That is what an adapter sends when it frames a part with no content, such as an empty `ThinkingPart` as
+    `<think>\n\n</think>` in an assistant turn.
+    """
+    return [
+        'wire.empty_frame'
+        for message in messages
+        for block in message.blocks
+        if block.kind == 'text'
+        for _ in _EMPTY_FRAME.finditer(block.value)
+    ]
+
+
+def _sent_name(call: ToolCallPart | NativeToolCallPart, system: str) -> str:
+    """The name a call goes under to the `system` provider: for a native call going back to the provider that named
+    the function it ran, that name, which an adapter keeps in `provider_details['function_name']` (xAI's web search
+    runs `open_page`, say). Another API gets it as a call of the tool."""
+    if (
+        isinstance(call, NativeToolCallPart)
+        and call.provider_name == system
+        and isinstance(name := (call.provider_details or {}).get('function_name'), str)
+    ):
+        return name
+    return call.tool_name
+
+
+def call_field_violations(
+    calls: Sequence[ToolCallPart | NativeToolCallPart], messages: Sequence[WireMessage], *, system: str
+) -> list[str]:
+    """`wire.call_field_lost`: every call the body sends to the `system` provider goes with a name and arguments the
+    history holds for its id.
+
+    That covers a server-side tool's call too, which a projection keeps as a named `'other'` block. A call the body
+    leaves out is another checker's concern; this one compares the calls it sends.
+    """
+    held: dict[str, list[tuple[str, JsonValue]]] = {}
+    for call in calls:
+        held.setdefault(call.tool_call_id, []).append((_sent_name(call, system), call.args_as_dict()))
+    return [
+        'wire.call_field_lost'
+        for message in messages
+        for block in message.blocks
+        if (block.kind == 'call' or block.name)
+        and block.value in held
+        and (block.name, block.arguments) not in held[block.value]
+    ]
+
+
+def json_strings(value: JsonValue) -> Iterator[str]:
+    """Every string in a JSON value, its object keys included."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from json_strings(item)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from json_strings(item)
+
+
+def stale_reference_violations(references: Collection[str], body: JsonValue) -> list[str]:
+    """`wire.stale_reference`: no reference that no longer applies appears anywhere in the body, as a value or a key.
+
+    A reference no longer applies when the content it names was edited, or when it names state on an endpoint the
+    body doesn't go to.
+    """
+    present = set(json_strings(body))
+    return ['wire.stale_reference' for reference in references if reference in present]

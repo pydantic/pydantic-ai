@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -31,9 +32,11 @@ from .history_invariants import (
     anthropic_wire,
     bedrock_wire,
     body_changes,
+    call_field_violations,
     call_pairing_violations,
     chat_completions_wire,
     duplicate_call_id_violations,
+    empty_frame_violations,
     empty_message_violations,
     empty_text_violations,
     google_wire,
@@ -41,7 +44,9 @@ from .history_invariants import (
     openai_responses_wire,
     part_changes,
     round_trip_violations,
+    stale_reference_violations,
     tool_pairing_violations,
+    xai_wire,
 )
 
 
@@ -210,12 +215,14 @@ WIRE_CASES = [
             },
             {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'call_1'}]},
             {'role': 'user', 'content': [{'type': 'text', 'text': 'Thanks'}]},
+            {'role': 'system', 'content': [], 'output_config': {'effort': 'low'}},
             {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Found it'}]},
         ],
         [
             WireMessage('user', [WireBlock('text', 'Look it up')]),
             WireMessage('assistant', [WireBlock('other'), WireBlock('call', 'call_1')]),
             WireMessage('user', [WireBlock('result', 'call_1'), WireBlock('text', 'Thanks')]),
+            WireMessage('system', [WireBlock('other')]),
             WireMessage('assistant', [WireBlock('text', 'Found it')]),
         ],
     ),
@@ -251,6 +258,44 @@ WIRE_CASES = [
             WireMessage('model', [WireBlock('text', 'Found it')]),
         ],
     ),
+    WireCase(
+        'xai',
+        xai_wire,
+        [
+            {'role': 'ROLE_USER', 'content': [{'text': 'Look it up'}]},
+            {
+                'role': 'ROLE_ASSISTANT',
+                'content': [{'text': 'Looking'}],
+                'toolCalls': [
+                    {'id': 'call_0', 'type': 'TOOL_CALL_TYPE_WEB_SEARCH_TOOL', 'function': {'name': 'web_search'}}
+                ],
+            },
+            {
+                'role': 'ROLE_TOOL',
+                'toolCallId': 'call_0',
+                'encryptedContent': 'AA==',
+                'toolCalls': [
+                    {'id': 'call_0', 'type': 'TOOL_CALL_TYPE_WEB_SEARCH_TOOL', 'function': {'name': 'web_search'}}
+                ],
+            },
+            {
+                'role': 'ROLE_ASSISTANT',
+                'toolCalls': [
+                    {'id': 'call_1', 'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL', 'function': {'name': 'lookup'}}
+                ],
+            },
+            {'role': 'ROLE_TOOL', 'toolCallId': 'call_1', 'content': [{'text': 'a'}]},
+            {'role': 'ROLE_ASSISTANT', 'content': [{'text': 'Found it'}]},
+        ],
+        [
+            WireMessage('user', [WireBlock('text', 'Look it up')]),
+            WireMessage('assistant', [WireBlock('text', 'Looking'), WireBlock('other', 'call_0')]),
+            WireMessage('tool', [WireBlock('other', 'call_0'), WireBlock('other', 'call_0')]),
+            WireMessage('assistant', [WireBlock('call', 'call_1')]),
+            WireMessage('tool', [WireBlock('result', 'call_1')]),
+            WireMessage('assistant', [WireBlock('text', 'Found it')]),
+        ],
+    ),
 ]
 
 
@@ -267,6 +312,7 @@ def test_well_formed_body_passes_every_body_checker(case: WireCase):
         == []
     )
     assert empty_text_violations(wire) == []
+    assert empty_frame_violations(wire) == []
 
 
 def test_duplicate_call_id():
@@ -442,3 +488,78 @@ def test_whitespace_only_text_passes_in_an_assistant_turn():
     assert empty_text_violations(bedrock_wire([{'role': 'assistant', 'content': [{'text': ''}]}])) == [
         'wire.empty_text'
     ]
+
+
+def test_empty_frame():
+    """An empty `ThinkingPart` sent in its tags in front of the text, as OpenAI Chat once rendered one
+    (https://github.com/pydantic/pydantic-ai/pull/13396)."""
+    assert empty_frame_violations([WireMessage('assistant', [WireBlock('text', '<think>\n\n</think>\n\nhi')])]) == [
+        'wire.empty_frame'
+    ]
+
+
+def test_framed_content_is_not_an_empty_frame():
+    assert empty_frame_violations([WireMessage('assistant', [WireBlock('text', '<think>Hm</think>\n\nhi')])]) == []
+
+
+def _sent_call(name: str, arguments: JsonValue) -> list[WireMessage]:
+    return [WireMessage('assistant', [WireBlock('call', 'call_1', name=name, arguments=arguments)])]
+
+
+def test_call_field_lost_name():
+    assert call_field_violations(
+        [ToolCallPart('lookup', {'q': 'a'}, 'call_1')], _sent_call('search', {'q': 'a'}), system='openai'
+    ) == ['wire.call_field_lost']
+
+
+def test_call_field_lost_arguments():
+    assert call_field_violations(
+        [ToolCallPart('lookup', {'q': 'a'}, 'call_1')], _sent_call('lookup', {'q': 'b'}), system='openai'
+    ) == ['wire.call_field_lost']
+
+
+def test_call_fields_kept():
+    assert (
+        call_field_violations(
+            [ToolCallPart('lookup', '{"q": "a"}', 'call_1')], _sent_call('lookup', {'q': 'a'}), system='openai'
+        )
+        == []
+    )
+
+
+_OPEN_PAGE = NativeToolCallPart(
+    'web_search', {'query': 'q'}, 'call_1', provider_name='xai', provider_details={'function_name': 'open_page'}
+)
+"""An xAI web search that ran `open_page`, which goes back by that name
+(https://github.com/pydantic/pydantic-ai/pull/10021)."""
+
+
+def test_call_field_lost_native_function_name():
+    sent = [WireMessage('assistant', [WireBlock('other', 'call_1', name='web_search', arguments={'query': 'q'})])]
+    assert call_field_violations([_OPEN_PAGE], sent, system='xai') == ['wire.call_field_lost']
+
+
+def test_native_call_keeps_its_function_name():
+    sent = [WireMessage('assistant', [WireBlock('other', 'call_1', name='open_page', arguments={'query': 'q'})])]
+    assert call_field_violations([_OPEN_PAGE], sent, system='xai') == []
+
+
+def test_native_call_goes_to_another_api_as_its_tool():
+    sent = [WireMessage('assistant', [WireBlock('call', 'call_1', name='web_search', arguments={'query': 'q'})])]
+    assert call_field_violations([_OPEN_PAGE], sent, system='openai-decisions') == []
+
+
+def test_stale_reference_as_a_value():
+    assert stale_reference_violations({'msg_1'}, [{'type': 'message', 'id': 'msg_1'}]) == ['wire.stale_reference']
+
+
+def test_stale_reference_as_a_key():
+    """A Responses reasoning id that OpenAI Chat once sent as a field name
+    (https://github.com/pydantic/pydantic-ai/pull/12136)."""
+    assert stale_reference_violations({'rs_1'}, [{'role': 'assistant', 'rs_1': 'Paris first.'}]) == [
+        'wire.stale_reference'
+    ]
+
+
+def test_fresh_references_pass():
+    assert stale_reference_violations({'rs_1'}, [{'role': 'assistant', 'content': 'Rain in Paris.'}]) == []
