@@ -1,4 +1,4 @@
-"""Repository workflow policy composed with the public CLAI 2 engine's Coder."""
+"""Repository workflow policy composed with the public Pax engine's Coder."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ result_metadata: dict[str, object] = {}
 
 @dataclass
 class WorkflowPolicy(AbstractCapability[object]):
-    """Keep workflow budgets and terminal health metadata around CLAI's run."""
+    """Keep workflow budgets and terminal health metadata around Pax's run."""
 
     timed_out: bool = False
 
@@ -123,7 +123,7 @@ _model: AnthropicModel | None = None
 
 
 def workflow_model(ctx: ModelResolutionContext[object], model_id: str) -> Model:
-    """Resolve CLAI's explicit model with the workflow's existing transport policy."""
+    """Resolve Pax's explicit model with the workflow's existing transport policy."""
     del ctx
     global _model
     provider, separator, name = model_id.partition(':')

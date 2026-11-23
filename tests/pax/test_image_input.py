@@ -54,6 +54,12 @@ def test_normalize(mode: str) -> None:
         assert restored.mode == ('RGBA' if mode == 'RGBA' else 'RGB')
 
 
+@pytest.mark.parametrize(('size', 'shown'), [((3000, 2000), (1024, 683)), ((1024, 600), (1024, 600))])
+def test_large_image_is_downscaled_to_max_side(size: tuple[int, int], shown: tuple[int, int]) -> None:
+    with Image.open(io.BytesIO(encode_image(Image.new('RGB', size)).data)) as restored:
+        assert restored.size == shown
+
+
 def test_size_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(image_codec, 'MAX_PIXELS', 5)
     with pytest.raises(ValueError, match='megapixel'):
@@ -333,7 +339,7 @@ def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
     data = base64.b64encode(image_path.read_bytes()).decode()
     assert decode_images([data, data]) == [read_image(image_path)] * 2
-    with pytest.raises(ValueError, match='Not an image CLAI can read'):
+    with pytest.raises(ValueError, match='Not an image Pax can read'):
         decode_images([base64.b64encode(b'not an image').decode()])
     with pytest.raises(ValueError, match='base64'):
         decode_images(['not base64!'])

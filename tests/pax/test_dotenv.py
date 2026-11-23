@@ -1,4 +1,4 @@
-"""Load project environment variables before CLAI startup consumes them."""
+"""Load project environment variables before Pax startup consumes them."""
 
 import os
 import subprocess

@@ -114,7 +114,7 @@ def _private_directory(path: Path) -> Path:
 def _check_private_directory(path: Path) -> Path:
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise PermissionError(f'Unsafe CLAI directory {path}')
+        raise PermissionError(f'Unsafe Pax directory {path}')
     return path
 
 
@@ -191,7 +191,7 @@ def _record_socket(record: LiveRecord) -> Path:
         or path.name != f'{record.pid}.sock'
         or path.parent.name != f'pydantic-clai2-{os.getuid()}'
     ):
-        raise ValueError('Invalid CLAI control socket path')
+        raise ValueError('Invalid Pax control socket path')
     _check_private_directory(path.parent)
     return path
 
@@ -280,18 +280,18 @@ def _socket_path(directory: Path, pid: int) -> tuple[Path, int | None]:
     _private_directory(directory)
     path = _socket_directory() / f'{pid}.sock'
     if len(os.fsencode(path)) >= 104:
-        raise OSError('CLAI control socket path is too long')
+        raise OSError('Pax control socket path is too long')
     if not path.exists() and not path.is_symlink():
         return path, None
     if not _owned_socket(path):
-        raise PermissionError(f'Unsafe CLAI socket {path}')
+        raise PermissionError(f'Unsafe Pax socket {path}')
     return path, path.lstat().st_ino
 
 
 def _unlink_abandoned(path: Path, inode: int) -> None:
     _unlink_if_unchanged(path, inode)
     if path.exists():
-        raise OSError(f'CLAI socket changed during cleanup at {path}')
+        raise OSError(f'Pax socket changed during cleanup at {path}')
 
 
 def _unlink_published(path: Path, socket_inode: int, record_path: Path, instance: str) -> None:
@@ -416,9 +416,9 @@ class LiveRegistry:
             except (ConnectionRefusedError, FileNotFoundError):
                 await to_thread.run_sync(_unlink_abandoned, path, abandoned)
             except (ControlProtocolError, ValueError) as exc:
-                raise OSError(f'CLAI socket already active at {path}') from exc
+                raise OSError(f'Pax socket already active at {path}') from exc
             else:
-                raise OSError(f'CLAI socket already active at {path}')
+                raise OSError(f'Pax socket already active at {path}')
         self.socket_path = path
         listener = socket.socket(socket.AF_UNIX)
         try:

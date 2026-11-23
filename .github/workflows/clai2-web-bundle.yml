@@ -1,5 +1,5 @@
 # description: Rebuilds the clai2 web UI bundle after a web UI change lands on main, and queues a pull request that commits it.
-name: CLAI 2 web bundle
+name: Pax web bundle
 
 # Pull requests change `src/pydantic_ai_pax/web-ui` without committing its built, minified bundle:
 # two that each committed a rebuild conflicted on it even when their sources merged cleanly, which
@@ -134,7 +134,7 @@ jobs:
             body=$(printf '%s\n' \
               'Commits the `clai2` web UI bundle built from `src/pydantic_ai_pax/web-ui` on `main`.' \
               '' \
-              'Opened by the `CLAI 2 web bundle` workflow, which replaces this branch with a new build after each web UI change on `main`. Pull requests do not commit the bundle themselves; see #11554.')
+              'Opened by the `Pax web bundle` workflow, which replaces this branch with a new build after each web UI change on `main`. Pull requests do not commit the bundle themselves; see #11554.')
             gh pr create --base main --head "$BRANCH" --title 'Rebuild the `clai2` web UI bundle' --body "$body"
           fi
           # A force-push keeps auto-merge, and asking again for a pull request that has it fails.
