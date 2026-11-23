@@ -55,7 +55,7 @@ interface Props {
   version: number
   /** The live session the main pane shows. */
   shown: string | null
-  /** The sessions live in this CLAI, by conversation ID, whose rows show what each is doing. */
+  /** The sessions live in this Pax, by conversation ID, whose rows show what each is doing. */
   live: Record<string, LiveEntry>
   viewing: string | null
   /** The session being opened: its row is highlighted at once, as the selection. */
@@ -65,7 +65,7 @@ interface Props {
   onTheme: () => void
   themeInfo: ThemeInfo | null
   onPickTheme: (name: string) => void
-  /** Show a session, such as a fork just made: live, or read-only when CLAI cannot open it. A row passes all it knows. */
+  /** Show a session, such as a fork just made: live, or read-only when Pax cannot open it. A row passes all it knows. */
   onView: (session: Pick<SessionEntry, 'id' | 'title'> & Partial<Pick<SessionEntry, 'workspace' | 'openable'>>) => void
   /** Start a new session, asking where it runs when sessions run in their own directories. */
   onNew: () => void
@@ -104,16 +104,16 @@ const LABELS: Record<Exclude<Status, null>, string> = {
   running: 'Running',
   queued: 'Running, with input queued',
   asking: 'Needs input',
-  busy: 'Running in another CLAI',
+  busy: 'Running in another Pax',
   failed: 'Last turn failed',
   cancelled: 'Last turn interrupted',
   unread: 'Unread',
 }
 
-/** A row's one glyph: a spinner while it runs here, a ring while another CLAI runs it, else a dot or nothing. */
+/** A row's one glyph: a spinner while it runs here, a ring while another Pax runs it, else a dot or nothing. */
 function Glyph({ state, pid }: { state: Status; pid: number | null }) {
   if (state === null) return <span className="state" />
-  const label = state === 'busy' && pid !== null ? `Running in clai2 pid ${pid}` : LABELS[state]
+  const label = state === 'busy' && pid !== null ? `Running in Pax pid ${pid}` : LABELS[state]
   if (state === 'running' || state === 'queued') {
     return <span className={`spinner row-spinner ${state === 'queued' ? 'with-queue' : ''}`} role="img" aria-label={label} title={label} />
   }
@@ -241,7 +241,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return () => window.clearTimeout(timer)
   }, [load, version, query])
 
-  // Other CLAIs save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
+  // Other Pax processes save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
   useEffect(() => {
     if (unsaved) return
     const interval = window.setInterval(() => void load(), 15000)
@@ -461,7 +461,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                   disabled={!archivable(session)}
                   title={
                     session.id === shown || session.id in live
-                      ? 'A session open in CLAI cannot be archived'
+                      ? 'A session open in Pax cannot be archived'
                       : !archivable(session)
                         ? 'A running session cannot be archived'
                         : 'Hide it; nothing is deleted'
@@ -484,7 +484,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             <button
               className="danger"
               disabled={session.id in live || session.id === shown}
-              title={session.id in live || session.id === shown ? 'A session open in CLAI cannot be deleted' : undefined}
+              title={session.id in live || session.id === shown ? 'A session open in Pax cannot be deleted' : undefined}
               onClick={() =>
                 window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
                 void act(() => api.remove(session.id))
@@ -572,7 +572,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   }
 
   const empty = unsaved
-    ? 'This CLAI does not save sessions'
+    ? 'This Pax does not save sessions'
     : query
       ? 'No matching sessions'
       : view === 'attention'
@@ -586,7 +586,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       <div className="sidebar-top">
         <div className="brand">
           <Logo />
-          <span className="brand-product">CLAI</span>
+          <span className="brand-product">Pax</span>
           <span className={`connection ${connected ? 'on' : ''}`} title={connected ? 'Connected' : 'Reconnecting…'} />
         </div>
         <button className="icon-button" onClick={onCollapse} title="Hide sidebar">

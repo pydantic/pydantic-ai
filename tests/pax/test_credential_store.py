@@ -47,7 +47,7 @@ def new_session() -> None:
 
 
 def legacy_chunks(vault: Vault, value: str, *, count: int = 3) -> None:
-    """Store `value` the way an older CLAI split large bundles for Windows' per-entry size limit."""
+    """Store `value` the way an older Pax split large bundles for Windows' per-entry size limit."""
     generation = 'a' * 32
     vault[LEGACY] = f'clai-chunks-v1:{generation}:{count}'
     size = -(-len(value) // count)
