@@ -177,8 +177,8 @@ def _scan(source: str | None, path: str, facts: frozenset[str]) -> _Scan:
 def _file_growth(path: str, old: _Scan, new: _Scan, moves: Counter[str]) -> _Growth | None:
     """How far a change raised a file's untagged count, less the members that only moved.
 
-    A member is new unless the file already had its name as often, or `moves`, the names the change removed from
-    the other changed files, holds it; each one taken from `moves` is used up.
+    A member is new unless the file already had its name as often, or `moves`, the untagged members the change removed
+    from the registered sets of changed files, holds it; each one taken from `moves` is used up.
     """
     gained = new.strings - old.strings
     paired = Counter(m.name for m in old.untagged)
@@ -213,9 +213,10 @@ def _growth(changes: list[Change], facts: frozenset[str]) -> tuple[list[_Growth]
     scans = [
         (c, _scan(c.old_source, c.old_path or '', facts), _scan(c.new_source, c.new_path or '', facts)) for c in changes
     ]
+    # Only a name that leaves a registered set elsewhere can move into one; any other string the change removes can't.
     moves: Counter[str] = Counter()
     for _, old, new in scans:
-        moves.update(old.strings - new.strings)
+        moves.update(Counter(m.name for m in old.untagged) - Counter(m.name for m in new.untagged))
     growth: list[_Growth] = []
     added_tags: list[tuple[str, _Tag]] = []
     for change, old, new in scans:

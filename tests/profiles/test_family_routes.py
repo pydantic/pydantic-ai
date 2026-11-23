@@ -18,9 +18,9 @@ Offline: `Provider.model_profile()` only.
 
 from __future__ import annotations
 
+import copy
 import importlib
 import inspect
-import json
 import pkgutil
 import warnings
 from collections.abc import Callable
@@ -30,6 +30,7 @@ from functools import cache
 import pytest
 
 from pydantic_ai import providers
+from pydantic_ai._json_schema_keywords import Subschema, iter_subschemas
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._family import _VENDOR_FAMILY_PROFILES  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.providers import Provider
@@ -81,7 +82,12 @@ def _facts(profile: ModelProfile | None) -> frozenset[str]:
         facts.add('always thinks')
     # Checked by its output rather than by the transformer class, since a route may inline `$defs` with its own one.
     if (transformer := profile.get('json_schema_transformer')) is not None:
-        if '$ref' not in json.dumps(transformer(json.loads(json.dumps(_REF_SCHEMA))).walk()):
+        # Walk the output until a subschema still holds a `$ref`; an empty walk means every `$ref` was inlined.
+        pending: list[Subschema] = [transformer(copy.deepcopy(_REF_SCHEMA)).walk()]
+        while pending and not (isinstance(pending[-1], dict) and '$ref' in pending[-1]):
+            node = pending.pop()
+            pending.extend(iter_subschemas(node) if isinstance(node, dict) else ())
+        if not pending:
             facts.add('inlines $defs')
     return frozenset(facts)
 
