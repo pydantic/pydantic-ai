@@ -2,8 +2,9 @@
 """Fail when an agent instruction names a repository path or a skill entry that does not exist.
 
 An instruction file names a path in a code span (`tests/AGENTS.md`). A path that starts at a top-level entry of the
-repository must name a tracked file or directory, from the repository root or from inside it: a package guide names
-its own `docs/`, and `agent_docs/complexity.md` names `pydantic_graph/graph_builder.py` inside its package. Paths git
+repository must name a tracked file or directory from the repository root, from a directory between the instruction
+file and the root, so a package guide can name its own `docs/`, or inside the top-level directory it starts with, so
+`agent_docs/complexity.md` can name `pydantic_graph/graph_builder.py` for `pydantic_graph/pydantic_graph/`. Paths git
 ignores, such as branch-context state, are runtime files and pass. A code span that is the text of a link to a URL
 names that URL's file and is skipped.
 
@@ -25,7 +26,7 @@ import sys
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
 
-# The file set `scripts/check_glossary_spellings.py` reads: every instruction file an agent loads.
+# Every instruction file an agent loads.
 INSTRUCTION_FILE = re.compile(r'(^|/)(AGENTS|CLAUDE|SKILL)\.md$|(^|/)(agent_docs|\.agents|\.claude)/.*\.md$')
 # Skills the packages ship to their users describe the user's repository, not this one.
 SHIPPED_SKILLS = ('pydantic_ai_slim/pydantic_ai/.agents/', 'src/pydantic_ai_harness/pydantic_ai_harness/.agents/')
@@ -61,13 +62,13 @@ def named_paths(text: str) -> list[tuple[int, str]]:
 
 def find_problems(tracked: Sequence[str], instructions: Sequence[str], read: Read, ignored: Ignored) -> list[str]:
     """Every unresolved reference in `instructions`, resolved against the `tracked` paths."""
-    entries = {*tracked, *(str(parent) for path in tracked for parent in PurePosixPath(path).parents)}
-    # Each entry and every trailing run of its components, so a path resolves from inside the repository too.
-    known = {'/'.join(parts[i:]) for entry in entries if (parts := entry.split('/')) for i in range(len(parts))}
+    known = {*tracked, *(str(parent) for path in tracked for parent in PurePosixPath(path).parents)}
     top = {path.split('/')[0] for path in tracked}
 
-    def exists(path: str) -> bool:
-        return path.rstrip('/') in known
+    def exists(path: str, bases: list[str]) -> bool:
+        path = path.rstrip('/')
+        candidates = [f'{base}/{path}'.removeprefix('./') for base in bases] + [f'{path.split("/")[0]}/{path}']
+        return any(candidate in known for candidate in candidates)
 
     problems: list[str] = []
     missing: list[tuple[str, int, str]] = []
@@ -78,8 +79,9 @@ def find_problems(tracked: Sequence[str], instructions: Sequence[str], read: Rea
             problems.append(f'{name}:{line}: link to `pydantic/pydantic-ai`, not the retired `{match[0]}`')
         if name.startswith(SHIPPED_SKILLS):
             continue
+        bases = [str(parent) for parent in PurePosixPath(name).parents]
         for line, path in named_paths(text):
-            if path.split('/')[0] in top and not exists(path):
+            if path.split('/')[0] in top and not exists(path, bases):
                 missing.append((name, line, path))
     runtime = ignored({path for _, _, path in missing})
     problems += [f'{name}:{line}: `{path}` does not exist' for name, line, path in missing if path not in runtime]
@@ -88,7 +90,7 @@ def find_problems(tracked: Sequence[str], instructions: Sequence[str], read: Rea
     problems += [
         f'.agents/skills/{skill}: add the `.claude/skills/{skill}` symlink so Claude Code loads the skill'
         for skill in sorted(skills)
-        if not exists(f'.claude/skills/{skill}')
+        if not exists(f'.claude/skills/{skill}', ['.'])
     ]
     return problems
 

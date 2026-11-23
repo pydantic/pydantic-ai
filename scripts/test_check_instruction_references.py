@@ -24,10 +24,14 @@ def test_named_paths(text: str, paths: list[str]):
     assert [path for _, path in named_paths(text)] == paths
 
 
-def test_a_path_resolves_from_the_root_or_from_inside_the_repository():
+def test_a_path_resolves_from_the_root_an_ancestor_or_its_own_top_level_directory():
     package = {'src/pkg/docs/guide.md': '', 'tests/pkg/test_x.py': '', 'pydantic_graph/pydantic_graph/graph.py': ''}
     guide = '`docs/guide.md` `tests/pkg/test_x.py` `pydantic_graph/graph.py`'
     assert check({**package, 'src/pkg/AGENTS.md': guide}) == []
+    # A path elsewhere in the repository with the same tail does not count.
+    assert check({'src/pkg/tests/x.py': '', 'tests/y.py': '', 'AGENTS.md': '`tests/x.py`'}) == [
+        'AGENTS.md:1: `tests/x.py` does not exist'
+    ]
 
 
 def test_a_moved_file_leaves_a_missing_path():

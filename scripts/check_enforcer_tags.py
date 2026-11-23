@@ -7,7 +7,8 @@ says only a reviewer can. The tag decides where the rule's enforcement lives, at
 Only rules a change adds or edits need a tag; rules the base already has pass until someone edits their prose. An edit
 inside code spans alone, such as a moved path, is not a new rule, and a rule that moves between two changed files keeps
 its standing. During a merge, `--staged` reports a rule only when it is new
-against both parents. The base-ref comparison is `scripts/_ratchet.py`.
+against both parents. Headings, table rows and comments are not checked: the tag goes on a list item or sentence. The
+base-ref comparison is `scripts/_ratchet.py`.
 
 Usage:
     uv run scripts/check_enforcer_tags.py --staged                  # the index against HEAD, for pre-commit

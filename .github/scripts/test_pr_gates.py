@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import shlex
 import shutil
@@ -608,8 +609,8 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
         ),
         pytest.param(
             ReviewGitHub(current_reviews=[]),
-            'No douwebot approval on this head: request a douwebot review, '
-            'or address its findings, push and request another.',
+            'No douwebot approval on this head: add the `douwebot` label, '
+            'or address its findings, push and add it again.',
             id='no-approval',
         ),
         pytest.param(
@@ -618,7 +619,7 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
                     review(body=f'No blocking findings.\n\n<!-- douwebot:review run=20 head={HEAD} engine=claude -->')
                 ]
             ),
-            'Douwebot review lacks its engine attribution: push a new head, then request a douwebot review.',
+            'Douwebot review lacks its engine attribution: push a new head, then add the `douwebot` label.',
             id='engine-attribution',
         ),
         pytest.param(
@@ -627,7 +628,7 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
                     review(body=f'No blocking findings.\n\nDiscussion\n\n<!-- douwebot:review run=20 head={HEAD} -->')
                 ]
             ),
-            'Douwebot left findings in its review body: address them, push, then request a new douwebot review.',
+            'Douwebot left findings in its review body: address them, push, then add the `douwebot` label again.',
             id='body-finding',
         ),
         pytest.param(
@@ -639,7 +640,7 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
                 ]
             ),
             'Douwebot has inline findings on this head: resolve each addressed `Optional:` thread; '
-            'fix the rest, push, request a new review.',
+            'fix the rest, push, add the `douwebot` label again.',
             id='inline-finding',
         ),
         pytest.param(
@@ -651,7 +652,7 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
                     )
                 ],
             ),
-            'An unattributable bot comment is on this head: push a new head, then request a douwebot review.',
+            'An unattributable bot comment is on this head: push a new head, then add the `douwebot` label.',
             id='unattributable-comment',
         ),
     ],
@@ -979,6 +980,31 @@ def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebo
 def _published(verdict: publish_douwebot_review.ReviewVerdict, discussion: str = '') -> str:
     result = ReviewResult(verdict=verdict, comments=[], discussion=discussion)
     return json.loads(publication(result, HEAD, 20, engine='claude'))['body']
+
+
+@pytest.mark.parametrize(
+    ('workflow', 'job'), [('bots.yml', 'prior-findings'), ('pr-review-gates.yml', 'review-statuses')]
+)
+def test_each_trusted_checkout_holds_every_module_review_gates_imports(workflow: str, job: str):
+    scripts = Path(__file__).parent
+    steps = yaml.safe_load((scripts.parent / 'workflows' / workflow).read_text(encoding='utf-8'))['jobs'][job]['steps']
+    listed = {path for step in steps for path in step.get('with', {}).get('sparse-checkout', '').split()}
+    needed: set[str] = set()
+    modules = ['review_gates']
+    while modules:
+        module = modules.pop()
+        if f'.github/scripts/{module}.py' in needed:
+            continue
+        needed.add(f'.github/scripts/{module}.py')
+        for node in ast.walk(ast.parse((scripts / f'{module}.py').read_text(encoding='utf-8'))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            else:
+                continue
+            modules += [name for name in names if (scripts / f'{name}.py').exists()]
+    assert needed <= listed
 
 
 def test_prior_findings_writes_the_first_review_with_findings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

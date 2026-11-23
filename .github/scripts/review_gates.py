@@ -208,11 +208,11 @@ def douwebot_approval(
                     body = body[: -len(suffix)]
                 else:
                     verdict.failures.append(
-                        'Douwebot review lacks its engine attribution: push a new head, then request a douwebot review.'
+                        'Douwebot review lacks its engine attribution: push a new head, then add the `douwebot` label.'
                     )
             if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
                 verdict.failures.append(
-                    'Douwebot left findings in its review body: address them, push, then request a new douwebot review.'
+                    'Douwebot left findings in its review body: address them, push, then add the `douwebot` label again.'
                 )
             if github.verified_review_run(int(marker[1]), pull.head.sha):
                 own_reviews.append(review)
@@ -222,8 +222,8 @@ def douwebot_approval(
     ]
     if not decisions or max(decisions, key=review_order).state != 'APPROVED':
         verdict.failures.append(
-            'No douwebot approval on this head: request a douwebot review, '
-            'or address its findings, push and request another.'
+            'No douwebot approval on this head: add the `douwebot` label, '
+            'or address its findings, push and add it again.'
         )
     by_id: dict[int, Review] = {review.id: review for review in reviews}
     for comment in comments:
@@ -239,13 +239,13 @@ def douwebot_approval(
                 continue
             verdict.failures.append(
                 'Douwebot has inline findings on this head: resolve each addressed `Optional:` thread; '
-                'fix the rest, push, request a new review.'
+                'fix the rest, push, add the `douwebot` label again.'
             )
         else:
             if other_review_receipt(comment, parent):
                 continue
             verdict.failures.append(
-                'An unattributable bot comment is on this head: push a new head, then request a douwebot review.'
+                'An unattributable bot comment is on this head: push a new head, then add the `douwebot` label.'
             )
         break
     return verdict
