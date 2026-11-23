@@ -14,7 +14,13 @@ _HAS_SPRITES = importlib.util.find_spec('sprites') is not None
 collect_ignore = (
     []
     if _HAS_SPRITES
-    else ['fake_sprites.py', 'test_conformance.py', 'test_sprites_sandbox.py', 'test_sprites_live.py']
+    else [
+        'fake_sprites.py',
+        'test_conformance.py',
+        'test_sprites_desktop.py',
+        'test_sprites_sandbox.py',
+        'test_sprites_live.py',
+    ]
 )
 
 if TYPE_CHECKING or _HAS_SPRITES:  # pragma: no branch - installed and slim jobs take opposite branches
