@@ -6,14 +6,15 @@ subprocesses in PowerShell -- it **isolates nothing**.
 
 from __future__ import annotations as _annotations
 
-import base64
 import errno
 import functools
 import ntpath
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
@@ -53,9 +54,6 @@ _INHERITED_ENV = (
 )
 """Not secrets, and without them PowerShell, `git` and most tools fail to start or miss the user's configuration."""
 
-_MAX_COMMAND_LINE = 32_767
-"""Characters `CreateProcess` accepts in one command line, the program's own name included."""
-
 _PREAMBLE = (
     "$ProgressPreference = 'SilentlyContinue'\n"
     'try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch {}\n'
@@ -90,17 +88,85 @@ def powershell_script(script: str) -> str:
     return f'{_PREAMBLE}{script}{_EPILOGUE}'
 
 
-def _powershell_command(executable: str, script: str) -> list[str]:
-    """The argv that runs `script` in PowerShell, exiting with its last native command's code.
+_SCRIPT_NAME = 'script.ps1'
 
-    The script is passed as `-EncodedCommand`, so no quoting rule of `CreateProcess` or PowerShell
-    applies to it. Raises `OSError(E2BIG)` when the encoded script is too long for one command line.
+_PRIVATE_DACL = 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)'
+"""Full control for SYSTEM, Administrators and the owner only, inherited by what the directory holds."""
+
+_DACL_SECURITY_INFORMATION = 0x00000004
+_PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
+
+
+def _make_private(directory: str) -> None:
+    """Replace `directory`'s ACL, which it inherits from the temporary directory, with `_PRIVATE_DACL`.
+
+    `mkdtemp` does the same itself since Python 3.11.10, 3.12.4 and 3.13, but not on earlier patch releases.
     """
-    encoded = base64.b64encode(powershell_script(script).encode('utf-16-le')).decode('ascii')
-    argv = [executable, *_POWERSHELL_FLAGS, '-EncodedCommand', encoded]
-    if len(subprocess.list2cmdline(argv)) >= _MAX_COMMAND_LINE:
-        raise OSError(errno.E2BIG, 'the PowerShell command is too long for one Windows command line')
-    return argv
+    import ctypes
+    from ctypes import wintypes
+
+    # `WinDLL` exists only on Windows; it is a `CDLL` subclass.
+    win_dll: type[ctypes.CDLL] = getattr(ctypes, 'WinDLL')
+    advapi32 = win_dll('advapi32')
+    convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    convert.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p)
+    convert.restype = wintypes.BOOL
+    set_security = advapi32.SetFileSecurityW
+    set_security.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p)
+    set_security.restype = wintypes.BOOL
+    local_free = win_dll('kernel32').LocalFree
+    local_free.argtypes = (ctypes.c_void_p,)
+
+    descriptor = ctypes.c_void_p()
+    if not convert(_PRIVATE_DACL, 1, ctypes.byref(descriptor), None):  # pragma: no cover - the descriptor is fixed
+        raise OSError(errno.EINVAL, 'invalid security descriptor', _PRIVATE_DACL)
+    try:
+        information = _DACL_SECURITY_INFORMATION | _PROTECTED_DACL_SECURITY_INFORMATION
+        if not set_security(directory, information, descriptor):  # pragma: no cover - the owner can set its ACL
+            raise OSError(errno.EACCES, 'could not make the directory private', directory)
+    finally:
+        local_free(descriptor)
+
+
+def _write_script(script: str) -> str:
+    """A new temporary directory holding `powershell_script(script)` as `_SCRIPT_NAME`.
+
+    The script may hold secrets, so the directory is for this user alone: `mkdtemp` gives it mode `0o700`, and on
+    Windows it gets `_PRIVATE_DACL` before the script is written. UTF-8 with a BOM, like the harness's `command.ps1`,
+    so the file reads correctly with `-File` too; `ReadAllText` doesn't need it.
+    """
+    directory = tempfile.mkdtemp(prefix='pydantic-ai-')
+    try:
+        if sys.platform == 'win32':
+            _make_private(directory)
+        with open(os.path.join(directory, _SCRIPT_NAME), 'x', encoding='utf-8-sig', newline='') as file:
+            file.write(powershell_script(script))
+    except BaseException:
+        _remove_script(directory)
+        raise
+    return directory
+
+
+def _remove_script(directory: str) -> None:
+    # An antivirus scan can hold the file open for a moment; a leftover in the temporary directory is harmless.
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def _powershell_command(executable: str, script_path: str) -> list[str]:
+    """The argv that runs the script at `script_path` in PowerShell.
+
+    The script stays off the command line: antivirus software flags an `-EncodedCommand` launch, and one
+    command line holds only about 12,000 characters of an encoded script. PowerShell reads the file as text
+    rather than running it with `-File`, so no execution policy, Group Policy's included, applies to it.
+    """
+    # PowerShell also ends a single-quoted string at a typographic single quote, so those are doubled too.
+    literal = re.sub("(['\u2018\u2019\u201a\u201b])", r'\1\1', script_path)
+    return [
+        executable,
+        *_POWERSHELL_FLAGS,
+        '-Command',
+        f"& ([ScriptBlock]::Create([IO.File]::ReadAllText('{literal}')))",
+    ]
 
 
 class _JobObjects:
@@ -227,6 +293,8 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         self._powershell = powershell
         # Keyed by PID: each command's Job Object, from its start until it is reaped.
         self._jobs: dict[int, int] = {}
+        # Keyed by PID: each `shell=True` command's script directory, from its start until it is reaped.
+        self._scripts: dict[int, str] = {}
 
     @property
     def workspace_platform(self) -> WorkspacePlatform:
@@ -252,19 +320,29 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
         return await self._run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
 
     async def _spawn(self, command: WorkspaceCommand, working_dir: Path, env: Mapping[str, str]) -> anyio.abc.Process:
-        if isinstance(command, str):
-            # Both search `PATH` on disk, so not on the event loop.
-            command = _powershell_command(await run_in_executor(self._executable), command)
-        command = await run_in_executor(_resolve_program, command, env)
-        process = await anyio.open_process(
-            command,
-            cwd=working_dir,
-            env=env,
-            stdin=DEVNULL,
-            stdout=PIPE,
-            stderr=PIPE,
-            creationflags=_CREATE_NEW_PROCESS_GROUP,
-        )
+        script_dir: str | None = None
+        try:
+            if isinstance(command, str):
+                # Disk I/O and a `PATH` search, so not on the event loop.
+                script_dir = await run_in_executor(_write_script, command)
+                script_path = os.path.join(script_dir, _SCRIPT_NAME)
+                command = _powershell_command(await run_in_executor(self._executable), script_path)
+            command = await run_in_executor(_resolve_program, command, env)
+            process = await anyio.open_process(
+                command,
+                cwd=working_dir,
+                env=env,
+                stdin=DEVNULL,
+                stdout=PIPE,
+                stderr=PIPE,
+                creationflags=_CREATE_NEW_PROCESS_GROUP,
+            )
+        except BaseException:
+            if script_dir is not None:
+                await run_in_executor(_remove_script, script_dir)
+            raise
+        if script_dir is not None:
+            self._scripts[process.pid] = script_dir
         if (job := _job_objects().assign(process.pid)) is not None:  # pragma: no branch
             self._jobs[process.pid] = job
         return process
@@ -287,6 +365,8 @@ class WindowsWorkspaceBackend(HostWorkspaceBackend, SupportsPlatform, SupportsRu
             # Closing the handle leaves the processes running: a background job outlives a command that returned.
             if (job := self._jobs.pop(process.pid, None)) is not None:  # pragma: no branch
                 _job_objects().close(job)
+            if (script_dir := self._scripts.pop(process.pid, None)) is not None:
+                await run_in_executor(_remove_script, script_dir)
 
     @staticmethod
     def _path(path: str) -> Path:

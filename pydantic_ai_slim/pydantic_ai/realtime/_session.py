@@ -144,6 +144,7 @@ from ._utils import (
     replay_recorded_system_prompts_in_place,
 )
 from .codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -327,7 +328,7 @@ _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:  # noqa: TID251  (not converted to anyio yet)
     """Put without blocking the pump, retaining the newest bounded window.
 
     The queue is sized one over its data window so the completion sentinel always fits. Returns the
@@ -382,7 +383,7 @@ class _AudioTap:
     so a device-side playback position can be mapped back into those coordinates.
     """
 
-    queue: asyncio.Queue[bytes | object]
+    queue: asyncio.Queue[bytes | object]  # noqa: TID251  (not converted to anyio yet)
     subscribed_at_bytes: int
     max_buffered_bytes: int
     """How much audio the queue may hold before the oldest chunks are dropped to make room."""
@@ -399,7 +400,7 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
-    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    progress: asyncio.Event = field(default_factory=asyncio.Event)  # noqa: TID251  (not converted to anyio yet)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
 
@@ -863,7 +864,7 @@ class RealtimeSession:
         # guards is a property of the response, not of how long the user kept talking. Released
         # when the next response opens, and by a reconnect that discards the one it referred to.
         self._server_cancelled_the_response_on_speech = False
-        self._exchange_progress = asyncio.Event()
+        self._exchange_progress = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Whether the frame being handled lost a response under way (a reconnect that didn't carry it).
         self._frame_lost_response = False
         # Answered calls of tool rounds that are over, which the connection may delete from the provider's
@@ -880,7 +881,7 @@ class RealtimeSession:
         # abandon the reader generator without affecting resource lifetime, and `__aexit__` still
         # drains everything before the connection and toolset close.
         self._queue: deque[RealtimeEvent | object] = deque()
-        self._queue_event = asyncio.Event()
+        self._queue_event = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._queue_delta_count = 0
         self._queue_dropped_deltas = 0
         self._queue_structural_count = 0
@@ -888,8 +889,8 @@ class RealtimeSession:
         self._queue_changed = object()
         self._tap_finished = object()
         self._audio_taps: set[_AudioTap] = set()
-        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
-        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()  # noqa: TID251  (not converted to anyio yet)
         self._audio_tap_drops = 0
         self._transcript_tap_drops = 0
         # Emitted-audio coordinates for `interrupt(played_bytes=...)`: cumulative output audio bytes,
@@ -925,8 +926,8 @@ class RealtimeSession:
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
         # `finally`, including cancellation and failure paths.
-        self._tool_completion_events: set[asyncio.Event] = set()
-        self._last_tool_barrier: asyncio.Event | None = None
+        self._tool_completion_events: set[asyncio.Event] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._last_tool_barrier: asyncio.Event | None = None  # noqa: TID251  (not converted to anyio yet)
         # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
         # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
         # released the moment `handle_call` settles (the same event-loop segment that records a
@@ -1543,7 +1544,7 @@ class RealtimeSession:
         self._ensure_streamable()
         # The queue itself is unbounded: `_AudioTap.put` bounds it by bytes, and the completion
         # sentinel always fits behind a full buffer without discarding audio or blocking teardown.
-        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()  # noqa: TID251  (not converted to anyio yet)
         tap = _AudioTap(
             queue=queue,
             subscribed_at_bytes=self._emitted_audio_bytes,
@@ -1725,7 +1726,7 @@ class RealtimeSession:
         # Each kind gets its own subscription, so a consumer's window is never spent on items it
         # would discard: sharing one queue let a burst of deltas evict the finalized part a
         # `delta=False` consumer was waiting for, and the two speakers' transcripts interleave.
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)  # noqa: TID251  (not converted to anyio yet)
         taps: set[Any] = self._transcript_delta_taps if delta else self._transcript_taps
         taps.add(queue)
         if self._pump_finished:
@@ -1840,8 +1841,9 @@ class RealtimeSession:
         profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
-        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
-        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) and `AppendVoiceInstructions` are driven through
+        the dedicated methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`,
+        `append_voice_instructions()`), and
         [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
@@ -2115,6 +2117,38 @@ class RealtimeSession:
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         await self._send_frame(CreateResponse())
+
+    async def append_voice_instructions(self, text: str) -> None:
+        """Add to the instructions of the voice model the caller hears, steering how it speaks from now on.
+
+        For a model whose voice model takes instructions of its own, apart from the agent's: its profile sets
+        [`supports_appending_voice_instructions`][pydantic_ai.realtime.RealtimeModelProfile.supports_appending_voice_instructions].
+        OpenAI GPT-Live does: the agent's instructions go to its delegated backend, and the voice model starts with
+        `openai_live_instructions`, which this adds to. On any other model the agent's instructions are the voice
+        model's, so [changing them](../realtime/capabilities.md#instructions-that-change) is how to steer it, and this
+        raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+        The instructions aren't part of the conversation, so history doesn't record them. The provider's
+        acknowledgement isn't waited for: one that refuses them reports a recoverable
+        [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent]. Send only instructions you
+        wrote: text from the caller, a tool, or a document doesn't earn the operator's authority by being sent here.
+
+        GPT-Live takes at most 500 tokens per call, and longer `text` raises `UserError` before anything is sent.
+        A [reconnect](../realtime/lifecycle.md#reconnecting) that forks a stored session keeps the instructions
+        added so far. One that starts a new session starts it with `openai_live_instructions` followed by those
+        instructions, as many of the newest as fit in the 16,384 tokens a session can start with: the oldest are
+        dropped first.
+
+        Args:
+            text: The instructions to add.
+        """
+        self._ensure_can_send()
+        self._require_capability(
+            'supports_appending_voice_instructions',
+            method='append_voice_instructions',
+            feature='voice instructions of its own',
+        )
+        await self._send_frame(AppendVoiceInstructions(text))
 
     @overload
     async def interrupt(self, *, played_ms: int | None = None) -> None: ...
@@ -2713,8 +2747,8 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -2952,9 +2986,9 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
-        completion: asyncio.Event,
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
+        completion: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -3099,7 +3133,7 @@ class RealtimeSession:
         # `output_parts` in emission order whatever the mode.
         order_index = self._next_tool_order_index
         self._next_tool_order_index += 1
-        completion = asyncio.Event()
+        completion = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         if is_barrier:
             execution_prerequisites = tuple(self._tool_completion_events)
             self._last_tool_barrier = completion
@@ -3108,7 +3142,7 @@ class RealtimeSession:
         else:
             execution_prerequisites = ()
         self._tool_completion_events.add(completion)
-        validation_done = asyncio.Event()
+        validation_done = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         task = asyncio.create_task(
             self._run_tool(
                 call_part,
@@ -3412,7 +3446,7 @@ class RealtimeSession:
         for tap in self._audio_taps:
             self._audio_tap_drops += tap.put(chunk)
 
-    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:
+    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:  # noqa: TID251  (not converted to anyio yet)
         for queue in queues:
             if _put_tap(queue, item) is not None:
                 self._transcript_tap_drops += 1

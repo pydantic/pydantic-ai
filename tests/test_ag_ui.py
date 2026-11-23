@@ -9754,6 +9754,11 @@ async def test_frontend_tool_calls_are_pending_on_success(
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
         pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
         pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
+        pytest.param('0001.0', {'type': 'cancelled'}, id='leading-zeros'),
+        pytest.param('\u0661.\u0660', {'type': 'cancelled'}, id='non-ascii-digits'),
+        # Past the 4,300 digits `int()` converts.
+        pytest.param('0' * 4301 + '.9', None, id='long-older'),
+        pytest.param('1' + '0' * 4300 + '.0', {'type': 'cancelled'}, id='long-newer'),
     ],
 )
 async def test_client_protocol_version_decides_1_0_outcomes(
@@ -9761,7 +9766,7 @@ async def test_client_protocol_version_decides_1_0_outcomes(
 ) -> None:
     """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
     `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
-    the server operator can't change what the client declares."""
+    the server operator can't change what the client declares. The numbers compare by value, however many digits they have."""
     agent = _cancelling_agent()
 
     events = await _collect_adapter_events(

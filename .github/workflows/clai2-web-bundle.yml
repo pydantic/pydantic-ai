@@ -1,7 +1,7 @@
 # description: Rebuilds the clai2 web UI bundle after a web UI change lands on main, and queues a pull request that commits it.
 name: CLAI 2 web bundle
 
-# Pull requests change `src/pydantic_clai2/web-ui` without committing its built, minified bundle:
+# Pull requests change `src/pydantic_ai_pax/web-ui` without committing its built, minified bundle:
 # two that each committed a rebuild conflicted on it even when their sources merged cleanly, which
 # kept ejecting them from the merge queue (#11554). The bundle stays committed so that an install
 # from a Git ref or commit archive gets a working web UI without Node. This workflow keeps it in
@@ -24,7 +24,7 @@ on:
     branches:
       - main
     paths:
-      - src/pydantic_clai2/web-ui/**
+      - src/pydantic_ai_pax/web-ui/**
       - .github/actions/build-clai2-web-ui/**
       - .github/workflows/clai2-web-bundle.yml
   workflow_dispatch: {}
@@ -45,7 +45,7 @@ jobs:
     permissions:
       contents: read
     env:
-      STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+      STATIC: src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
     outputs:
       stale: ${{ steps.bundle.outputs.stale }}
     steps:
@@ -90,7 +90,7 @@ jobs:
       contents: read
     env:
       BRANCH: clai2-web-bundle
-      STATIC: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+      STATIC: src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -132,7 +132,7 @@ jobs:
           number=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [[ -z "$number" ]]; then
             body=$(printf '%s\n' \
-              'Commits the `clai2` web UI bundle built from `src/pydantic_clai2/web-ui` on `main`.' \
+              'Commits the `clai2` web UI bundle built from `src/pydantic_ai_pax/web-ui` on `main`.' \
               '' \
               'Opened by the `CLAI 2 web bundle` workflow, which replaces this branch with a new build after each web UI change on `main`. Pull requests do not commit the bundle themselves; see #11554.')
             gh pr create --base main --head "$BRANCH" --title 'Rebuild the `clai2` web UI bundle' --body "$body"

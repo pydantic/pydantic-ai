@@ -106,6 +106,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
@@ -219,11 +220,6 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
-
-# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
-# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
-# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
-READINESS_WAIT_TIMEOUT = 10
 
 
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
@@ -4497,8 +4493,14 @@ async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
 
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
     await agent.run('hi', run_id='run-pre-hook')
+    # A trailing request from `message_history`, as UI adapters send it, is stamped before hooks too.
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')])], run_id='run-from-history')
+    # It is still prior context, not a new message.
+    assert [type(message) for message in result.new_messages()] == [ModelResponse]
+    # One that already has a `run_id` keeps it.
+    await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')], run_id='run-earlier')])
 
-    assert seen == ['run-pre-hook']
+    assert seen == ['run-pre-hook', 'run-from-history', 'run-earlier']
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
@@ -5114,6 +5116,58 @@ def test_unknown_tool_per_tool_retries_exceeded():
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
         agent.run_sync('Hello')
+
+
+@pytest.mark.parametrize('external', [pytest.param(True, id='external'), pytest.param(False, id='requires_approval')])
+def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
+    """A deferred tool call cut off by the token limit raises `IncompleteToolCall`, as a function tool call does.
+
+    `FunctionModel` scripts the cut-off response: what's under test is how the agent graph handles it,
+    not how a provider reports a `'length'` finish reason.
+    """
+    requests = 0
+
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='deferred_tool', args='{"value":', tool_call_id='call-1')],
+            finish_reason='length',
+        )
+
+    toolset: AbstractToolset[object]
+    if external:
+        toolset = ExternalToolset(
+            [
+                ToolDefinition(
+                    name='deferred_tool',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'value': {'type': 'string'}},
+                        'required': ['value'],
+                    },
+                )
+            ]
+        )
+    else:
+        toolset = FunctionToolset()
+
+        @toolset.tool_plain(requires_approval=True)
+        def deferred_tool(value: str) -> str:
+            assert False
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests], toolsets=[toolset])
+
+    with pytest.raises(IncompleteToolCall) as exc_info:
+        agent.run_sync('test')
+
+    assert str(exc_info.value) == (
+        'Model token limit (provider default) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+    # An external tool gets no retries; an approval-required tool gets the default one retry first.
+    assert requests == (1 if external else 2)
 
 
 def test_tool_exceeds_token_limit_error():
