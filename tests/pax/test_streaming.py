@@ -182,6 +182,25 @@ async def test_a_failed_write_at_part_end_is_not_written_again() -> None:
     assert output.getvalue().count('once') == 1
 
 
+async def test_a_part_whose_typing_already_failed_ends_with_that_error() -> None:
+    class FailsFirst(io.StringIO):
+        writes = 0
+
+        def write(self, text: str) -> int:
+            self.writes += 1
+            if self.writes == 1:
+                raise OSError('first')
+            return super().write(text)
+
+    output = FailsFirst()
+    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 100 + '\n')))
+    await asyncio.sleep(0.05)  # real-wait: the drainer's first tick is the failure
+    with pytest.raises(OSError, match='first'):
+        await renderer.finish()
+    assert 'x' not in output.getvalue()
+
+
 async def test_abort_discards_pending_output() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)

@@ -2,11 +2,12 @@
 
 import io
 import re
+from asyncio import Future
 from collections import deque
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
-from typing import IO
+from typing import IO, cast
 
 import anyio
 from rich.console import Console, RenderableType
@@ -230,12 +231,16 @@ class PartWriter(SmoothWriter):
 
     async def close(self) -> None:
         """Write what is still queued at once, so the next tool line or the prompt does not wait for it to be typed."""
-        try:
-            self._flush_all()
-        except BaseException:
-            # A failed write must not be retried by the drainer, nor hidden by joining it.
-            self.abort()
-            raise
+        # Termflow annotates its task as a bare `Task`.
+        drainer = cast('Future[None] | None', self._task)  # pyright: ignore[reportUnknownMemberType]
+        if drainer is None or not drainer.done():
+            try:
+                self._flush_all()
+            except BaseException:
+                # A failed write must not be retried by the drainer, nor hidden by joining it.
+                self.abort()
+                raise
+        # A drainer that already failed raises its own error here, before anything is written again.
         await super().close()
 
 
