@@ -95,7 +95,8 @@ class Known:
     tracked_by: str
     """The issue tracking the fix."""
     repro: str
-    """A test that streams the violation: for a `KNOWN` entry here, its node id, which fails once it no longer does."""
+    """The test that streams the violation: its node id for a `KNOWN` entry here, which fails once it no longer does,
+    and its function for a parity module's `_KNOWN`."""
 
 
 KNOWN: dict[ViolationKey, Known] = {
