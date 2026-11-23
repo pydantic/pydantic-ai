@@ -554,9 +554,9 @@ control the group's position and visibility with `display.footer_fields`; see th
 [status-line reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#status-line).
 The row repaints about ten times a second while CLAI works and once a second while idle,
 so it runs that often: no blocking IO, no awaits, no printing. Return an empty
-string to contribute nothing that frame. Fragments are truncated from the right
-on narrow terminals and cannot set their own colours. get_status_segments adds
-to the row; replacing the row, prompt editor, splash, or adding custom palettes
+string to contribute nothing that frame. On a narrow terminal the whole group is
+hidden before the model. Fragments cannot set their own colours. get_status_segments
+adds to the row; replacing the row, prompt editor, splash, or adding custom palettes
 is still a CLAI source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:

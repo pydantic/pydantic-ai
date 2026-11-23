@@ -3688,7 +3688,9 @@ class Where(Plugin):
 The row is repainted about ten times a second while CLAI works and once a second
 while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
 and free of blocking IO. Return `''` to contribute nothing for a frame.
-Fragments are truncated from the right on a narrow terminal and are readable
+When the row is too narrow, the `plugins` group is hidden after the output count,
+cost, working directory, and other optional fields, and before the model; see the
+[status-line reference](docs/reference.md#status-line). Fragments are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
