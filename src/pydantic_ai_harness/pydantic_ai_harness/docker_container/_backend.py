@@ -36,7 +36,6 @@ from typing import Literal
 import anyio
 import anyio.to_thread
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
@@ -49,9 +48,9 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, start_display_script, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
@@ -242,25 +241,25 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
 
 DESKTOP_DOCKERFILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile').read_text()
 """The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
-manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages and for emoji. Firefox
-starts without its first-run pages. The window manager's and panel's settings are written when the display starts."""
+manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages. The window manager's and
+panel's settings are written when the display starts."""
 
-_DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
+_DESKTOP_IMAGE_TAG = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
 
-_START_DESKTOP = start_x_server(f'{_PID_DIR}/xvfb.log')
+_START_DESKTOP = start_display_script(f'{_PID_DIR}/xvfb.log')
 """Starts the container's display and desktop at the size `$1` names."""
 
 
-async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
+async def _ensure_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
     """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
-    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
+    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE_TAG])).exit_code == 0:
         return
     # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this.
-    # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile; not tried with podman
-    # yet. The runner gives a command no stdin, so `sh` pipes it in.
-    build = 'printf %s "$1" | "$2" build --tag "$3" -'
-    result = await runner.run(['sh', '-c', build, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE])
+    # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile. The runner gives a
+    # command no stdin, so `sh` pipes it in.
+    build_script = 'printf %s "$1" | "$2" build --tag "$3" -'
+    result = await runner.run(['sh', '-c', build_script, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE_TAG])
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
@@ -313,7 +312,7 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
         desktop: bool | tuple[int, int] = False,
     ):
         if desktop and image is None and ref is None:
-            image = _DESKTOP_IMAGE  # built just before its container is first created
+            image = _DESKTOP_IMAGE_TAG  # built just before its container is first created
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
         if ref is not None:
@@ -326,21 +325,14 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
-        self._desktop_size = desktop_size(desktop)
-        self._display = (
-            None
-            if self._desktop_size is None
-            else x11_display(
-                self._run_argv,
-                self._desktop_size,
-                _START_DESKTOP,
-                lambda: f'Docker workspace {self._name}',
-            )
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'Docker workspace {self._name}',
+            start_script=_START_DESKTOP,
         )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
-        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
-        display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
-        self._env = _checked_env({**display_env, **(env or {})})
+        self._env = _checked_env({**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
         self._executable = resolve_executable(executable)
@@ -365,8 +357,6 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
                     await self._create()
                 else:
                     await self._start()
-                if self._display is not None:
-                    await self._check_network()
                 # Created here rather than by `docker run --workdir`, which Podman refuses for a missing directory.
                 if self._working_dir is None:
                     result = await self._exec(['sh', '-c', 'pwd -P'], env={}, timeout=None, workdir=None)
@@ -384,30 +374,6 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
                 self._resolved_working_dir = printed
             return self._resolved_working_dir
 
-    async def _check_network(self) -> None:
-        """Refuse a desktop on the host's network, however the container got onto it.
-
-        On the host's network, programs in the container could connect to an X server on the host through Linux's
-        abstract socket, and control the host's screen. A `container:<id>` network is that other container's network,
-        so it is checked in turn. Podman's `ns:<path>` joins whatever network the path names, such as the host's at
-        `ns:/proc/1/ns/net`, so it is refused too.
-        """
-        container = self._name
-        while True:
-            argv = [self._executable, 'inspect', '--type', 'container', '--format', '{{.HostConfig.NetworkMode}}']
-            result = await self._runner.run([*argv, '--', container])
-            if result.exit_code != 0:
-                raise WorkspaceUnavailableError(f'could not inspect container {container}: {result.stderr.strip()}')
-            mode = result.stdout.strip()
-            if mode == 'host' or mode.startswith('ns:'):
-                raise UserError(
-                    "a desktop can't use the host's network: programs in the container could connect to the host's X "
-                    'server, which draws its screen, and control that screen'
-                )
-            kind, _, container = mode.partition(':')
-            if kind != 'container':
-                return
-
     @property
     def _name(self) -> str:
         assert self._ref is not None
@@ -415,8 +381,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
 
     async def _create(self) -> None:
         assert self._image is not None
-        if self._image == _DESKTOP_IMAGE:
-            await _build_desktop_image(self._runner, self._executable)
+        if self._image == _DESKTOP_IMAGE_TAG:
+            await _ensure_desktop_image(self._runner, self._executable)
         if self._ref is None:
             # Set before `docker run`: the daemon may create the container even if the client is cancelled,
             # and whoever holds the ref can then remove it.
