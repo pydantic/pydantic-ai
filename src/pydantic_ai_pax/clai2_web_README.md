@@ -66,7 +66,9 @@ While a turn runs, the composer works as the terminal's prompt does. Enter queue
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
 turn instead: its model reads the message at its next request, and the transcript shows it then.
 Commands are never steered, a message with images attached is queued as Enter queues it, and a
-message typed while no turn runs is just sent. Alt+Enter with nothing typed steers the oldest queued
+message typed while no turn runs is just sent. In the terminal prompt, Ctrl+N
+promotes the oldest queued follow-up while preserving the draft. Alt+Enter with
+nothing typed steers the oldest queued
 message. Everything waiting is listed above the composer,
 whether you queued it here, in another browser, or in the terminal: edit a message in place (Enter
 saves, Esc cancels), steer it now, or remove it before it runs. A message that runs while you edit it

@@ -599,9 +599,10 @@ cancel in-flight tools. Messages already queued stay queued. With an empty
 draft, it sends the oldest queued follow-up instead. Each press sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
-pressed Enter. A queued message that cannot steer stays queued and is not
+pressed Enter. Ctrl+N promotes the oldest queued follow-up while preserving the current draft. A queued message that cannot steer stays queued and is not
 skipped over. While running with a draft or a queued message, the input box
-shows both shortcuts. If Option+Enter queues like Enter, see
+shows the queue and steer shortcuts. Ctrl+N is shown only when queued input
+exists. If Option+Enter queues like Enter, see
 [Option keys on macOS](#option-keys-on-macos).
 Shift-Enter inserts a newline when the terminal reports it separately from Enter.
 Ctrl-J inserts a newline in the editor (it steers on Windows, see

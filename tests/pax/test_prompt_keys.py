@@ -5,12 +5,14 @@ import sys
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 
+import anyio
 import pytest
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
 from pydantic_ai_pax.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
+from tests.pax.test_live_prompt import editor
 
 
 async def test_decoding_meta_paste_arrows_and_lone_escape() -> None:
@@ -160,6 +162,7 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (105, 5, 'tab'),
         (106, 5, 'ctrl-j'),
         (109, 5, 'enter'),
+        (110, 5, 'ctrl-n'),
         (114, 5, 'ctrl-r'),
         (120, 5, 'ctrl-x'),
         (115, 5, 'ctrl-s'),
@@ -356,3 +359,23 @@ async def test_ctrl_z_is_a_key_in_raw_mode_not_a_suspend_signal() -> None:
         assert termios.tcgetattr(follower)[3] & termios.ISIG
     os.close(leader)
     assert events == ['ctrl-z']
+
+
+async def test_ctrl_n_hint_advertised_when_queued() -> None:
+    async with editor() as (live, _, _):
+        active, release = anyio.Event(), anyio.Event()
+
+        async def hold_run() -> None:
+            active.set()
+            await release.wait()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.interrupts.run, hold_run())
+            await active.wait()
+            frame = '\n'.join(live.frame())
+            assert 'Ctrl+N: promote' not in frame
+            live.buffer.replace('queued prompt')
+            live.feed('enter')
+            assert live.queued_messages == ('queued prompt',)
+            assert 'Ctrl+N: promote' in '\n'.join(live.frame())
+            release.set()

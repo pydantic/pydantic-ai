@@ -420,7 +420,7 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             # An empty queue and draft have nothing to steer, so the title carries no queue hints.
             assert plain.rstrip('─') == f'─ Working {frame} '
             assert f'{accent}{frame}' in title
-            hint = f'─ Working {frame} | Enter: queue | Alt+Enter: steer '
+            hint = f'─ Working {frame} | Enter: queue | Alt+Enter: steer'
             live.buffer.replace('typed')
             assert Text.from_ansi(live.frame()[0]).plain.startswith(hint)
             live.buffer.replace('')
