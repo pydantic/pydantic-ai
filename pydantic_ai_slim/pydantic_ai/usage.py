@@ -158,11 +158,11 @@ class UsageBase:
     """Number of output/completion tokens."""
 
     unmeasured_requests: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
-    """Number of responses that omitted usage information.
+    """Number of responses that omitted usage information, or whose usage information could not be extracted.
 
     When non-zero, token totals and any known cost are lower bounds. On a `RequestUsage`, it is non-zero when the
-    response omitted usage, so its token counts carry no information. This count does not imply a particular number
-    of missing tokens, cost, or usage details.
+    response's usage is unavailable, so its token counts carry no information. This count does not imply a particular
+    number of missing tokens, cost, or usage details.
     """
 
     output_reasoning_tokens: int = 0
@@ -315,7 +315,7 @@ class UsageBase:
     def has_values(self) -> bool:
         """Whether any usage values (token counts, details, or cost) are set and non-zero.
 
-        `unmeasured_requests` is not a usage value: it records that usage was omitted.
+        `unmeasured_requests` is not a usage value: it records that usage was unavailable.
         """
         return any(self.details.values()) or any(
             v for k, v in self.__dict__.items() if k not in {'details', 'unmeasured_requests'}
@@ -372,6 +372,10 @@ class RequestUsage(UsageBase):
     ) -> RequestUsage:
         """Extract usage information from the response data using genai-prices.
 
+        If extraction fails unexpectedly, this warns with
+        [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning] and returns usage with
+        `unmeasured_requests=1`. A caller that recovers the token counts from another source should reset it to `0`.
+
         Args:
             data: The response data from the model API.
             provider: The actual provider ID
@@ -413,6 +417,7 @@ class RequestUsage(UsageBase):
                 UsageExtractionFailedWarning,
                 stacklevel=2,
             )
+            return cls(details=details, cost=cost, unmeasured_requests=1)
         return cls(details=details, cost=cost)
 
 
@@ -660,7 +665,7 @@ class UsageLimits:
         Args:
             usage: The accumulated run usage to check.
             warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
-                When some responses omitted usage information, `check_tokens` warns instead.
+                When some responses have no available usage information, `check_tokens` warns instead.
         """
         if warn_if_cost_unavailable:
             self._warn_if_cost_unavailable(usage)
@@ -682,7 +687,7 @@ class UsageLimits:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits.
 
         Warns with [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] when some
-        responses omitted usage information and a token or cost limit is configured.
+        responses have no available usage information and a token or cost limit is configured.
         """
         self._check_token_limits(usage)
         self._warn_if_usage_unavailable(usage)
@@ -708,8 +713,9 @@ class UsageLimits:
             # A fixed message, so the default warning filter shows it once rather than after every later response.
             warnings.warn(
                 UsageLimitUnavailableWarning(
-                    'Some responses omitted usage information, so the known token and cost totals are lower bounds '
-                    'and configured limits cannot be fully enforced. `RunUsage.unmeasured_requests` counts them. '
+                    'Some responses omitted usage information or it could not be extracted, so the known token and '
+                    'cost totals are lower bounds and configured limits cannot be fully enforced. '
+                    '`RunUsage.unmeasured_requests` counts them. '
                     'Check the provider or server usage reporting, or promote `UsageLimitUnavailableWarning` to an '
                     'error.'
                 )

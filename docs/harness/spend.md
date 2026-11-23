@@ -326,7 +326,7 @@ Any object with `get_many` and `add_many` ([`BatchSpendStore`][pydantic_ai_harne
 
 ## Pricing
 
-When `price` is unset or returns `None`, each complete response is priced on its own with [genai-prices](https://github.com/pydantic/genai-prices) via [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost]; cache and tier pricing are per request, so pricing summed usage would be wrong. For a response with omitted usage, any known `response.usage.cost` subtotal is recorded instead.
+When `price` is unset or returns `None`, each complete response is priced on its own with [genai-prices](https://github.com/pydantic/genai-prices) via [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost]; cache and tier pricing are per request, so pricing summed usage would be wrong. For a response with omitted or unextractable usage, any known `response.usage.cost` subtotal is recorded instead.
 
 `price` covers a model the registry does not know, such as a local deployment or a negotiated rate:
 
@@ -342,7 +342,7 @@ SpendLimits(price=lambda response: Decimal('0.002') if response.model_name == 'i
 
 `None` falls through to the registry. With incomplete usage, a known cost subtotal is recorded but the response stays unpriced, since its full cost is unknown. `on_unpriced` then applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues; `'raise'` fails the run with [`UnpricedModelError`][pydantic_ai_harness.spend_limits.UnpricedModelError] after recording the subtotal. With `'zero'` and a `usd` budget, [`UnpricedModelWarning`][pydantic_ai_harness.spend_limits.UnpricedModelWarning] is emitted once per model with no complete price. If callers choose the model, prefer `'raise'` or supply `price`.
 
-Known token totals for incomplete usage are lower bounds, even when `price` supplies the cost. When a response omits usage and a token budget is configured, `SpendLimits` emits `UsageLimitUnavailableWarning` if the run can continue; check the provider's usage reporting, or promote the warning to an error to stop when the token ceiling cannot be verified.
+Known token totals for incomplete usage are lower bounds, even when `price` supplies the cost. When a response omits usage, or its usage cannot be extracted, and a token budget is configured, `SpendLimits` emits `UsageLimitUnavailableWarning` if the run can continue; check the provider's usage reporting, or promote the warning to an error to stop when the token ceiling cannot be verified.
 
 Under durable execution, `price` and each budget's `scope` and ceiling callables must be deterministic for the same response and run context. A ceiling is read in orchestration, so a changed value can flip a replayed refusal. Pricing runs in orchestration, outside the journaled accrual, so a changed price can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. A changed scope selects a different store key than the recorded accrual, which `SpendLimits` reports as a `UserError` naming the determinism requirement.
 
