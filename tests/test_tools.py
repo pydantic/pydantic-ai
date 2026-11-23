@@ -2337,7 +2337,7 @@ FUNCTION_TOOLSET_PARAMETERS: dict[str, ToolsetDefault | Exempt] = {
 }
 """How each `FunctionToolset.__init__` parameter reaches the tools the toolset lists.
 
-`docs/toolsets.md` lists how the defaults other than `timeout` reach a `Tool` passed in; the rest is read from
+`docs/toolsets.md` lists how the all-tools defaults other than `timeout` reach a `Tool` passed in; the rest is read from
 `FunctionToolset` itself.
 """
 
