@@ -63,7 +63,6 @@ def test_mcp_sampling_model():
     assert model.system == 'MCP'
 
 
-@pytest.mark.anyio
 async def test_unprojected_instruction_delta_raises():
     create_message = AsyncMock()
     model = MCPSamplingModel(fake_session(create_message))
@@ -454,7 +453,6 @@ def test_unsupported_tool_history(file_in_result: bool):
             agent.run_sync('Continue', message_history=history)
 
 
-@pytest.mark.anyio
 async def test_append_instruction_baseline_is_tagged_like_its_updates():
     """MCP sampling reads the prefix from each request's `instructions`, so it must carry the same tags as the updates."""
     create_message = AsyncMock(

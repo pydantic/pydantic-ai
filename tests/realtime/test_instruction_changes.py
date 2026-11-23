@@ -51,8 +51,6 @@ from .test_session import (
     _profile,  # pyright: ignore[reportPrivateUsage]
 )
 
-pytestmark = pytest.mark.anyio
-
 _TURN: list[RealtimeCodecEvent] = [OutputTranscript(text='Hello.', is_final=True), ResponseDone()]
 
 

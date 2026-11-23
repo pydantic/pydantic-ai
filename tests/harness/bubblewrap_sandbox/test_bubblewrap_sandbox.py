@@ -49,7 +49,6 @@ from .. import _fake_remote_tools
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools, require_bwrap
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='the wrapped workspaces run POSIX subprocesses'),
 ]
 

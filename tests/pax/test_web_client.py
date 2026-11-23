@@ -26,8 +26,6 @@ from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.test_web import QuestionModel
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class Served:

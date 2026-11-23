@@ -74,7 +74,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
-    pytest.mark.anyio,
 ]
 
 

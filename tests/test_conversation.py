@@ -125,7 +125,6 @@ def test_run_sync_continues_a_conversation() -> None:
     assert result.conversation_id == conversation.conversation_id
 
 
-@pytest.mark.anyio
 async def test_run_continues_a_conversation() -> None:
     agent = Agent(TestModel(), instructions='Be helpful.')
     conversation = (await agent.run('One')).conversation
@@ -138,7 +137,6 @@ async def test_run_continues_a_conversation() -> None:
     assert result.conversation_id == conversation.conversation_id
 
 
-@pytest.mark.anyio
 async def test_run_stream_continues_a_conversation() -> None:
     agent = Agent(TestModel(), instructions='Be helpful.')
     conversation = (await agent.run('One')).conversation
@@ -152,7 +150,6 @@ async def test_run_stream_continues_a_conversation() -> None:
         assert result.conversation_id == conversation.conversation_id
 
 
-@pytest.mark.anyio
 async def test_iter_continues_a_conversation() -> None:
     agent = Agent(TestModel(), instructions='Be helpful.')
     conversation = (await agent.run('One')).conversation

@@ -9123,7 +9123,6 @@ async def _select_crm_async(ctx: RunContext[None], tool_def: ToolDefinition) -> 
     return tool_def.name.startswith('crm_')
 
 
-@pytest.mark.anyio
 async def test_tool_search_tools_all_defers_every_regular_tool():
     function_tools, output_tools = await _first_request_tools(ToolSearch(tools='all'))
     assert function_tools == snapshot(['search_tools'])
@@ -9138,34 +9137,29 @@ async def test_tool_search_tools_all_defers_every_regular_tool():
         pytest.param(_select_crm_async, id='async-callable'),
     ],
 )
-@pytest.mark.anyio
 async def test_tool_search_tools_selector_defers_selected_tools(selector: Any):
     function_tools, output_tools = await _first_request_tools(ToolSearch(tools=selector))
     assert function_tools == snapshot(['get_time', 'inventory_lookup', 'search_tools'])
     assert output_tools == snapshot(['final_result'])
 
 
-@pytest.mark.anyio
 async def test_tool_search_tools_metadata_selector():
     function_tools, _ = await _first_request_tools(ToolSearch(tools={'searchable': True}))
     assert function_tools == snapshot(['crm_lookup', 'get_time', 'inventory_lookup', 'search_tools'])
 
 
-@pytest.mark.anyio
 async def test_tool_search_tools_selects_tools_with_a_custom_tool_kind():
     """A user tool with its own `tool_kind` is selectable; only the framework's kinds are excluded."""
     function_tools, _ = await _first_request_tools(ToolSearch(tools=['inventory_lookup']))
     assert function_tools == snapshot(['crm_lookup', 'crm_update', 'get_time', 'search_tools'])
 
 
-@pytest.mark.anyio
 async def test_tool_search_tools_none_defers_nothing():
     function_tools, output_tools = await _first_request_tools(ToolSearch())
     assert function_tools == snapshot(['crm_lookup', 'crm_update', 'get_time', 'inventory_lookup'])
     assert output_tools == snapshot(['final_result'])
 
 
-@pytest.mark.anyio
 async def test_tool_search_tools_selected_tool_is_discovered_and_called():
     """Selected tools join the corpus alongside per-tool and toolset deferral, and `load_capability` stays visible."""
     user_toolset = FunctionToolset()

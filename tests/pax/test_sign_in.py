@@ -43,8 +43,6 @@ from pydantic_ai_pax.ui.menus.field_menu import Runners
 from tests.pax.dialog_script import Asked, Back, Finish, ScriptedDialogs
 from tests.pax.menu_script import UNTIL_CLOSED, Script
 
-pytestmark = pytest.mark.anyio
-
 CLOSE = MenuResult(cancelled=True)
 
 

@@ -45,8 +45,6 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReview, ApprovalReview
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from tests.harness._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
 Answer = Literal['yes', 'no', 'unsure']
 
 

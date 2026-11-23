@@ -33,7 +33,6 @@ from .._tool_calls import call_tools
 from .fake_boxd import FakeBoxd, wait_until_gone
 
 pytestmark = [
-    pytest.mark.anyio(backends=['asyncio']),
     pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
 ]
 

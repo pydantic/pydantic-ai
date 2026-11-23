@@ -29,10 +29,6 @@ from .capability_models import (
     tool_calling_stream_function,
 )
 
-pytestmark = [
-    pytest.mark.anyio,
-]
-
 
 @dataclass
 class _ReplacingCapability(AbstractCapability[Any]):

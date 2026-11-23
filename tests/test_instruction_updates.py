@@ -91,8 +91,6 @@ class ReminderPart(InstructionCapabilityPart, namespace='test_instruction_update
     """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
 
 
-pytestmark = pytest.mark.anyio
-
 STATE_ID = InstructionId(AgentInstructionSource(), name='state')
 
 

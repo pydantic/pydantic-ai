@@ -45,8 +45,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-pytestmark = pytest.mark.anyio
-
 
 def _entry_count(store: InMemoryConversationStore) -> int:
     return len(store._entries)  # pyright: ignore[reportPrivateUsage]

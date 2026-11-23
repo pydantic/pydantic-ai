@@ -108,7 +108,6 @@ def test_a_judge_without_an_id_cannot_bind_to_a_durable_agent() -> None:
         )
 
 
-@pytest.mark.anyio
 async def test_dbos_replays_the_recorded_verdict(dbos: DBOS) -> None:
     """A replay must reuse the recorded verdict: no second judge request, same decision."""
     global _judge_calls

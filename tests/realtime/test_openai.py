@@ -5174,7 +5174,6 @@ async def test_a_stale_response_request_failing_after_the_redial_keeps_the_repla
     assert [frame['type'] for frame in second.sent].count('response.create') == 1
 
 
-@pytest.mark.anyio
 async def test_requests_joining_a_deferred_response_create_share_it() -> None:
     """Requests joining one already deferred get no `response.create` of their own.
 
@@ -5236,7 +5235,6 @@ def _response_frames(response_id: str, transcript: str) -> list[dict[str, Any]]:
     ]
 
 
-@pytest.mark.anyio
 async def test_image_history_cap_evicts_the_oldest_image_the_provider_added() -> None:
     """Both session cores drop the oldest retained image to keep within `retain_images_max`."""
     ws = _QueuedWebSocket()
@@ -5264,7 +5262,6 @@ async def test_image_history_cap_evicts_the_oldest_image_the_provider_added() ->
     ]
 
 
-@pytest.mark.anyio
 async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
     """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
 
@@ -5301,7 +5298,6 @@ async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for
     assert transcripts == ['Paris.', 'Madrid. Rome.']
 
 
-@pytest.mark.anyio
 async def test_parallel_tool_calls_get_one_response_create() -> None:
     """Results for one response's parallel calls go out together, with a single `response.create`.
 
@@ -5385,7 +5381,6 @@ _WEATHER_CALL_ITEM = {
 }
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     'done_response',
     [
@@ -5465,7 +5460,6 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(
             await session.wait_for_reply()
 
 
-@pytest.mark.anyio
 async def test_tool_batch_response_create_counts_as_one_request() -> None:
     """A batch's `response.create` is one request, however many outputs it follows.
 
@@ -5530,7 +5524,6 @@ async def test_tool_batch_response_create_counts_as_one_request() -> None:
             await waiting
 
 
-@pytest.mark.anyio
 async def test_a_reply_waits_for_the_transcript_of_the_turn_before_it_for_a_while(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5588,7 +5581,6 @@ async def test_a_reply_waits_for_the_transcript_of_the_turn_before_it_for_a_whil
     ]
 
 
-@pytest.mark.anyio
 async def test_a_server_vad_reply_at_the_request_limit_is_not_counted_twice() -> None:
     """The core counts the reply as its terminal frame arrives; the limit check it makes then mustn't count it again."""
     ws = _QueuedWebSocket()
@@ -5627,7 +5619,6 @@ async def test_a_server_vad_reply_at_the_request_limit_is_not_counted_twice() ->
     assert session.usage.requests == 1
 
 
-@pytest.mark.anyio
 async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monkeypatch: pytest.MonkeyPatch) -> None:
     """The core records a response as its terminal arrives, before the span ends: the span's input must not hold it."""
     ended: list[tuple[list[ModelMessage], ModelResponse | None]] = []
@@ -5735,7 +5726,6 @@ async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
     ]
 
 
-@pytest.mark.anyio
 async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> None:
     """`RealtimeSession.conversation` mints the id late; the replies the session core recorded before carry it too."""
     ws = _QueuedWebSocket()
@@ -5770,7 +5760,6 @@ async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> Non
     assert [message.conversation_id for message in conversation.messages] == [conversation.conversation_id] * 2
 
 
-@pytest.mark.anyio
 async def test_audio_that_fails_to_go_out_never_reaches_the_core() -> None:
     class _FailingAudio(_QueuedWebSocket):
         async def send(self, data: str) -> None:
@@ -5792,7 +5781,6 @@ async def test_audio_that_fails_to_go_out_never_reaches_the_core() -> None:
         assert not core._input_audio  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_a_failed_send_leaves_its_audio_out_while_another_waits_to_go_out() -> None:
     """Two chunks sent at once go out one after the other: the first failing never adds its audio, and the second's goes in."""
 
@@ -5833,7 +5821,6 @@ async def test_a_failed_send_leaves_its_audio_out_while_another_waits_to_go_out(
         assert bytes(core._input_audio) == second  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
     """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails.
 
@@ -5911,7 +5898,6 @@ def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
     )
 
 
-@pytest.mark.anyio
 async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_its_audio() -> None:
     """A turn `commit_audio()` committed is recorded with its retained audio though the session closes before
     reading the provider's `input_audio_buffer.committed`: the provider has it, and no transcript is coming."""
@@ -5928,7 +5914,6 @@ async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_
     assert part.audio is not None and part.audio.data[44:] == pcm
 
 
-@pytest.mark.anyio
 async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_turn_at_close() -> None:
     """A commit with no audio sent since the last one, or one the provider refused as too short, is no turn when
     the session closes before anything acknowledges it."""
@@ -5953,7 +5938,6 @@ async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_t
     assert session.all_messages() == []
 
 
-@pytest.mark.anyio
 async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
     """What tools see is the core's history itself, so its retained audio is kept, and bounded, once.
 

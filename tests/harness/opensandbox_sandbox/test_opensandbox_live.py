@@ -32,7 +32,7 @@ LIVE_IMAGE = 'python:3.12-slim'
 # Each live sandbox also expires on its own, so one a killed CI job leaves behind does not run on.
 _LIVE_SANDBOX_TIMEOUT = 900
 
-pytestmark = [pytest.mark.opensandbox_live, pytest.mark.anyio]
+pytestmark = [pytest.mark.opensandbox_live]
 
 
 def live_capability() -> OpenSandbox[None]:

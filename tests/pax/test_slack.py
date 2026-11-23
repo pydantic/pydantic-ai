@@ -33,8 +33,6 @@ from tests.pax.slack_shell import BUILTIN, CONTEXT, ENABLED, script, shell
 
 LABEL = 'Slack user token (xoxp-); a new one is saved in /keys as SLACK_USER_TOKEN'
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture(autouse=True)
 def no_env_token(monkeypatch: pytest.MonkeyPatch) -> None:

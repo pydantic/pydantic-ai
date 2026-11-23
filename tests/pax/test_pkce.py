@@ -21,8 +21,6 @@ from pydantic_ai_pax.config.credential_store import delete_credentials, load_cod
 from pydantic_ai_pax.pkce import REFRESH_MARGIN, PKCEFlow, PKCESignIn, PublicClient, Tokens, refresh
 from tests._ports import reserve_loopback_port
 
-pytestmark = pytest.mark.anyio
-
 ACCOUNT = 'test-oauth'
 
 

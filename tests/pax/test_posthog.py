@@ -54,8 +54,6 @@ from pydantic_ai_pax.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.pax.dialog_script import Answer, Asked, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.pax.menu_script import UNTIL_CLOSED, Script, pick, typed
 
-pytestmark = pytest.mark.anyio
-
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'posthog')
 CLOSE = MenuResult(cancelled=True)
 KEY = 'POSTHOG_PERSONAL_API_KEY'

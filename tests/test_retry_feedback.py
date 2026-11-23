@@ -108,8 +108,6 @@ anthropic_installed = pytest.mark.skipif(not anthropic_imports_successful(), rea
 google_installed = pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
 bedrock_installed = pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
 
-pytestmark = pytest.mark.anyio
-
 
 class Answer(BaseModel):
     count: int

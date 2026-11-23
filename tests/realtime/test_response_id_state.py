@@ -36,7 +36,6 @@ with try_import() as imports_successful:
     from .ws_helpers import collect_session_events
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
 ]
 

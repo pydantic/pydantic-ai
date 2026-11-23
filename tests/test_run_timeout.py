@@ -37,8 +37,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 # For tests where the real timer fires while the run blocks forever on a model, tool or sub-agent. Tests that
 # assert on how far a run got before it timed out instead expire it once it gets there, with `LONG_TIMEOUT`.
 SHORT_TIMEOUT = 0.05

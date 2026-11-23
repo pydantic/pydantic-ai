@@ -68,8 +68,6 @@ from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace
 
 from .test_web import HOSTS, TOKEN, static_dir
 
-pytestmark = pytest.mark.anyio
-
 QUESTION = {
     'questions': [{'question': 'Which colour?', 'header': 'Colour', 'options': [{'label': 'Red'}, {'label': 'Blue'}]}]
 }

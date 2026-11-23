@@ -856,7 +856,6 @@ def test_prompted_output_schema_instructions_do_not_set_variable_instructions(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 @pytest.mark.parametrize('streaming', [False, True])
 async def test_chat_span_captures_request_before_wrapper_restores_it(capfire: CaptureLogfire, streaming: bool) -> None:
     sent_messages: list[ModelMessage] = []
@@ -917,7 +916,6 @@ async def test_chat_span_captures_request_before_wrapper_restores_it(capfire: Ca
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_chat_span_records_response_rejected_by_after_hook(capfire: CaptureLogfire) -> None:
     call_count = 0
 
@@ -989,7 +987,6 @@ async def test_chat_span_records_a_stream_the_consumer_stopped(capfire: CaptureL
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_nested_instrumentation_capabilities_capture_request_and_response(capfire: CaptureLogfire) -> None:
     settings = InstrumentationSettings()
     agent = Agent(
@@ -1007,7 +1004,6 @@ async def test_nested_instrumentation_capabilities_capture_request_and_response(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_nested_uninstrumented_agent_does_not_fill_outer_failed_chat_span(capfire: CaptureLogfire) -> None:
     inner = Agent(TestModel())
 
@@ -1033,7 +1029,6 @@ async def test_nested_uninstrumented_agent_does_not_fill_outer_failed_chat_span(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 async def test_streaming_ttft_does_not_leak_to_nested_non_streaming_request(capfire: CaptureLogfire) -> None:
     inner = Agent(TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
 
@@ -1063,7 +1058,6 @@ async def test_streaming_ttft_does_not_leak_to_nested_non_streaming_request(capf
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.anyio
 @pytest.mark.parametrize('streaming', [False, True])
 async def test_instrumented_model_request_short_circuit_has_no_model_attributes(
     capfire: CaptureLogfire, streaming: bool

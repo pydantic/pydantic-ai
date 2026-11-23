@@ -28,7 +28,6 @@ from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from .fake_boxd import FakeBoxd, wait_until_gone
 
 pytestmark = [
-    pytest.mark.anyio(backends=['asyncio']),
     pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
 ]
 

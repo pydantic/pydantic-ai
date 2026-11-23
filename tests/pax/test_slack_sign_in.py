@@ -18,8 +18,6 @@ from tests.pax.dialog_script import Asked, Back, Finish, Type
 from tests.pax.menu_script import UNTIL_CLOSED, pick, typed
 from tests.pax.slack_shell import Shell, script, shell
 
-pytestmark = pytest.mark.anyio
-
 APP = '4717091972327.12139745453623'
 
 

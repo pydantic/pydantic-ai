@@ -31,8 +31,6 @@ from ._inline_snapshot import snapshot
 from .capability_models import make_text_response
 from .conftest import IsDatetime, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 class MyOutput(BaseModel):
     value: int

@@ -53,7 +53,6 @@ from tests.pax.menu_script import UNTIL_CLOSED, Script, pick, typed
 RETIRED = 'pydantic_ai_harness.grain:Grain'
 """The raw factory the retired `/plugins` catalog saved under `grain`."""
 
-pytestmark = pytest.mark.anyio
 
 BROWSER_SIGN_IN = OAuthSignIn.sign_in
 """The real sign-in, which the autouse stub replaces."""

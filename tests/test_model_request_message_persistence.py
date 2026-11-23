@@ -16,8 +16,6 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-pytestmark = pytest.mark.anyio
-
 
 def _count_markers(messages: list[ModelMessage]) -> int:
     return sum(

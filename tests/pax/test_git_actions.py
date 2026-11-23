@@ -37,7 +37,6 @@ from tests.pax.test_web_sessions import MakeFleet, make_fleet
 __all__ = ['make_fleet']
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(sys.platform == 'win32', reason='the stand-in `gh` and the hooks are POSIX shell scripts'),
 ]
 

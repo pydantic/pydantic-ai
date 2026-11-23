@@ -43,8 +43,6 @@ from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
 from tests.conftest import legacy_retry_prompt_part
 from tests.harness._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def anyio_backend() -> str:

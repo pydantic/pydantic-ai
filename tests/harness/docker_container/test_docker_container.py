@@ -28,7 +28,6 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 from ._fake_docker import FakeDocker, install_fake_docker
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='`DockerContainerBackend` runs `docker` as a POSIX subprocess'),
 ]
 

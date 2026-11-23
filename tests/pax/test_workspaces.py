@@ -35,8 +35,6 @@ from pydantic_ai_pax.runtime import worktrees
 from pydantic_ai_pax.runtime.worktrees import add_worktree, clone_or_fetch, commit_of, remove_worktree, repository_root
 from tests.pax.dialog_script import Back, Confirm, Pick, ScriptedDialogs, Type
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class CheckingDialogs:

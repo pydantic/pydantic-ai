@@ -34,7 +34,6 @@ from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
 from .._tool_calls import call_tool
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='`SSHWorkspaceBackend` runs `ssh` as a POSIX subprocess'),
 ]
 

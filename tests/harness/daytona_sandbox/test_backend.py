@@ -48,7 +48,6 @@ from pydantic_ai_harness.daytona_sandbox import (
 
 from .fake_daytona import CreateParams, FakeClient, FakeDaytona, FakeSandbox
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
 posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 

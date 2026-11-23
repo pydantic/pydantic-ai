@@ -26,7 +26,6 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 from .._tool_calls import call_tools
 from .fake_daytona import FakeDaytona
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
 posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 

@@ -60,6 +60,14 @@ repos:
         language: pygrep
         entry: '(?<!`)``(?!`)|::\s*$|:[a-z][a-z_:]*:`'
         types_or: [python, markdown]
+      - id: no-anyio-marker
+        name: No pytest.mark.anyio in tests
+        description: |
+          `anyio_mode = "auto"` runs every async test under anyio, so `tests/AGENTS.md` says not to add the marker.
+        language: pygrep
+        entry: '\bpytest\.mark\.anyio\b'
+        files: ^tests/
+        types: [python]
       - id: clai-help
         name: clai help output
         entry: uv

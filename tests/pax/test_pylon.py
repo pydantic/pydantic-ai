@@ -38,8 +38,6 @@ from tests.pax.dialog_script import Back, Confirm, Finish, Pick, ScriptedDialogs
 from tests.pax.menu_script import UNTIL_CLOSED, Script, pick, typed
 from tests.pax.test_workspace_defaults import per_run
 
-pytestmark = pytest.mark.anyio
-
 CLOSE = MenuResult(cancelled=True)
 CTX = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 SIGNED_OUT = 'Not signed in to Pylon. Run /pylon login to sign in.'

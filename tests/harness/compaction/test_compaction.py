@@ -6116,7 +6116,6 @@ recent
         )
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('anyio_backend', ['asyncio'])
 @pytest.mark.parametrize('inject_first', [False, True])
 @pytest.mark.parametrize('clamp', [False, True])
