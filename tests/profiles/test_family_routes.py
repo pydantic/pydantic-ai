@@ -251,8 +251,7 @@ ROUTE_GAPS: dict[str, dict[str, str]] = {
         ),
         _SHARED_RESOLVER,
     ),
-    # OpenRouter's MiniMax profile keeps the always-on thinking but not the inlined `$defs`.
-    'OpenRouterProvider': {'minimax': _CROSS_ROUTE},
+    'OpenRouterProvider': {'minimax': _SHARED_RESOLVER},
     'TogetherProvider': {
         'openai': (
             "Together's only OpenAI models are gpt-oss, so `providers/together.py:_gpt_oss_only_profile` gives other"
@@ -280,7 +279,10 @@ ROUTE_GAPS: dict[str, dict[str, str]] = {
     'VercelProvider': dict.fromkeys(('amazon', 'google', 'inclusionai', 'meta', 'minimax', 'qwen'), _VERCEL_MAP),
 }
 """The families each spelled route loses a fact of today, each with the issue that owns the gap or the reason the
-route differs on purpose."""
+route differs on purpose.
+
+A gateway that takes only some vendors from the shared map, or keeps its own vendor table, loses the families of the
+rest; https://github.com/pydantic/pydantic-ai/issues/12101 owns moving it onto the whole map."""
 
 
 @cache
