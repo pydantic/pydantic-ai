@@ -485,7 +485,7 @@ Python up to 3.14.
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
 - `desktop=True` gives the box a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
   `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
-  `allow_internet_access=True` (and the Debian mirrors in any `allowed_hosts`), or an `image` that has them;
+  `allow_internet_access=True` (with `deb.debian.org` in any `allowed_hosts`), or an `image` that has them;
   creating a new box without either raises `UserError`, attaching to one doesn't. For a browser, pass `box_options={'disk_size_gb': 4}`.
 
 ### DockerContainer

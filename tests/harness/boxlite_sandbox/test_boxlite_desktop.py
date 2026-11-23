@@ -14,7 +14,7 @@ from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBa
 from pydantic_ai_harness.computer_use import ComputerUse
 
 from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_boxlite import FakeBoxLite
 
 
@@ -89,7 +89,7 @@ async def test_a_desktop_box_reattaches_with_its_display(
     # Attaching installs nothing it can't, so the network setting for new boxes doesn't stop it.
     sandbox = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900))
     attached = sandbox.backend(owner.ref)
-    await screen(attached).display_size()
+    await full_display(attached).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')

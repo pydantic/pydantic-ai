@@ -148,7 +148,7 @@ Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
 `capabilities=[BoxLiteSandbox(desktop=True, allow_internet_access=True), ComputerUse()]`. The screen is 1280x800;
 pass a size such as `desktop=(1440, 900)` for another.
 
-Without an `image`, a new box runs `debian:bookworm-slim`, and its first start installs [the display's programs](../computer_use/#what-the-display-needs), with no web browser. That needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with the Debian mirrors in any `allowed_hosts`. Creating a new box without it raises `UserError`; for a box without network access, pass an `image` that has the programs. To install a browser, pass `box_options={'disk_size_gb': 4}`: the default disk is too small.
+Without an `image`, a new box runs `debian:bookworm-slim`, and its first start installs [the display's programs](../computer_use/#what-the-display-needs), with no web browser. That needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with `deb.debian.org` in any `allowed_hosts`. Creating a new box without it raises `UserError`; for a box without network access, pass an `image` that has the programs. To install a browser, pass `box_options={'disk_size_gb': 4}`: the default disk is too small.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
