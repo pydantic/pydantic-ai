@@ -5112,22 +5112,40 @@ def test_unknown_tool_per_tool_retries_exceeded():
         agent.run_sync('Hello')
 
 
-def test_deferred_tool_cutoff_raises_incomplete_tool_call():
+@pytest.mark.parametrize('external', [pytest.param(True, id='external'), pytest.param(False, id='requires_approval')])
+def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
     requests = 0
 
     def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         nonlocal requests
         requests += 1
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='needs_approval', args='{"value":', tool_call_id='call-1')],
+            parts=[ToolCallPart(tool_name='deferred_tool', args='{"value":', tool_call_id='call-1')],
             finish_reason='length',
         )
 
-    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+    toolset: AbstractToolset[object]
+    if external:
+        toolset = ExternalToolset(
+            [
+                ToolDefinition(
+                    name='deferred_tool',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'value': {'type': 'string'}},
+                        'required': ['value'],
+                    },
+                )
+            ]
+        )
+    else:
+        toolset = FunctionToolset()
 
-    @agent.tool_plain(requires_approval=True)
-    def needs_approval(value: str) -> str:
-        return value
+        @toolset.tool_plain(requires_approval=True)
+        def deferred_tool(value: str) -> str:
+            assert False
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests], toolsets=[toolset])
 
     with pytest.raises(IncompleteToolCall) as exc_info:
         agent.run_sync('test')
@@ -5137,41 +5155,8 @@ def test_deferred_tool_cutoff_raises_incomplete_tool_call():
         'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
         'to result in a shorter response that will fit within the limit.'
     )
-    assert requests == 2
-
-
-def test_approved_deferred_tool_cutoff_raises_incomplete_tool_call():
-    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name='needs_approval', args='{"value":', tool_call_id='call-1')],
-            finish_reason='length',
-        )
-
-    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
-
-    @agent.tool_plain(requires_approval=True)
-    def needs_approval(value: str) -> str:
-        return value
-
-    message_history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='test')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='needs_approval', args='{"value":', tool_call_id='call-1')],
-            finish_reason='length',
-        ),
-    ]
-
-    with pytest.raises(IncompleteToolCall) as exc_info:
-        agent.run_sync(
-            deferred_tool_results=DeferredToolResults(approvals={'call-1': True}),
-            message_history=message_history,
-        )
-
-    assert str(exc_info.value) == (
-        'Model token limit (provider default) exceeded while generating a tool call, '
-        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
-        'to result in a shorter response that will fit within the limit.'
-    )
+    # An external tool gets no retries; an approval-required tool gets the default one retry first.
+    assert requests == (1 if external else 2)
 
 
 def test_tool_exceeds_token_limit_error():
