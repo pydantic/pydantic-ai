@@ -76,6 +76,7 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
     [
         ('list_files', {}, '● list_files .'),
         ('list_files', {'path': '/tmp', 'glob': '*.cpp'}, '● list_files /tmp *.cpp'),
+        ('list_files', {'recursive': False}, '● list_files . not recursive'),
         ('read_file', {'path': '/tmp/example.cpp'}, '● read_file /tmp/example.cpp'),
         ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, '● read_file main.py lines 21-35'),
         ('read_file', {'path': 'main.py', 'offset': 20}, '● read_file main.py from line 21'),

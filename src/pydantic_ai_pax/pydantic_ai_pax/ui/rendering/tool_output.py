@@ -152,6 +152,7 @@ class DisplayArgs(BaseModel):
     offset: int = 0
     limit: int | None = None
     glob: str | None = None
+    recursive: bool = True
 
 
 @dataclass
@@ -284,7 +285,8 @@ class ToolOutput:
                 details = f' from line {args.offset + 1}'
             argument = args.path + details
         else:
-            argument = ' '.join(part for part in (args.path or '.', args.glob) if part)
+            parts = (args.path or '.', args.glob, None if args.recursive else 'not recursive')
+            argument = ' '.join(part for part in parts if part)
         self.header(tool_call_id, name=name, argument=argument)
         return True
 
