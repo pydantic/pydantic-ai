@@ -248,8 +248,8 @@ _APT_NETWORK = '-o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Ac
 
 A network that drops packets, such as a Render sandbox's without internet, otherwise runs out `_START_TIMEOUT`: there,
 live, each DNS lookup took 80 seconds, and apt looks up its host again for each list and each of its 4 tries. With
-these options and `_APT_DNS`, the start gave up in 50 seconds, and a sandbox with internet still installed the
-packages. One retry keeps a single mirror error from failing the install. The 20 seconds are for connecting and for
+these options and `_APT_DNS`, the start gave up in 50 to 195 seconds, as it did without the retries, and a sandbox
+with internet still installed the packages. One retry keeps a single mirror error from failing the install. The 20 seconds are for connecting and for
 each wait for data, not for a whole download, so a slow mirror that keeps sending still works.
 """
 
