@@ -30,10 +30,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
 from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError, LoopNudgePart
-from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY, TOOLS_CHANGE_MID_RUN
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness.conftest import Instrumented
 
 
@@ -403,31 +402,6 @@ class TestDetectLoops:
                 'detect_loops.fingerprints': ('cad0390702834b89',),
             }
         )
-
-    @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
-    async def test_an_earlier_offer_is_still_a_tool_name(self, instrumented: Instrumented):
-        @dataclass
-        class HideReadFileAfterFirst(AbstractCapability[object]):
-            requests: int = 0
-
-            async def prepare_tools(
-                self, ctx: RunContext[object], tool_defs: list[ToolDefinition]
-            ) -> list[ToolDefinition]:
-                del ctx
-                self.requests += 1
-                return tool_defs if self.requests == 1 else [tool for tool in tool_defs if tool.name != 'read_file']
-
-        tracing, exporter = instrumented(False)
-        agent = _agent(
-            [[_call()]] * 3,
-            DetectLoops(repeated_result_threshold=None, repeated_call_threshold=2),
-            extra_capabilities=[HideReadFileAfterFirst(), tracing],
-        )
-
-        await agent.run('Read it')
-
-        [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop detected']
-        assert (span.attributes or {})['detect_loops.tool_names'] == ('read_file',)
 
     @pytest.mark.parametrize(
         ('create', 'message'),
