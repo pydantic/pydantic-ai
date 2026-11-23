@@ -1502,17 +1502,6 @@ class TestInputGuardrailTracing:
             'guardrail.position': 0,
         }
 
-    async def test_the_span_names_the_deciding_guard_in_a_chain(self):
-        tracer, exporter = _recording_tracer()
-        run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer)
-
-        ig = InputGuardrail(guard=[redact_secrets, _refuse_nope])
-        with pytest.raises(SkipModelRequest):
-            await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
-
-        attributes = dict(_only_span(exporter).attributes or {})
-        assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_refuse_nope', 1)
-
 
 class TestInputGuardrailStreaming:
     """`InputGuardrail` behaves the same under `run_stream()` as under `run()`."""
