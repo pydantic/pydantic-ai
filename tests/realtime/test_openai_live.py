@@ -3796,6 +3796,29 @@ async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: Op
             assert connection._backend_model is None  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_a_sideband_appends_voice_instructions_to_the_session_it_attaches_to(model: OpenAILiveModel) -> None:
+    """A sideband re-attaches to the same session, which keeps what was appended, so nothing is kept for a redial."""
+    ws = _FakeWebSocket([_started_frame(delegation={'type': 'client'})])
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            await connection.send(AppendVoiceInstructions('The caller is on a key menu: stay quiet.'))
+            assert connection._voice_instructions == []  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent[1:]] == snapshot(
+        [
+            {
+                'type': 'session.instructions.append',
+                'delegation_id': None,
+                'content': 'The caller is on a key menu: stay quiet.',
+            }
+        ]
+    )
+
+
 async def test_a_malformed_started_event_on_the_sideband_raises(model: OpenAILiveModel) -> None:
     with _patched_connect(_FakeWebSocket([json.dumps({'type': 'session.started', 'session': {}})])):
         with pytest.raises(RealtimeError, match=r'Malformed `session\.started`'):
