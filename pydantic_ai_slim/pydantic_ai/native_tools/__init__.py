@@ -912,7 +912,7 @@ class ComputerTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
-    * Anthropic, on Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock
+    * Anthropic, on the models listed under [Anthropic](../models/anthropic.md#computer-use)
     """
 
     display_size: tuple[int, int]

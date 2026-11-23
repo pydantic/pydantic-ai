@@ -865,13 +865,13 @@ The native tool is sent only when the request has exactly one `computer` tool th
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | On the models listed under [OpenAI](models/openai.md#computer-use). |
-| Anthropic | ✅ | On Claude Haiku 4.5, Sonnet 4.6, Opus 4.5 and later through the Claude API and Amazon Bedrock. See [Anthropic computer use](models/anthropic.md#computer-use). |
+| Anthropic | ✅ | On the models and clients listed under [Anthropic](models/anthropic.md#computer-use). |
 | OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
 | OpenRouter | ❌ | The model gets the function tool. |
 | Google | ❌ | |
 | xAI | ❌ | |
 | Groq | ❌ | |
-| Bedrock | ❌ | Claude on Amazon Bedrock gets it through `AnthropicModel`. See the Anthropic row. |
+| Bedrock | ❌ | Claude on Amazon Bedrock gets it through `AnthropicModel`. |
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
