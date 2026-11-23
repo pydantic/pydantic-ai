@@ -62,7 +62,16 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Total lifetime of the sandbox in seconds, applied on create and on attach.
 
     When it runs out, E2B pauses the sandbox and attaching resumes it. The default, 1 hour, is
-    the most E2B's Hobby plan allows; Pro plans allow up to 86400.
+    the most E2B's Hobby plan allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead
+    the most a run extends the lifetime to, from its first use, and a value over your plan's limit
+    isn't refused up front: the sandbox pauses at the plan's limit.
+    """
+
+    idle_timeout: int | None = None
+    """Seconds without use after which E2B pauses the sandbox; `None` keeps the fixed `sandbox_timeout` lifetime.
+
+    Each command or file operation extends its lifetime as it starts, but never past `sandbox_timeout` from the run's
+    first use. Model turns between operations count as idle, and one command must finish within it, so use minutes.
     """
 
     working_dir: str | None = None
@@ -97,6 +106,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
+        check_integer('idle_timeout', self.idle_timeout, optional=True)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         desktop_size(self.desktop)
@@ -115,6 +125,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
         template: str | None = None,
         allow_internet_access: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
@@ -134,6 +145,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             template=template,
             allow_internet_access=allow_internet_access,
             sandbox_timeout=sandbox_timeout,
+            idle_timeout=idle_timeout,
             working_dir=working_dir,
             env=env,
             authority=authority,
@@ -147,6 +159,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             client=self.client,
             ref=ref,
             sandbox_timeout=self.sandbox_timeout,
+            idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
             desktop=self.desktop,
@@ -172,6 +185,7 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             template=self.template,
             allow_internet_access=self.allow_internet_access,
             sandbox_timeout=self.sandbox_timeout,
+            idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
             network=self.network,
