@@ -149,7 +149,7 @@ def test_finding_and_unarchiving(make_web: MakeWeb, tmp_path: Path) -> None:
     alpha.mkdir()
     beta.mkdir()
     parser = save(web_, ConversationSummary(workspace=str(alpha), title='Parser | fix'), days=1)
-    # Imported from Claude Code: the table and the sidebar both say so; CLAI's own sessions say nothing.
+    # Imported from Claude Code: the table and the sidebar both say so; Pax's own sessions say nothing.
     imported = str(uuid5(NAMESPACE_URL, 'claude:docs'))
     save(web_, ConversationSummary(id=imported, workspace=str(beta), title='Docs', tags=('claude', 'docs')))
     sources = {
@@ -193,4 +193,4 @@ def test_finding_and_unarchiving(make_web: MakeWeb, tmp_path: Path) -> None:
     assert len(published) == 2, 'nothing changed, so the sidebar is not told'
 
     web_.plugin.host.sessions = None
-    assert call(reported(tools.sessions_find)) == 'Error: This CLAI does not save sessions.'
+    assert call(reported(tools.sessions_find)) == 'Error: This Pax does not save sessions.'

@@ -1,8 +1,8 @@
-name: Build the CLAI 2 web UI
+name: Build the Pax web UI
 description: >-
   Install the Node version and locked dependencies of `src/pydantic_ai_pax/web-ui`, then build
   its bundle into `src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static`. Pull requests
-  do not commit that bundle (the `CLAI 2 web bundle` workflow commits it after a merge), so
+  do not commit that bundle (the `Pax web bundle` workflow commits it after a merge), so
   every job that tests or packages the web UI builds it from source first.
 
 inputs:

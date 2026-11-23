@@ -68,7 +68,7 @@ class Display(Protocol):
     async def display_size(self) -> tuple[int, int]:
         """The `(width, height)` of the next screenshot, in pixels. Every action's positions are in this space.
 
-        The size can change between calls, for example when a phone rotates.
+        The size can change between calls.
         """
         ...
 
@@ -104,10 +104,7 @@ class SupportsZoom(Protocol):
     """An optional extra for a [`Display`][pydantic_ai_harness.computer_use.Display]: capture part of the screen."""
 
     async def zoom(self, region: Region) -> bytes:
-        """Capture the region as PNG bytes, at the screen's full resolution.
-
-        The region is in screenshot pixels.
-        """
+        """Capture the region as PNG bytes. The region and the image are in screenshot pixels."""
         ...
 
 

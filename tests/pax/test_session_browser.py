@@ -142,13 +142,13 @@ def test_headings_and_header_use_the_terminal_foreground(monkeypatch: pytest.Mon
     widget, _ = browser()
     frame = widget.frame(width=120, height=24)
     lines = '\n'.join(frame)
-    assert frame[0] == 'CLAI > Resume session    3 sessions / 2 projects'
+    assert frame[0] == 'Pax > Resume session    3 sessions / 2 projects'
     assert '\x1b[1mSELECT PROJECT\x1b[0m' in lines
     assert '\x1b[0m SESSIONS: /a/project | Sort: recent' in lines
     widget.handle_key(Key.ENTER)
     frame = widget.frame(width=120, height=24)
     lines = '\n'.join(frame)
-    assert frame[0] == 'CLAI > Resume session    3 sessions / 2 projects'
+    assert frame[0] == 'Pax > Resume session    3 sessions / 2 projects'
     assert any(line.startswith('PROJECTS ') for line in frame)
     assert '\x1b[1mSELECT SESSION: /a/project | Sort: recent\x1b[0m' in lines
     assert not any(module.theme.sgr(module.theme.INFO) in line for line in frame)
@@ -377,7 +377,7 @@ def test_idle_loop_redraws_only_for_changes(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0.0))
     assert widget.loop() == ''
     assert isinstance(widget.output, StringIO)
-    assert widget.output.getvalue().count('CLAI > Resume session') == 2
+    assert widget.output.getvalue().count('Pax > Resume session') == 2
 
 
 def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -682,7 +682,7 @@ def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
         titles.append([e.title for e in widget.sessions])
     assert titles == [['Native'], ['From Claude'], ['From Codex'], ['Native', 'From Claude', 'From Codex']]
     widget.handle_key('f')
-    assert widget.notice == 'Listing CLAI sessions.' and 'Source: CLAI' in widget.frame(width=120, height=30)[0]
+    assert widget.notice == 'Listing Pax sessions.' and 'Source: Pax' in widget.frame(width=120, height=30)[0]
     # The older row is gone with the worktrees it gathered, so the project is selected instead.
     assert widget.rows == [(key, '')] and widget.checkout == ''
     for _ in range(3):

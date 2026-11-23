@@ -405,6 +405,39 @@ def test_neon_thinking_levels_follow_the_client_transport(
 @pytest.mark.parametrize(
     ('make_provider', 'profile', 'expected'),
     [
+        pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, 512, id='gemini_api'),
+        pytest.param(lambda: GoogleCloudProvider(api_key='mock-api-key'), None, 128, id='google_cloud'),
+        pytest.param(
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            128,
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(
+            lambda: GoogleProvider(api_key='mock-api-key'),
+            GoogleModelProfile(google_minimal_thinking_budget=1024),
+            1024,
+            id='gemini_api_user_budget_wins',
+        ),
+    ],
+)
+def test_flash_lite_minimal_thinking_budget_follows_the_client_transport(
+    make_provider: Callable[[], Provider[Client]], profile: GoogleModelProfile | None, expected: int
+) -> None:
+    """`thinking='minimal'` sends 512 on `gemini-2.5-flash-lite` only when requests go to the Gemini API.
+
+    The Gemini API rejects a budget below 512 on this model; Vertex isn't probed, so it keeps 128. Not a VCR test:
+    the budget is decided before the request is built. The body-matched `google-gemini-25-flash-lite-minimal-budget`
+    cassette in `tests/test_thinking_wire_contract.py` pins the Gemini API side.
+    """
+    m = GoogleModel('gemini-2.5-flash-lite', provider=make_provider(), profile=profile)
+    sent = m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking='minimal'))  # pyright: ignore[reportPrivateUsage]
+    assert sent == {'include_thoughts': True, 'thinking_budget': expected}
+
+
+@pytest.mark.parametrize(
+    ('make_provider', 'profile', 'expected'),
+    [
         pytest.param(
             lambda: GoogleCloudProvider(api_key='mock-api-key'), None, {'thinking_budget': 0}, id='google_cloud'
         ),

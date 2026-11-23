@@ -15,7 +15,7 @@ LOCAL_WORKTREE = 'local-worktree'
 
 
 class WorktreeKind(BaseModel):
-    """A Git worktree on this machine, whose sessions run in this CLAI as any other does."""
+    """A Git worktree on this machine, whose sessions run in this Pax as any other does."""
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
@@ -50,8 +50,8 @@ class WorktreeKind(BaseModel):
     model: str = Field(
         default='',
         description=(
-            "Retired: the model of a workspace's own CLAI process. Its sessions run in this CLAI now and start with "
-            'the saved default, so a value an older CLAI saved is kept for it but not used.'
+            "Retired: the model of a workspace's own Pax process. Its sessions run in this Pax now and start with "
+            'the saved default, so a value an older Pax saved is kept for it but not used.'
         ),
     )
 

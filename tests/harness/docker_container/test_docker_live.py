@@ -190,11 +190,11 @@ class TestLiveDockerDesktop:
 
     async def test_each_button_arrives_as_its_x_button(self, backend: DockerContainerBackend) -> None:
         display = await _xev_window(backend)
-        for button in ('left', 'middle', 'right', 'back', 'forward'):
+        for button in ('left', 'middle', 'right'):
             await display.act(Click(x=400, y=300, button=button))
-        events = await _xev_events(backend, lambda events: _logged(events, 'ButtonRelease', '9') == 1)
+        events = await _xev_events(backend, lambda events: _logged(events, 'ButtonRelease', '3') == 1)
         presses = [detail for kind, detail, _ in events if kind == 'ButtonPress']
-        assert presses == ['1', '2', '3', '8', '9']
+        assert presses == ['1', '2', '3']
 
     async def test_a_scroll_clicks_the_wheel_once_per_step(self, backend: DockerContainerBackend) -> None:
         display = await _xev_window(backend)

@@ -30,7 +30,7 @@ class HerdrClient:
         self._seq = time.time_ns() // 1000
         self._original_label: str | None = None
         self._last_label: str | None = None
-        self._worker = threading.Thread(target=self._run, name='clai2-herdr', daemon=True)
+        self._worker = threading.Thread(target=self._run, name='pax-herdr', daemon=True)
         self._worker.start()
 
     def submit(self, lane: Lane, method: str, params: dict[str, JsonValue]) -> None:

@@ -59,7 +59,7 @@ class StoredAccount:
     label: str | None = None
     """A name the user gave it; the profile is shown when there is none."""
     plugin_login: str | None = None
-    """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
+    """The plugin `/login` name that signed it in, such as `claude`; `None` when Pax keeps its credentials."""
 
 
 _OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
@@ -75,7 +75,7 @@ def read_regular_file(path: Path) -> bytes:
 
 
 def file_sha256(path: Path) -> str:
-    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file CLAI can read."""
+    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file Pax can read."""
     try:
         return hashlib.sha256(read_regular_file(path)).hexdigest()
     except OSError:
@@ -88,12 +88,12 @@ def setting_json(value: JsonValue) -> str:
 
 
 def config_dir() -> Path:
-    """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
+    """The user's Pax folder, honouring `XDG_CONFIG_HOME`."""
     return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
 
 
 def state_dir() -> Path:
-    """Where CLAI keeps state that is not a preference, honouring an absolute `XDG_STATE_HOME`."""
+    """Where Pax keeps state that is not a preference, honouring an absolute `XDG_STATE_HOME`."""
     root = os.environ.get('XDG_STATE_HOME', '')
     state = Path(root) if os.path.isabs(root) else Path.home() / '.local' / 'state'
     return state / 'pydantic-clai2'
@@ -229,7 +229,7 @@ class SettingsStore:
 
     @staticmethod
     def _remove_model(connection: sqlite3.Connection, name: str) -> bool:
-        # Keep the default check and the deletes atomic across CLAI sessions.
+        # Keep the default check and the deletes atomic across Pax sessions.
         connection.execute('BEGIN IMMEDIATE')
         row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
         if row is not None and _JSON.validate_json(row[0]) == name:
@@ -267,7 +267,7 @@ class SettingsStore:
         Raises `ValueError` if another session took `new` since the name was checked.
         """
         with self._connect() as connection:
-            # Keep the checks and the renames atomic across CLAI sessions, as removal does.
+            # Keep the checks and the renames atomic across Pax sessions, as removal does.
             connection.execute('BEGIN IMMEDIATE')
             row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
             if row is not None and _JSON.validate_json(row[0]) == f'chain:{old}':
