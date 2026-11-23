@@ -1106,7 +1106,6 @@ def test_gateway_gpt_oss_inline_defs():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -2221,7 +2220,6 @@ def test_github_copilot_openai_gpt_5_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -2496,7 +2494,6 @@ def test_azure_openai_gpt_5():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -2837,7 +2834,6 @@ def test_ollama_gpt_oss():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
             'default_framing_announcement': 'always',
             'supported_native_tools': frozenset(
@@ -2900,7 +2896,6 @@ def test_vllm_gpt_oss_hf_namespace():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -3045,7 +3040,6 @@ def test_litellm_openai_gpt():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -3088,7 +3082,6 @@ def test_litellm_mistral_small_latest():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -3339,7 +3332,6 @@ def test_together_qwen():
                     'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3357,7 +3349,6 @@ def test_together_qwen():
                     'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3376,7 +3367,6 @@ def test_together_qwen():
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_image_output': True,
-                    'supports_inline_system_prompts': True,
                     'supports_thinking': True,
                     'openai_supports_encrypted_reasoning_content': True,
                     'openai_supports_reasoning': True,
@@ -3478,7 +3468,6 @@ def test_together_qwen():
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3495,7 +3484,6 @@ def test_together_qwen():
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3510,7 +3498,6 @@ def test_together_qwen():
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3556,7 +3543,6 @@ def test_openai_compatible_groq_route_keeps_json_mode_unset():
                     'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3864,7 +3850,6 @@ def test_github_openai_bare_name():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -3985,7 +3970,6 @@ def test_vercel_openai_gpt():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -4291,7 +4275,6 @@ def test_otari_gpt_oss_on_groq():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -4360,7 +4343,6 @@ def test_stav_gpt_oss():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -4381,7 +4363,6 @@ def test_stav_openai():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'openai_supports_encrypted_reasoning_content': True,
@@ -4496,7 +4477,6 @@ def test_crusoe_harmony():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),

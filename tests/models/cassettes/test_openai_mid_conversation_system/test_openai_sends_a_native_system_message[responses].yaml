@@ -1,0 +1,172 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "620"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.1-terra
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Call ping, then tell me what it returned.
+        - name: ping
+          arguments: "{}"
+          call_id: call_1
+          type: function_call
+        - type: function_call_output
+          call_id: call_1
+          output: pong
+        - role: system
+          content: Reply with exactly the word BANANA.
+        instructions: You are a test agent.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: ping
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2838"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs:
+          cyber: standard
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795447310
+        created_at: 1795447308
+        error: null
+        frequency_penalty: 0.0
+        id: resp_06f29b20f4646242006b045a0c571087d2aebda91b9a6fd9c6
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: You are a test agent.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-terra
+        moderation: null
+        object: response
+        output:
+        - content: []
+          encrypted_content: >-
+            gAAAAABrBFoOLYHjqNY1JGYdUDesgpAmJRxT-k0nJW-sqnTW6zBjCQYk10uH7PeQG5cqvQaYcEqd5Y6HyAJ_nBY1jc4VX9mydgT3B13qVHJ7nq79RLtrTQEHn62YiyXKouM2UYnTMm94bMgSRIsend8qFDFCU_Y7W_2ZL7SOg1JS3_FtcbuhJWR1z8JIzxsjPu7QY9_JtW48cFpzU-3aDIyG2OSf8dwRtJeh0vVY6a57D6dRFO7Ck2J1Ie2hMnBAOJkz1rAhgibUPxsRWwCU0BdYkXY36GGKAtXDbsMDgdv7unQ4jozhFLqpbWQVG-olP1Ftzmhdkdhy8P_JcnW70QBrRkDQLs6XVgHd78g8xkIJSKUD4xWZbwS9jMOCFFCissAmRAtpfKggSiT2jVIkSoqNDycIOzZ_X9nHcQsdpJcL3NoQPIrqStt8zLXfLdbCwjfY0tXAagUrjUGibABkhwRGmN6JyIQ-tj7SJAQrdZ5fBzv_TX8ih0BRhJTk7wfSEJ4Wl0mA3UuKNa0Qo3m8SxNWfsUVi00Wd-gz9egHi2wrYJp09Gb1JGbwExR4aNz3gEgCMzp6KySDlvK1f5DOf7BlGetEgD-JsSTWhlMnnKjoH8pFwi0KNQwHJgBKQEz6xC9ZPqpHbtXf33BD5HyLTTe8_gWIEWx_bNNrXldkKVBb6fQwDRZU_LT4OGQ7-dYkFJ2-JctLVC_3JvtTrBoUcEzgmfptombRscBBaA0XBmQ3nIJNASQHLGNrh3zper2h6BlyE9onwInNB5nTZHxDixUYJ2LeroNs6O5UnI8UsGgDiYYGOefkFTC8sHO3pDBDDq-2o8N5rU9W8Y-4DUoJQpjqnzfG7EwidTE4nmoYO6W0ngAGKhXbJ2fFvVKNFnGnywhDzD5ze9a_0gYJW2YAPDsCJBQnQE6wv6RykZSpbD09rP78KFfXiTaVDWEo3402c10bh92g1tOFWDnHiKgWXqi7AX6v_tRcsKaBvBSIbKx_1gkhlpo6yBDyV51DgxUwuu0NlOKDELCP0GI3mTiMCebZG69FB_6fs7hJinZreMVTZ_6-nqDHktF59IbZcdDwvpL7nKWTIHtPj8ar4VF2c2OYVIUdkzTid6oESGqIy6dY0Omw0C1bQZovorgQ5IyyFWPD3BsszTSLdjPlh8nTLk5EAZ6KcPRFlBAE6kSGIMRap_cOU6xtsrtBpwMwcjS-vvneSUzYMm9suyjfryypEmt2wbGJaghxoB9k1b4VwQCTWQcBBC4Ma71AiDvGnAD8qM7DbMvf7_pfvA-Fs0SA3G2j8raONggsx9X_PHIxON06yeFImwRmEkx9QxMdDay_HcWEcaV7Jg0xehV3M0-UFbJY7jsCS763_ZJ_BL98zCFpQM3U6vMTn6JFy8Ax1P4X2sQ6-3-wQO-MmXT-gg4dwJFf11laJS4zIBbEoDuH-gs5Lid5lgyn9aH689oJDojwRxSFC9X61beJT4KT2TBD-EeW5rl0wtxWRSQeNy9c75su_4TCgUjGFsk3dOVyPIXAFzErundivaXJMuhvb9livhXpSNbUD0yHLDeuSyPh9MOlabteg-fOzIJLsm7VAfdwZVciR2hXxAO-CNJBUS7-t8Ut5TtT7LSdGvxA3v4x_tIMtEkw7vnf7s1Jj4EBtdsFNDLj5gC8A0EmnTQYtsXjAtOOsuFm_JT9iEC_MIDxq54N6ffjcBFPIwzzlxVCuvV-FrUcDMUMMYCNkNerHRNd2BElKmMvrM1drhPuBi1BIxJnarc2lw51_RykIbufoesDuUr0pNAesgHutF0y0ALsdn9xNJLxcNmq3LZWcydM0t3s1Jnx20Jbug_hgvuIIWHnYm1Le7O5bvb32NCKhkft8gD_IMxlifYNyz-gQzuJtWGB8iWdLTgPjOZCeEkBmsc9muUnrwwQSZkTTrNcjrRt6l82V6eBughT-g==
+          id: rs_06f29b20f4646242006b045a0e4df087d2a6ea4f93a7af9307
+          summary: []
+          type: reasoning
+        - content:
+          - annotations: []
+            logprobs: []
+            text: BANANA
+            type: output_text
+          id: msg_06f29b20f4646242006b045a0e594c87d2bcac9698a7b0c549
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - description: null
+          name: ping
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 86
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 30
+          output_tokens_details:
+            reasoning_tokens: 22
+          total_tokens: 116
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-23T15:21:51.181182+00:00

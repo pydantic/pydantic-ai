@@ -334,7 +334,6 @@ def test_bedrock_mantle_profiles() -> None:
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': False,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': False,
             'openai_system_prompt_role': None,
