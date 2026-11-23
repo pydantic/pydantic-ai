@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -47,7 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import acquire_span
+from pydantic_ai_harness._smolvm_cli import NAME as _NAME, NAME_PREFIX as _NAME_PREFIX
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
@@ -74,16 +73,6 @@ except ImportError as _import_error:
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
-
-_NAME_PREFIX = 'pydantic-ai-'
-_NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
-"""The names the backend gives its VMs, and so the only refs it attaches to or deletes.
-
-A local VM's id is its name and `connect` opens any VM of this OS user, so without this check a ref
-from message history could reach a VM made by another tool, with host mounts or network. The name is
-a namespace, not proof of origin: any process of this OS user could use it, and smolmachines can't report
-an existing VM's mounts or network, so a ref is still trusted input.
-"""
 
 _SETUP_TIMEOUT = 60.0
 """Seconds the backend's own commands in the VM (`mkdir -p` and `pwd -P`) get."""
@@ -325,33 +314,32 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _acquire(self, machine_id: str, *, create: bool) -> smol.Machine:
         try:
-            with acquire_span('create' if create else 'attach', self):
-                try:
-                    if create:
-                        config = smol.MachineConfig(
-                            name=machine_id, image=self._image, resources=self._resources, persistent=True
-                        )
-                        machine = await asyncio.to_thread(smol.Machine.create, config, local_target())  # noqa: TID251  (not converted to anyio yet)
-                    else:
-                        machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())  # noqa: TID251  (not converted to anyio yet)
-                except smol.SmolError as error:
-                    if create:
-                        # The SDK reported the boot failed, so a retry boots a VM under a new name.
-                        self._ref = None
-                    elif error.code == 'NOT_FOUND' and self._passed_in:
-                        # One deleted since, or a Smol Cloud machine, whose id the local target doesn't know: the SDK
-                        # can't tell them apart.
-                        raise WorkspaceUnavailableError(
-                            f'The smol VM {machine_id!r} passed as `sandbox` is not, or is no longer, a VM on this '
-                            'machine: SmolSandboxBackend only uses the local target.'
-                        ) from error
-                    elif error.code == 'NOT_FOUND':
-                        raise WorkspaceUnavailableError(_gone_message(machine_id)) from error
-                    if error.code in _HOST_UNAVAILABLE:
-                        raise WorkspaceUnavailableError(
-                            f'This host cannot run a local smol VM ({error.code}): {error}'
-                        ) from error
-                    raise
+            try:
+                if create:
+                    config = smol.MachineConfig(
+                        name=machine_id, image=self._image, resources=self._resources, persistent=True
+                    )
+                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())  # noqa: TID251  (not converted to anyio yet)
+                else:
+                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())  # noqa: TID251  (not converted to anyio yet)
+            except smol.SmolError as error:
+                if create:
+                    # The SDK reported the boot failed, so a retry boots a VM under a new name.
+                    self._ref = None
+                elif error.code == 'NOT_FOUND' and self._passed_in:
+                    # One deleted since, or a Smol Cloud machine, whose id the local target doesn't know: the SDK
+                    # can't tell them apart.
+                    raise WorkspaceUnavailableError(
+                        f'The smol VM {machine_id!r} passed as `sandbox` is not, or is no longer, a VM on this '
+                        'machine: SmolSandboxBackend only uses the local target.'
+                    ) from error
+                elif error.code == 'NOT_FOUND':
+                    raise WorkspaceUnavailableError(_gone_message(machine_id)) from error
+                if error.code in _HOST_UNAVAILABLE:
+                    raise WorkspaceUnavailableError(
+                        f'This host cannot run a local smol VM ({error.code}): {error}'
+                    ) from error
+                raise
             if self._working_dir is not None:
                 result = await self._exec(
                     machine, ['mkdir', '-p', self._working_dir], env={}, working_dir=None, timeout=_SETUP_TIMEOUT

@@ -6,18 +6,22 @@ These are unit tests, not VCR tests: what they check is span attributes and the 
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.trace import INVALID_SPAN
+from opentelemetry.trace import INVALID_SPAN, NoOpTracer
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._telemetry import (
+    RunTelemetry,
+    current_run_telemetry,
     current_span,
     open_span,
     record_decision,
+    run_telemetry_scope,
     set_content_attribute,
 )
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
@@ -195,3 +199,58 @@ def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
 
     assert span is INVALID_SPAN
     assert current_span(ctx) is INVALID_SPAN
+
+
+async def test_code_without_a_ctx_traces_to_the_calling_run():
+    """A tool's helper with no `RunContext` reads the run's telemetry; outside a run there is none."""
+    instrumentation, exporter = instrumented(include_content=False)
+    agent = Agent(TestModel(call_tools=['noop']), capabilities=[instrumentation])
+
+    @agent.tool_plain
+    def noop() -> str:
+        with open_span(current_run_telemetry(), 'example helper', content={'example.input': 'a'}):
+            pass
+        return 'ok'
+
+    await agent.run('go')
+
+    assert example_spans(exporter) == [{'name': 'example helper'}]
+    with open_span(current_run_telemetry(), 'example outside a run') as span:
+        assert span is INVALID_SPAN
+
+
+@pytest.mark.parametrize(
+    ('error', 'not_errors', 'status'),
+    [
+        (asyncio.CancelledError('private'), (), 'ERROR'),
+        (asyncio.CancelledError('private'), (asyncio.CancelledError,), 'UNSET'),
+        (FileNotFoundError('private'), (FileNotFoundError,), 'UNSET'),
+    ],
+)
+def test_an_escaping_exception_is_recorded_by_its_type(
+    error: BaseException, not_errors: tuple[type[BaseException], ...], status: str
+):
+    """A cancellation is an error like any other unless the caller expects it; the message stays out without content."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with pytest.raises(type(error)):
+        with open_span(
+            RunTelemetry(provider.get_tracer('test'), include_content=False), 'example work', not_errors=not_errors
+        ):
+            raise error
+
+    [span] = exporter.get_finished_spans()
+    assert span.status.status_code.name == status
+    assert [dict(event.attributes or {}).get('exception.message') for event in span.events] == [None]
+
+
+def test_a_telemetry_scope_publishes_for_its_block_only():
+    telemetry = RunTelemetry(TracerProvider().get_tracer('test'), include_content=False)
+
+    with run_telemetry_scope(telemetry):
+        assert current_run_telemetry() is telemetry
+        with run_telemetry_scope(RunTelemetry(NoOpTracer(), include_content=True)):
+            assert current_run_telemetry() is None
+    assert current_run_telemetry() is None
