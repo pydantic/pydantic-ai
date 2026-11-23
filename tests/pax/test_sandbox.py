@@ -11,6 +11,7 @@ import io
 import itertools
 import json
 import os
+import re
 import shlex
 import stat
 import subprocess
@@ -20,7 +21,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import anyio
 import pytest
@@ -59,6 +60,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
     daytona as daytona_provider,
     e2b as e2b_provider,
     kubernetes as kubernetes_provider,
+    local as local_provider,
     modal as modal_provider,
     opensandbox as opensandbox_provider,
     render as render_provider,
@@ -74,7 +76,10 @@ from pydantic_ai_pax.builtin_plugins.sandbox.seed import (
     seed,
     snapshot,
 )
+from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.api_keys import load_keys, save_key
+from pydantic_ai_pax.config.project_settings import ProjectSettings
+from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import (
     ConversationChanged,
     LoadedPlugin,
@@ -85,6 +90,7 @@ from pydantic_ai_pax.plugins import (
 )
 from pydantic_ai_pax.runtime.imported_history import imported_kind
 from pydantic_ai_pax.runtime.rewind import rewind_points
+from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs, Type
 
 if TYPE_CHECKING:
@@ -98,6 +104,7 @@ if TYPE_CHECKING:
     from tests.harness.modal_sandbox.fake_modal import FakeModal
     from tests.harness.opensandbox_sandbox.fake_opensandbox import FakeOpenSandbox
     from tests.harness.render_sandbox.workspace_helpers import WorkspaceHarness
+    from tests.harness.smol_sandbox.fake_smolvm import FakeSmolvm
     from tests.harness.sprites_sandbox.fake_sprites import SpriteTransport
 
 CLONE_URL = 'https://github.com/owner/repo.git'
@@ -412,7 +419,7 @@ class TestCommand:
         loaded = load(checkout)
         plugin = plugin_of(loaded)
         assert await plugin.command([]) == (
-            'This conversation runs on this machine. /sandbox fake moves a new conversation into a cloud sandbox.'
+            'This conversation runs on this machine. /sandbox fake moves a new conversation into a sandbox.'
         )
         message = await plugin.command(['fake'])
         head = git(checkout, 'rev-parse', '--short=7', 'HEAD')
@@ -421,7 +428,7 @@ class TestCommand:
             'with your uncommitted changes.\n'
             'git and gh there act as @Ada, on every repository that login reaches. '
             "Fake's proxy, outside the sandbox, holds the token until the sandbox is deleted.\n"
-            'Your files here stay as they are: ask the agent to push, then pull here. ! commands still run here.'
+            'Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.'
         )
         assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
         # The history records the sandbox before any prompt, so every copy of the conversation finds it.
@@ -473,6 +480,7 @@ class TestCommand:
 
     def test_complete_offers_the_shipped_providers(self, checkout: Path) -> None:
         assert list(plugin_of(load(checkout)).complete([])) == [
+            'local',
             'e2b',
             'boxd',
             'daytona',
@@ -789,6 +797,116 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
     result = await fork.prompt('in the background')
     assert working_dirs[-1] == str(provider.folder(WorkspaceRef(provider='fake', id='sbx-1')))
     assert result.response.workspace_ref == WorkspaceRef(provider='fake', id='sbx-1')
+
+
+def sandboxed_shell(
+    loaded: LoadedPlugin[None], checkout: Path, tmp_path: Path
+) -> tuple[SessionRuntime[None, str], io.StringIO]:
+    """A headless shell on `checkout` with the plugin's capability, whose conversation the plugin's commands act on."""
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(), deps_type=type(None)),
+        deps=None,
+        plugins=loaded.capabilities,
+        usage_limits=None,
+        console=Console(file=output, force_terminal=False, width=200),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=checkout,
+    )
+    loaded.host.conversation = shell.session
+    return shell, output
+
+
+def saved_prompts(shell: SessionRuntime[None, str]) -> list[str]:
+    return [
+        part.content
+        for message in shell.session.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+    ]
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_shell_lines_run_in_the_sandbox(checkout: Path, provider: FakeProvider, tmp_path: Path) -> None:
+    """A `!` line in a sandboxed conversation runs in the sandbox, where the agent's commands run, and says so."""
+    loaded = load(checkout)
+    shell, output = sandboxed_shell(loaded, checkout, tmp_path)
+    await plugin_of(loaded).command(['fake'])
+    folder = provider.folder(WorkspaceRef(provider='fake', id='sbx-1')).resolve()
+    clipboard = "!printf '\\033]52;c;aGk=\\007'"  # A file the sandbox prints could set this machine's clipboard.
+    for line in ('!pwd -P', "!head -c 100001 /dev/zero | tr '\\0' x >&2; exit 3", clipboard, '!!vim', '/exit'):
+        shell.send_input(line)
+    assert await shell.run() == 'exit'
+
+    text = output.getvalue()
+    assert f'Runs in the Fake sandbox; command and output saved for the next prompt\n{folder}\nDone (' in text
+    assert str(checkout.resolve()) not in text
+    assert '!! needs this terminal, which the Fake sandbox does not have. Nothing ran.' in text
+    cut = f'{"x" * 100_000}\n[Output truncated after 100000 characters]\n'
+    assert '\x1b' not in text and '\\x1b]52;c;aGk=\\x07' in text
+    assert '\x1b]52;c;aGk=\x07' in saved_prompts(shell)[-1]
+    assert saved_prompts(shell)[-3:-1] == [
+        f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
+        f'$ pwd -P\nExit code 0\n\nstdout:\n{folder}\n\n\nstderr:\n',
+        f'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
+        f"$ head -c 100001 /dev/zero | tr '\\0' x >&2; exit 3\nExit code 3\n\nstdout:\n\n\nstderr:\n{cut}",
+    ]
+
+
+@pytest.mark.parametrize('failure', ['stopped', 'deleted', 'unreachable'])
+async def test_a_shell_line_reports_a_sandbox_it_cannot_use(
+    checkout: Path,
+    provider: FakeProvider,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Literal['stopped', 'deleted', 'unreachable'],
+) -> None:
+    """A sandbox that fails the command, was deleted, or cannot be reached is reported; the shell goes on.
+
+    The `!` line never falls back to this machine.
+    """
+
+    async def stopped(self: FakeSandboxBackend, command: WorkspaceCommand, **kwargs: object) -> CommandResult:
+        raise WorkspaceUnavailableError('The Fake sandbox stopped.')
+
+    def unreachable(self: object, ref: WorkspaceRef) -> object:
+        raise RuntimeError('The Fake API returned 502.')
+
+    loaded = load(checkout)
+    shell, output = sandboxed_shell(loaded, checkout, tmp_path)
+    plugin = plugin_of(loaded)
+    await plugin.command(['fake'])
+    if failure == 'deleted':
+        await plugin.command(['delete'])
+    elif failure == 'unreachable':
+        monkeypatch.setattr(sandbox._ConversationSandbox, '_workspace', unreachable)  # pyright: ignore[reportPrivateUsage]
+    else:
+        monkeypatch.setattr(FakeSandboxBackend, 'run', stopped)
+    saved = saved_prompts(shell)
+    shell.send_input('!pwd')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+
+    text = output.getvalue()
+    if failure == 'deleted':
+        assert "This conversation's Fake sandbox was deleted. Run /new to start another." in text
+        assert saved_prompts(shell) == saved
+    elif failure == 'unreachable':
+        assert 'The Fake API returned 502.' in text
+        assert saved_prompts(shell) == saved
+    else:
+        assert 'Shell error: The Fake sandbox stopped.' in text
+        assert saved_prompts(shell) == [
+            *saved,
+            'The user ran a shell command in the Fake sandbox (not an agent tool call):\n'
+            '$ pwd\nShell error: The Fake sandbox stopped.\n\nstdout:\n\n\nstderr:\n',
+        ]
+    assert str(checkout.resolve()) not in text
 
 
 async def test_a_fork_before_the_first_answer_runs_in_the_sandbox(checkout: Path, provider: FakeProvider) -> None:
@@ -2108,6 +2226,352 @@ class TestKubernetes:
             await provider.create(github=GITHUB)
         assert fake_cluster.claims == {}
         assert all(client.closed for client in fake_cluster.clients)
+
+
+LocalEngine = Literal['smolmachines', 'smolvm CLI', 'boxlite']
+
+
+@dataclass
+class LocalHost:
+    """A host `/sandbox local` runs on, the engine it runs the VM with, and its VMs' states, by name."""
+
+    engine: LocalEngine
+    provider: type[local_provider.SmolProvider] | type[local_provider.BoxLiteProvider]
+    harness: str
+    """The provider name the harness gives its own VMs' refs, which `/sandbox` must not take for its own."""
+    states: Callable[[], dict[str, str]]
+    stop: Callable[[str], None]
+    """Stop a VM, as it is after this machine restarts."""
+
+    @property
+    def words(self) -> list[str]:
+        """What the user types after `/sandbox`."""
+        return self.provider().name.split()
+
+
+@pytest.fixture
+def fake_smolvm(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'FakeSmolvm':
+    """The harness's fake `smolvm` CLI, in an absolute `PATH` directory, as its own tests set it up."""
+    from tests.harness.smol_sandbox.fake_smolvm import install_fake_smolvm
+
+    return install_fake_smolvm(monkeypatch, tmp_path)
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(('linux', 'smolmachines'), id='smol-linux'),
+        pytest.param(('darwin', 'smolmachines'), id='smol-macos'),
+        pytest.param(('win32', 'smolvm CLI'), id='smol-windows'),
+        pytest.param(('linux', 'smolvm CLI'), id='smol-linux-cli'),
+        pytest.param(('linux', 'boxlite'), id='boxlite-linux'),
+        pytest.param(('darwin', 'boxlite'), id='boxlite-macos'),
+    ]
+)
+def local_host(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_smolvm: 'FakeSmolvm'
+) -> Iterator[LocalHost]:
+    """A host of each OS each `/sandbox local` engine runs on: smolmachines has no Windows wheel, BoxLite no Windows build.
+
+    smolmachines' and BoxLite's VMs are the harness's fakes, whose commands run here; the `smolvm` CLI is `fake_smolvm`.
+    """
+    platform, engine = cast('tuple[str, LocalEngine]', request.param)
+    monkeypatch.setattr(local_provider.sys, 'platform', platform)
+    # The fakes' commands get only the environment they are sent; a real VM has a home of its own.
+    monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
+    if engine == 'boxlite':
+        # BoxLite has wheels for macOS and Linux only, up to Python 3.14, so some test jobs lack it.
+        if find_spec('boxlite') is None:  # pragma: lax no cover
+            pytest.skip('boxlite not installed')
+        from tests.harness.boxlite_sandbox.fake_boxlite import FakeBoxLite
+
+        boxes = FakeBoxLite(tmp_path.resolve())
+        monkeypatch.setattr('pydantic_ai_harness.boxlite_sandbox._backend.boxlite', boxes.module)
+        yield LocalHost(
+            engine,
+            local_provider.BoxLiteProvider,
+            'boxlite',
+            lambda: {name: box.status for name, box in boxes.boxes.items()},
+            boxes.stop,
+        )
+        boxes.close()
+        return
+    if engine == 'smolmachines':
+        # smolmachines has wheels for macOS and Linux only, so some test jobs lack it.
+        if find_spec('smol') is None:  # pragma: lax no cover
+            pytest.skip('smolmachines not installed')
+        from tests.harness.smol_sandbox.fake_smol import FakeSmol
+
+        control = FakeSmol(tmp_path.resolve())
+        for module in ('_backend', '_capability'):
+            monkeypatch.setattr(f'pydantic_ai_harness.smol_sandbox.{module}.smol', control.module)
+
+        def stop(name: str) -> None:
+            control.vms[name].state = 'stopped'
+
+        yield LocalHost(
+            engine,
+            local_provider.SmolProvider,
+            'smol',
+            lambda: {name: vm.state for name, vm in control.vms.items()},
+            stop,
+        )
+        return
+    monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+    yield LocalHost(
+        engine,
+        local_provider.SmolProvider,
+        'smol',
+        lambda: dict(fake_smolvm.machines),
+        lambda name: fake_smolvm.machines.update({name: 'stopped'}),
+    )
+
+
+VM_NAME = r'pydantic-ai-[0-9a-f]{32}'
+
+LOCAL_CHOICE = (
+    '/sandbox local runs a new conversation in a VM on this machine. Pick its engine: '
+    '/sandbox local smol (SmolVM) or /sandbox local boxlite (BoxLite).'
+)
+
+
+class TestLocal:
+    """`/sandbox local smol` and `/sandbox local boxlite`: a VM on this machine, on Linux, macOS, and Windows."""
+
+    async def test_offered_with_a_choice_of_engine(self, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        smol, boxlite = sandbox.PROVIDERS['local smol'], sandbox.PROVIDERS['local boxlite']
+        assert (smol.name, smol.title, smol.token_in_sandbox) == ('local smol', 'SmolVM', True)
+        assert (boxlite.name, boxlite.title, boxlite.token_in_sandbox) == ('local boxlite', 'BoxLite', True)
+        assert 'local' not in sandbox.PROVIDERS
+        plugin = plugin_of(load(checkout))
+        [command] = plugin.get_commands()
+        assert command.description == (
+            'Run a new conversation in a sandbox (local smol, local boxlite, e2b, boxd, daytona, opensandbox, modal, '
+            'render, sprites, kubernetes; local ones run a VM on this machine), or show where it runs'
+        )
+        assert await plugin.command([]) == (
+            'This conversation runs on this machine. /sandbox local smol or /sandbox local boxlite or /sandbox e2b or '
+            '/sandbox boxd or /sandbox daytona or /sandbox opensandbox or /sandbox modal or /sandbox render or '
+            '/sandbox sprites or /sandbox kubernetes moves a new conversation into a sandbox.'
+        )
+        assert list(plugin.complete(['local', ''])) == ['smol', 'boxlite']
+        assert list(plugin.complete(['e2b', ''])) == []
+        assert list(plugin.complete(['local', 'smol', ''])) == []
+        # `/sandbox local` alone asks which engine, saying what each still needs here, and moves nothing.
+        monkeypatch.setattr(local_provider, 'find_spec', installed)
+        assert await plugin.command(['local']) == LOCAL_CHOICE
+        monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+        monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
+        monkeypatch.setenv('PATH', '')
+        assert await plugin.command(['local']) == '\n'.join(
+            [LOCAL_CHOICE, f'SmolVM: {local_provider.SmolProvider().missing()}', 'BoxLite: ' + BOXLITE_ON_WINDOWS]
+        )
+        assert plugin.host.conversation.messages == []
+        with pytest.raises(
+            ValueError, match=r'^Usage: /sandbox \[local smol \| local boxlite \| e2b \| .* \| delete\]$'
+        ):
+            await plugin.command(['local', 'smolvm'])
+        with pytest.raises(ValueError, match=r'^Usage: '):
+            await plugin.command(['smol'])
+
+    @pytest.mark.parametrize(
+        ('platform', 'machine'), [('linux', 'x86_64'), ('darwin', 'arm64'), ('darwin', 'x86_64'), ('win32', 'AMD64')]
+    )
+    def test_missing(self, platform: str, machine: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(local_provider.sys, 'platform', platform)
+        monkeypatch.setattr(local_provider.platform, 'machine', lambda: machine)
+        smol, boxlite = local_provider.SmolProvider(), local_provider.BoxLiteProvider()
+        empty = tmp_path / 'empty'
+        empty.mkdir()
+        monkeypatch.setenv('PATH', str(empty))
+        # Neither needs a key.
+        monkeypatch.setattr(local_provider, 'find_spec', installed)
+        assert smol.missing() is None
+        assert boxlite.missing() is None
+        monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+        cli = tmp_path / 'bin'
+        cli.mkdir()
+        for name in ('smolvm', 'smolvm.exe'):
+            (cli / name).touch(mode=0o755)
+        monkeypatch.setenv('PATH', f'{empty}{os.pathsep}{cli}')
+        assert smol.missing() is None
+        # Never one in the current directory, such as a checkout's, nor on a relative `PATH` entry.
+        monkeypatch.chdir(tmp_path / 'bin')
+        monkeypatch.setenv('PATH', f'.{os.pathsep}{empty}')
+        on_intel_mac = machine == 'x86_64' and platform == 'darwin'
+        assert smol.missing() == (
+            'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
+            'into a folder on PATH. It needs the Windows Hypervisor Platform. '
+            '/sandbox local smol on Windows has not been tested on a Windows host yet.'
+            if platform == 'win32'
+            else 'SmolVM runs only on Macs with Apple silicon.'
+            if on_intel_mac
+            else "SmolVM support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[local]'."
+        )
+        assert boxlite.missing() == (
+            BOXLITE_ON_WINDOWS
+            if platform == 'win32'
+            else 'BoxLite runs only on Macs with Apple silicon.'
+            if on_intel_mac
+            else "BoxLite support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[local]'. "
+            'It needs Python 3.14 or older.'
+        )
+
+    async def test_boxlite_deletes_nothing_without_boxlite(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
+        monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+        with pytest.raises(WorkspaceUnavailableError, match='BoxLite does not run on Windows'):
+            await local_provider.BoxLiteProvider().delete(WorkspaceRef(provider='local-boxlite', id='x'))
+
+    async def test_create_reopen_delete(self, local_host: LocalHost, fake_smolvm: 'FakeSmolvm', tmp_path: Path) -> None:
+        provider = local_host.provider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        assert provider.missing() is None
+        ref, backend = await provider.create(github=GITHUB)
+        # Not `local`, which names this machine's own folder, nor the harness's, which its capabilities make too.
+        assert ref.provider == f'local-{local_host.words[1]}'
+        assert re.fullmatch(VM_NAME, ref.id)
+        assert (tmp_path / 'workspace').is_dir()
+        if local_host.engine == 'smolvm CLI':
+            # The VM pulls an image with bash and git, which the copy of the checkout needs, and reaches GitHub.
+            assert fake_smolvm.created == [['--name', ref.id, '--net', '--image', local_provider.IMAGE]]
+        else:
+            assert fake_smolvm.created == []
+        assert (await backend.run(['printenv', 'GIT_TERMINAL_PROMPT'])).stdout == '0\n'
+        await give_github_login(backend, GITHUB)
+        assert signed_in(Path(os.environ['HOME'])) == SIGNED_IN
+        reopened = provider.reopen(ref)
+        # `request_env`'s keys reach a command as its own `env`.
+        assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
+        await provider.close(reopened)
+        await provider.close(backend)
+        await provider.delete(ref)
+        await provider.delete(ref)  # One already gone is fine.
+        assert local_host.states() == {}
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await provider.reopen(ref).run(['true'])
+        # Closing a deleted VM's workspace, as `/sandbox delete` does, has nothing left to write back.
+        await provider.close(reopened)
+
+    async def test_closing_boots_no_vm(self, local_host: LocalHost, tmp_path: Path) -> None:
+        provider = local_host.provider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=None)
+        await provider.close(backend)
+        # As after Pax restarts: a conversation reopened and closed without a command leaves its VM stopped.
+        local_host.stop(ref.id)
+        await provider.close(provider.reopen(ref))
+        assert local_host.states() == {ref.id: 'stopped'}
+        await provider.delete(ref)
+        # Nor one whose operations could not reach the VM, deleted since.
+        gone = provider.reopen(ref)
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await gone.working_dir()
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await gone.run(['true'])
+        await provider.close(gone)
+        assert local_host.states() == {}
+
+    async def test_a_conversation_runs_in_the_vm(
+        self, local_host: LocalHost, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        git(checkout, 'remote', 'remove', 'origin')
+        Path(os.environ['HOME']).mkdir()
+        provider = local_host.provider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        monkeypatch.setattr(sandbox, 'PROVIDERS', {provider.name: provider})
+        monkeypatch.setattr(sandbox, 'gh_token', not_installed)
+        loaded = load(checkout)
+        session = on_screen(loaded, checkout, shell=True)
+        message = await plugin_of(loaded).command(local_host.words)
+        ref = history_sandbox(session.messages)
+        assert ref is not None and ref.provider == f'local-{local_host.words[1]}'
+        assert message.startswith(f'This conversation now runs in {provider.title} sandbox {ref.id}. ')
+        copy = tmp_path / 'workspace'
+        assert git(copy, 'rev-parse', 'HEAD') == git(checkout, 'rev-parse', 'HEAD')
+        result = await session.prompt('where?')
+        assert result.response.workspace_ref == ref
+        assert plugin_of(loaded).get_status_segments()[0]() == f'{provider.name} sandbox'
+        # A VM of the user's own `SmolSandbox` or `BoxLiteSandbox` is not a `/sandbox` sandbox.
+        assert history_sandbox(worked_in(WorkspaceRef(provider=local_host.harness, id=ref.id))) is None
+        assert await plugin_of(loaded).command(['delete']) == (
+            f'Deleted {provider.title} sandbox {ref.id}. Run /new to start another conversation.'
+        )
+
+
+BOXLITE_ON_WINDOWS = 'BoxLite does not run on Windows: use /sandbox local smol.'
+
+
+@pytest.fixture
+def windows(monkeypatch: pytest.MonkeyPatch, fake_smolvm: 'FakeSmolvm') -> 'FakeSmolvm':
+    """A Windows host, where `/sandbox local smol` drives the `smolvm` CLI."""
+    monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
+    monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+    monkeypatch.setattr(local_provider, 'SANDBOX_ENV', {**SANDBOX_ENV, 'HOME': os.environ['HOME']})
+    return fake_smolvm
+
+
+class TestLocalCli:
+    """What `/sandbox local smol` adds to the harness's `SmolvmCliBackend`, where smolmachines has no wheel, as on Windows."""
+
+    async def test_close_stops_the_vm(self, windows: 'FakeSmolvm', tmp_path: Path) -> None:
+        provider = local_provider.SmolProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        ref, backend = await provider.create(github=GITHUB)
+        await give_github_login(backend, GITHUB)
+        # The token reached the VM on a command's stdin, never on a command line of this machine.
+        token = base64.b64encode(b'gho_x').decode()
+        assert any(token in script for script in windows.scripts)
+        assert not any(token in argument for command in windows.commands for argument in command)
+        # A workspace that never reached the VM stops nothing.
+        await provider.close(provider.reopen(ref))
+        [name] = windows.machines
+        assert windows.machines[name] == 'running'
+        # The VM would otherwise outlive Pax; its next command starts it again.
+        await provider.close(backend)
+        assert windows.machines[name] == 'stopped'
+        assert (await provider.reopen(ref).run(['true'])).exit_code == 0
+        await provider.delete(ref)
+        assert windows.machines == {}
+
+    async def test_a_failed_stop_does_not_stop_closing(
+        self, windows: 'FakeSmolvm', tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        provider = local_provider.SmolProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        (first, first_backend), (second, second_backend) = [await provider.create(github=None) for _ in range(2)]
+        windows.failures['stop'] = ('SMOLVM_ERROR', 'stuck')
+        # As when a session ends: one VM that will not stop leaves the next to close, and says so.
+        await provider.close(first_backend)
+        assert 'Could not stop or sync SmolVM sandbox' in caplog.text
+        del windows.failures['stop']
+        await provider.close(second_backend)
+        assert windows.machines == {first.id: 'running', second.id: 'stopped'}
+        await provider.delete(first)
+        await provider.delete(second)
+
+    async def test_without_smolvm(self, windows: 'FakeSmolvm', tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Never one in the current directory, such as a checkout's, nor on a relative `PATH` entry: Windows would run it.
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / 'smolvm.exe').touch(mode=0o755)
+        monkeypatch.setenv('PATH', f'.{os.pathsep}{tmp_path / "nowhere"}')
+        provider = local_provider.SmolProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        assert provider.missing() == (
+            'Install SmolVM: unzip the windows-x86_64 release from https://github.com/smol-machines/smolvm/releases '
+            'into a folder on PATH. It needs the Windows Hypervisor Platform. '
+            '/sandbox local smol on Windows has not been tested on a Windows host yet.'
+        )
+        with pytest.raises(WorkspaceUnavailableError, match='smolvm was not found on PATH'):
+            await provider.create(github=None)
+        assert windows.commands == []
+
+    async def test_a_failed_create_leaves_nothing_behind(self, windows: 'FakeSmolvm', tmp_path: Path) -> None:
+        provider = local_provider.SmolProvider(working_dir=str(tmp_path.resolve() / 'workspace'))
+        windows.failures['start'] = ('HYPERVISOR_UNAVAILABLE', 'the Windows Hypervisor Platform is not enabled')
+        with pytest.raises(WorkspaceUnavailableError, match=r'cannot run a local smol VM \(HYPERVISOR_UNAVAILABLE\)'):
+            await provider.create(github=GITHUB)
+        # smolvm made the machine before it failed to start it.
+        assert len(windows.created) == 1
+        assert windows.machines == {}
+
+    def test_only_its_own_vms(self, windows: 'FakeSmolvm') -> None:
+        # A conversation's history could otherwise open any VM of this user, such as one with this machine's folders.
+        with pytest.raises(ValueError, match='only uses VMs it created'):
+            local_provider.SmolProvider().reopen(WorkspaceRef(provider='local-smol', id='dev'))
 
 
 class TestCompaction:

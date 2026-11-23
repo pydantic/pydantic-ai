@@ -556,6 +556,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         'pydantic_ai_harness/_monty_exec.py',
         ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
     ),
+    # `/sandbox local smol` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or `/sandbox local smol`, or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
@@ -636,6 +639,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax reads keys once the event loop reports the terminal readable, and writes output straight to it.
     ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
     ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', '_key'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', 'key'),
     ('os.write', 'pydantic_ai_pax/cli/shell_terminal.py', 'pass_through'),
     ('os.write', 'pydantic_ai_pax/cli/self_update.py', '_print_line'),
     # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
@@ -741,6 +745,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
 )
 
 

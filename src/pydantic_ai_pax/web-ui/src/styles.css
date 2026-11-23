@@ -3583,7 +3583,7 @@ textarea.setting-input {
   }
 }
 
-/* Where a new session runs, under `clai2 --web`. */
+/* Where a new session runs, under `pax --web`. */
 .new-session-dialog .dialog-description {
   margin: 0;
 }

@@ -1455,7 +1455,7 @@ async def test_a_session_another_clai_runs_shows_a_ring(page: Page, web_ui: WebU
     sidebar = page.locator('.sidebar')
     row = sidebar.locator(f'.session[data-session="{web_ui.busy}"]')
     ring = row.locator('.state.busy')
-    await expect(ring).to_have_attribute('title', f'Running in clai2 pid {os.getppid()}')
+    await expect(ring).to_have_attribute('title', f'Running in Pax pid {os.getppid()}')
     await expect(row.locator('.spinner')).to_have_count(0)
     # It is running, so the attention view lists it, and the archived view does not.
     await sidebar.get_by_role('button', name=re.compile('^Attention')).click()

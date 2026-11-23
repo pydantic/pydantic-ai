@@ -77,7 +77,9 @@ class Sessions(Generic[DepsT, OutputT]):
         """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
-        self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
+        self.naming = NamingClient(
+            generate=self.generate, enabled=lambda: self.context.settings.session_namer, may_see=self.naming_may_see
+        )
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
         self.join()
@@ -164,6 +166,22 @@ class Sessions(Generic[DepsT, OutputT]):
         if model is None:
             return None
         return await generate_name(model=model, prompt=prompt)
+
+    def naming_may_see(self, summary: ConversationSummary) -> bool:
+        """Whether a naming request may carry `summary`'s excerpts or title.
+
+        When naming is on only by default, it uses only sessions held with the current model, so a model is never
+        sent another conversation's text it was not already sent. Saving `sessions.naming true` or choosing a
+        `sessions.naming_model` opts into naming every session, as it did while naming was opt-in.
+        """
+        settings = self.context.settings
+        if 'session_namer' in settings.model_fields_set or settings.session_namer_model is not None:
+            return True
+        if summary.model != self.session.model:
+            return False
+        # No recorded model means Pax's default, unless the session came from another agent: an import, or a
+        # fork of one, which leads its tags with the source and whose model is unknown.
+        return summary.model is not None or not (summary.tags and import_source(summary.tags[0]))
 
     async def usage(self, *, console: Console) -> str:
         """Report auxiliary tokens separately from retained foreground-history cost."""
