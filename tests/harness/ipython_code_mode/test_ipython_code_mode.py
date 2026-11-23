@@ -13,7 +13,7 @@ import json
 import math
 import os
 import time
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,19 +71,6 @@ class _NewEachStep(WrapperToolset[None]):
 class Trip(BaseModel):
     city: str
     nights: int
-
-
-@pytest.fixture(scope='module', autouse=True)
-def ipython_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
-    """Gives this module's kernels their own IPython profile, so they share no history file with other processes.
-
-    Otherwise every kernel on the machine writes its history to `~/.ipython/profile_default/history.sqlite`. A kernel
-    that hits a SQLite error there moves the file away, and a kernel whose history thread connects after the move
-    writes to a new file with no tables: the thread's error lands in the output of the cell that is running.
-    """
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setenv('IPYTHONDIR', str(tmp_path_factory.mktemp('ipython')))
-        yield
 
 
 @pytest.fixture(scope='module')
