@@ -39,11 +39,12 @@ import httpx
 from opensandbox.config import ConnectionConfig
 from pydantic import TypeAdapter
 
+from .._fake_x_display import FakeDisplay
+
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
 """A name that cannot resolve, so a request that skips the fake's transport fails instead of leaving the host."""
 EXECD_PORT = 44772
-_DISPLAY_PROGRAMS = ('Xvfb', 'xwininfo', 'scrot', 'xdotool')
 _NOT_FOUND = 'DOCKER::SANDBOX_NOT_FOUND'
 _IDLE_TURNS_AFTER_EXIT = 1000
 """Event loop turns with nothing to deliver after a command exits, which the readers need to queue what it wrote."""
@@ -301,7 +302,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
         stream_breaks = sandbox.stream_breaks
         command = body['command']
-        if self.display is not None and any(program in command for program in _DISPLAY_PROGRAMS):
+        if self.display is not None and FakeDisplay.answers(command):
             envs: dict[str, str] = body.get('envs') or {}
             assert envs.get('DISPLAY') == ':1'
             stdout, stderr, exit_code = self.display(command, None)

@@ -47,7 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import desktop_size
+from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     check_env,
     check_provider,
@@ -58,7 +58,7 @@ from pydantic_ai_harness._workspace_provider import (
     running_on_asyncio,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import desktop_display
+from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 try:
@@ -281,12 +281,13 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         self._lock = anyio.Lock()
         self._operations = 0
         self._close_after_operation = False
-        self._display, self._env = desktop_display(
+        self._display = x11_display(
             self._run_argv,
-            desktop_size(desktop),
-            self._env,
+            checked_desktop_size(desktop),
             lambda: f'OpenSandbox sandbox {self._ref.id if self._ref else "(not created)"}',
         )
+        if self._display:
+            self._env = {'DISPLAY': DISPLAY, **self._env}
 
     @property
     def display(self) -> Display | None:

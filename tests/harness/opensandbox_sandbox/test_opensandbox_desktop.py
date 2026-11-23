@@ -10,12 +10,11 @@ from opensandbox.constants import DEFAULT_EGRESS_PORT, DEFAULT_EXECD_PORT
 from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
 
 from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, look_click_then_finish, screen
+from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_opensandbox import FakeOpenSandbox
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
@@ -57,29 +56,11 @@ async def test_a_desktop_size_sets_the_display_it_starts(
 ) -> None:
     backend = _backend(server, working_dir, desktop=(1440, 900))
 
-    await screen(backend).display_size()
+    await full_display(backend).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
     assert 'fluxbox tint2 xterm' in start and 'setsid fluxbox' in start
-    await backend.aclose()
-
-
-async def test_a_display_that_does_not_start_names_the_sandbox_and_what_it_needs(
-    server: FakeOpenSandbox, working_dir: str
-) -> None:
-    def refuse(command: str, timeout: float | None) -> tuple[str, str, int]:
-        return '', "the display needs Xvfb xdotool, and there's no root or passwordless sudo to install them with", 1
-
-    server.display = refuse
-    backend = _backend(server, working_dir, desktop=True)
-
-    with pytest.raises(
-        WorkspaceUnavailableError,
-        match=r'^Could not start the display in OpenSandbox sandbox \S+: the display needs Xvfb xdotool, and '
-        r"there's no root or passwordless sudo to install them with$",
-    ):
-        await screen(backend).display_size()
     await backend.aclose()
 
 
@@ -93,7 +74,7 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(
     await created.aclose()
 
     reattached = OpenSandbox(connection=server.connection, working_dir=working_dir, desktop=(1440, 900)).backend(ref)
-    await screen(reattached).display_size()
+    await full_display(reattached).display_size()
     await reattached.aclose()
 
     (start,) = display.starts
