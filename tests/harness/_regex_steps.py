@@ -185,7 +185,10 @@ class StepCounter:
         return None
 
     def _attempt(self, start: int, *, must_advance: bool = False, full: bool = False) -> tuple[int, int] | None:
-        """The match starting at `start`, if any: non-empty when `must_advance`, ending at the text's end when `full`."""
+        """The match starting at `start`, if any.
+
+        It is non-empty when `must_advance`, and ends at the text's end when `full`.
+        """
         ends: list[int] = []
 
         def accept(end: int) -> bool:
@@ -457,8 +460,9 @@ def linearity_failure(pattern: str, flags: int, mode: Mode = 'scan') -> str | No
     followed by `!`, which few patterns accept, so the last attempts fail. `mode` is how the pattern's calls run it.
     Each scan must find what `re` finds in that mode, and stay within `4 * nodes * (reach + 1)` steps per
     character: a linear scan tries each node about once per character an attempt reads. A pattern without an
-    unbounded repeat reads at most `reach` characters per attempt, so that one scan is enough. One with an unbounded repeat is also scanned at twice and four times that
-    length, and must add no more than `_GROWTH_LIMIT` times as many steps for the second doubling as for the first.
+    unbounded repeat reads at most `reach` characters per attempt, so that one scan is enough. One with an unbounded
+    repeat is also scanned at twice and four times that length, and must add no more than `_GROWTH_LIMIT` times as
+    many steps for the second doubling as for the first.
     """
     counter = StepCounter(pattern, flags)
     compiled = re.compile(pattern, flags)

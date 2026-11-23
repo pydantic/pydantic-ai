@@ -14,8 +14,9 @@ checked through `PATTERN_TABLES`.
 Each pattern is run the way its calls run it. `re.match` and `re.fullmatch` try one match from the start.
 `re.search` tries each offset until one matches, so it re-reads a run from each offset only where every attempt in
 the run fails; an alternative that matches where the others fail ends the search there. Every other call goes on from
-each match it finds. A compiled pattern bound to a module-level name runs the way the methods called on that name do, in any
-scanned module, the most expensive of them; any other use of the name, or none, counts as going on.
+each match it finds. A compiled pattern bound to a module-level name runs the way the methods called on that name, or
+on `module.name`, do in any scanned module, the most expensive of them. Any other use of the name, an import of it
+under another name, or no use at all counts as going on.
 
 Each pattern is then scanned by `tests/harness/_regex_steps.py`, which counts the steps `re`'s backtracking takes
 rather than timing it. `linearity_failure` says what it asserts, on inputs built from each pattern's own literals and
@@ -347,23 +348,33 @@ def _patterns(call: ast.Call, function: str, scopes: list[dict[str, _Binding]]) 
 
 
 def _modes_of_names(trees: list[ast.Module]) -> dict[str, Mode]:
-    """How each name runs the pattern it holds: through its `search`, `match` or `fullmatch` method, or any other way."""
+    """How each name runs the pattern it holds: through its `search`, `match` or `fullmatch` method, or any other way.
+
+    A name is read as `name` or as `module.name`. The uses of a name imported under another name are not followed, so
+    that import counts as going on.
+    """
     calls = {id(node.func) for tree in trees for node in ast.walk(tree) if isinstance(node, ast.Call)}
     methods = {
         id(node.value): node
         for tree in trees
         for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name | ast.Attribute)
     }
     modes: dict[str, Mode] = {}
     for tree in trees:
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
+            used: Mode = 'scan'
+            if isinstance(node, ast.alias) and node.asname is not None:
+                name = node.name.rpartition('.')[2]
+            elif isinstance(node, ast.Name | ast.Attribute) and isinstance(node.ctx, ast.Load):
+                name = node.id if isinstance(node, ast.Name) else node.attr
+                method = methods.get(id(node))
+                if method is not None and id(method) in calls:
+                    used = _ONE_MATCH.get(method.attr, 'scan')
+            else:
                 continue
-            method = methods.get(id(node))
-            used = _ONE_MATCH.get(method.attr, 'scan') if method is not None and id(method) in calls else 'scan'
-            previous = modes.get(node.id, used)
-            modes[node.id] = previous if _COST[previous] >= _COST[used] else used
+            previous = modes.get(name, used)
+            modes[name] = previous if _COST[previous] >= _COST[used] else used
     return modes
 
 
@@ -567,6 +578,12 @@ def f(pattern, table, names):
                 CallSite('m.py::f', [('x+', 0)], 'search'),
             ],
             id='compiled-pattern-mode-from-its-methods',
+        ),
+        pytest.param(
+            "import re\nimport m\nfrom m import _B as B\n_A = re.compile('a+')\n_B = re.compile('b+')\n"
+            "def f(s):\n    return _A.match(s), m._A.sub('', s), _B.match(s), B.sub('', s)\n",
+            [CallSite('m.py::_A', [('a+', 0)]), CallSite('m.py::_B', [('b+', 0)])],
+            id='compiled-pattern-read-through-its-module-or-imported-as-another-name',
         ),
         pytest.param(
             "import re\nA, B = 'a', 'b'\ndef f(s):\n    for p in ('x', 'y'):\n        re.match(p, s)\n"
