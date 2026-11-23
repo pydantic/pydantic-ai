@@ -1216,14 +1216,16 @@ class TestE2B:
 class FakeBoxdAccount:
     """boxd's secrets and machine specs, which the harness's boxd fake leaves out."""
 
-    secrets: dict[str, tuple[str, str, list[str]]] = field(default_factory=dict[str, tuple[str, str, list[str]]])
+    secrets: dict[str, tuple[str, str, list[str], list[str]]] = field(
+        default_factory=dict[str, tuple[str, str, list[str], list[str]]]
+    )
     specs: dict[str, dict[str, object]] = field(default_factory=dict[str, dict[str, object]])
     clients: list['FakeClient'] = field(default_factory=list['FakeClient'])
     delete_error: Exception | None = None
     fake: 'FakeBoxd' = field(default=None)  # pyright: ignore[reportAssignmentType]
 
-    async def set(self, name: str, value: str, *, scope: str, domains: list[str]) -> None:
-        self.secrets[name] = (value, scope, domains)
+    async def set(self, name: str, value: str, *, scope: str, domains: list[str], replace_in: list[str]) -> None:
+        self.secrets[name] = (value, scope, domains, replace_in)
 
     async def delete(self, name: str, *, scope: str) -> None:
         if self.delete_error is not None:
@@ -1250,7 +1252,7 @@ class FakeBoxdAccount:
 
         return [
             Secret(name=name, scope=scope, domains=domains, bound_machines=bound(name))
-            for name, (_, scope, domains) in self.secrets.items()
+            for name, (_, scope, domains, _) in self.secrets.items()
         ]
 
 
@@ -1318,7 +1320,7 @@ class TestBoxd:
         monkeypatch.setenv(secret, 'bxds_stand-in')
         provider = boxd_provider.BoxdProvider(working_dir=str(tmp_path / 'workspace'))
         ref, backend = await provider.create(github=GitHubCredential(login='Ada', token='gho_x'))
-        assert account.secrets == {secret: ('gho_x', 'private-unattached', list(GITHUB_HOSTS))}
+        assert account.secrets == {secret: ('gho_x', 'private-unattached', list(GITHUB_HOSTS), ['headers'])}
         [machine] = fake.machines.values()
         assert machine.isolated
         assert machine.create_kwargs['spec']['secrets'] == [secret]
@@ -1376,7 +1378,7 @@ class TestBoxd:
         await provider.close(backend)
         kept, backend = await provider.create(github=github)
         await provider.close(backend)
-        account.secrets['USER_OWN'] = ('x', 'private-unattached', [])
+        account.secrets['USER_OWN'] = ('x', 'private-unattached', [], [])
         # boxd deleted the first machine itself, so only its secret is left.
         from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
 

@@ -291,19 +291,32 @@ class MarkdownBlock(io.StringIO):
     """One assistant text or thinking part, kept as Markdown so a new width or theme renders it again.
 
     The stream writes its incrementally rendered ANSI here, which is shown while the width and theme
-    still match. Otherwise the whole source renders again, once per width, theme, and length.
+    still match, and until the part ends. After that the whole source renders again, once per width and
+    theme. Rendering a part that is still streaming again per frame made each frame cost the whole part.
     """
 
     def __init__(
-        self, *, render: Render, width: int, changed: Callable[[], None], max_chars: int, max_lines: int
+        self,
+        *,
+        render: Render,
+        width: int,
+        changed: Callable[[], None],
+        max_chars: int,
+        max_lines: int,
+        streaming: bool = False,
     ) -> None:
-        """Start empty; `changed` asks the panel for a frame."""
+        """Start empty; `changed` asks the panel for a frame, and `streaming` is for a part still arriving."""
         super().__init__()
         self.source: str | None = ''
         self._render = render
         self._key = (width, theme.name())
         self._stream = _Lines(max_chars=max_chars, max_lines=max_lines)
         self._changed = changed
+        self.streaming = streaming
+        """Until `end`, the stream's own rows show at every width, wrapped again if it changed."""
+        self._resized_while_streaming = False
+        """Shown at another width or theme while streaming. Code fences take the console's width when they
+        close, so the stream's rows may mix widths: the ended part renders again even at `_key`."""
         self._rows: tuple[object, tuple[str, ...]] = ((), ())
         self._continued: tuple[bool, ...] = ()
         """Per cached row, whether it wraps on from the row above."""
@@ -312,6 +325,9 @@ class MarkdownBlock(io.StringIO):
     def rebind(cls, block: 'MarkdownBlock') -> 'MarkdownBlock':
         block.__class__ = cls
         block._stream = _Lines.rebind(block._stream)
+        # A reload happens between turns, so a block from before it has ended.
+        vars(block).setdefault('streaming', False)
+        vars(block).setdefault('_resized_while_streaming', False)
         # Blocks from before a reload have no wrap flags, so render their rows again.
         block._rows, block._continued = ((), ()), ()
         return block
@@ -341,6 +357,11 @@ class MarkdownBlock(io.StringIO):
     def flush(self) -> None:
         """Painting is the panel's job."""
 
+    def end(self) -> None:
+        """The part is complete, so a new width or theme renders its whole source once."""
+        self.streaming = False
+        self._changed()
+
     def freeze(self) -> None:
         """Keep only what was shown, as an aborted stream never rendered the rest of its source."""
         self.source = None
@@ -353,7 +374,10 @@ class MarkdownBlock(io.StringIO):
 
     def _lines(self, *, width: int) -> list[_Line]:
         key = (width, theme.name())
-        if self.source is None or key == self._key:
+        if self.streaming:
+            self._resized_while_streaming |= key != self._key
+            return self._stream.all()
+        if self.source is None or (key == self._key and not self._resized_while_streaming):
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(self._render(source=self.source, width=width))
@@ -362,7 +386,7 @@ class MarkdownBlock(io.StringIO):
     def rows(self, *, width: int) -> tuple[str, ...]:
         """Rows at `width`; the cache follows theme and source, not just width."""
         source = None if self.source is None else len(self.source)
-        key = (width, theme.name(), source, self._stream.revision)
+        key = (width, theme.name(), source, self._stream.revision, self.streaming)
         if self._rows[0] != key:
             lines = self._lines(width=width)
             self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
@@ -494,7 +518,9 @@ class TranscriptBuffer:
         prefix, self._pending = self._pending[:cutoff], self._pending[cutoff:]
         self._decoder.decode_line(prefix)
 
-    def markdown(self, *, render: Render, width: int, changed: Callable[[], None]) -> MarkdownBlock:
+    def markdown(
+        self, *, render: Render, width: int, changed: Callable[[], None], streaming: bool = False
+    ) -> MarkdownBlock:
         """Start a Markdown part on its own row, after any unfinished line."""
         if self._pending:
             self.write('\n')
@@ -510,7 +536,12 @@ class TranscriptBuffer:
             changed()
 
         block = MarkdownBlock(
-            render=render, width=width, changed=updated, max_chars=self.max_chars, max_lines=self.max_lines
+            render=render,
+            width=width,
+            changed=updated,
+            max_chars=self.max_chars,
+            max_lines=self.max_lines,
+            streaming=streaming,
         )
         self._append(block)
         return block
