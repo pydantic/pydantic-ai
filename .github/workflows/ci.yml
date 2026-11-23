@@ -333,14 +333,14 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
 
-      # The `complexity` job runs the first two scripts with only the `lint` group installed, and pre-commit runs the
-      # instruction reference check, so their tests run here.
-      - name: Test the cognitive complexity, test waits and instruction reference checks
+      # The `complexity` and `enforcer-tags` jobs and pre-commit run these scripts without the workspace installed,
+      # so their tests run here.
+      - name: Test the cognitive complexity, test waits, instruction reference and enforcer tag checks
         env:
           UV_NO_SYNC: "1"
         run: >-
           uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
-          scripts/test_check_instruction_references.py
+          scripts/test_check_instruction_references.py scripts/test_check_enforcer_tags.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -613,6 +613,22 @@ jobs:
       - name: Check test waits against the base
         if: ${{ !cancelled() }}
         run: uv run --only-group lint scripts/check_test_waits.py --base HEAD^1 --format github
+
+  # Instruction-only changes skip `complexity`, so this ratchet runs in its own job on every route.
+  enforcer-tags:
+    name: instruction enforcer tags
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The base is `HEAD^1`, as in `complexity`.
+          fetch-depth: 2
+
+      # Standard library only, so no install step.
+      - name: Check that new hard rules in agent instructions name their enforcer
+        run: python3 scripts/check_enforcer_tags.py --base HEAD^1 --format github
 
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
@@ -2374,6 +2390,7 @@ jobs:
       - classify
       - quality
       - complexity
+      - enforcer-tags
       - mypy
       - docs-assets
       - docs-only

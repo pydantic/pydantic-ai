@@ -76,6 +76,13 @@ repos:
         language: python
         always_run: true
         pass_filenames: false
+      - id: enforcer-tags
+        name: Enforcer tags on new hard rules in agent instructions
+        # Like `complexity`, `--staged` checks only what is staged, against `HEAD` and during a merge `MERGE_HEAD`.
+        entry: python scripts/check_enforcer_tags.py --staged
+        language: python
+        files: ^(AGENTS\.md|tests/AGENTS\.md|agent_docs/.*\.md|\.(agents|claude)/skills/.*SKILL\.md)$
+        pass_filenames: false
       - id: pax-docs-page
         name: CLAI docs page
         entry: python src/pydantic_ai_pax/scripts/sync_docs_page.py
