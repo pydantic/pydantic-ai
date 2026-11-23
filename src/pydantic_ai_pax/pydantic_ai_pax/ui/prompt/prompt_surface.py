@@ -201,10 +201,10 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def markdown(self, *, render: Render, width: int) -> MarkdownBlock:
-        """Start a Markdown part that renders again for a new width or theme."""
+    def markdown(self, *, render: Render, width: int, streaming: bool = False) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock.streaming`."""
         with self._lock:
-            return self.transcript.markdown(render=render, width=width, changed=self.changed)
+            return self.transcript.markdown(render=render, width=width, changed=self.changed, streaming=streaming)
 
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""
