@@ -52,6 +52,7 @@ _AGENT_GRAPH = str(_ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / '_agent_graph.py
 GC_FINALIZED_BASELINE: frozenset[str] = frozenset(
     {
         # Each is left suspended when its consumer stops early and nothing closes it; fixing each is product work.
+        'examples/pydantic_ai_examples/realtime_twilio/app.py:twilio_messages',
         'pydantic_ai_slim/pydantic_ai/_agent_graph.py:buffered_events',
         'pydantic_ai_slim/pydantic_ai/_ssrf.py:_aiter_raw',
         'pydantic_ai_slim/pydantic_ai/_tool_execution.py:_ToolCallProcessor._validate_function_calls',
