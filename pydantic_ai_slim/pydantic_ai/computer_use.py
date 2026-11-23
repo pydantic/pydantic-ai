@@ -7,10 +7,10 @@ with a computer tool of its own, the model adapter sends that tool instead and c
 Positions (`x` and `y`) are pixels of the latest screenshot, from its top left corner. A click or scroll without a
 position happens at the pointer.
 
-The `type` field picks the action: the class name in snake case, such as `click` or `press_keys`. A key is a single
-character or one of a fixed set of names. Common other spellings, such as the X11 `KP_Enter` or the browser
-`NumpadAdd`, are converted, and `ctrl+s` is split into two keys. A character presses whatever keys the keyboard
-layout needs to type it. An upper-case letter presses the same key as its lower-case one.
+The `type` field picks the action: the class name in snake case, such as `click` or `press_keys`. A key is a
+[`NamedKey`][pydantic_ai.computer_use.NamedKey] or a single character, in any case. A character presses whatever keys
+the keyboard layout needs to type it. An upper-case letter presses the same key as its lower-case one. A model adapter
+turns its provider's key names, such as the X11 `Page_Down`, into these.
 
 The actions change only in ways that keep an existing tool doing what the model asked:
 
@@ -33,10 +33,9 @@ In the message history, the tool's calls and results become
 
 from __future__ import annotations as _annotations
 
-import re
 from typing import Annotated, Any, Literal, NotRequired, TypeAlias
 
-from pydantic import AfterValidator, ConfigDict, Field
+from pydantic import BeforeValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass
 from typing_extensions import TypedDict
 
@@ -54,10 +53,13 @@ __all__ = (
     'CursorPosition',
     'Drag',
     'HoldKeys',
+    'Key',
+    'Modifier',
     'MouseButton',
     'MouseDown',
     'MouseMove',
     'MouseUp',
+    'NamedKey',
     'Point',
     'PressKeys',
     'Region',
@@ -82,183 +84,29 @@ def _require_type(schema: dict[str, Any]) -> None:
 
 _ACTION_CONFIG = ConfigDict(extra='forbid', use_attribute_docstrings=True, json_schema_extra=_require_type)
 
-_MODIFIER_NAMES = ('ctrl', 'shift', 'alt', 'super')
-_MODIFIERS = frozenset(_MODIFIER_NAMES)
+Modifier: TypeAlias = Literal['ctrl', 'shift', 'alt', 'super']
+"""A modifier key, held during a click, move, drag or scroll."""
 
-_NAMED_KEYS = (
-    'enter',
-    'escape',
-    'tab',
-    'backspace',
-    'delete',
-    'insert',
-    'home',
-    'end',
-    'pageup',
-    'pagedown',
-    'up',
-    'down',
-    'left',
-    'right',
-    'space',
-    'printscreen',
-    'pause',
-    'menu',
-    'capslock',
-    'numlock',
-    'scrolllock',
-)
-_NUMPAD_OPERATORS = ('add', 'subtract', 'multiply', 'divide', 'decimal')
-_MEDIA_KEYS = ('volumemute', 'volumeup', 'volumedown', 'mediaplay', 'medianext', 'mediaprev')
+NamedKey: TypeAlias = Literal[
+    Modifier,
+    'enter', 'escape', 'tab', 'backspace', 'delete', 'insert', 'home', 'end', 'pageup', 'pagedown',
+    'up', 'down', 'left', 'right', 'space', 'printscreen', 'pause', 'menu', 'capslock', 'numlock', 'scrolllock',
+    'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+]  # fmt: skip
+"""A key with a name: a modifier, a navigation or editing key, or `f1` to `f12`."""
 
-_KEY_NAMES = frozenset(
-    {
-        *_MODIFIER_NAMES,
-        *_NAMED_KEYS,
-        *(f'f{n}' for n in range(1, 25)),
-        *(f'numpad{n}' for n in range(10)),
-        'numpad_enter',
-        *(f'numpad_{operator}' for operator in _NUMPAD_OPERATORS),
-        *_MEDIA_KEYS,
-    }
-)
-
-_KEY_ALIASES = {
-    'return': 'enter',
-    'esc': 'escape',
-    'control': 'ctrl',
-    'cmd': 'super',
-    'command': 'super',
-    'meta': 'super',
-    'win': 'super',
-    'windows': 'super',
-    'option': 'alt',
-    'arrowup': 'up',
-    'arrowdown': 'down',
-    'arrowleft': 'left',
-    'arrowright': 'right',
-    'pgup': 'pageup',
-    'page_up': 'pageup',
-    'prior': 'pageup',
-    'pgdn': 'pagedown',
-    'page_down': 'pagedown',
-    'next': 'pagedown',
-    'del': 'delete',
-    'back_space': 'backspace',
-    'spacebar': 'space',
-    ' ': 'space',
-    'prtsc': 'printscreen',
-    'apps': 'menu',
-    'contextmenu': 'menu',
-    # X11 key names (keysyms), as Claude sends them. Right-hand modifiers such as `Control_R` are rejected, so those
-    # names stay free for keys such as AltGr.
-    'control_l': 'ctrl',
-    'shift_l': 'shift',
-    'alt_l': 'alt',
-    'super_l': 'super',
-    'meta_l': 'super',
-    'print': 'printscreen',
-    'caps_lock': 'capslock',
-    'num_lock': 'numlock',
-    'scroll_lock': 'scrolllock',
-    **{f'kp_{n}': f'numpad{n}' for n in range(10)},
-    'kp_enter': 'numpad_enter',
-    **{f'kp_{operator}': f'numpad_{operator}' for operator in _NUMPAD_OPERATORS},
-    'xf86audiomute': 'volumemute',
-    'xf86audioraisevolume': 'volumeup',
-    'xf86audiolowervolume': 'volumedown',
-    'xf86audioplay': 'mediaplay',
-    'xf86audionext': 'medianext',
-    'xf86audioprev': 'mediaprev',
-    # X11 names of punctuation keys, as in `ctrl+plus`.
-    'plus': '+',
-    'minus': '-',
-    'equal': '=',
-    'comma': ',',
-    'period': '.',
-    'slash': '/',
-    'backslash': '\\',
-    'semicolon': ';',
-    'apostrophe': "'",
-    'grave': '`',
-    'bracketleft': '[',
-    'bracketright': ']',
-    'less': '<',
-    'greater': '>',
-    'question': '?',
-    'exclam': '!',
-    'at': '@',
-    'numbersign': '#',
-    'dollar': '$',
-    'percent': '%',
-    'asciicircum': '^',
-    'ampersand': '&',
-    'asterisk': '*',
-    'parenleft': '(',
-    'parenright': ')',
-    'underscore': '_',
-    'colon': ':',
-    'quotedbl': '"',
-    'braceleft': '{',
-    'braceright': '}',
-    'bar': '|',
-    'asciitilde': '~',
-    # Browser key names (the DOM `key` and `code` values), which browser automation tools use.
-    'controlleft': 'ctrl',
-    'shiftleft': 'shift',
-    'altleft': 'alt',
-    'metaleft': 'super',
-    'numpadenter': 'numpad_enter',
-    **{f'numpad{operator}': f'numpad_{operator}' for operator in _NUMPAD_OPERATORS},
-    'audiovolumemute': 'volumemute',
-    'audiovolumeup': 'volumeup',
-    'audiovolumedown': 'volumedown',
-    'mediaplaypause': 'mediaplay',
-    'mediatracknext': 'medianext',
-    'mediatrackprevious': 'mediaprev',
-}
-
-_UNKNOWN_KEY = 'is not a key: use a single character or one of ' + ', '.join(
-    (
-        *_MODIFIER_NAMES,
-        *_NAMED_KEYS,
-        'f1 to f24',
-        'numpad0 to numpad9',
-        'numpad_enter',
-        *(f'numpad_{operator}' for operator in _NUMPAD_OPERATORS),
-        *_MEDIA_KEYS,
-    )
-)
+Key: TypeAlias = NamedKey | Annotated[str, Field(min_length=1, max_length=1)]
+"""A named key, or a single character such as `a` or `+`."""
 
 
-def _normalize_key(key: str) -> str:
-    if not key:
-        raise ValueError('a key name must not be empty')
-    lower = key.lower()
-    name = _KEY_ALIASES.get(lower, lower)
-    if len(name) > 1 and name not in _KEY_NAMES:
-        raise ValueError(f'{key!r} {_UNKNOWN_KEY}')
-    return name
+def _lower(key: object) -> object:
+    # Models write names in any case, such as `Home` or `F5`. An upper-case letter presses the same key as its
+    # lower-case one.
+    return key.lower() if isinstance(key, str) else key
 
 
-_COMBINATION = re.compile(r'(?<=.)\+(?=.)')
-"""A `+` between two characters joins keys, as in `ctrl+s`; a lone `+`, or the last one in `ctrl++`, is the plus key."""
-
-
-def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key))
-
-
-def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
-    # Checked before any action runs, so a screen can't skip a modifier it doesn't know and act without it.
-    normalized = _normalize_keys(modifiers)
-    if not _MODIFIERS.issuperset(normalized):
-        raise ValueError('modifiers must be ctrl, shift, alt or super')
-    return normalized
-
-
-_Keys: TypeAlias = Annotated[tuple[str, ...], Field(min_length=1), AfterValidator(_normalize_keys)]
-_Modifiers: TypeAlias = Annotated[tuple[str, ...], AfterValidator(_normalize_modifiers)]
+_Keys: TypeAlias = Annotated[tuple[Annotated[Key, BeforeValidator(_lower)], ...], Field(min_length=1)]
+_Modifiers: TypeAlias = tuple[Annotated[Modifier, BeforeValidator(_lower)], ...]
 
 
 def _check_position(x: int | None, y: int | None) -> None:

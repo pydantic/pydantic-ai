@@ -997,7 +997,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
     [
         (
             {'type': 'click', 'x': 1, 'y': 2, 'button': 'wheel', 'keys': ['CTRL']},
-            {'type': 'click', 'x': 1, 'y': 2, 'button': 'middle', 'modifiers': ['CTRL']},
+            {'type': 'click', 'x': 1, 'y': 2, 'button': 'middle', 'modifiers': ['ctrl']},
         ),
         ({'type': 'double_click', 'x': 1, 'y': 2}, {'type': 'click', 'x': 1, 'y': 2, 'count': 2, 'modifiers': []}),
         (
@@ -1039,7 +1039,12 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(
                 {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': list[str]()},
             ],
         ),
-        ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'press_keys', 'keys': ['CTRL', 'S']}),
+        ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'press_keys', 'keys': ['ctrl', 's']}),
+        # Names GPT-5.5 sends, and `ARROWLEFT` from OpenAI's guide, in the tool's spelling.
+        (
+            {'type': 'keypress', 'keys': ['META', 'ESC', 'ARROWLEFT', 'KP_ADD', 'PAGEDOWN']},
+            {'type': 'press_keys', 'keys': ['super', 'escape', 'left', '+', 'pagedown']},
+        ),
         ({'type': 'type', 'text': 'hi'}, {'type': 'type_text', 'text': 'hi'}),
         ({'type': 'wait'}, {'type': 'wait'}),
         ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': []}),
