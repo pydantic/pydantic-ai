@@ -170,6 +170,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
     """
 
+    google_minimal_thinking_budget: int
+    """The `thinking_budget` that unified `thinking='minimal'` sends on a model that takes `thinking_budget`.
+    Default: `128`, the smallest budget Gemini 2.5 Pro accepts.
+
+    `gemini-2.5-flash-lite` rejects budgets below 512, so it gets 512.
+    See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
@@ -340,8 +348,17 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    _set_minimal_thinking_budget(profile, model_name)
     _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
     return profile
+
+
+def _set_minimal_thinking_budget(profile: GoogleModelProfile, model_name: str) -> None:
+    # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
+    # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex's thinking
+    # table lists the same minimum: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    if model_name.startswith('gemini-2.5-flash-lite'):
+        profile['google_minimal_thinking_budget'] = 512
 
 
 def _with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:

@@ -1262,7 +1262,7 @@ class GoogleModel(Model[Client]):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
+                'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,

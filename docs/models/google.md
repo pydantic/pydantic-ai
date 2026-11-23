@@ -400,6 +400,9 @@ Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and
 rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
 `high`. Without a `thinking` setting it thinks by default there.
 
+On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens, except on `gemini-2.5-flash-lite`,
+which rejects budgets below 512 and gets 512.
+
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
 and Gemini 2.5 Pro uses its minimum `thinking_budget` of 128 tokens. Neither asks for the thoughts to be returned.
