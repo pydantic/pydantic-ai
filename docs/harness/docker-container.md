@@ -196,7 +196,7 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run builds one from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE], with Firefox, and later runs reuse it. The screen is 1280x800 unless you pass a size, such as `desktop=(1440, 900)`. Add `Coder` to give the agent the container's shell and files too.
+Without an `image`, the first run builds one from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE], with Firefox, and later runs reuse it. The screen is 1280x800 unless you pass a size, such as `desktop=(1440, 900)`. The size applies when the screen first starts. Add `Coder` to give the agent the container's shell and files too.
 
 The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it yourself from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE] and pass it as `image`. Under [durable execution](../durable_execution/overview.md), build it before the first run, so the build doesn't count against a step's timeout.
 
