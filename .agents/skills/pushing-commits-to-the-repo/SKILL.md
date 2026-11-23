@@ -191,11 +191,7 @@ The section is public. Leave out confidential or privileged reasoning. Keep sess
 For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the final metadata check's session.
 Reconcile labels whenever the title or body changes.
 
-Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to that session.
-The checked-in catalog supplies clones and worktrees without label-read requests.
-Run the helper with `--refresh` after creating, renaming, or updating repository labels.
-Commit refreshed catalog changes.
-The helper uses at most two requests and verifies completeness before replacing the catalog.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. It prints the path of a label catalog it caches outside the worktree. Read that file directly for prose-only documentation; otherwise give it to that session.
 Never fetch labels individually or pass raw label API responses.
 
 Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.

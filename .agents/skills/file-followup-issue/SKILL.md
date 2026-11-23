@@ -76,7 +76,7 @@ EOF
 
 For issues filed on a maintainer's behalf, honor their chosen route; otherwise ask which route they want.
 Combine this choice with draft approval when both are needed. This routing also applies to non-follow-up issues.
-Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/labels.tsv) before using them; a missing label fails the command.
+Confirm labels against the catalog that [`label-catalog`](../pushing-commits-to-the-repo/label-catalog) prints before using them; a missing label fails the command.
 
 - **General queue:** create without `--assignee` or `pydanty:skip`, then run
   `gh issue edit <issue-number> --add-label pydanty:triage-issue`.
