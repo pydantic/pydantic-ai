@@ -1589,7 +1589,7 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         else:  # pragma: no cover
-            supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
+            supported = ', '.join(sorted(t.__name__ for t in XaiModel.supported_native_tools()))
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
                 f'Supported built-in tools: {supported}.'

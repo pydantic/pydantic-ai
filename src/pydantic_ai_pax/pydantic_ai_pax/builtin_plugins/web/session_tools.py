@@ -43,7 +43,7 @@ class SessionTools:
 
     def catalog(self) -> SessionCatalog:
         if self.host.sessions is None:
-            raise RuntimeError('This CLAI does not save sessions.')
+            raise RuntimeError('This Pax does not save sessions.')
         return self.host.sessions
 
     def tools(self) -> list[Callable[..., Awaitable[str]]]:

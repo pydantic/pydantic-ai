@@ -115,7 +115,7 @@ export function ChangesPanel({
   /** Whether to ask again: off while a turn runs, so the panel asks again as it ends. A scope with no answer yet is asked
    * for regardless. */
   active: boolean
-  /** Whether the page reaches CLAI, so Refresh can ask. */
+  /** Whether the page reaches Pax, so Refresh can ask. */
   connected: boolean
   /** Changes whenever the session list does, including once the session has saved a turn; the panel then asks again. */
   saved: number

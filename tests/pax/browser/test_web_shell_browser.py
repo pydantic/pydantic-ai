@@ -63,7 +63,7 @@ async def test_a_running_command_in_a_cell_shows_its_output(page: Page, shell_ui
     await page.locator('.sidebar').get_by_text('Browser Shell', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Shell')
     await expect(page.locator('.session.opening')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill('Run the ticks')
     await composer.press('Enter')

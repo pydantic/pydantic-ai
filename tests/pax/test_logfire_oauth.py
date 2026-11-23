@@ -53,7 +53,7 @@ DEVICE: dict[str, JsonValue] = {
 
 
 class Logfire:
-    """Just enough of Logfire's OAuth server and MCP endpoint, recording what CLAI sends."""
+    """Just enough of Logfire's OAuth server and MCP endpoint, recording what Pax sends."""
 
     def __init__(self) -> None:
         offered: list[JsonValue] = [*OFFERED]
@@ -115,7 +115,7 @@ def pending(error: str = 'authorization_pending') -> Reply:
 
 @pytest.fixture(autouse=True)
 def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Record the links CLAI opens instead of opening a browser."""
+    """Record the links Pax opens instead of opening a browser."""
     links: list[str] = []
 
     def open_link(url: str) -> bool:
@@ -172,7 +172,7 @@ class TestSignIn:
         assert sleeps == [1, 1, 6]  # Logfire's 0 is raised to 1 second; slow_down adds 5.
         [registered] = logfire.registered
         assert registered == {
-            'client_name': 'CLAI',
+            'client_name': 'Pax',
             'client_uri': 'https://github.com/pydantic/pydantic-ai',
             'grant_types': ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
             'token_endpoint_auth_method': 'none',
@@ -342,13 +342,13 @@ class TestSignIn:
             (
                 'metadata',
                 {**METADATA, 'registration_endpoint': None},
-                'This Logfire server does not let CLAI register for browser sign-in.',
+                'This Logfire server does not let Pax register for browser sign-in.',
             ),
             ('metadata', {**METADATA, 'token_endpoint': 'http://logfire.test/token'}, 'failed: ValidationError.'),
             (
                 'registration',
                 (400, {'error': 'invalid_client_metadata', 'error_description': 'nope'}),
-                'Logfire refused to register CLAI: nope',
+                'Logfire refused to register Pax: nope',
             ),
             (
                 'resource',
