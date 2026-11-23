@@ -1222,6 +1222,13 @@ def prefect_test_server() -> Iterator[None]:
             yield
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if isinstance(item, pytest.Function) and 'prefect_test_server' in item.fixturenames:
+            # Prefect's API client leaves its pooled connections to the test server for the collector to close.
+            item.add_marker(pytest.mark.filterwarnings('ignore:unclosed <socket.socket:ResourceWarning'))
+
+
 def raise_if_exception(e: Any) -> None:
     if isinstance(e, Exception):
         raise e

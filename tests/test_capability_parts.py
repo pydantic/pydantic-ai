@@ -328,7 +328,10 @@ def test_a_part_with_an_invalid_voice_is_refused() -> None:
 
 def _workspace_source(workspace: Workspace, path: str) -> WorkspaceSource:
     """`WorkspaceSource.from_workspace`, for a parametrization or a sync test, which can't await it."""
-    return asyncio.run(WorkspaceSource.from_workspace(workspace, path))
+    # With a loop factory the runner leaves the thread's current loop alone; `asyncio.run()` would unset it, and the
+    # test's next `run_sync()` would then create a loop that nothing closes.
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
+        return runner.run(WorkspaceSource.from_workspace(workspace, path))
 
 
 TRUSTED_WORKSPACE = Workspace(LocalWorkspaceBackend('.'))

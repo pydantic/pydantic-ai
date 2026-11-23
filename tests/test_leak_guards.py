@@ -2,7 +2,10 @@
 
 from __future__ import annotations as _annotations
 
+import gc
+import importlib.util
 import textwrap
+import warnings
 from collections.abc import AsyncIterator
 
 import pytest
@@ -31,9 +34,15 @@ def run_session(pytester: pytest.Pytester, source: str) -> pytest.RunResult:
     pytester.makepyfile(test_session=WORKER_LOOP + textwrap.dedent(source))
     # The session inherits this suite's warning filters, under which a collected loop's `ResourceWarning` fails the
     # test too: ignored here, so each outcome is the guard's own.
-    return pytester.runpytest(
+    result = pytester.runpytest(
         '-p', 'tests.leak_guards', '-p', 'no:cacheprovider', '-p', 'no:pretty', '-W', 'ignore::ResourceWarning'
     )
+    # The session runs in this process, so what its tests leak on purpose is this test's garbage: collected here, where
+    # the suite's filters would otherwise fail this test for it.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', ResourceWarning)
+        gc.collect()
+    return result
 
 
 def test_a_loop_left_open_on_a_worker_thread_fails_the_test_that_created_it(pytester: pytest.Pytester):
@@ -110,6 +119,7 @@ def run_with_model_named(agent):
 """
 
 
+@pytest.mark.skipif(importlib.util.find_spec('anthropic') is None, reason='anthropic not installed')
 def test_a_client_an_agent_run_leaves_open_fails_the_test_and_a_client_its_builder_owns_does_not(
     pytester: pytest.Pytester,
 ):
