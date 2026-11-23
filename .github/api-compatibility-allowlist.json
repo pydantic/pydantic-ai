@@ -151,7 +151,7 @@
       "symbol": "CODEX_MODELS"
     },
     {
-      "path": "src/pydantic_clai2/pydantic_clai2/models/key_profiles.py",
+      "path": "src/pydantic_ai_pax/pydantic_ai_pax/models/key_profiles.py",
       "symbol": "KEY_VARIABLES"
     }
   ]
