@@ -235,6 +235,50 @@ async def test_interrupt_targets_work_and_preserves_draft(key: str) -> None:
         assert live.buffer.text == 'retained draft'
 
 
+async def test_working_rule_counts_the_turn_and_names_esc() -> None:
+    now = [100.0]
+    async with editor() as (live, pipe, _):
+        live.interrupts = Interrupts(clock=lambda: now[0])
+        live.ctrl_enter_steers = False
+        started, done = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            started.set()
+            await anyio.sleep_forever()
+
+        async def run() -> None:
+            assert not await live.interrupts.run(operation())
+            done.set()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            await started.wait()
+            now[0] += 72
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule.startswith('─ Working ⠋ 1m 12s · Esc to interrupt ─')
+            # Too narrow for every hint: a draft's own keys outrank the Esc hint.
+            live.buffer.replace('typed')
+            live.console.width = 60
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ 1m 12s · Enter to queue · Alt+Enter to steer ───'
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
+            live.buffer.replace('')
+            live.console.width = 30
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Esc to interrupt ─'
+            # A queued prompt keeps the hints with an empty draft: it can still be steered in.
+            live.submit('follow-up')
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
+            pipe.send_text('\x1b')
+            await done.wait()
+        assert not live.interrupts.exit_requested
+        assert live.interrupts.elapsed == 0
+
+
 async def test_ctrl_l_clears_the_screen_but_keeps_the_draft_and_queue() -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal) as (live, pipe, _):

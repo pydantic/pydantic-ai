@@ -1201,7 +1201,7 @@ response has omitted usage information.
 ```text
 Follow-up: Add tests for the change
 Command: /usage
-─ Working ⠋ ────────────────────────────────────
+─ Working ⠋ 12s · Esc to interrupt ─────────────
 /
 /resume Browse or restore a saved session; claude or codex imports theirs
 /set Change settings; no arguments opens menu
@@ -1215,10 +1215,14 @@ for wrapped or pasted text, not to fill the terminal. Text pastes of five or mor
 lines, or at least 1,000 characters, display as `[paste N lines]`. The full text
 is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
+While a turn or command runs, the rule above the draft shows how long it has run
+and that Esc interrupts it; with a draft or a queued message it also shows the
+queue and steer keys, which keep their place first on a narrow terminal.
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
-accent colour, with the prompt text in bold. This keeps your prompts apart from
-answers. Steering messages, commands entered during a turn, and prompts restored by
-`/resume` look the same.
+accent colour, with the prompt text in bold and every row after its first (wrapped or
+its own line) indented under the text. This keeps your prompts apart from answers.
+Steering messages, commands entered during a turn, and prompts restored by `/resume`
+look the same.
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
@@ -1240,9 +1244,10 @@ transcript panel on the alternate screen, for the rest of the session.
 `/set display.full_screen true` starts there instead, from the next start. The rest of this section describes that panel.
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
-changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Ctrl+O shows or hides the full output of
-commands in place (see [How tool calls look](#how-tool-calls-look)). Ctrl+L clears the screen, as in
+changing the draft. While scrolled back, `↓ more below · PgDn` shows in the rule
+below the draft, covering no transcript text. New output leaves a scrolled view in
+place; returning to the bottom or submitting follows new output again. Ctrl+O shows or hides
+the full output of commands in place (see [How tool calls look](#how-tool-calls-look)). Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
@@ -1668,12 +1673,15 @@ rows that each link to all of it.
 
 ### Code highlighting
 
-Fenced code uses the fence's language for syntax highlighting. CLAI renders a
-block when its closing fence arrives, or when the text part ends if the fence
-is unfinished. This keeps multiline strings and comments correctly colored.
-Prose outside fences still streams line by line. Unlabelled and Markdown fences
-stay literal, including indentation and blank lines; unknown languages use plain
-text. Long code lines wrap to the terminal width. Response and reasoning code
+Fenced code uses the fence's language for syntax highlighting. In the interactive
+prompt each code line shows as it arrives, highlighted on its own, so a line inside
+a multiline string or comment can be coloured as code for a moment. When the
+closing fence arrives, or the text part ends if the fence is unfinished, the whole
+block is highlighted again in place, so multiline strings and comments end up
+correctly coloured. Everywhere else, such as `-p`, redirected output or a resumed
+session's history, the block prints once, at that point. Unlabelled and Markdown
+fences stay literal, including indentation and blank lines; unknown languages use
+plain text. Long code lines wrap to the terminal width. Response and reasoning code
 blocks use the terminal foreground and ANSI syntax colours, rather than pale
 text intended for a dark background. Bundled themes supply their own ANSI colours.
 
@@ -1767,7 +1775,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to fit; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1780,6 +1788,13 @@ Every field is independently selectable and reorderable:
 
 Reordering preserves each field's colours and conditional visibility. Plugin
 fragments move and hide together through `plugins`, not as individual fields.
+
+When the row is wider than the terminal, `workspace` shortens to its last folder
+(`…/jsonrc`), then fields are hidden, least important first, until it fits:
+`assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
+`plugins`, the `context` labels, then `model`. `activity` and the context figure
+always stay. The row is cut at the edge rather than wrapped if it still does not fit.
+
 To set the list directly, keep the JSON in one quoted argument:
 
 ```text
