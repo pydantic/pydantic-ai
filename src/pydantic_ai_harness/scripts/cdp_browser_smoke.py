@@ -10,9 +10,9 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
 - a navigation and a `Runtime.evaluate` on a real page,
 - teardown: runs under `blockbuster`, so a blocking call on the event loop fails the check, and after each of
   several runs no Chrome process started for that run is left and its profile directory is gone,
-- the private-address block against a real local server: the `navigate` pre-check, its decimal-IP spelling, a
-  navigation a page script starts, and an in-page `fetch`, with a `block_private_addresses=False` control that
-  reaches the server for the plain-address pre-check and the `fetch`,
+- the egress policy against a real local server: the private-address block on the `navigate` pre-check and its
+  decimal-IP spelling, and `blocked_domains` on a navigation a page script starts and an in-page `fetch`, with a
+  `block_private_addresses=False` control that reaches the server for the plain-address pre-check and the `fetch`,
 - the private-name block: a hostname resolving to loopback through a public wildcard DNS service (skipped when
   that name does not resolve),
 - the request guard in targets of their own: a cross-site iframe, a dedicated worker, a shared worker and a popup
