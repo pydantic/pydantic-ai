@@ -21,11 +21,10 @@ from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from threading import Thread
-from typing import Annotated, ClassVar, Literal, Self
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
-from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
@@ -35,6 +34,7 @@ from pydantic_ai_pax.builtin_plugins.logfire_destination import logfire_dir, par
 from pydantic_ai_pax.builtin_plugins.logfire_live import live_view_url, project_url
 from pydantic_ai_pax.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_ai_pax.builtin_plugins.logfire_setup import Setup, run_setup
+from pydantic_ai_pax.cli.self_update import installed
 from pydantic_ai_pax.config.api_keys import KeyReference, load_keys
 from pydantic_ai_pax.plugins import (
     PanelView,
@@ -51,6 +51,9 @@ from pydantic_ai_pax.runtime import agent_instrumentation
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.field_menu import first_error
 from pydantic_ai_pax.ui.rendering import theme
+
+if TYPE_CHECKING:
+    from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 
 
 class LogfireAccount(BaseModel):
@@ -143,6 +146,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 # Unset, the SDK reads `LOGFIRE_API_KEY`. It only uses the key once something reads a variable.
                 api_key=api_key,
                 service_name=settings.service_name,
+                # Unset, the SDK runs `git rev-parse HEAD` in the launch directory and reports that repo's commit.
+                service_version=installed().label,
                 console=False,
                 # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
                 # changes on disk mid-session, and the warning it prints to stderr tears through the live display.
@@ -236,6 +241,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self._clai2.log('info', 'session started', attributes={'model': model})
 
     def _instrument_httpx(self) -> None:
+        # Imported here: HTTPX instrumentation is off by default, and the instrumentors are slow to import.
+        from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
+
         instrumentors = (HTTPXClientInstrumentor(), HTTPX2ClientInstrumentor())
         available = [
             instrumentor for instrumentor in instrumentors if not instrumentor.is_instrumented_by_opentelemetry

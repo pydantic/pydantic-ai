@@ -318,6 +318,15 @@ class UserError(RuntimeError):
         super().__init__(message)
 
 
+class _TokenCountingUnavailableError(UserError, NotImplementedError):  # pyright: ignore[reportUnusedClass]
+    """Raised by a model's `count_tokens` when its provider serves no token counting.
+
+    It is a `NotImplementedError`, as `Model.count_tokens` raises for a model that can't count, so a caller that
+    falls back for such a model, like Pydantic AI Harness running a nested agent, falls back here too. A durable
+    engine records it as a `UserError`.
+    """
+
+
 class UndrainedPendingMessagesError(UserError):
     """Error that used to be raised when an agent run ended with messages still queued via `enqueue`.
 

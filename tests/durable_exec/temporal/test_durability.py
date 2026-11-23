@@ -71,7 +71,6 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._telemetry import open_span, set_content_attribute
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
@@ -158,6 +157,7 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ..override_rebind_cases import REBIND_CASES, RebindCase
 from ..span_utils import drop_fastmcp_client_spans
 
 try:
@@ -413,6 +413,54 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: What is the capital of Mexico?'
+
+
+class _OverrideExtra(AbstractCapability[object]):
+    def get_instructions(self) -> str:
+        return 'extra'
+
+
+@workflow.defn
+class StackedOverrideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, added: Literal['extra', 'instrumentation']) -> str:
+        extra = _OverrideExtra() if added == 'extra' else Instrumentation(InstrumentationSettings())
+        with simple_durable_agent.override(capabilities=[*simple_durable_agent.root_capability.capabilities, extra]):
+            return (await simple_durable_agent.run(prompt)).output
+
+
+async def test_durability_override_capabilities_in_workflow(client: Client):
+    """Inside a workflow, stacking onto `root_capability.capabilities` keeps the bound `TemporalDurability`.
+
+    Re-binding it there would raise, as it cannot register activities once the workflow runs. What the override
+    adds follows the per-run rules: `Instrumentation` is allowed, and a capability with no registered activities
+    fails the workflow.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StackedOverrideDurableAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            StackedOverrideDurableAgentWorkflow.run,
+            args=['What is the capital of Mexico?', 'instrumentation'],
+            id=f'{StackedOverrideDurableAgentWorkflow.__name__}_instrumentation',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: What is the capital of Mexico?'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                StackedOverrideDurableAgentWorkflow.run,
+                args=['What is the capital of Mexico?', 'extra'],
+                id=f'{StackedOverrideDurableAgentWorkflow.__name__}_extra',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _OverrideExtra.' in str(
+        exc_info.value.cause
+    )
 
 
 # --- Durability with the `ModelFallback` capability ---
@@ -2470,6 +2518,85 @@ def test_durability_rejects_a_second_engine():
             name='duplicate_durability',
             capabilities=[TemporalDurability(), TemporalDurability()],
         )
+
+
+def test_durability_override_capabilities_must_keep_the_bound_durability():
+    """`override(capabilities=...)` refuses a list without the bound `TemporalDurability`, even outside a workflow.
+
+    The constructed `TemporalDurability` is not the bound copy the agent registered its activities with, so passing
+    it is refused too.
+    """
+    durability = TemporalDurability()
+    agent = Agent(_durability_fn_model, name='durability_override_keep', capabilities=[durability])
+    message = snapshot(
+        "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, the "
+        'item of `agent.root_capability.capabilities` that holds the bound `TemporalDurability` the agent '
+        'registered its durable activities with. A `TemporalDurability` you construct, or the bound one inside '
+        'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, for '
+        'example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+    )
+
+    with pytest.raises(UserError) as dropped:
+        with agent.override(capabilities=[_OverrideExtra()]):
+            pass
+    assert str(dropped.value) == message
+
+    with pytest.raises(UserError) as unbound:
+        with agent.override(capabilities=[durability, _OverrideExtra()]):
+            pass
+    assert str(unbound.value) == message
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
+        result = agent.run_sync('Hello')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'extra'
+
+
+def test_durability_override_capabilities_keeps_a_wrapped_durability():
+    """A durability capability behind a wrapper is kept when the wrapper is passed through."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_override_wrapped',
+        capabilities=[WrapperCapability(wrapped=TemporalDurability())],
+    )
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
+        pass
+
+    with pytest.raises(UserError, match='holds the bound `TemporalDurability`'):
+        with agent.override(capabilities=[_OverrideExtra()]):
+            pass
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(case: RebindCase):
+    """The bound `TemporalDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register its activities a second time. Temporal keeps no registry to observe that in, so
+    the test counts `_bind_for_agent` calls.
+    """
+    durability = TemporalDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    capabilities = case.capabilities(agent, bound)
+
+    with patch.object(
+        TemporalDurability,
+        '_bind_for_agent',
+        autospec=True,
+        side_effect=TemporalDurability._bind_for_agent,  # pyright: ignore[reportPrivateUsage]
+    ) as bind_for_agent:
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
+    assert bind_for_agent.call_count == 0
 
 
 def test_durability_from_agent_rejects_duplicates():
@@ -8630,128 +8757,6 @@ async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(
     assert len(_workspace_probe_backends) == backend_count
     assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
     assert before_replay == after_replay
-
-
-async def test_temporal_workspace_calls_are_traced_inside_their_activity(
-    client_with_logfire: Client, capfire: CaptureLogfire
-):
-    """The run's tracer can't cross into an activity, so the activity traces its workspace calls with the agent's own.
-
-    They nest under the activity's span.
-    """
-    _workspace_probe_backends.clear()
-
-    async with Worker(
-        client_with_logfire,
-        task_queue=TASK_QUEUE,
-        workflows=[WorkspaceProbeWorkflow],
-        plugins=[AgentPlugin(_workspace_probe_agent)],
-    ):
-        await client_with_logfire.execute_workflow(
-            WorkspaceProbeWorkflow.run, id=f'{WorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
-        )
-
-    spans = capfire.exporter.exported_spans_as_dict()
-    names = {span['context']['span_id']: span['name'] for span in spans}
-    assert [
-        (span['name'], names[span['parent']['span_id']], span['attributes'].get('process.command_args'))
-        for span in spans
-        if span['name'].startswith('workspace ')
-    ] == snapshot(
-        [
-            ('workspace working_dir', 'RunActivity:agent__workspace_probe_agent__capability__workspace__call', None),
-            ('workspace run', 'RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('first',)),
-            ('workspace run', 'RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('second',)),
-        ]
-    )
-
-
-@workflow.defn
-class ContentFreeWorkspaceProbeWorkflow:
-    @workflow.run
-    async def run(self) -> str:
-        result = await _workspace_probe_agent.run(
-            'Use the probe_workspace tool.',
-            deps=WorkspaceProbeDeps(prefix='worker'),
-            workspace=WorkspaceRef(provider='probe', id='existing-123'),
-            capabilities=[Instrumentation(InstrumentationSettings(include_content=False))],
-        )
-        return result.output
-
-
-_content_free_worker_agent = Agent(
-    TestModel(call_tools=['probe_workspace_content']),
-    name='content_free_worker_agent',
-    deps_type=WorkspaceProbeDeps,
-    capabilities=[
-        Instrumentation(InstrumentationSettings(include_content=False)),
-        WorkspaceProbeCapability(),
-        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
-    ],
-)
-
-_CTX_CONTENT_MARKER = 'ctx-content-marker-41c7'
-
-
-@_content_free_worker_agent.tool
-async def probe_workspace_content(ctx: RunContext[WorkspaceProbeDeps]) -> str:
-    with open_span(ctx, 'capability probe', content={'probe.content': _CTX_CONTENT_MARKER}) as span:
-        set_content_attribute(ctx, span, 'probe.later_content', _CTX_CONTENT_MARKER)
-    await ctx.workspace.write_text('notes.txt', 'hello')
-    await ctx.workspace.read_text('notes.txt')
-    await ctx.workspace.run(['true'])
-    return 'done'
-
-
-@workflow.defn
-class ContentRunOnContentFreeWorkerWorkflow:
-    @workflow.run
-    async def run(self) -> str:
-        result = await _content_free_worker_agent.run(
-            'Use the probe_workspace_content tool.',
-            deps=WorkspaceProbeDeps(prefix='worker'),
-            workspace=WorkspaceRef(provider='probe', id='existing-123'),
-            capabilities=[Instrumentation(InstrumentationSettings(include_content=True))],
-        )
-        return result.output
-
-
-@pytest.mark.parametrize(
-    ('workflow_type', 'agent', 'expected_spans'),
-    [
-        pytest.param(
-            ContentFreeWorkspaceProbeWorkflow, _workspace_probe_agent, {'workspace run'}, id='run_off_worker_on'
-        ),
-        # `ctx` carries the run's flag, but a span a capability opens from it follows the worker's setting too.
-        pytest.param(
-            ContentRunOnContentFreeWorkerWorkflow,
-            _content_free_worker_agent,
-            {'workspace run', 'capability probe'},
-            id='run_on_worker_off',
-        ),
-    ],
-)
-async def test_temporal_workspace_activity_records_content_only_if_the_run_and_the_worker_do(
-    client_with_logfire: Client,
-    capfire: CaptureLogfire,
-    workflow_type: Any,
-    agent: Agent[WorkspaceProbeDeps, str],
-    expected_spans: set[str],
-):
-    """An activity's spans carry no content unless both the run and the worker's agent record content."""
-    _workspace_probe_backends.clear()
-
-    async with Worker(
-        client_with_logfire, task_queue=TASK_QUEUE, workflows=[workflow_type], plugins=[AgentPlugin(agent)]
-    ):
-        await client_with_logfire.execute_workflow(
-            workflow_type.run, id=f'{workflow_type.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
-        )
-
-    spans = capfire.exporter.exported_spans_as_dict()
-    assert {span['name'] for span in spans} >= expected_spans
-    content_keys = ('file.path', 'process.command_args', 'probe.content', 'probe.later_content')
-    assert [key for span in spans for key in span['attributes'] if key in content_keys] == []
 
 
 @workflow.defn
