@@ -9,8 +9,9 @@ behaves as the set says. A member the gateway can't reach is `Exempt`, with the 
 exemption, and a probe whose member left its set fails as stale. `test_the_fact_still_holds` makes the paid requests,
 and runs only under `--run-gateway-live`, each Monday in `.github/workflows/provider-facts-health.yml`.
 
-A probe sends a minimal prompt and sets no `max_tokens`. Claude, on the Anthropic API and on Bedrock, still gets the
-model's maximum, which those APIs require. A probe asserts what the provider answers, not what the library sends: the
+A probe sends a minimal prompt and sets no `max_tokens`. A Claude request still carries one, which the Anthropic API
+requires: the default `models/anthropic/_request_params.py::default_max_tokens` picks, or on Bedrock
+`BedrockConverseModel._default_max_tokens`'s. A probe asserts what the provider answers, not what the library sends: the
 recorded test each check names pins the request.
 """
 
@@ -103,11 +104,11 @@ def _gateway(route: GatewayRoute, model: str) -> Model:
 
 
 async def _rejects(request: Awaitable[object], *, mentions: str | None = None, status: int = 400) -> None:
-    """Fail unless the provider rejects `request` with `status`, and with a body that names `mentions`, in any case."""
+    """Fail unless the provider rejects `request` with `status`, and with a body that names `mentions`."""
     with pytest.raises(ModelHTTPError) as exc_info:
         await request
     assert exc_info.value.status_code == status, exc_info.value
-    assert mentions is None or mentions.lower() in str(exc_info.value.body).lower(), exc_info.value.body
+    assert mentions is None or mentions in str(exc_info.value.body), exc_info.value.body
 
 
 async def _request(model: Model, history: list[ModelRequest | ModelResponse], params: ModelRequestParameters) -> None:
@@ -252,13 +253,14 @@ async def _bedrock_accepts_one_hour_cache(model_name: str) -> None:
 async def _bedrock_rejects_native_output(model_name: str) -> None:
     """Turns on the structured output the set turns off, after a plain request shows the model answers at all.
 
-    No recording holds this rejection, so the probe checks only that it names the output format.
+    The control request differs only in its output type, so a 400 on the second is the structured output's. No
+    recording holds the rejection's message, so the probe doesn't match one.
     """
     model = BedrockConverseModel(
         model_name, provider=gateway_provider('bedrock'), profile=BedrockModelProfile(supports_json_schema_output=True)
     )
     await Agent(model).run(_PROMPT)
-    await _rejects(Agent(model, output_type=NativeOutput(_Answer)).run(_PROMPT), mentions='output')
+    await _rejects(Agent(model, output_type=NativeOutput(_Answer)).run(_PROMPT))
 
 
 async def _bedrock_answers(model_name: str) -> None:
@@ -287,6 +289,9 @@ async def _bedrock_rejects_stop_sequences(model_name: str) -> None:
 async def _google_thinking_levels_as_profiled(model_name: str) -> None:
     """Sends each standard thinking level the profile leaves out, and the lowest it lists; checks each answer.
 
+    The requests differ only in their level, so with the last one accepted, each 400 is its level's. No recording holds
+    Vertex's message for it, so the probe doesn't match one.
+
     Mirrors `tests/test_thinking_wire_contract.py::test_reasoning_wire_contract`'s Google cases, on Vertex.
     `XHIGH` is left out: only a model that lists it takes it, at the highest cost.
     """
@@ -296,7 +301,7 @@ async def _google_thinking_levels_as_profiled(model_name: str) -> None:
     for level in GOOGLE_THINKING_LEVEL_SCALE:
         if level in GOOGLE_THINKING_LEVELS and level not in levels:
             settings = GoogleModelSettings(google_thinking_config={'thinking_level': ThinkingLevel(level)})
-            await _rejects(agent.run(_PROMPT, model_settings=settings), mentions='thinking')
+            await _rejects(agent.run(_PROMPT, model_settings=settings))
     lowest = next(level for level in GOOGLE_THINKING_LEVEL_SCALE if level in levels)
     await agent.run(
         _PROMPT, model_settings=GoogleModelSettings(google_thinking_config={'thinking_level': ThinkingLevel(lowest)})
