@@ -290,10 +290,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._sandbox_timeout = sandbox_timeout
         self._idle_timeout = idle_timeout
         self._working_dir = absolute_path('working_dir', working_dir)
-        self._desktop_size = checked_desktop_size(desktop)
         self._display = x11_display(
             self._run_argv,
-            self._desktop_size,
+            checked_desktop_size(desktop),
             lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
         )
         self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
@@ -517,7 +516,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 if self._image is None:
                     # Built on create, not at import: Modal caches it per workspace after the first build.
                     built = modal.Image.debian_slim(python_version='3.12').apt_install(
-                        'git', 'ripgrep', *(DESKTOP_PACKAGES if self._desktop_size else ())
+                        'git', 'ripgrep', *(DESKTOP_PACKAGES if self._display else ())
                     )
                 elif isinstance(self._image, str):
                     built = modal.Image.from_registry(self._image)  # pyright: ignore[reportUnknownMemberType]
