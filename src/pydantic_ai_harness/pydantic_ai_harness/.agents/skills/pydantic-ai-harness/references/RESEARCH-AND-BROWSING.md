@@ -433,9 +433,9 @@ Fields: `headless=True`, `chrome_path=None` (`CHROME_PATH`, then the usual insta
 - Commands outside `allowed_methods`, non-http(s) `Page.navigate` URLs, URLs the egress policy refuses,
   protocol errors and commands that time out (`timeout=30` covers the command and `wait_for_event`) are retries.
 - The egress policy applies to every request of the tab, its frames, popups and workers through CDP `Fetch`
-  interception, including navigations page scripts start. WebSockets go through a local proxy that applies the
-  same policy to their host and port. DNS rebinding on other requests is not covered.
+  interception, including navigations page scripts start. DNS rebinding on HTTP requests is not covered.
 - `Page.captureScreenshot` returns image content (5 MB cap). Dialogs are dismissed; downloads are denied.
+- WebSocket connections go through a local proxy that applies the egress policy to their host and port.
 - Set `chrome_sandbox=False` only where Chrome's sandbox cannot start (it exits with "No usable sandbox!").
 - Durable execution is rejected with `UserError` at agent construction.
 

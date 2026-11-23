@@ -13,8 +13,6 @@ fake of the protocol, so these are what it cannot show. Re-check them against a 
 - `Fetch.enable` on a target pauses each request the target makes in a `Fetch.requestPaused` event until
   `Fetch.continueRequest` or `Fetch.failRequest` answers it. Source:
   <https://chromedevtools.github.io/devtools-protocol/tot/Fetch/>.
-- A WebSocket handshake is not paused. The Fetch domain does not say so; observed on Chrome 158, and the reason
-  `_websocket_proxy.py` exists.
 - A shared worker target has a `Fetch` domain, and its requests are paused on its own session.
 - A dedicated worker target has no `Fetch` domain (`Fetch.enable` answers "'Fetch.enable' wasn't found"); its
   requests are paused on the session of the page that started it.
