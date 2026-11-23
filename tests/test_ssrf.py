@@ -222,6 +222,8 @@ class TestIsPrivateIp:
             # ISATAP (RFC 5214) with a public prefix, embedding a private/link-local IPv4
             '2606:4700::5efe:192.168.1.1',
             '2606:4700::200:5efe:169.254.169.254',
+            # ISATAP in a globally reachable row of 2001::/23 (AMT), embedding a private IPv4
+            '2001:3::5efe:192.168.1.1',
         ],
     )
     def test_private_ips_detected(self, ip: str) -> None:
@@ -356,7 +358,9 @@ class TestIsPrivateIp:
     ) -> None:
         """An address is blocked exactly when the most specific IANA row holding it is not globally reachable.
 
-        The first, middle and last address of every row are checked, so a wrong prefix length fails.
+        A row in `_IANA_ROW_OVERRIDES` is judged by its override instead, and the rows in `_IANA_ROWS_DECODED`
+        are left to the embedded-IPv4 cases. The first, middle and last address of every row outside
+        `_IANA_ROWS_DECODED` are checked, so a wrong prefix length fails.
         """
         row = max((row for row in _IANA_ROWS if address in row), key=lambda row: row.prefixlen)
         blocked = _IANA_ROW_OVERRIDES.get(row, not _IANA_ROWS[row])
