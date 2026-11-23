@@ -151,10 +151,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_tool_choice_accepts_additional_tools=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
-                # GPT-6.2 and later put the top-level `instructions` after `input` and bill them at the uncached rate,
-                # and OpenAI recommends leading input messages for reusable instructions (measured live:
-                # https://github.com/pydantic/pydantic-ai/pull/14095). Set here rather than in `openai_model_profile`
-                # because OpenAI-compatible endpoints that share it may render instructions differently.
+                # `gpt-6.2-sol` and `gpt-6.2-astra` put the top-level `instructions` after `input` and bill them at
+                # the uncached rate, and OpenAI recommends leading input messages for reusable instructions
+                # (measured live: https://github.com/pydantic/pydantic-ai/pull/14095). Set here rather than in
+                # `openai_model_profile` because OpenAI-compatible endpoints that share it may render instructions
+                # differently.
                 # https://developers.openai.com/api/docs/guides/latest-model
                 openai_responses_stable_instructions_as_input=model_name.startswith(_GPT_6_2_MODEL_PREFIXES),
                 # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`

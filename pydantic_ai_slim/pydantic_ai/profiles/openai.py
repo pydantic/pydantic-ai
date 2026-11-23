@@ -567,8 +567,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     too. All of them stay there on a request that continues server-side state or a compacted history, has a dynamic
     system prompt, or uses the `'user'` system prompt role.
 
-    Set by `OpenAIProvider` for GPT-6.2 and later, which put the top-level `instructions` after `input` and bill them
-    at the uncached rate on every request:
+    Set by `OpenAIProvider` for `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level `instructions` after
+    `input` and bill them at the uncached rate on every request:
     https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works.
     """
 

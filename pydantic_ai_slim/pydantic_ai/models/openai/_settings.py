@@ -196,8 +196,8 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     otherwise go (normally the top-level field) and adds no breakpoint. That includes
     `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
     its input, so relocated instructions would be replayed alongside every later request's own.
-    On GPT-6.2 and later, which put the top-level field after the input, the dynamic instructions that rewrite
-    the prefix stay there (see
+    On `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level field after the input, the dynamic
+    instructions that rewrite the prefix stay there (see
     [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
