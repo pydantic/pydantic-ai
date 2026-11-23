@@ -1,6 +1,9 @@
 """Native capability events drive terminal-safe specialized output."""
 
 import io
+import os
+from collections.abc import AsyncIterable
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -10,13 +13,24 @@ from rich.style import Style
 from rich.text import Text
 from termflow.themes import PALETTES
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.messages import PartStartEvent, RetryInfo, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    PartStartEvent,
+    RetryInfo,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai_harness.file_system import FileEditedEvent
-from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent, Shell
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
+from tests.pax.test_speculative_mode import streamed
 
 
 async def test_shell_header_includes_argument_once() -> None:
@@ -612,3 +626,31 @@ async def test_a_live_command_whose_result_never_arrives_expands_to_its_row_alon
     surface.toggle_details()
     rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
     assert rows == ['● shell make', '  ⎿ exit 0 · 4 lines', '', '']
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX shell command')
+async def test_a_live_command_expands_to_what_the_shell_tool_returned_without_its_handles(tmp_path: Path) -> None:
+    """Runs the real `shell` tool, so a change to the handles that follow its output fails here."""
+    calls = iter([ToolCallPart('shell', {'command': 'printf "one\\ntwo\\nthree\\n"'}, tool_call_id='s')])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+
+    async def render(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            await renderer.on_stream_event(event)
+
+    shell = Shell[None](tools=['shell'], denied_commands=[])
+    await Agent(streamed(respond), capabilities=[LocalWorkspace(tmp_path), shell]).run(
+        'go', event_stream_handler=render
+    )
+    await renderer.finish()
+    surface.toggle_details()
+    rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
+    start = next(index for index, row in enumerate(rows) if row.startswith('  ⎿ exit 0'))
+    assert rows[start + 1 : start + 5] == ['    one', '    two', '    three', '']

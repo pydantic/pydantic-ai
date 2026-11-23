@@ -33,7 +33,6 @@ from pydantic_ai_harness.shell import (
     Shell,
 )
 from pydantic_ai_harness.shell._jobs import Job
-from pydantic_ai_harness.shell._persistent import command_output
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool, call_tools
@@ -191,12 +190,6 @@ class TestShellTool:
             denied_env_patterns=['OPENAI_*'],
         )
         assert 'unset' in output and 'do-not-expose' not in output
-
-    async def test_command_output_is_the_result_without_its_handles(self, tmp_path: Path) -> None:
-        output = await shell(tmp_path, {'command': 'printf "one\\ntwo\\n"'})
-        pid = int(output.split('PID: ')[1].split()[0])
-        assert command_output(output, pid=pid) == 'one\ntwo\n'
-        assert command_output('no handles', pid=pid) == 'no handles'
 
     async def test_foreground_wait_makes_the_same_calls_however_slow_the_workspace(self, tmp_path: Path) -> None:
         # A durable engine returns a run's recorded workspace calls by position, so a recovered run, on a
