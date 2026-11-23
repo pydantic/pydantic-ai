@@ -569,9 +569,11 @@ Neither is set here, so no step in these locks mints a token.
 `shared/engine-zai.md` sets `max-ai-credits: -1`; AWF accepts that value only from v0.29.1.
 `shared/engine-zai.md` imports the public Pydantic AI engine and explicitly pins runtime 0.70.0. Keep each workflow's
 root engine block model-only; the shared import owns identity and credentials.
-Each workflow reads its model from the `GH_AW_ZAI_MODEL` repository variable. Keep `GH_AW_MODEL` on `glm-5.3-flash`.
+Each workflow reads its model from the `GH_AW_ZAI_MODEL` repository variable.
+Keep `GH_AW_MODEL` on `glm-5.3-flash`, so a lock from before #14254 cannot reach `glm-5.4`.
 On an approval, `CI Review` runs the PR's merge ref, which keeps its old lock while the PR conflicts with `main`.
-A lock from before #14254 reads `GH_AW_MODEL` and has neither GLM-5.4's pricing nor its low effort.
+A lock from before #14254 has neither GLM-5.4's pricing nor its low effort.
+A later lock that reads `GH_AW_MODEL` runs `glm-5.3-flash` at low effort.
 `build_model` in `pydantic_ai_gh_aw_shim/cli.py` sends Z.AI's low effort, `output_config.effort: "low"`, on every request
 unless `ANTHROPIC_BASE_URL` is unset or names `api.anthropic.com`.
 Z.AI's Anthropic-compatible endpoint maps any enabled `thinking`, a token budget included, to its default `max` effort
