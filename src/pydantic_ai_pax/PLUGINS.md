@@ -3173,9 +3173,9 @@ streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
-has to wait for streamed text to finish and the editor and status row to
-get out of the way. `host.full_screen()` flushes pending output, suspends the
-editor's input reader, and restores the editor and its draft when the block exits.
+needs streamed text written out and the editor and status row out of the way.
+`host.full_screen()` writes pending streamed text at once, suspends the editor's
+input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
@@ -3215,8 +3215,9 @@ output without changing the draft. New output does not move a scrolled view.
 A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
-Assistant Markdown renders again at the new width and theme once its part ends; tool and command
-output rewraps, and a theme change repaints its colours role by role. Output
+Assistant Markdown renders again at the new width and theme once its part
+ends; tool and command output rewraps, and a theme change repaints its colours
+role by role. Output
 coloured with `theme.color(...)` or the theme's diff and syntax colours follows
 `/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
@@ -3688,7 +3689,9 @@ class Where(Plugin):
 The row is repainted about ten times a second while CLAI works and once a second
 while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
 and free of blocking IO. Return `''` to contribute nothing for a frame.
-Fragments are truncated from the right on a narrow terminal and are readable
+When the row is too narrow, the `plugins` group is hidden after the output count,
+cost, working directory, and other optional fields, and before the model; see the
+[status-line reference](docs/reference.md#status-line). Fragments are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
