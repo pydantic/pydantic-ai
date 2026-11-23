@@ -49,6 +49,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai_harness._display import RELEASE_TIMEOUT
 from pydantic_ai_harness._png import PNG_SIGNATURE
 from pydantic_ai_harness._x11 import TINT2_BUTTON_STYLE
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
@@ -166,9 +167,6 @@ starts the panel with `boxd-desktop-launch` unless a tint2 panel already runs. W
 (under a second live) and exits 0 once it is there. A machine created with `desktop` also installs both from its spec
 at boot; the second install waits for apt's lock."""
 
-_RELEASE_TIMEOUT = 5
-"""Seconds to spend letting go of the mouse button after a drag fails or is cancelled, as on the other desktops."""
-
 _MAX_CHARS_PER_CALL = 10_000
 
 _MAX_SCROLL_CLICKS_PER_CALL = 100
@@ -217,29 +215,29 @@ class BoxdDisplayDriver:
     """
 
     def __init__(self, get_computer_api: Callable[[], Awaitable[tuple[AsyncComputer, str]]]):
-        self._attached = get_computer_api
+        self._get_computer_api = get_computer_api
 
     async def display_size(self) -> tuple[int, int]:
-        computer, machine_id = await self._attached()
+        computer, machine_id = await self._get_computer_api()
         result = await computer.cursor_position(machine_id)
         return result.screen_width, result.screen_height
 
     async def screenshot(self) -> bytes:
-        computer, machine_id = await self._attached()
+        computer, machine_id = await self._get_computer_api()
         return _screenshot_png(await computer.screenshot(machine_id))
 
     async def zoom(self, region: Region) -> bytes:
-        computer, machine_id = await self._attached()
+        computer, machine_id = await self._get_computer_api()
         area = (region.left, region.top, region.right - region.left, region.bottom - region.top)
         return _screenshot_png(await computer.screenshot(machine_id, region=area))
 
     async def cursor_position(self) -> Point:
-        computer, machine_id = await self._attached()
+        computer, machine_id = await self._get_computer_api()
         cursor = (await computer.cursor_position(machine_id)).cursor
         return Point(x=cursor.x, y=cursor.y)
 
     async def act(self, action: DisplayAction) -> None:
-        computer, machine_id = await self._attached()
+        computer, machine_id = await self._get_computer_api()
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 await computer.click(machine_id, x, y, button=button, count=count, modifiers=modifiers)
@@ -294,7 +292,7 @@ class BoxdDisplayDriver:
             await computer.mouse_up(machine_id, end.x, end.y)
         except BaseException as error:
             released = False
-            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
+            with anyio.move_on_after(RELEASE_TIMEOUT, shield=True), suppress(Exception):
                 await computer.mouse_up(machine_id)
                 released = True
             # A credentials error keeps its own type, so the backend still ends the run on it.
