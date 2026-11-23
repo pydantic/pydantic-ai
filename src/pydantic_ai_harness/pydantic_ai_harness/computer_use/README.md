@@ -125,7 +125,7 @@ The providers' own advice:
   For each model's image size limits, see
   [Images and vision](https://developers.openai.com/api/docs/guides/images-vision#model-sizing-behavior).
 
-On `AnthropicModel`, a screenshot larger than the model's image size limit fails or misses
+On `AnthropicModel`, a screenshot over the model's image size limit either fails the request or makes clicks miss
 ([computer use tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)):
 
 - Claude's `computer_toolset_20260801` tool refuses a screenshot over 2576 pixels on its longer side or over 4784 image
