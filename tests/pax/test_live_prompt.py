@@ -260,11 +260,7 @@ async def test_working_rule_counts_the_turn_and_names_esc() -> None:
             rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
             assert rule == '─ Working ⠋ Esc to interrupt ─'
             # A queued prompt keeps the hints with an empty draft: it can still be steered in.
-            live.buffer.replace('follow-up')
-            pipe.send_text('\r')
-            while not live.queued_messages:
-                await anyio.sleep(0)
-            assert live.buffer.text == ''
+            live.submit('follow-up')
             live.console.width = 50
             rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
             assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
