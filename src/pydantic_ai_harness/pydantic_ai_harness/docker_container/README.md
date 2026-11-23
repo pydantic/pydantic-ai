@@ -110,7 +110,7 @@ container = DockerContainer(
 )
 ```
 
-The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. With `desktop`, a container on the host's network (such as `--network host`) is refused before its desktop starts, whether the run created it or attached to it, since programs in it could control your screen through your machine's X server. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
+The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. With `desktop`, a container on the host's network (such as `--network host`) is refused, since programs in it could control your screen through your machine's X server. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
 
@@ -199,7 +199,7 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, a window manager, Firefox and a terminal), and later runs reuse it. The screen is 1280x800 unless you pass a size, such as `desktop=(1440, 900)`; a container whose screen already runs keeps its size. Add `Coder` to give the agent the container's shell and files too.
+Without an `image`, the first run builds one from `DESKTOP_DOCKERFILE`, with Firefox, and later runs reuse it. The screen is 1280x800 unless you pass a size, such as `desktop=(1440, 900)`. Add `Coder` to give the agent the container's shell and files too.
 
 The built image is reused, so it doesn't get security updates. To update it, or to keep it under your own tag, build it yourself from `DESKTOP_DOCKERFILE` and pass it as `image`. Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), build it before the first run, so the build doesn't count against a step's timeout.
 
