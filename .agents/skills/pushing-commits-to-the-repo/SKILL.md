@@ -192,6 +192,7 @@ For prose-only documentation, handle title, body, and labels directly. Otherwise
 Reconcile labels whenever the title or body changes.
 
 Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. It prints the path of a label catalog it caches outside the worktree. Read that file directly for prose-only documentation; otherwise give it to that session.
+Run `label-catalog --refresh` after creating, renaming, or updating repository labels.
 Never fetch labels individually or pass raw label API responses.
 
 Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
@@ -653,7 +654,7 @@ maintainers run them, not something this repo can show you.
 - **Apply the label last, not early.** None of them re-runs on a later push, so a deep review of a
   still-moving PR reports on a diff that no longer exists.
 - **How:** `gh pr edit <number> --add-label <name>`, after confirming the name against
-  the checked-in label catalog. This needs triage permission on the repo. If it fails, quote the
+  the catalog `label-catalog` prints. This needs triage permission on the repo. If it fails, quote the
   actual error rather than skipping the step on an assumed lack of permission.
 - **The label tells you nothing about the outcome.** Every surface consumes its own trigger label —
   pydanty on pickup, before it has reviewed anything; `douwebot` from an `always()` step that also
