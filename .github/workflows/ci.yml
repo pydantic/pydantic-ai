@@ -1925,6 +1925,8 @@ jobs:
 
       - run: mkdir .coverage
 
+      - run: uv sync --only-dev
+
       - name: run the pax suite measuring its source
         shell: bash
         run: |

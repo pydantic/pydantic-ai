@@ -374,6 +374,8 @@ _HAND_BUILT_TAG = re.compile(
     rf'<\s*/?\s*(?:{"|".join(re.escape(tag) for tag in get_args(FramingTag))})(?=[\s/>{_INTERPOLATION}]|$)',
     re.IGNORECASE,
 )
+_MAY_HOLD_A_TAG = re.compile(rf'<\s*/?\s*(?:{"|".join(re.escape(tag) for tag in get_args(FramingTag))})', re.IGNORECASE)
+"""A file without this match in its raw text holds no hand-built tag, so it is not parsed."""
 
 
 _HAND_BUILT_TAG_ALLOWLIST = {
@@ -416,14 +418,17 @@ def _hand_built_framing_tags_in(relative: str, source: str) -> list[tuple[str, i
 
 
 def _hand_built_framing_tags() -> list[tuple[str, int, str]]:
-    return [
-        found
+    sources = {
+        path.relative_to(REPO_ROOT / package.member).as_posix(): path.read_text(encoding='utf-8')
         for package in shipped_packages()
         for path in sorted((REPO_ROOT / package.path).rglob('*.py'))
         if path != REPO_ROOT / 'pydantic_ai_slim/pydantic_ai/_framing.py'
-        for found in _hand_built_framing_tags_in(
-            path.relative_to(REPO_ROOT / package.member).as_posix(), path.read_text(encoding='utf-8')
-        )
+    }
+    return [
+        found
+        for relative, source in sources.items()
+        if _MAY_HOLD_A_TAG.search(source)
+        for found in _hand_built_framing_tags_in(relative, source)
     ]
 
 
