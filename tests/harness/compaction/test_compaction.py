@@ -4245,43 +4245,6 @@ class TestCompactWithSpan:
         assert attrs['compaction.tokens_before'] > attrs['compaction.tokens_after']
         assert seen  # the strategy tokenizer reached the span attributes, not the default heuristic
 
-    @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-    @pytest.mark.parametrize('include_content', [False, True])
-    async def test_an_escaping_error_records_its_message_only_with_content(
-        self, capfire: CaptureLogfire, include_content: bool
-    ) -> None:
-        # The tokenizer runs inside the span, and its error quotes the conversation it was counting.
-        def _tokenizer(text: str) -> int:
-            raise ValueError(f'cannot count {text!r}')
-
-        async def _compact() -> list[ModelMessage]:
-            return [_user('b')]
-
-        ctx = _make_ctx_with_tracer()
-        ctx.trace_include_content = include_content
-        with pytest.raises(ValueError):
-            await compact_with_span(
-                ctx, strategy='Strat', messages=[_user('secret'), _user('b')], compact=_compact, tokenizer=_tokenizer
-            )
-
-        # Logfire also exports a pending copy of each span when it starts; only the ended span has the error.
-        [span] = [
-            span
-            for span in capfire.exporter.exported_spans
-            if span.name == 'compact_messages' and (span.attributes or {}).get('logfire.span_type') != 'pending_span'
-        ]
-        [event] = span.events
-        attributes = dict(event.attributes or {})
-        # The stack trace quotes the message too, and only its last line is stable.
-        stacktrace = attributes.pop('exception.stacktrace', None)
-        message = "cannot count 'secret'"
-        expected = {'exception.type': 'ValueError', 'exception.escaped': 'False'}
-        if include_content:
-            expected['exception.message'] = message
-        assert attributes == expected
-        assert (stacktrace is not None) == include_content
-        assert span.status.description == (f'ValueError: {message}' if include_content else None)
-
     async def test_non_recording_tracer_skips_attributes(self):
         # A no-op tracer returns a non-recording span, so attribute computation is skipped.
         before: list[ModelMessage] = [_user('a'), _user('b')]

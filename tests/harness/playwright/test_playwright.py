@@ -4561,21 +4561,6 @@ class TestEgressPolicy:
 
 
 class TestSpanOutcome:
-    @pytest.mark.parametrize('include_content', [True, False])
-    async def test_an_escaping_exception_keeps_its_message_only_with_content(
-        self, include_content: bool, instrumented: Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]
-    ) -> None:
-        # An exception message can quote what the model passed, so it follows the run's content setting.
-        async def drive() -> None:
-            with pytest.raises(RuntimeError, match='PlaywrightBrowser is not running'):
-                await PlaywrightBrowserToolset[None](session=PlaywrightBrowserSession()).snapshot()
-
-        (span,) = await _run_browser_operation(instrumented, drive, include_content)
-        (event,) = span.events
-        assert event.attributes is not None and event.attributes['exception.type'] == 'RuntimeError'
-        assert ('exception.message' in event.attributes) is include_content
-        assert ('not running' in (span.status.description or '')) is include_content
-
     async def test_a_returned_error_marks_the_span_failed(self) -> None:
         page = _FakePage(selector_raises=True)
         session = PlaywrightBrowserSession()

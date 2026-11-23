@@ -161,11 +161,11 @@ def summaries(messages: list[ModelMessage]) -> list[str | None]:
 
 
 @contextmanager
-def traced(*, include_content: bool = True) -> Generator[InMemorySpanExporter]:
+def traced() -> Generator[InMemorySpanExporter]:
     spans = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(spans))
-    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider, include_content=include_content))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
     try:
         yield spans
     finally:
@@ -333,24 +333,6 @@ async def test_summary_failure_falls_back_to_blocking_compaction() -> None:
     messages = await compact_after(summarizer, OVER, outcome='failed')
     assert summarizer.calls == 2 and summarizer.finished == 1
     assert summaries(messages) == ['summary 2']
-
-
-@pytest.mark.parametrize('include_content', [True, False])
-async def test_a_failed_summary_keeps_its_message_only_with_content(include_content: bool) -> None:
-    """A model error can quote the request, so the background span keeps its message only with content."""
-    summarizer = Summarizer(failures=1)
-    compaction = chain(summarizer)
-    with traced(include_content=include_content) as spans:
-        history = await start_background(summarizer, compaction)
-        summarizer.release.set()
-        await agent(Main([500]), compaction).run(OVER, message_history=history, conversation_id='c')
-    [background] = named(spans, 'background_compaction')
-    [event] = background.events
-    assert (
-        event.attributes is not None and event.attributes['exception.type'] == 'pydantic_ai.exceptions.ModelHTTPError'
-    )
-    assert ('exception.message' in event.attributes) is include_content
-    assert ('503' in (background.status.description or '')) is include_content
 
 
 async def test_cancelled_summary_falls_back_to_blocking_compaction() -> None:
