@@ -2353,10 +2353,9 @@ def _check_declared_shape(
             # read as the payload's shape.
             continue
         for (label, shape), declared_shape in zip(shapes.items(), declared):
-            # Leaving out the metadata type leaves `typed_metadata` typed `Any`, as on a bare `ToolReturnPart`.
-            if isinstance(declared_shape, TypeVar) or (label == 'metadata' and declared_shape is Any):
-                continue
-            if declared_shape is Any if shape is None else _same_shape(declared_shape, shape):
+            if isinstance(declared_shape, TypeVar) or (
+                declared_shape is Any if shape is None else _same_shape(declared_shape, shape)
+            ):
                 continue
             raise UserError(
                 f'Typed tool part {cls.__qualname__} parameterizes {base.__name__} with '
