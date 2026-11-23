@@ -1483,9 +1483,24 @@ class TestObservability:
 class TestTracing:
     """Only a refusal is worth a span."""
 
-    async def test_a_refusal_records_a_span(self):
+    @pytest.mark.parametrize(
+        ('budget', 'expected'),
+        [
+            pytest.param(
+                Budget(usd=Decimal('0.001')),
+                {'spend.limit_kind': 'usd', 'spend.limit': 0.001, 'spend.spent': 1.0},
+                id='usd',
+            ),
+            pytest.param(
+                Budget(tokens=1000),
+                {'spend.limit_kind': 'tokens', 'spend.limit': 1000, 'spend.spent': 1100},
+                id='tokens',
+            ),
+        ],
+    )
+    async def test_a_refusal_records_a_span(self, budget: Budget, expected: dict[str, object]):
         tracer, exporter = _recording_tracer()
-        guard = SpendLimits(budgets=[Budget(usd=Decimal('0.001'), window='day')], price=lambda r: Decimal('1'))
+        guard = SpendLimits(budgets=[budget], price=lambda r: Decimal('1'))
         await _record(guard)
 
         with pytest.raises(SpendLimitExceeded):
@@ -1493,7 +1508,7 @@ class TestTracing:
 
         span = _only_span(exporter)
         assert span.name == 'spend budget exhausted'
-        assert dict(span.attributes or {}) == {'spend.budget': 'default', 'spend.window': 'day'}
+        assert dict(span.attributes or {}) == {'spend.budget': 'default', 'spend.window': 'day', **expected}
 
     async def test_the_scope_key_is_content(self):
         tracer, exporter = _recording_tracer()
