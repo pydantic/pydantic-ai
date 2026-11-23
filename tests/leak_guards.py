@@ -7,11 +7,11 @@ that something keeps alive is never reported at all. `tests/gc_isolation.py` alr
 garbage. This plugin fails the test for what that cannot see:
 
 - An event loop it created on a thread other than the main one and never closed, such as the one `Agent.run_sync()`
-  sets on a worker thread. While the thread lives it keeps the loop alive, and once it exits the collector finalizes
-  the loop under a warning the suite ignores, so nothing else reports it. Loops a
-  `module`, `class`, `package` or `session`-scoped fixture creates are left to that fixture, and loops third-party code
-  creates to that code. A loop left on the main thread is the one `run_sync()` reuses there; once dropped, the
-  collector finalizes it in the test that dropped it.
+  sets on a worker thread. While the thread lives it keeps the loop alive, so no `ResourceWarning` reports it, and
+  once the thread exits the warning lands in whichever test is running then. Loops a `module`, `class`, `package`
+  or `session`-scoped fixture creates are left to that fixture, and loops third-party code creates to that code. A
+  loop left on the main thread is the one `run_sync()` reuses there; once dropped, the collector finalizes it in the
+  test that dropped it.
 """
 
 from __future__ import annotations as _annotations

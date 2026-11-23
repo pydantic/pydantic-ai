@@ -329,7 +329,9 @@ When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module 
 
 `tests/leak_guards.py` fails a test, in its teardown, for a resource it leaves for someone else to clean up:
 
-- An event loop it created on a thread other than the main one and left open, such as the one `Agent.run_sync()` sets on the thread that calls it. While the thread lives it keeps the loop alive, and once the thread exits the collector finalizes the loop under a warning the suite ignores, so nothing else reports it. Close it on that thread, with `asyncio.get_event_loop().close()` at the end of the function the thread runs. Loops that a `module`, `class`, `package` or `session`-scoped fixture or third-party code creates are left to their owner.
+- An event loop it created on a thread other than the main one and left open, such as the one `Agent.run_sync()` sets on the thread that calls it. While the thread lives it keeps the loop alive, so no `ResourceWarning` reports it, and once the thread exits the warning lands in whichever test is running then. Close it on that thread, with `asyncio.get_event_loop().close()` at the end of the function the thread runs. Loops that a `module`, `class`, `package` or `session`-scoped fixture or third-party code creates are left to their owner.
+
+The suite's `filterwarnings` ignores no `ResourceWarning`, so an unclosed socket or event loop that the collector finalizes fails the test it lands in. Close the resource where it's created rather than adding an ignore.
 
 ## Home directory
 

@@ -28,7 +28,11 @@ def on_worker_thread(close: bool) -> None:
 
 def run_session(pytester: pytest.Pytester, source: str) -> pytest.RunResult:
     pytester.makepyfile(test_session=WORKER_LOOP + textwrap.dedent(source))
-    return pytester.runpytest('-p', 'tests.leak_guards', '-p', 'no:cacheprovider', '-p', 'no:pretty')
+    # The session inherits this suite's warning filters, under which a collected loop's `ResourceWarning` fails the
+    # test too: ignored here, so each outcome is the guard's own.
+    return pytester.runpytest(
+        '-p', 'tests.leak_guards', '-p', 'no:cacheprovider', '-p', 'no:pretty', '-W', 'ignore::ResourceWarning'
+    )
 
 
 def test_a_loop_left_open_on_a_worker_thread_fails_the_test_that_created_it(pytester: pytest.Pytester):
