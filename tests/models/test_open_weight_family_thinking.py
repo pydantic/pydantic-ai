@@ -61,6 +61,8 @@ THINKING_CASES = [
     ThinkingCase(
         'nemotron-3-on', 'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8', True, snapshot({'reasoning_effort': 'medium'})
     ),
+    # On by default: leaving `thinking` unset sends no effort, so the model keeps its own default.
+    ThinkingCase('nemotron-3-default', 'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8', None, snapshot({})),
     # Hybrid: thinking can be turned off.
     ThinkingCase('hy3-off', 'tencent/Hy3', False, snapshot({'reasoning_effort': 'none'})),
     ThinkingCase('step-5-default', 'stepfun/step-5-preview', None, snapshot({})),
