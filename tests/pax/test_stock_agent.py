@@ -146,6 +146,7 @@ async def test_only_the_coding_loop_is_eager(tmp_path: Path) -> None:
         if 'capability:deferred_capabilities' in part.content
     ]
     assert len(catalog) == 1
+    assert 'clai_customization' not in catalog[0]
     assert '- pax_customization: Use when asked to customize Pax itself' in catalog[0]
     assert catalog == [
         part.content

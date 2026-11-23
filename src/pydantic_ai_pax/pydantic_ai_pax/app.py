@@ -11,7 +11,8 @@ from anyio import CancelScope, create_task_group
 from pydantic import JsonValue
 from rich.console import Console
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -27,7 +28,7 @@ from pydantic_ai_pax.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.models.resolver import ModelResolver
-from pydantic_ai_pax.pax_docs import PaxDocs
+from pydantic_ai_pax.pax_docs import LEGACY_CAPABILITY_ID, ClaiDocs, PaxDocs
 from pydantic_ai_pax.plugins import (
     SessionEndReason,
     SessionStart,
@@ -40,6 +41,7 @@ from pydantic_ai_pax.runtime.session import (
     ModelDefaults,
     SessionModels,
     StockAgent,
+    WorkspacelessCapability,
     local_workspace,
     resolve_model_name,
 )
@@ -59,9 +61,13 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+def _resumed_docs(ctx: RunContext[None]) -> ClaiDocs | None:
+    return ClaiDocs() if LEGACY_CAPABILITY_ID in parse_loaded_capabilities(ctx.messages) else None
+
+
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[PaxDocs()])
+    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -69,7 +75,13 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[PaxDocs()], name='clai2')
+    return StockAgent(
+        model,
+        deps_type=type(None),
+        output_type=str,
+        capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)],
+        name='clai2',
+    )
 
 
 @asynccontextmanager
