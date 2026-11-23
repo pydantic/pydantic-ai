@@ -266,7 +266,7 @@ def _leg_failures(leg: Path, python: str, outcome: LegOutcome | None, root: Path
             for failure in _test_failures(leg / 'junit.xml', root):
                 tests.append(failure)
         except (OSError, ElementTree.ParseError) as error:
-            reason = _first_line(str(error))
+            reason = first_line(str(error))
             if not tests:
                 return [(f'pytest fails on Python {python} and leaves no readable JUnit report', '', reason)]
             # A report past the read limit, as one with every test failing can be, or broken partway still
@@ -284,7 +284,7 @@ def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
                 continue
             text = result.text or ''
             if stop := next((signature for pattern, signature in _XDIST_STOPS if pattern.match(text)), None):
-                yield stop, '', _first_line(text)
+                yield stop, '', first_line(text)
                 continue
             locations = list(_LOCATION.finditer(text))
             frames = [
@@ -316,7 +316,7 @@ def _test_failures(junit: Path, root: Path) -> Iterator[tuple[str, str, str]]:
             raised = list(_RAISED.finditer(text))
             exception = names[-1] if names else raised[-1].group(2) if raised else result.tag
             evidence = raised[-1].group(1) if raised else result.get('message') or text
-            yield f'{exception} in {site}', _node_id(case, test_file), _first_line(evidence)
+            yield f'{exception} in {site}', _node_id(case, test_file), first_line(evidence)
 
 
 def testcases(junit: Path) -> Iterator[ElementTree.Element]:
@@ -377,21 +377,38 @@ def _repo_path(raw: str, root: Path) -> str | None:
 
 def _node_id(case: ElementTree.Element, test_file: str | None) -> str:
     if test_file is None:
-        return _first_line(f'{case.get("classname", "")}::{case.get("name", "")}')
+        return first_line(f'{case.get("classname", "")}::{case.get("name", "")}')
     module = test_file.removesuffix('.py').replace('/', '.')
     # A collection error names the module itself; a test names its class path and function.
     classname = case.get('classname', '')
     parts = [*classname.removeprefix(module).lstrip('.').split('.'), case.get('name', '')] if classname else []
-    return _first_line('::'.join([test_file, *filter(None, parts)]))
+    return first_line('::'.join([test_file, *filter(None, parts)]))
 
 
-def _first_line(text: str) -> str:
+def collected_node_id(classname: str, name: str, root: Path) -> str | None:
+    """The node id of the test a report names by `classname` and `name`, when its module is a file in `tests/`.
+
+    The module is the longest prefix of `classname` that names a file. A report's `file` attribute won't do: it
+    names where the test function is defined, which for a test a class inherits is not the module that collected it.
+    """
+    parts = classname.split('.')
+    if parts[0] != 'tests':
+        return None
+    for end in range(len(parts), 0, -1):
+        if (root / Path(*parts[:end])).with_suffix('.py').is_file():
+            return '::'.join(['/'.join(parts[:end]) + '.py', *parts[end:], name])
+    return None
+
+
+def first_line(text: str) -> str:
+    """The first non-blank line of `text`, with control characters blanked and truncated to `_MESSAGE_LIMIT`."""
     line = next((line.strip() for line in text.splitlines() if line.strip()), '')
     printable = ''.join(' ' if unicodedata.category(char).startswith('C') else char for char in line)
     return printable if len(printable) <= _MESSAGE_LIMIT else f'{printable[: _MESSAGE_LIMIT - 1]}…'
 
 
-def _fenced(lines: list[str]) -> str:
+def fenced(lines: list[str]) -> str:
+    """`lines` as a Markdown code block whose fence is longer than any run of backticks they hold."""
     text = '\n'.join(lines)
     fence = '`' * max([3, *(len(run) + 1 for run in re.findall(r'`+', text))])
     return f'{fence}text\n{text}\n{fence}'
@@ -407,7 +424,7 @@ def read_moved(reports: Path) -> dict[str, list[str]]:
             lines = _read(leg / 'moved.txt').decode(errors='replace').splitlines()
         except OSError:
             continue
-        kept = [_first_line(line) for line in lines[:_MOVED_LINE_LIMIT]]
+        kept = [first_line(line) for line in lines[:_MOVED_LINE_LIMIT]]
         if len(lines) > _MOVED_LINE_LIMIT:
             kept.append(f'... and {len(lines) - _MOVED_LINE_LIMIT} more')
         moved[match.group(1)] = kept
@@ -589,13 +606,13 @@ def _issue_body(
         listed = [f'{test}\n    {message}' for test, message in list(failure.tests.items())[:_LISTED_TEST_LIMIT]]
         if len(failure.tests) > _LISTED_TEST_LIMIT:
             listed.append(f'... and {len(failure.tests) - _LISTED_TEST_LIMIT} more in the run')
-        sections.append(f'<details><summary>Failing tests</summary>\n\n{_fenced(listed)}\n</details>')
+        sections.append(f'<details><summary>Failing tests</summary>\n\n{fenced(listed)}\n</details>')
     if failure.details:
-        sections.append(_fenced(failure.details[:_LISTED_TEST_LIMIT]))
+        sections.append(fenced(failure.details[:_LISTED_TEST_LIMIT]))
     for python, lines in moved.items():
         sections.append(
             f'<details><summary>Dependencies past <code>uv.lock</code> on Python {python}</summary>\n\n'
-            f'{_fenced(lines or ["none"])}\n</details>'
+            f'{fenced(lines or ["none"])}\n</details>'
         )
     body = ''
     for section in sections:

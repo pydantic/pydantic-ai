@@ -534,6 +534,17 @@ without blocking a merge.
   loop holds every CPU meanwhile. The job logs each run's seed and wall time as notices. Keep the job out of the
   needs of `check` and `never-ran`, and keep its `continue-on-error`. `CI Review` requires the run's conclusion to be
   `success`, and an advisory failure must not change it.
+- `tests-shuffled-nightly.yml` runs the `test-all-extras` selection every night, unsharded, on that job's newest
+  Python. The run takes one `pytest-randomly` order from a seed it logs. When tests fail, the run reruns them once in
+  the default order. A test that fails both times fails the run.
+
+`.github/scripts/flake_report.py` reads a run's JUnit reports, one `junit-<job>-<index>` artifact per job leg. A test
+that one report of a leg lists as failed and another as passed is a flake. Each flake gets one open issue titled
+`Flaky <node id>` and labeled `flake`, the convention of "Flake claims" in
+`.agents/skills/pushing-commits-to-the-repo/SKILL.md`. A later flake of the test comments on that issue. A run files
+at most three new issues and logs the rest. The reports are untrusted text. An issue title holds only a test file
+path under `tests/` in the checkout and identifier-shaped names. Failure text reaches an issue only fenced and
+truncated.
 
 # Code owners review dependency, CI config and durable runtime changes
 

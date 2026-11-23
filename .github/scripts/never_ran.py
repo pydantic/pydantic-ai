@@ -29,26 +29,11 @@ def never_ran(reports: Iterable[Path], root: Path) -> set[str]:
     ran: set[str] = set()
     for report in reports:
         for case in junit.testcases(report):
-            if (node_id := _node_id(case.get('classname', ''), case.get('name', ''), root)) is not None:
+            if (node_id := junit.collected_node_id(case.get('classname', ''), case.get('name', ''), root)) is not None:
                 seen.add(node_id)
                 if all(result.tag != 'skipped' or result.get('type') == 'pytest.xfail' for result in case):
                     ran.add(node_id)
     return seen - ran
-
-
-def _node_id(classname: str, name: str, root: Path) -> str | None:
-    """The node id of the test a report names by `classname` and `name`, when its module is a file in `tests/`.
-
-    The module is the longest prefix of `classname` that names a file. A report's `file` attribute won't do: it
-    names where the test function is defined, which for a test a class inherits is not the module that collected it.
-    """
-    parts = classname.split('.')
-    if parts[0] != 'tests':
-        return None
-    for end in range(len(parts), 0, -1):
-        if (root / Path(*parts[:end])).with_suffix('.py').is_file():
-            return '::'.join(['/'.join(parts[:end]) + '.py', *parts[end:], name])
-    return None
 
 
 def entry(node_id: str, keys: Iterable[str]) -> str:

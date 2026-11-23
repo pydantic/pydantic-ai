@@ -349,7 +349,9 @@ Every CI test job uploads a JUnit report of each pytest session. On a run that r
 
 ## Flaky tests
 
-`pytest-randomly` is installed but off: `addopts` in `pyproject.toml` passes `-p no:randomly`. CI turns it on to shuffle the test order in the job that stresses a pull request's changed test files. Each run logs its seed. Reproduce a run's order with `uv run pytest -p randomly --randomly-seed=<seed> <tests>`. A test that fails in that order and passes alone depends on state an earlier test left behind.
+`pytest-randomly` is installed but off: `addopts` in `pyproject.toml` passes `-p no:randomly`. CI turns it on to shuffle the test order in the job that stresses a pull request's changed test files, and in the nightly shuffled run. Each run logs its seed. Reproduce a run's order with `uv run pytest -p randomly --randomly-seed=<seed> <tests>`. A test that fails in that order and passes alone depends on state an earlier test left behind.
+
+The nightly run reruns its failed tests once in the default order. A test that then passes gets an issue titled `Flaky <node id>` and labeled `flake`. Claim and fix it as "Flake claims" in `.agents/skills/pushing-commits-to-the-repo/SKILL.md` says.
 
 ## Home directory
 
