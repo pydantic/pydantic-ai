@@ -14,7 +14,7 @@ from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.input.typeahead import get_typeahead
 
 from pydantic_ai_pax.ui import terminal_background as background_module
-from pydantic_ai_pax.ui.terminal_background import terminal_background
+from pydantic_ai_pax.ui.terminal_background import drain_late_reply, terminal_background
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 termios = pytest.importorskip('termios', reason='needs a POSIX pseudo-terminal')
@@ -99,6 +99,16 @@ def test_a_silent_terminal_is_waited_on_briefly(monkeypatch: pytest.MonkeyPatch)
         assert terminal_background() is None
 
 
+def test_a_reply_after_the_wait_does_not_reach_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A terminal that answers after the wait: its reply is dropped before the prompt, typed keys are kept."""
+    monkeypatch.setattr(background_module, '_TIMEOUT', 0.01)
+    with on_a_terminal() as leader:
+        assert terminal_background() is None
+        os.write(leader, b'\x1b]11;rgb:ffff/ffff/ffff\x07' + DA1 + b'ok')
+        drain_late_reply()
+    assert [key.data for key in get_typeahead(get_app_session().input)] == ['o', 'k']
+
+
 def test_keys_typed_during_the_query_are_kept_for_the_prompt() -> None:
     """Keys typed before the reply (here, before pax even asked) are read with it and stored for the prompt."""
     with on_a_terminal() as leader:
@@ -116,6 +126,9 @@ def test_not_asked_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     os.dup2(reader, 0)
     try:
         assert terminal_background() == '#FFFFFF'
+        drain_late_reply()  # Reads nothing from the pipe.
+        os.write(writer, b'x')
+        assert os.read(reader, 1) == b'x'
     finally:
         os.dup2(saved, 0)
         for fd in (saved, reader, writer):

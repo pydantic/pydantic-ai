@@ -402,8 +402,9 @@ a tool call reads as secondary; keep fences unchanged. The default theme's diff 
 bundled palettes get diff lines from `theme.diff_renderer()`, tinted
 from the palette until their lightness differs, so colour-blind readers can tell them apart.
 On a light terminal (`app.chat` asks for the background once, `ui/terminal_background.py`, and
-passes it to `theme.use(background=...)`), `default` raises brand roles against that background and
-takes code and diff colours from `github_light` over it; on a dark or unknown one it is unchanged.
+passes it to `theme.use(background=...)`), `default` paints brand roles in the fixed `theme._ON_LIGHT`
+shades and diffs on pale lines with Pygments' `xcode` style; code fences keep the terminal's ANSI
+colours. On a dark or unknown background it is unchanged.
 `theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
 (or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 

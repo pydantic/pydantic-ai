@@ -359,7 +359,7 @@ and apply right away. You can also type one directly, such as
 
 `/theme` previews each palette on a sample conversation before you pick it. `default`
 keeps CLAI's usual colours and leaves your terminal's palette alone. On a light terminal
-background it darkens them to stay readable on it.
+background it uses darker shades that stay readable on it.
 
 ![The /theme picker previewing tokyo_night](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/theme-tokyo-night.png)
 

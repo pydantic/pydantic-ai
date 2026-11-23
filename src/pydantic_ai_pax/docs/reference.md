@@ -1859,9 +1859,9 @@ searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
-terminal palette untouched. On a light terminal background, `default` darkens each
-colour, keeping its hue, until text reaches WCAG AA contrast (4.5:1), and shows diffs
-on light green and red lines. CLAI finds the background at startup by asking the
+terminal palette untouched. On a light terminal background, `default` uses darker
+shades of its colours that reach WCAG AA contrast (4.5:1) on white, and shows diffs
+on pale green and red lines. CLAI finds the background at startup by asking the
 terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark one.
 It does not ask when stdin or stdout is not a terminal, or with `-p` or `--web`; keys typed
 during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.

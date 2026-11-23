@@ -6,7 +6,7 @@ import re
 
 import pytest
 from pygments.token import Keyword
-from rich.color import Color, ColorSystem
+from rich.color import Color
 from rich.console import Console
 from rich.syntax import ANSI_LIGHT
 from rich.text import Text
@@ -85,13 +85,9 @@ def _linear(colour: str) -> tuple[float, ...]:
     return tuple(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
 
 
-def _luminance_of(colour: str) -> float:
-    return sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), _linear(colour)))
-
-
 def _contrast(a: str, b: str) -> float:
     """WCAG 2 contrast ratio."""
-    darker, lighter = sorted(_luminance_of(x) for x in (a, b))
+    darker, lighter = sorted(sum(w * c for w, c in zip((0.2126, 0.7152, 0.0722), _linear(x))) for x in (a, b))
     return (lighter + 0.05) / (darker + 0.05)
 
 
@@ -258,47 +254,25 @@ def _hex_colours(rendered: str) -> set[tuple[str, str]]:
     return colours
 
 
-@pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3', '#EEEEEE'])
-async def test_default_theme_reads_on_a_light_background(background: str) -> None:
-    """On a light terminal every role, the code, and the diff text reach WCAG AA (4.5:1)."""
+async def test_default_theme_reads_on_a_light_background(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On white every brand role, in truecolor and as a 256-colour code, and the diff text reach WCAG AA (4.5:1)."""
     roles = (theme.ACCENT, theme.INFO, theme.SUCCESS, theme.WARNING, theme.ERROR, theme.MUTED, theme.THINKING)
-    with theme.use(lambda: 'default', background=background):
-        assert theme.light_background() == background
+    with theme.use(lambda: 'default', background='#FFFFFF'):
         colours = {role: theme.color(role).removeprefix('bold ') for role in roles}
-        syntax = theme.syntax_theme()
         rendered = await _render_sample()
         diff = theme.diff_theme()
-    for token in ANSI_LIGHT:
-        if (color := syntax.get_style_for_token(token).color) is not None:
-            colours[str(token)] = color.get_truecolor().hex
-    assert {role: colour for role, colour in colours.items() if _contrast(colour, background) < 4.5} == {}
+        monkeypatch.delenv('COLORTERM', raising=False)
+        codes = {role: theme.sgr(role) for role in roles}
+    assert len(set(colours.values())) == len(roles)  # Still one colour per role.
+    for role, code in codes.items():
+        colours[f'{role} 256'] = Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex
+    assert {role: colour for role, colour in colours.items() if _contrast(colour, '#FFFFFF') < 4.5} == {}
     painted = _hex_colours(rendered)
     # Diff markers are tinted from their line, like a light palette's.
     markers = {diff.addition_marker.upper(), diff.deletion_marker.upper()}
-    unreadable = {(fg, bg) for fg, bg in painted if fg not in markers and _contrast(fg, bg or background) < 4.5}
-    assert unreadable == set()
+    assert {(fg, bg) for fg, bg in painted if fg not in markers and _contrast(fg, bg or '#FFFFFF') < 4.5} == set()
     assert '[38;2;1;2;3m' in re.sub(r'\x1b\[[0-9;]*m', '', rendered)  # Code that looks like an escape stays as written.
     assert {bg for _, bg in painted} >= {diff.addition.upper(), diff.deletion.upper()}
-    assert all(_luminance_of(shade) > 0.4 for shade in (diff.addition, diff.deletion))  # Light tints, not dark lines
-
-
-@pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3'])
-def test_raw_ansi_reads_on_a_light_background_without_truecolor(
-    background: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Without `COLORTERM`, surfaces that bypass Rich still get the raised shade, as a 256-colour code."""
-    monkeypatch.delenv('COLORTERM', raising=False)
-    roles = (theme.ACCENT, theme.INFO, theme.SUCCESS, theme.WARNING, theme.ERROR, theme.MUTED, theme.THINKING)
-    with theme.use(lambda: 'default', background=background):
-        codes = {role: theme.sgr(role) for role in roles}
-        syntax = theme.syntax_theme()
-    shades = {
-        role: Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex for role, code in codes.items()
-    }
-    for token in ANSI_LIGHT:
-        if (color := syntax.get_style_for_token(token).color) is not None:
-            shades[str(token)] = color.downgrade(ColorSystem.EIGHT_BIT).get_truecolor().hex
-    assert {role: shade for role, shade in shades.items() if _contrast(shade, background) < 4.5} == {}
 
 
 async def test_default_preview_over_a_dark_palette_paints_the_light_background() -> None:

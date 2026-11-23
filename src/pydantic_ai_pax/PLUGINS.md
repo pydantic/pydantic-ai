@@ -4312,7 +4312,7 @@ area. Browsing previews colours without applying them; Enter confirms, and Esc
 or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves CLAI's existing appearance without changing terminal colours
 on startup or exit; on a light terminal background, which CLAI asks the terminal for
-at startup, it raises each role to WCAG AA contrast. `/theme default` restores it after a palette selection.
+at startup, it uses darker shades that reach WCAG AA contrast on white. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
 validation. A project override takes precedence again on the next startup.
 

@@ -1,20 +1,17 @@
-"""CLAI's brand colours, raised to read on a light terminal background, with opt-in Termflow palettes."""
+"""CLAI's brand colours, with fixed shades for light terminals and opt-in Termflow palettes."""
 
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import replace
 from functools import cache
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rich.syntax import SyntaxTheme
     from termflow.diff import DiffRenderer, DiffTheme
-    from termflow.syntax import Highlighter
     from termflow.themes import TerminalPalette
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
@@ -62,39 +59,18 @@ def current() -> TerminalPalette | None:
 
 
 def light_background() -> str | None:
-    """The terminal's background when the default theme paints for a light one, else `None`."""
+    """The terminal's background when it is light, else `None`; the default theme paints for it."""
     return _LIGHT_BACKGROUND.get()
-
-
-_LIGHT_SURFACE = 'github_light'
-"""The bundled palette whose ANSI colours the default theme's code and diffs use on a light terminal."""
-
-
-def _surface() -> TerminalPalette | None:
-    """The palette code and diff colours come from: the selected one, or a light one on a light terminal."""
-    palette = current()
-    background = _LIGHT_BACKGROUND.get()
-    if palette is not None or background is None:
-        return palette
-    from termflow.themes import PALETTES
-
-    # Black text, so code is raised to 4.5:1 even where the palette's own text would read worse.
-    return replace(PALETTES[_LIGHT_SURFACE], bg=background, fg='#000000')
 
 
 def color(role: str) -> str:
     """Resolve a brand colour against the selected palette, or the light terminal background, at render time."""
     palette = current()
-    background = _LIGHT_BACKGROUND.get()
     shade = role.removeprefix('bold ')
-    if shade not in _SLOTS:
-        return role
-    if palette is not None:
+    if palette is not None and shade in _SLOTS:
         resolved = _readable(palette.ansi[_SLOTS[shade]], palette.bg, palette.fg)
-    elif background is not None:
-        resolved = _readable(shade, background, '#000000')
-        if not truecolor():
-            resolved = _nearest_eight_bit(resolved, background)
+    elif light_background() is not None and shade in _ON_LIGHT:  # Only with no palette: each is in `_SLOTS`.
+        resolved = _ON_LIGHT[shade][0]
     else:
         return role
     return ('bold ' if role.startswith('bold ') else '') + resolved
@@ -112,18 +88,6 @@ def _readable(colour: str, bg: str, fg: str) -> str:
     floor = min(_MIN_CONTRAST, _contrast(fg, bg))
     end = max('#000000', '#FFFFFF', key=lambda extreme: _contrast(extreme, bg))
     return next(blended for step in range(21) if _contrast(blended := blend_hex(colour, end, step / 20), bg) >= floor)
-
-
-@cache
-def _nearest_eight_bit(colour: str, bg: str) -> str:
-    """The 256-colour shade closest to `colour` that still reads on `bg`, since the nearest one may not."""
-    from rich.color import Color
-
-    shades = (Color.from_ansi(number).get_truecolor().hex.upper() for number in range(16, 256))
-    return min(
-        (shade for shade in shades if _contrast(shade, bg) >= _MIN_CONTRAST),
-        key=lambda shade: sum((int(shade[i : i + 2], 16) - int(colour[i : i + 2], 16)) ** 2 for i in (1, 3, 5)),
-    )
 
 
 def _luminance(colour: str) -> float:
@@ -149,17 +113,14 @@ def syntax_theme() -> SyntaxTheme:
     from rich.style import Style
     from rich.syntax import ANSI_LIGHT, ANSISyntaxTheme
 
-    palette = _surface()
+    palette = current()
     styles = ANSI_LIGHT.copy()
     if palette is not None:
         for token, style in styles.items():
             color = style.color
             if color is not None:
                 assert color.number is not None
-                shade = _readable(palette.ansi[color.number], palette.bg, palette.fg)
-                if current() is None and not truecolor():  # The adaptive default on a light terminal.
-                    shade = _nearest_eight_bit(shade, palette.bg)
-                styles[token] = style + Style(color=shade)
+                styles[token] = style + Style(color=_readable(palette.ansi[color.number], palette.bg, palette.fg))
     return ANSISyntaxTheme(styles)
 
 
@@ -176,7 +137,9 @@ def diff_theme() -> DiffTheme:
     from termflow.diff import DiffTheme
     from termflow.themes.palette import blend_hex
 
-    palette = _surface()
+    palette = current()
+    if palette is None and light_background() is not None:
+        return DiffTheme(addition=DIFF_ADDITION_ON_LIGHT, deletion=DIFF_DELETION_ON_LIGHT, marker_brighten=-0.5)
     if palette is None:
         return DiffTheme(addition=DIFF_ADDITION, deletion=DIFF_DELETION, marker_brighten=2.0)
     pairs = [
@@ -202,37 +165,13 @@ def diff_renderer() -> DiffRenderer:
     from termflow.diff import DiffRenderer
     from termflow.syntax import Highlighter
 
-    palette = _surface()
-    colours = diff_theme()
-    if palette is None or not _is_light(palette):
-        return DiffRenderer(highlighter=None, theme=colours)
-    if current() is not None:
-        # Monokai's near-white text vanishes on a light line; `default` leaves names in the palette's foreground.
-        return DiffRenderer(highlighter=Highlighter(style='default'), theme=colours)
-    # Monokai's near-white text vanishes on a light line, and `default`'s strings and comments fade on the red one.
-    darker = min(colours.addition, colours.deletion, key=_luminance)
-    return DiffRenderer(highlighter=_readable_highlighter(darker, palette.fg), theme=colours)
-
-
-_SGR = re.compile(r'\x1b\[[0-9;]*m')
-_TRUECOLOR_FOREGROUND = re.compile(r'(?<=[\[;])38;2;(\d+);(\d+);(\d+)(?=[;m])')
-"""A 24-bit foreground inside an `_SGR` sequence, which may also carry bold or italic."""
-
-
-def _readable_highlighter(bg: str, fg: str) -> Highlighter:
-    """Pygments' `default` style, each colour raised to read on `bg` as `_readable` raises a palette's."""
-    from termflow.syntax import Highlighter
-
-    def raised(match: re.Match[str]) -> str:
-        colour = _readable('#' + ''.join(f'{int(channel):02X}' for channel in match.groups()), bg, fg)
-        return '38;2;' + ';'.join(str(int(colour[index : index + 2], 16)) for index in (1, 3, 5))
-
-    class Readable(Highlighter):
-        def highlight_line(self, line: str, language: str = 'text') -> str:
-            line = super().highlight_line(line, language)
-            return _SGR.sub(lambda sgr: _TRUECOLOR_FOREGROUND.sub(raised, sgr.group()), line)
-
-    return Readable(style='default')
+    palette = current()
+    # Monokai's near-white text vanishes on a light line; `default` leaves names in the palette's foreground.
+    highlighter = Highlighter(style='default') if palette is not None and _is_light(palette) else None
+    if palette is None and light_background() is not None:
+        # `default`'s purple and teal fall under 4.5:1 on the pale red line; `xcode`'s colours all stay above it.
+        highlighter = Highlighter(style='xcode')
+    return DiffRenderer(highlighter=highlighter, theme=diff_theme())
 
 
 def _is_light(palette: TerminalPalette) -> bool:
@@ -248,13 +187,11 @@ def roles(name: str) -> tuple[tuple[str, str], ...]:
     """The Rich colour `name` paints each role with; where roles share a colour, the earlier one claims it.
 
     Roles are the background and foreground, diff lines and markers, CLAI's brand colours, and the
-    16 ANSI slots. The default theme leaves the background and foreground to the terminal, and the slots too on a
-    dark or unknown background; on a light one they are `github_light`'s.
+    16 ANSI slots. The default theme leaves the background, foreground, and slots to the terminal.
     Output painted in one theme repaints in another by translating its colours role by role.
     """
     with use(lambda: name):
         palette = current()
-        slots = _surface()
         diff = diff_theme()
         brands = tuple((f'brand {brand}', color(brand)) for brand in _SLOTS)
     surface = (palette.bg, palette.fg) if palette is not None else ('default', 'default')
@@ -266,7 +203,7 @@ def roles(name: str) -> tuple[tuple[str, str], ...]:
         ('diff addition marker', diff.addition_marker),
         ('diff deletion marker', diff.deletion_marker),
         *brands,
-        *((f'ansi {slot}', slots.ansi[slot] if slots is not None else f'color({slot})') for slot in range(16)),
+        *((f'ansi {slot}', palette.ansi[slot] if palette is not None else f'color({slot})') for slot in range(16)),
     )
 
 
@@ -291,8 +228,8 @@ def use(
     """Scope colours to a shell, leaving the terminal untouched when no palette is chosen.
 
     `background` is the terminal's background colour (`#RRGGBB`); `None` keeps the enclosing scope's. On a
-    light one the default theme raises its colours to WCAG AA contrast against it and uses light code and
-    diff colours; on a dark or unknown one it keeps its original colours.
+    light one the default theme paints brand roles in `_ON_LIGHT` and diffs on pale lines; on a dark one
+    it keeps its original colours.
     """
     active = _ACTIVE
     token = active.set(get_name)
@@ -334,6 +271,9 @@ BANNER = (LITHIUM, PURPLE, AI_CYAN)
 # Dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
 DIFF_ADDITION = '#225C2B'
 DIFF_DELETION = '#7A2936'
+# The same on a light terminal: pale enough that every `xcode` code colour reads on them at 4.5:1.
+DIFF_ADDITION_ON_LIGHT = '#E6FFEC'
+DIFF_DELETION_ON_LIGHT = '#FFEBE9'
 
 # `roles` gives a shared slot to the first brand here: muted grey text is commoner than element purple.
 _SLOTS = {
@@ -348,6 +288,17 @@ _SLOTS = {
     ELEMENT_PURPLE: 8,
     AI_CYAN: 6,
     AI_YELLOW: 3,
+}
+# The default theme's roles on a light terminal: an xterm 256-colour shade close to each brand colour's hue that
+# reads at WCAG AA (4.5:1) on white, so 256-colour terminals show the same shade; `test_theme_preview.py` checks it.
+_ON_LIGHT = {
+    LITHIUM: ('#AF00AF', 127),
+    PURPLE: ('#5F5FD7', 62),
+    CALCIUM: ('#AF0000', 124),
+    AQUA: ('#00875F', 29),
+    GREY: ('#6C6C6C', 242),
+    AI_CYAN: ('#005F5F', 23),
+    AI_YELLOW: ('#875F00', 94),
 }
 _BASIC = {
     LITHIUM: 95,
@@ -381,11 +332,8 @@ def sgr(role: str, *, bold: bool = False) -> str:
     if current() is not None and shade in _SLOTS:
         slot = _SLOTS[shade]
         code = str(30 + slot if slot < 8 else 90 + slot - 8)
-    elif light_background() is not None:
-        from rich.color import Color, ColorSystem
-
-        # The bright 16 colours are tuned for dark terminals; `color` picked a readable 256-colour shade.
-        code = ';'.join(Color.parse(resolved).downgrade(ColorSystem.EIGHT_BIT).get_ansi_codes())
+    elif light_background() is not None and shade in _ON_LIGHT:
+        code = f'38;5;{_ON_LIGHT[shade][1]}'
     else:
-        code = str(_BASIC[shade])
+        code = str(_BASIC[resolved])
     return f'\x1b[{prefix}{code}m'

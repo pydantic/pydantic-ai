@@ -32,8 +32,30 @@ def terminal_background() -> str | None:
 
 def _reported() -> str | None:
     """Ask the terminal on stdin and stdout, when both are one; keys typed meanwhile go on to the prompt."""
-    if sys.platform == 'win32' or os.getenv('TERM') == 'dumb' or not (os.isatty(0) and os.isatty(1)):
+    if not _on_a_terminal():
         return None
+    background = _BACKGROUND_REPLY.search(_read(query=_QUERY, timeout=_TIMEOUT))
+    if background is None:
+        return None
+    return '#' + ''.join(f'{int(channel, 16) * 255 // (16 ** len(channel) - 1):02X}' for channel in background.groups())
+
+
+def drain_late_reply() -> None:
+    """Before the prompt reads keys, drop a reply that came after `terminal_background` stopped waiting.
+
+    A terminal behind a slow link can answer after the wait; its reply would otherwise reach the prompt
+    as typed text. Keys typed meanwhile go on to the prompt.
+    """
+    if _on_a_terminal():
+        _read(query=b'', timeout=0)
+
+
+def _on_a_terminal() -> bool:
+    return sys.platform != 'win32' and os.getenv('TERM') != 'dumb' and os.isatty(0) and os.isatty(1)
+
+
+def _read(*, query: bytes, timeout: float) -> bytes:
+    """Send `query`, then read stdin until the device attributes reply or `timeout`; typed keys go to the prompt."""
     import termios
 
     saved = termios.tcgetattr(0)
@@ -42,24 +64,20 @@ def _reported() -> str | None:
     modes[0] &= ~termios.ICRNL  # Enter typed meanwhile stays Enter for the prompt, not Ctrl-J.
     termios.tcsetattr(0, termios.TCSANOW, modes)
     try:
-        os.write(1, _QUERY)
+        os.write(1, query)
         received = b''
-        deadline = time.monotonic() + _TIMEOUT
+        deadline = time.monotonic() + timeout
         while (
             not _ATTRIBUTES_REPLY.search(received)
-            and (remaining := deadline - time.monotonic()) > 0
-            and select.select([0], [], [], remaining)[0]
+            and select.select([0], [], [], max(0, deadline - time.monotonic()))[0]
             and (chunk := os.read(0, 1024))  # Empty once the terminal is gone.
         ):
             received += chunk
     finally:
         termios.tcsetattr(0, termios.TCSANOW, saved)  # Not `TCSAFLUSH`, which would drop keys typed meanwhile.
-    background = _BACKGROUND_REPLY.search(received)
     if typed := _ATTRIBUTES_REPLY.sub(b'', _ANY_BACKGROUND_REPLY.sub(b'', received)):
         _keep_for_the_prompt(typed)
-    if background is None:
-        return None
-    return '#' + ''.join(f'{int(channel, 16) * 255 // (16 ** len(channel) - 1):02X}' for channel in background.groups())
+    return received
 
 
 def _keep_for_the_prompt(typed: bytes) -> None:
