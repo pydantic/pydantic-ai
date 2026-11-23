@@ -779,7 +779,7 @@ class GoogleModel(Model[Client]):
         On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`.
         """
         profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
-        if self._is_google_cloud or not _google_computer.is_computer_use_model(self._model_name):
+        if self._is_google_cloud or not _google_computer.is_google_computer_use_model(self._model_name):
             profile = merge_profile(
                 profile,
                 GoogleModelProfile(
@@ -1112,28 +1112,27 @@ class GoogleModel(Model[Client]):
         image_config: ImageConfigDict | None = None
         # Google's computer use tool is sent with the function tools, in place of the `computer` tool.
         other_native_tools = [t for t in model_request_parameters.native_tools if not isinstance(t, ComputerTool)]
-        if other_native_tools:
-            if model_request_parameters.function_tools and not self.profile.get(
-                'google_supports_tool_combination', False
-            ):
-                raise UserError('This model does not support function tools and built-in tools at the same time.')
+        if not other_native_tools:
+            return tools, image_config
+        if model_request_parameters.function_tools and not self.profile.get('google_supports_tool_combination', False):
+            raise UserError('This model does not support function tools and built-in tools at the same time.')
 
-            for tool in other_native_tools:
-                if isinstance(tool, WebSearchTool):
-                    tools.append(ToolDict(google_search=GoogleSearchDict()))
-                elif isinstance(tool, WebFetchTool):
-                    tools.append(ToolDict(url_context=UrlContextDict()))
-                elif isinstance(tool, CodeExecutionTool):
-                    tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
-                elif isinstance(tool, FileSearchTool):
-                    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
-                    tools.append(ToolDict(file_search=file_search_config))
-                elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    image_config = self._build_image_config(tool)
-                else:  # pragma: no cover
-                    raise UserError(
-                        f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
-                    )
+        for tool in other_native_tools:
+            if isinstance(tool, WebSearchTool):
+                tools.append(ToolDict(google_search=GoogleSearchDict()))
+            elif isinstance(tool, WebFetchTool):
+                tools.append(ToolDict(url_context=UrlContextDict()))
+            elif isinstance(tool, CodeExecutionTool):
+                tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+            elif isinstance(tool, FileSearchTool):
+                file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
+                tools.append(ToolDict(file_search=file_search_config))
+            elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+                image_config = self._build_image_config(tool)
+            else:  # pragma: no cover
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
+                )
 
         return tools, image_config
 
@@ -1152,15 +1151,9 @@ class GoogleModel(Model[Client]):
         tool_defs, tool_choice_mode, allowed_function_names = _apply_tool_choice(
             model_request_parameters.declared_tool_defs, resolve_tool_choice(model_settings, model_request_parameters)
         )
-        computer = _sent_computer(model_request_parameters, tool_defs, tool_choice_mode)
+        computer = _sent_native_computer(model_request_parameters, tool_defs, tool_choice_mode)
         if computer is not None:
-            if allowed_function_names == [computer.name]:
-                # Forced to the computer alone: `ANY` with only Google's tool sent makes Gemini call it.
-                tool_defs = {}
-            # Gemini rejects a predefined function's name in `allowed_function_names`, and keeps its computer functions
-            # callable beside the names it lists (both checked live on gemini-3.8-flash, 2026-11-20).
-            tool_defs = {name: t for name, t in tool_defs.items() if name != computer.name}
-            allowed_function_names = [name for name in allowed_function_names if name != computer.name]
+            tool_defs, allowed_function_names = _without_the_computer(computer.name, tool_defs, allowed_function_names)
 
         tool_config = ToolConfigDict()
         # A `function_calling_config` only governs function tools. Gemini rejects one that has no
@@ -1195,7 +1188,7 @@ class GoogleModel(Model[Client]):
             ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
         ]
         if computer is not None:
-            tools.append(computer.tool())
+            tools.append(computer.tool_dict())
 
         tools.extend(native_tools)
 
@@ -1456,7 +1449,7 @@ class GoogleModel(Model[Client]):
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
             file_search_enabled=_file_search_enabled(model_request_parameters),
-            computer=_native_computer(model_request_parameters, messages),
+            computer=_requested_native_computer(model_request_parameters, messages),
         )
         model_response.canonical_system = self._canonical_system_stamp
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
@@ -1496,7 +1489,7 @@ class GoogleModel(Model[Client]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
             _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
-            _computer=_native_computer(model_request_parameters, messages),
+            _computer=_requested_native_computer(model_request_parameters, messages),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -1513,22 +1506,22 @@ class GoogleModel(Model[Client]):
         )
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
-        computer = _native_computer(model_request_parameters)
+        computer = _requested_native_computer(model_request_parameters)
         # Gemini's original computer use calls, by tool call ID, to send back with their results.
-        computer_calls: dict[str, _google_computer.GeminiCall] = {}
+        gemini_calls_by_id: dict[str, _google_computer.GeminiFunctionCall] = {}
 
         for m in messages:
             match m:
                 case ModelRequest():
-                    contents.extend(await self._map_model_request(m, system_parts, computer_calls))
+                    contents.extend(await self._map_model_request(m, system_parts, gemini_calls_by_id))
                 case ModelResponse():
                     replayed = self._replayed_computer_calls(m, computer)
-                    computer_calls.update(replayed)
+                    gemini_calls_by_id.update(replayed)
                     maybe_content = _content_model_response(
                         m,
                         self.accepts_stateless_artifacts,
                         supports_tool_combination=supports_tool_combination,
-                        computer_calls=replayed,
+                        gemini_calls_by_id=replayed,
                     )
                     if maybe_content:
                         contents.append(maybe_content)
@@ -1549,7 +1542,7 @@ class GoogleModel(Model[Client]):
 
     def _replayed_computer_calls(
         self, m: ModelResponse, computer: _google_computer.NativeComputer | None
-    ) -> dict[str, _google_computer.GeminiCall]:
+    ) -> dict[str, _google_computer.GeminiFunctionCall]:
         """Gemini's original computer use calls behind the `computer` calls of `m` that go back unchanged."""
         if computer is None:
             return {}
@@ -1558,14 +1551,14 @@ class GoogleModel(Model[Client]):
             for part in m.parts
             if isinstance(part, ToolCallPart)
             and self.accepts_stateless_artifacts(m, part)
-            and (call := computer.replayed_call(part)) is not None
+            and (call := computer.stored_computer_call(part)) is not None
         }
 
     async def _map_model_request(
         self,
         m: ModelRequest,
         system_parts: list[PartDict],
-        computer_calls: Mapping[str, _google_computer.GeminiCall],
+        gemini_calls_by_id: Mapping[str, _google_computer.GeminiFunctionCall],
     ) -> list[ContentDict]:
         """Map a request to user contents, and add its system prompts to `system_parts`."""
         message_parts: list[PartDict] = []
@@ -1581,7 +1574,7 @@ class GoogleModel(Model[Client]):
                 message_parts.extend(await self._map_user_prompt(part))
             elif isinstance(part, ToolReturnPart):
                 function_response_part, framed_media = await self._map_tool_return(
-                    part, computer_calls.get(part.tool_call_id)
+                    part, gemini_calls_by_id.get(part.tool_call_id)
                 )
                 message_parts.append(function_response_part)
                 tool_return_media.extend(framed_media)
@@ -1607,7 +1600,7 @@ class GoogleModel(Model[Client]):
         return _split_function_responses(message_parts)
 
     async def _map_tool_return(
-        self, part: ToolReturnPart, computer_call: _google_computer.GeminiCall | None = None
+        self, part: ToolReturnPart, computer_call: _google_computer.GeminiFunctionCall | None = None
     ) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
@@ -1659,7 +1652,7 @@ class GoogleModel(Model[Client]):
         name = part.tool_name
         if computer_call is not None:
             name = computer_call['name']
-            response = _google_computer.acknowledge(response, computer_call, part)
+            response = _google_computer.map_computer_result(response, computer_call, part)
         function_response_dict: FunctionResponseDict = {
             'name': name,
             'response': response,
@@ -1968,7 +1961,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         if part.text is not None:
             yield from self._map_text(part.text, part.thought, provider_details)
-        elif part.function_call and (computer_call := _computer_call(part, self._computer, self.provider_name)):
+        elif part.function_call and (computer_call := _map_computer_call(part, self._computer, self.provider_name)):
             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=computer_call)
         elif part.function_call:
             yield from self._parts_manager.handle_tool_call_delta_events(
@@ -2205,7 +2198,7 @@ def _content_model_response(
     accepts: _StatelessArtifactPredicate,
     *,
     supports_tool_combination: bool = False,
-    computer_calls: Mapping[str, _google_computer.GeminiCall] | None = None,
+    gemini_calls_by_id: Mapping[str, _google_computer.GeminiFunctionCall] | None = None,
 ) -> ContentDict | None:
     # `accepts` is `GoogleModel.accepts_stateless_artifacts`: thought signatures, and the native tool parts that
     # carry them, only go back to the transport that issued them, as the Gemini API and Google Cloud reject each
@@ -2233,7 +2226,7 @@ def _content_model_response(
                     item,
                     item_signature,
                     needs_signature=needs_function_call_signature,
-                    computer_call=(computer_calls or {}).get(item.tool_call_id),
+                    computer_call=(gemini_calls_by_id or {}).get(item.tool_call_id),
                 )
                 needs_function_call_signature = False
             case TextPart():
@@ -2307,7 +2300,7 @@ def _function_call_part_dict(
     signature: bytes | None,
     *,
     needs_signature: bool,
-    computer_call: _google_computer.GeminiCall | None = None,
+    computer_call: _google_computer.GeminiFunctionCall | None = None,
 ) -> PartDict:
     """A function call, or Gemini's original computer use call behind a `computer` call."""
     name, args = (
@@ -2436,7 +2429,7 @@ def _process_part(
     elif part.code_execution_result is not None:
         assert code_execution_tool_call_id is not None
         item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
-    elif computer_call := _computer_call(part, computer, provider_name):
+    elif computer_call := _map_computer_call(part, computer, provider_name):
         item = computer_call
     elif (item := _map_response_part(part, provider_name)) is None:
         return None, code_execution_tool_call_id
@@ -2448,46 +2441,60 @@ def _process_part(
     return item, code_execution_tool_call_id
 
 
-def _computer_call(
+def _map_computer_call(
     part: Part, computer: _google_computer.NativeComputer | None, provider_name: str
 ) -> ComputerCallPart | None:
     """Gemini's call to Google's computer use tool as a `computer` call, or `None` for any other part."""
     call = part.function_call
-    if computer is None or call is None or not computer.answers(call.name) or call.name is None:
+    if computer is None or call is None or not computer.is_computer_call(call.name) or call.name is None:
         return None
-    item = computer.call_part(call.name, call.args or {}, call.id, provider_name)
+    item = computer.to_call_part(call.name, call.args or {}, call.id, provider_name)
     if provider_details := _thought_signature_details(part):
         item.provider_details = {**(item.provider_details or {}), **provider_details}
     return item
 
 
-def _native_computer(
+def _requested_native_computer(
     model_request_parameters: ModelRequestParameters, messages: Sequence[ModelMessage] = ()
 ) -> _google_computer.NativeComputer | None:
     """For a `ComputerTool`, Google's computer use tool, holding the keys Gemini held after `messages`."""
     tool = next((t for t in model_request_parameters.native_tools if isinstance(t, ComputerTool)), None)
     if tool is None:
         return None
-    name = next(iter(model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)), None)
-    if name is None:
-        return None
+    # The request keeps a `ComputerTool` only beside a `computer` tool to run its calls.
+    name = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)[0]
     if clashing := sorted(_google_computer.COMPUTER_FUNCTIONS & model_request_parameters.declared_tool_defs.keys()):
         raise UserError(
             f"Google's computer use tool has predefined functions named {', '.join(map(repr, clashing))}, "
             "so a function tool can't have those names beside it. Rename the function tool."
         )
     computer = _google_computer.NativeComputer(name, tool.display_size)
-    computer.hold_after(messages)
+    computer.restore_held_keys(messages)
     return computer
 
 
-def _sent_computer(
+def _without_the_computer(
+    name: str, tool_defs: dict[str, ToolDefinition], allowed_function_names: list[str]
+) -> tuple[dict[str, ToolDefinition], list[str]]:
+    """The function tools and allowed names to send beside Google's computer use tool, which replaces `name`."""
+    if allowed_function_names == [name]:
+        # Forced to the computer alone: `ANY` with only Google's tool sent makes Gemini call it.
+        return {}, []
+    # Gemini rejects a predefined function's name in `allowed_function_names`, and keeps its computer functions
+    # callable beside the names it lists (both checked live on gemini-3.8-flash, 2026-11-20).
+    return (
+        {tool_name: t for tool_name, t in tool_defs.items() if tool_name != name},
+        [tool_name for tool_name in allowed_function_names if tool_name != name],
+    )
+
+
+def _sent_native_computer(
     model_request_parameters: ModelRequestParameters,
     tool_defs: Mapping[str, ToolDefinition],
     tool_choice_mode: ToolChoiceScalar,
 ) -> _google_computer.NativeComputer | None:
     """Google's computer use tool, if this request sends it: not when `tool_choice` leaves out the `computer` tool."""
-    computer = _native_computer(model_request_parameters)
+    computer = _requested_native_computer(model_request_parameters)
     if computer is None or computer.name not in tool_defs or tool_choice_mode == 'none':
         return None
     return computer

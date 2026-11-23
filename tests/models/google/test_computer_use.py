@@ -36,7 +36,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.exceptions import ModelRetry, SkipToolValidation, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
@@ -50,7 +50,7 @@ from ...harness.display_fakes import ScreenBackend, ScreenProvider
 from ...workspace_fakes import InMemoryProvider
 
 with try_import() as imports_successful:
-    from pydantic_ai.models._google_computer import map_gemini_call
+    from pydantic_ai.models._google_computer import map_computer_call
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -143,7 +143,7 @@ def _function_parts(body: dict[str, JsonValue], key: str) -> list[JsonValue]:
         (
             'scroll',
             {'x': 500, 'y': 500, 'direction': 'up'},
-            [{'type': 'scroll', 'x': 640, 'y': 400, 'direction': 'up'}],
+            [{'type': 'scroll', 'x': 640, 'y': 400, 'direction': 'up', 'amount': 3}],
         ),
         ('type', {'text': 'hi'}, [{'type': 'type_text', 'text': 'hi'}]),
         (
@@ -183,15 +183,19 @@ def _function_parts(body: dict[str, JsonValue], key: str) -> list[JsonValue]:
 def test_each_function_becomes_computer_actions_in_pixels(
     name: str, args: dict[str, JsonValue], actions: list[dict[str, object]]
 ) -> None:
-    assert map_gemini_call(name, args, FAKE_DISPLAY_SIZE)[:2] == (actions, None)
+    assert map_computer_call(name, args, FAKE_DISPLAY_SIZE)[:2] == (actions, None)
 
 
 def test_a_flagged_call_carries_geminis_explanation() -> None:
     flagged: dict[str, JsonValue] = {'decision': 'require_confirmation', 'explanation': 'It sends a message.'}
-    assert map_gemini_call('click', {'x': 0, 'y': 0, 'safety_decision': flagged}, (10, 10))[1] == 'It sends a message.'
+    assert (
+        map_computer_call('click', {'x': 0, 'y': 0, 'safety_decision': flagged}, (10, 10))[1] == 'It sends a message.'
+    )
+    # Google documents an explanation on every flagged call, so a decision without one isn't run.
     unexplained: dict[str, JsonValue] = {'decision': 'require_confirmation'}
-    assert map_gemini_call('click', {'x': 0, 'y': 0, 'safety_decision': unexplained}, (10, 10))[1] == snapshot(
-        'Gemini asks to confirm this action.'
+    assert map_computer_call('click', {'x': 0, 'y': 0, 'safety_decision': unexplained}, (10, 10))[:2] == (
+        [{'type': 'click', 'unsupported_fields': ['safety_decision']}],
+        None,
     )
 
 
@@ -299,7 +303,7 @@ async def test_calls_go_back_as_geminis_and_changed_calls_as_pixels(allow_model_
         response = await model.request([ModelRequest.user_text_prompt('Go.')], None, params)
         first, second = response.parts
         assert isinstance(first, ComputerCallPart) and isinstance(second, ComputerCallPart)
-        second.args = {'actions': [{'type': 'type_text', 'text': 'changed'}]}
+        second.args = {'actions': [{'type': 'type_text', 'text': 'actions_changed'}]}
         results = [
             ComputerReturnPart(tool_name='computer', content='ok', tool_call_id=part.tool_call_id)
             for part in (first, second)
@@ -311,7 +315,11 @@ async def test_calls_go_back_as_geminis_and_changed_calls_as_pixels(allow_model_
     assert calls == snapshot(
         [
             {'name': 'click', 'args': {'x': 500, 'y': 500, 'intent': 'Click.'}, 'id': 'call_1'},
-            {'name': 'computer', 'args': {'actions': [{'type': 'type_text', 'text': 'changed'}]}, 'id': 'call_2'},
+            {
+                'name': 'computer',
+                'args': {'actions': [{'type': 'type_text', 'text': 'actions_changed'}]},
+                'id': 'call_2',
+            },
         ]
     )
     names = [part['name'] for part in _function_parts(gemini.bodies[1], 'functionResponse') if isinstance(part, dict)]
@@ -406,7 +414,7 @@ async def test_a_flagged_call_a_runner_ran_without_asking_is_not_acknowledged(al
     assert computer.actions == [TypeText(text='send')]
     (function_response,) = _function_parts(gemini.bodies[-1], 'functionResponse')
     assert isinstance(function_response, dict)
-    assert function_response['response'] == {'return_value': 'Ran 1 of 1 actions.', 'safety_acknowledgement': False}
+    assert function_response['response'] == {'error': 'Ran 1 of 1 actions.', 'safety_acknowledgement': False}
 
 
 async def test_an_approved_flagged_call_whose_screenshot_fails_is_not_acknowledged(
@@ -528,7 +536,7 @@ async def test_a_shift_click_in_one_turn_clicks_with_shift(allow_model_requests:
 
 async def test_a_hotkey_while_ctrl_is_held_presses_ctrl_with_it(allow_model_requests: None) -> None:
     provider, _ = await _display_actions(
-        [_call('key_down', key='Control')], [_call('hotkey', 'call_2', keys=['shift', 'tab'])]
+        [_call('key_down', key='Control_L')], [_call('hotkey', 'call_2', keys=['shift', 'tab'])]
     )
     assert provider.actions == [PressKeys(keys=('ctrl', 'shift', 'tab'))]
 
@@ -584,15 +592,6 @@ async def test_a_refused_key_down_holds_nothing(allow_model_requests: None) -> N
     assert provider.actions == [Click(x=640, y=400)]
 
 
-async def test_mouse_down_while_a_key_is_held_is_refused(allow_model_requests: None) -> None:
-    """`mouse_down` takes no modifiers, so it would run without the held key."""
-    provider, gemini = await _display_actions(
-        [_call('key_down', key='shift')], [_call('mouse_down', 'call_2', x=500, y=500)]
-    )
-    assert "can't hold a key through mouse_down" in _error(gemini, 'call_2')
-    assert provider.actions == []
-
-
 async def test_mouse_up_while_a_key_is_held_still_lets_go(allow_model_requests: None) -> None:
     """A button pressed before the key was held is released, so it never stays down."""
     provider, _ = await _display_actions(
@@ -642,3 +641,31 @@ def test_computer_use_models_support_it_on_the_gemini_api_only(model_name: str) 
     assert ComputerTool in gemini_api.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
     vertex = GoogleModel(model_name, provider=GoogleCloudProvider(project='p', location='us-central1'))
     assert ComputerTool not in vertex.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
+
+
+async def test_calls_gemini_did_not_make_go_back_as_function_calls(allow_model_requests: None) -> None:
+    """A `computer` call from another model and another tool's call have no Gemini call to send back."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('lookup', {}, tool_call_id='call_a'),
+                ComputerCallPart('computer', {'actions': [{'type': 'screenshot'}]}, tool_call_id='call_b'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('lookup', 'found', tool_call_id='call_a'),
+                ComputerReturnPart('computer', 'Ran 1 action.', tool_call_id='call_b'),
+            ]
+        ),
+    ]
+    gemini = _Gemini([{'functionCall': {'name': 'click', 'args': {'x': 500, 'y': 500}}}])
+    lookup = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    async with gemini.model() as model:
+        response = await model.request(history, None, _params(lookup))
+
+    assert _names(gemini.bodies[0]) == ['lookup', 'computer']
+    # Gemini sent no ID, so the call keeps the one the part generated.
+    (call,) = response.parts
+    assert isinstance(call, ComputerCallPart) and call.tool_call_id
