@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 
-from ._instrumentation import record_uncaught_errors
+from ._instrumentation import record_exception, record_uncaught_errors, set_error_status
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
@@ -95,16 +95,17 @@ def open_span(
     *,
     attributes: Mapping[str, AttributeValue] | None = None,
     content: Mapping[str, AttributeValue] | None = None,
-    not_errors: tuple[type[Exception], ...] = (),
+    not_errors: tuple[type[BaseException], ...] = (),
 ) -> Generator[Span]:
     """Open `name` on the run's tracer.
 
     Yields `INVALID_SPAN` outside an instrumented run. `attributes` are always recorded; `content`,
     which can quote what the span is about, only when the run captures content. Both are set at the
-    start, so Logfire's console and pending spans show them. An uncaught error is recorded by its type
-    only, unless the run captures content, as its message can quote content. An exception in
-    `not_errors`, such as an expected `FileNotFoundError`, is still recorded as an `exception` event,
-    but the span's status is left unset rather than marked ERROR.
+    start, so Logfire's console and pending spans show them. An uncaught error, including a
+    cancellation, marks the span ERROR and is recorded by its type only, unless the run captures
+    content, as its message can quote content. An exception in `not_errors`, such as an expected
+    `FileNotFoundError` or a cancellation the caller expects, is still recorded as an `exception`
+    event, but the span's status is left unset rather than marked ERROR.
     """
     if (telemetry := _telemetry_of(ctx)) is None:
         yield INVALID_SPAN
@@ -115,8 +116,17 @@ def open_span(
         record_exception=False,
         set_status_on_exception=False,
     ) as span:
-        with record_uncaught_errors(span, include_content=telemetry.include_content, not_errors=not_errors):
-            yield span
+        try:
+            with record_uncaught_errors(span, include_content=telemetry.include_content, not_errors=not_errors):
+                yield span
+        except Exception:
+            raise
+        except BaseException as error:
+            # `use_span` also marks a cancellation, which `record_uncaught_errors` leaves alone.
+            record_exception(span, error, include_content=telemetry.include_content, escaped=False)
+            if not isinstance(error, not_errors):
+                set_error_status(span, error, include_content=telemetry.include_content)
+            raise
 
 
 def record_decision(
