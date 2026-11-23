@@ -1880,6 +1880,7 @@ jobs:
         python-version: ["3.11", "3.14"]
     env:
       CI: true
+      BLOCKBUSTER_ENABLED: false
       COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.pax-${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
