@@ -7,23 +7,17 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles._family import ModelProfileFunc
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     _gpt_oss_schema_profile,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.stepfun import stepfun_model_profile
-from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
-from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
@@ -41,17 +35,6 @@ else:
 
 
 _FIREWORKS_P_VERSION_RE = re.compile(r'(?<=\d)p(?=\d)')
-
-_FIREWORKS_THINKING_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
-    'inkling': thinkingmachines_model_profile,
-    'ling-': inclusionai_model_profile,
-    'mimo-': xiaomi_model_profile,
-    'nemotron': nvidia_model_profile,
-    'nvidia-nemotron': nvidia_model_profile,
-    'step-': stepfun_model_profile,
-}
-"""Prefixes of the open-weight thinking families as Fireworks names them, matched after the `p` version dots are
-restored."""
 
 
 class FireworksProvider(_OpenAISDKProvider):
@@ -98,11 +81,6 @@ class FireworksProvider(_OpenAISDKProvider):
             profile = _glm_5_3_schema_profile(model_name.replace('glm-5p3', 'glm-5.3', 1))
         elif model_name.startswith('kimi-'):
             profile = moonshotai_model_profile(_FIREWORKS_P_VERSION_RE.sub('.', model_name))
-        else:
-            for family_prefix, family_profile in _FIREWORKS_THINKING_FAMILY_PROFILES.items():
-                if model_name.startswith(family_prefix):
-                    profile = family_profile(_FIREWORKS_P_VERSION_RE.sub('.', model_name))
-                    break
 
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.

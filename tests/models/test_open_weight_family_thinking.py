@@ -1,8 +1,9 @@
 """Requests for the open-weight thinking families on the OpenAI-compatible gateways that resolve their profiles.
 
-Not VCR tests: there are no recordings for these gateways, and the claims are about the request the code builds,
-which cassette matching doesn't check. A `MockTransport` serves synthetic responses, and `request_capture` records
-the requests. See https://github.com/pydantic/pydantic-ai/issues/12096.
+`test_open_weight_family_thinking_on_openrouter` is recorded against OpenRouter's OpenAI-compatible API. The other
+tests are not VCR tests: there are no recordings for the other gateways, and their claims are about the request the
+code builds, which cassette matching doesn't check. A `MockTransport` serves synthetic responses, and
+`request_capture` records the requests. See https://github.com/pydantic/pydantic-ai/issues/12096.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import httpx2
 import pytest
 from pydantic import BaseModel, JsonValue
 
-from pydantic_ai import Agent, NativeOutput
+from pydantic_ai import Agent, ModelResponse, NativeOutput, ThinkingPart
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .._inline_snapshot import snapshot
@@ -98,8 +99,8 @@ VERCEL_EFFORT_CASES = [
     VercelEffortCase('hy3-off', 'tencent/hy3', False, snapshot({'reasoning_effort': 'none'})),
     # Step 5 always reasons and Vercel lists `low` as its lowest effort.
     VercelEffortCase('step-5-off', 'stepfun/step-5-preview', False, snapshot({'reasoning_effort': 'low'})),
-    # Ling lists only an on/off toggle on Vercel, so no effort goes out.
-    VercelEffortCase('ling-on', 'inclusionai/ling-3.1-flash', True, snapshot({})),
+    # Vercel's catalog lists no reasoning controls for Nemotron 3 Super, so no effort goes out.
+    VercelEffortCase('nemotron-3-super-on', 'nvidia/nemotron-3-super-120b-a12b', True, snapshot({})),
 ]
 
 
@@ -155,3 +156,55 @@ async def test_open_weight_family_native_output(
             },
         }
     )
+
+
+@dataclass(frozen=True)
+class OpenRouterCase:
+    id: str
+    model_name: str
+    thinking: bool
+    expected: dict[str, JsonValue]
+
+
+OPENROUTER_CASES = [
+    OpenRouterCase('nemotron-3', 'nvidia/nemotron-3-super-120b-a12b', True, snapshot()),
+    OpenRouterCase('nemotron-3.5', 'nvidia/nemotron-3.5-lightning', True, snapshot()),
+    OpenRouterCase('inkling', 'thinkingmachines/inkling', True, snapshot()),
+    OpenRouterCase('mimo', 'xiaomi/mimo-v2.6-flash', True, snapshot()),
+    OpenRouterCase('step-5', 'stepfun/step-5-preview', True, snapshot()),
+    OpenRouterCase('step-5-off', 'stepfun/step-5-preview', False, snapshot()),
+    OpenRouterCase('hy3', 'tencent/hy3', True, snapshot()),
+    OpenRouterCase('ling-3', 'inclusionai/ling-3.1-flash', True, snapshot()),
+]
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in OPENROUTER_CASES])
+async def test_open_weight_family_thinking_on_openrouter(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture, case: OpenRouterCase
+):
+    """`OpenAICompatibleProvider` sends the family profile's `reasoning_effort` as a top-level field, which OpenRouter's
+    Chat Completions API takes as "Shorthand for setting reasoning effort. Equivalent to setting reasoning.effort":
+    https://openrouter.ai/docs/api-reference/chat-completion.
+
+    Each case pins the effort sent and whether the response reasoned (reasoning tokens or a `ThinkingPart`).
+    """
+    provider = OpenAICompatibleProvider(
+        'gateway',
+        base_url='https://openrouter.ai/api/v1',
+        api_key=openrouter_api_key,
+        http_client=request_capture.http_client(timeout=120),
+    )
+    agent = Agent(OpenAIChatModel(case.model_name, provider=provider))
+    result = await agent.run('What is 17 * 23? Reply with the number only.', model_settings={'thinking': case.thinking})
+
+    body = request_capture.body('/chat/completions')
+    thinking_parts = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ThinkingPart)
+    ]
+    reasoned = result.usage.details.get('reasoning_tokens', 0) > 0 or bool(thinking_parts)
+    assert {'reasoning_effort': body.get('reasoning_effort'), 'reasoned': reasoned} == case.expected

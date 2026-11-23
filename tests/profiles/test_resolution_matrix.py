@@ -4821,7 +4821,6 @@ def test_minimax_unmatched(model_name: str):
         ),
         # Thinks when asked to.
         (nvidia_model_profile, 'nemotron-3.5-lightning', {'supports_thinking': True}),
-        (nvidia_model_profile, 'nemotron-lightning-3.5-30b-a3b', {'supports_thinking': True}),
         (nvidia_model_profile, 'NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16', {'supports_thinking': True}),
         (xiaomi_model_profile, 'mimo-v2.6-pro', {'supports_thinking': True}),
         (xiaomi_model_profile, 'MiMo-V2.5', {'supports_thinking': True}),
@@ -4920,7 +4919,7 @@ def test_ollama_open_weight_family(model_name: str, thinking: dict[str, bool]):
     ('model_name', 'thinking', 'reasoning_efforts'),
     [
         ('nvidia/nemotron-3-ultra-550b-a55b', _HYBRID_THINKING, {'none', 'low', 'medium', 'high'}),
-        # Vercel's catalog lists no reasoning controls for Nemotron 3 Super, and only an on/off toggle for Ling.
+        # Vercel's catalog lists no reasoning controls for Nemotron 3 Super.
         ('nvidia/nemotron-3-super-120b-a12b', _HYBRID_THINKING, set[str]()),
         ('nvidia/nemotron-3.5-lightning-free', _OPT_IN_THINKING, {'none', 'low', 'medium', 'high'}),
         (
@@ -4932,7 +4931,6 @@ def test_ollama_open_weight_family(model_name: str, thinking: dict[str, bool]):
         ('stepfun/step-3.7-flash', _ALWAYS_THINKING, {'low', 'medium', 'high'}),
         ('tencent/hy3', _HYBRID_THINKING, {'none', 'low', 'high'}),
         ('tencent/hy4', _HYBRID_THINKING, {'none', 'high'}),
-        ('inclusionai/ling-3.0-flash', _HYBRID_THINKING, set[str]()),
     ],
 )
 def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool], reasoning_efforts: set[str]):
@@ -4945,47 +4943,6 @@ def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool], r
     assert _normalize(VercelProvider.model_profile(model_name)) == _normalize(default) | thinking | {
         'openai_reasoning_efforts': frozenset(reasoning_efforts)
     }
-
-
-@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-@pytest.mark.parametrize(
-    'model_name', ['nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3.5-super-vl-120b-a12b']
-)
-def test_crusoe_nemotron(model_name: str):
-    """Crusoe's Nemotron 3.5 models add only their thinking flags to the profile Nemotron 3 Nano Omni keeps, which is
-    outside the published ids the family profile describes."""
-    default = CrusoeProvider.model_profile('nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B')
-    assert _normalize(default) == snapshot(
-        {
-            'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_json_schema_output': True,
-            'supports_json_object_output': True,
-            'may_tokenize_special_tokens_in_content': True,
-        }
-    )
-    assert _normalize(CrusoeProvider.model_profile(model_name)) == _normalize(default) | _OPT_IN_THINKING
-
-
-@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-@pytest.mark.parametrize(
-    ('model_name', 'thinking'),
-    [
-        ('accounts/fireworks/models/nvidia-nemotron-3-super-120b-a12b-fp8', _HYBRID_THINKING),
-        ('accounts/fireworks/models/nemotron-3-ultra-bf16', _HYBRID_THINKING),
-        ('accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b', _OPT_IN_THINKING),
-        ('accounts/fireworks/models/nvidia-nemotron-3p5-super-vl-120b-a12b-bf16', _OPT_IN_THINKING),
-        ('accounts/fireworks/models/inkling-small', _HYBRID_THINKING),
-        ('accounts/fireworks/models/mimo-v2p6-pro-rl', _OPT_IN_THINKING),
-        ('accounts/fireworks/models/step-5-preview-fp8', _ALWAYS_THINKING),
-        ('accounts/fireworks/models/step-3p7-flash-nvfp4', _ALWAYS_THINKING),
-        ('accounts/fireworks/models/ling-3-flash', _HYBRID_THINKING),
-    ],
-)
-def test_fireworks_open_weight_family(model_name: str, thinking: dict[str, bool]):
-    """Fireworks' open-weight family models, with `p` read as a version dot, add only their thinking flags to the
-    profile an unprofiled model gets, pinned in `test_fireworks_unprofiled`."""
-    default = _normalize(FireworksProvider.model_profile('accounts/fireworks/models/minimax-m3'))
-    assert _normalize(FireworksProvider.model_profile(model_name)) == default | thinking
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')

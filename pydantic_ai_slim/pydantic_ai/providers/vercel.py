@@ -14,7 +14,6 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_cloud_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
-from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.nvidia import nvidia_model_profile
@@ -52,7 +51,7 @@ _EVERY_EFFORT: frozenset[OpenAIReasoningEffort] = frozenset(
     {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
 )
 
-_OPEN_WEIGHT_THINKING_VENDORS = frozenset({'inclusionai', 'nvidia', 'stepfun', 'tencent', 'thinkingmachines', 'xiaomi'})
+_OPEN_WEIGHT_THINKING_VENDORS = frozenset({'nvidia', 'stepfun', 'tencent', 'thinkingmachines', 'xiaomi'})
 
 _OPEN_WEIGHT_REASONING_EFFORTS: dict[str, frozenset[OpenAIReasoningEffort]] = {
     'nvidia/nemotron-3-ultra-550b-a55b': _NONE_TO_HIGH,
@@ -77,7 +76,7 @@ open-weight thinking families' models.
 Vercel's docs don't say what it does with an effort a model doesn't list, and ask for "a value supported by the
 model's catalog entry" (https://vercel.com/docs/ai-gateway/models-and-providers/reasoning), so `thinking` resolves to
 the lowest listed effort at or above the requested level, else the highest. A family model missing here, such as
-the Ling models, which list only an on/off toggle, gets no `reasoning_effort` at all.
+Nemotron 3 Super, for which the catalog lists no reasoning controls, gets no `reasoning_effort` at all.
 """
 
 
@@ -104,7 +103,6 @@ class VercelProvider(_OpenAISDKProvider):
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
             'groq': groq_model_profile,
-            'inclusionai': inclusionai_model_profile,
             'mistral': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
             'nvidia': nvidia_model_profile,
