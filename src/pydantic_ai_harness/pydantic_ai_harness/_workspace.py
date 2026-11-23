@@ -92,11 +92,12 @@ def innermost_backend(workspace: Workspace) -> WorkspaceBackend:
 
 
 async def nameable_working_dir(workspace: Workspace) -> str | None:
-    """The working directory, if instructions can name it without starting or waking a sandbox.
+    """The working directory, if instructions can name it without creating a sandbox.
 
-    A directory the backend already knows costs nothing. An existing environment is asked, which is
-    free for a local workspace and under durable execution, which journaled the answer. A sandbox no
-    tool has started yet gives `None`: its first tool call starts it, and the next request names it.
+    A directory the backend already knows needs no I/O. An environment that exists (`ref` is set) is
+    asked: a local workspace answers itself, durable execution answers from its journal, and a remote
+    sandbox attached by `ref` without a configured directory is woken if it was stopped. A sandbox no
+    tool has created yet gives `None`: its first tool call creates it, and the next request names it.
     """
     if (known := workspace.known_working_dir) is not None:
         return known

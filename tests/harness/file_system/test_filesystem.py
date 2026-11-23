@@ -107,7 +107,10 @@ class CountingWorkspace(LocalWorkspaceBackend):
 
 
 class KnownDirCountingWorkspace(CountingWorkspace, SupportsKnownWorkingDir):
-    """A `CountingWorkspace` whose instructions name the directory without asking, so only the boundary counts."""
+    """A `CountingWorkspace` whose instructions name the directory without asking, so only the boundary counts.
+
+    On a plain local workspace the instructions also ask `working_dir()` on each request, which its cache answers.
+    """
 
     def __init__(self, working_dir: Path) -> None:
         super().__init__(working_dir)

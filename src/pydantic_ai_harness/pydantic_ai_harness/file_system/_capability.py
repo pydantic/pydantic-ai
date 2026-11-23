@@ -180,7 +180,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
-        """Where relative paths resolve from, naming the directory once that costs nothing; see `nameable_working_dir`."""
+        """Where relative paths resolve from, naming the directory when `nameable_working_dir` can."""
         # Without `root_dir`, the working directory is also the boundary.
         bounded = ', and the file tools only accept paths inside it' if self.root_dir is None else ''
 

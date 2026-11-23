@@ -176,13 +176,18 @@ class Shell(AbstractCapability[AgentDepsT]):
         require_workspace(ctx.workspace, 'Shell', ctx.messages)
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
-        """Where commands start, naming the directory once that costs nothing; see `nameable_working_dir`."""
+        """Where commands start, naming the directory when `nameable_working_dir` can."""
+
+        carries = ' A `cd` carries over to later `run_command` and `start_command` calls.' if self.persist_cwd else ''
 
         async def instructions(ctx: RunContext[AgentDepsT]) -> str:
             working_dir = await nameable_working_dir(ctx.workspace)
             if working_dir is None:
-                return 'Shell commands start in the working directory; use relative paths, not guessed absolute ones.'
-            return f'Shell commands start in `{working_dir}`.'
+                return (
+                    'Shell commands start in the working directory; use relative paths, not guessed absolute ones.'
+                    + carries
+                )
+            return f'Shell commands start in `{working_dir}`.{carries}'
 
         return instructions
 

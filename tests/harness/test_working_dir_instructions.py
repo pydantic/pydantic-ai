@@ -85,6 +85,14 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert _instructions(model, tmp_path) == expected
 
+    async def test_a_sticky_cd_is_mentioned(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Shell(persist_cwd=True)]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert (
+            'Shell commands start in `<dir>`. A `cd` carries over to later `run_command` and `start_command` calls.'
+            in (_instructions(model, tmp_path))
+        )
+
     async def test_a_configured_sandbox_is_named_without_starting_it(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
         backend = LazyBackend(tmp_path, configured=True)
