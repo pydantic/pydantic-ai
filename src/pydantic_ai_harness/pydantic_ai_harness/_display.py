@@ -1,0 +1,122 @@
+"""`LazyDisplay`, which starts a backend's display on first use and again after a failure, plus shared helpers."""
+
+from __future__ import annotations as _annotations
+
+import base64
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import Protocol, TypeVar
+
+import anyio
+
+from pydantic_ai.computer_use import Point, Region
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai_harness._png import PNG_SIGNATURE
+
+from .computer_use import Display, DisplayAction, SupportsCursorPosition, SupportsZoom, UnsupportedActionError
+
+T = TypeVar('T')
+
+
+def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
+    """The display size `desktop=` asks for, or `None` for no display."""
+    if desktop is True:
+        return (1280, 800)
+    if not desktop:
+        return None
+    if len(desktop) != 2 or min(desktop) < 1:
+        raise UserError(f'`desktop` must be a `(width, height)` of at least 1 pixel each, got {desktop!r}.')
+    return desktop
+
+
+def png_from_base64(encoded: str | None, source: str) -> bytes:
+    """The PNG a display sent as base64, or a `WorkspaceError` naming `source` when it isn't one."""
+    try:
+        data = base64.b64decode(''.join((encoded or '').split()), validate=True)
+    except ValueError:
+        data = b''
+    if not data.startswith(PNG_SIGNATURE):
+        raise WorkspaceError(f'{source} did not return a PNG screenshot.')
+    return data
+
+
+class DisplayDriver(Display, SupportsZoom, SupportsCursorPosition, Protocol):
+    """Controls one running display, such as an X server through commands, or a provider's API."""
+
+
+class LazyDisplay:
+    """The display a backend hands out for its whole life. It starts on first use, and again after a failure.
+
+    `scope` wraps every call, including the start, for example to turn a provider's errors into workspace errors. The
+    backend also calls `start` before each shell command, so a program the command opens shows on the screen.
+
+    A call that only looks, such as a screenshot, is retried once after a failure, and the retry restarts a lost
+    display. An action is never retried, so nothing is done twice.
+
+    It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
+    """
+
+    def __init__(
+        self,
+        driver: DisplayDriver,
+        start: Callable[[], Awaitable[None]],
+        *,
+        scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
+    ):
+        self._driver = driver
+        self._start = start
+        self._scope = scope
+        self._running = False
+        self._lock = anyio.Lock()
+
+    def reset(self) -> None:
+        """Forget that the display runs, so the next call starts it, such as after the environment restarted."""
+        self._running = False
+
+    async def start(self) -> None:
+        """Start the display, unless it is known to be running."""
+        async with self._scope():
+            await self._start_unless_running()
+
+    async def _start_unless_running(self) -> None:
+        # One start at a time: two would both find no display and start two.
+        async with self._lock:
+            if not self._running:
+                await self._start()
+                self._running = True
+
+    async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
+        retry = observe
+        while True:
+            try:
+                async with self._scope():
+                    await self._start_unless_running()
+                    return await call(self._driver)
+            except UnsupportedActionError:
+                raise  # a refused action, such as an unknown key: the display is fine
+            except Exception as error:
+                # The display may have stopped or the environment restarted, so the next call starts it again. Starting
+                # one that still runs does nothing.
+                self._running = False
+                # Retrying can't help an unavailable environment, and would double a timeout.
+                if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
+                    raise
+                if not retry:
+                    raise
+                retry = False
+
+    async def display_size(self) -> tuple[int, int]:
+        return await self._call(lambda driver: driver.display_size(), observe=True)
+
+    async def screenshot(self) -> bytes:
+        return await self._call(lambda driver: driver.screenshot(), observe=True)
+
+    async def act(self, action: DisplayAction) -> None:
+        await self._call(lambda driver: driver.act(action), observe=False)
+
+    async def zoom(self, region: Region) -> bytes:
+        return await self._call(lambda driver: driver.zoom(region), observe=True)
+
+    async def cursor_position(self) -> Point:
+        return await self._call(lambda driver: driver.cursor_position(), observe=True)

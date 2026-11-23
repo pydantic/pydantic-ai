@@ -168,8 +168,8 @@ def _run_buttons(ctx: RunContext[Any]) -> _RunButtons | None:
 
 
 _NO_DISPLAY = (
-    '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
-    "run's workspace has none."
+    "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with one, such as "
+    '`DockerContainer(desktop=True)`.'
 )
 
 _READ_ONLY = (
