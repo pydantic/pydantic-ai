@@ -62,9 +62,13 @@ from pydantic_ai_pax.ui.rendering.tool_output import (
 )
 
 
+PROMPT_MARKER = '> '
+"""What starts an echoed prompt; its wrapped rows are indented by its width."""
+
+
 def prompt_line(text: str) -> Text:
     """Text the user typed, as the transcript shows it: an accent marker and bold text set it apart from answers."""
-    return Text.assemble(('> ', theme.color(theme.ACCENT)), (terminal_text(text), 'bold'))
+    return Text.assemble((PROMPT_MARKER, theme.color(theme.ACCENT)), (terminal_text(text), 'bold'))
 
 
 def print_prompt(console: Console, text: str) -> None:
@@ -92,7 +96,7 @@ def _prompt_ansi(*, source: str, width: int, colors: ColorSystemName | None) -> 
 
 
 def _print_prompt_rows(console: Console, text: str) -> None:
-    marker, body = prompt_line(text).divide([2])
+    marker, body = prompt_line(text).divide([len(PROMPT_MARKER)])
     indent = Text(' ' * marker.cell_len)
     for index, row in enumerate(body.wrap(console, max(console.width - marker.cell_len, 1))):
         row.rstrip()
