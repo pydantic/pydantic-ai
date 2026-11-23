@@ -189,9 +189,14 @@ Gotchas:
   guardrails keep content from its parent.
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
-  `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
-  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run, and a
-  remote worker applies the announced limits as received.
+  `count_tokens`, or an `openai-codex:` or `openai-chatgpt:` model) is started once more without it
+  (under a new run ID when recorded as a task). Under durable execution, a delegation to `self` can
+  count through the engine, where an `openai-codex:` or `openai-chatgpt:` child's count fails as a
+  `UserError` and is not retried: on DBOS and Prefect always, on Temporal when `self` is the only
+  delegate or `dynamic_agents` or `task_control` is set
+  ([#14194](https://github.com/pydantic/pydantic-ai/issues/14194)). A `SubAgent.usage_limits` that
+  sets the flag itself is kept and fails like a top-level run, and a remote worker applies the
+  announced limits as received.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
@@ -443,8 +448,9 @@ Gotchas:
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
   `max_uses`. A parent `count_tokens_before_request=True` is kept on an advisor model that implements
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
-  pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
-  consultation started, in which case the error propagates.
+  pre-request `NotImplementedError` (`openai-codex:` and `openai-chatgpt:` models raise one), unless a
+  request was counted in the shared `usage` since the consultation started, in which case the error
+  propagates.
 - Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
   list `output_type`s combining, and any other option the later one's. With different `id`s, their
   built `advisor` tools conflict.
