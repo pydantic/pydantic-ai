@@ -688,7 +688,7 @@ class StreamRenderer:
         self._tool_output.abort()
         self._close_group()
         if self._block is not None:
-            self._block.freeze()
+            self._block.abort()
         writer, self._writer = self._writer, None
         self._reset()
         if writer is not None:
