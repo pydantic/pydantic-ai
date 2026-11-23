@@ -2021,7 +2021,7 @@ jobs:
         shell: bash
         run: |
           status=0
-          uv run --all-packages --all-extras --no-extra sentence-transformers pytest --collect-only -q tests > "$RUNNER_TEMP/collect.log" 2>&1 || status=$?
+          uv run --all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers pytest --collect-only -q tests > "$RUNNER_TEMP/collect.log" 2>&1 || status=$?
           grep -E 'ERROR collecting|errors? during collection|tests collected' "$RUNNER_TEMP/collect.log" || true
           echo "collection exited $status"
           tail -n 60 "$RUNNER_TEMP/collect.log"
