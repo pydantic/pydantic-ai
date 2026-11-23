@@ -2875,7 +2875,7 @@ class TestLoadMCPToolsets:
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
         (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise. A reference that's
-        never closed stays as written, and doesn't stop a closed one after it from expanding."""
+        never closed or is malformed stays as written, and doesn't stop a closed one after it from expanding."""
         monkeypatch.setenv('MCP_TEST_TOKEN', 'secret-value')
         config = {
             'mcpServers': {
@@ -2887,6 +2887,8 @@ class TestLoadMCPToolsets:
                         'X-Unclosed-Then-Closed': '${a:b ${MCP_TEST_TOKEN}',
                         'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
                         'X-Empty-Default': '${MCP_TEST_HOST:-}',
+                        'X-Malformed-Then-Closed': '${:-x} ${MCP_TEST_TOKEN:x} ${MCP_TEST_TOKEN}',
+                        'X-Default-Then-Unclosed': '${MCP_TEST_UNSET:-$5} ${MCP_TEST_TOKEN',
                     },
                 },
                 # `args` is the list-valued field, so it covers expansion inside a list.
@@ -2907,6 +2909,8 @@ class TestLoadMCPToolsets:
             'X-Unclosed-Then-Closed': '${a:b secret-value',
             'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
             'X-Empty-Default': '',
+            'X-Malformed-Then-Closed': '${:-x} ${MCP_TEST_TOKEN:x} secret-value',
+            'X-Default-Then-Unclosed': '$5 ${MCP_TEST_TOKEN',
         }
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
 
