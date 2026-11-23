@@ -50,8 +50,9 @@ the tool. The description decides when the model loads it, so pass your own `des
 
 ## Models
 
-The model has to accept images to see the screen. A model that can't gets a note in place of each screenshot, saying it wasn't sent. Every
-model gets `computer` as a regular function tool.
+The model has to accept images to see the screen. A model that can't gets a note in place of each screenshot, saying it wasn't sent.
+
+Every model gets `computer` as a regular function tool.
 
 ## Computer use, Playwright, or Browser Use
 
