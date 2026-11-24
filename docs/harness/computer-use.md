@@ -46,12 +46,14 @@ tool.
 | Sandbox | Turn on its screen |
 |---|---|
 | Docker | [`DockerContainer(desktop=True)`](docker-container.md#give-the-agent-a-desktop) |
+| Daytona | [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) |
 
 For any other workspace, see [Your own display](#your-own-display).
 
 ### What the display needs
 
-Every sandbox above runs a desktop that needs these programs:
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above runs one
+that needs these programs:
 
 - Xvfb, unless an X server is already running
 - `xdotool`
