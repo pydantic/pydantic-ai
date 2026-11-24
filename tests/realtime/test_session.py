@@ -111,6 +111,7 @@ from pydantic_ai.realtime._utils import (
     session_instructions,
 )
 from pydantic_ai.realtime.codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -5373,6 +5374,28 @@ async def test_send_respond_rejects_audio_and_unsupported_image_response() -> No
     with pytest.raises(UserError, match='does not support manual turn-taking'):
         await unsupported.send(BinaryImage(data=b'image', media_type='image/png'), respond=True)
     assert conn.sent == []
+
+
+async def test_append_voice_instructions_needs_a_voice_model_with_instructions_of_its_own() -> None:
+    """Voice instructions go only to a model whose voice model takes instructions apart from the agent's; elsewhere the
+    agent's instructions are the voice model's, and the method raises before sending anything.
+
+    A unit test for the flag-off side, which no provider takes to the wire. History never records the instructions.
+    """
+    conn = FakeRealtimeConnection([])
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile())
+    with pytest.raises(
+        UserError,
+        match=r'does not support voice instructions of its own, so `session\.append_voice_instructions\(\)` is unavailable',
+    ):
+        await unsupported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == []
+
+    profile: RealtimeModelProfile = {**_profile(), 'supports_appending_voice_instructions': True}
+    supported = RealtimeSession(conn, _noop_runner, profile=profile)
+    await supported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == [AppendVoiceInstructions('Speak slowly.')]
+    assert supported.all_messages() == []
 
 
 async def test_send_respond_sequence_can_lead_with_audio() -> None:

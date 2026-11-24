@@ -1,11 +1,10 @@
 """Grep invocation and bounded result previews from native tool events."""
 
 from pydantic import BaseModel, ValidationError
-from rich.console import Console
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.tool_output import print_tool_header, terminal_text
+from pydantic_ai_pax.ui.rendering.tool_output import ToolOutput, terminal_text
 
 
 class GrepArgs(BaseModel):
@@ -18,9 +17,13 @@ class GrepArgs(BaseModel):
 class GrepOutput:
     """Keep concurrent grep results associated with their invocation."""
 
-    def __init__(self, console: Console, *, lines: int = 20, show_output: bool = False) -> None:
-        """Limit display only, without changing the result sent to the model."""
-        self.console = console
+    def __init__(self, tool_output: ToolOutput, *, lines: int = 20, show_output: bool = False) -> None:
+        """Limit display only, without changing the result sent to the model.
+
+        Headers go through `tool_output`, so a failed search gets its result row under its own header.
+        """
+        self.tool_output = tool_output
+        self.console = tool_output.console
         self.lines = lines
         self.show_output = show_output
         self._calls: dict[str, str] = {}
@@ -36,14 +39,16 @@ class GrepOutput:
                 return False
             label = f'grep {args.pattern!r} in {args.path!r}'
             self._calls[event.part.tool_call_id] = label
-            print_tool_header(self.console, name='grep', argument=f'{args.pattern!r} in {args.path!r}')
+            self.tool_output.header(event.part.tool_call_id, name='grep', argument=f'{args.pattern!r} in {args.path!r}')
             return True
         label = self._calls.pop(event.part.tool_call_id, None)
-        if label is None:
+        if label is None or event.part.outcome != 'success':
+            # A failure gets the result row every tool does.
             return False
         if not self.show_output:
             return True
-        if event.part.outcome == 'retried' or not isinstance(event.part.content, str):
+        self.tool_output.separate()
+        if not isinstance(event.part.content, str):
             self.console.print(
                 f'{terminal_text(label)}: tool did not return text results.',
                 style=theme.color(theme.MUTED),

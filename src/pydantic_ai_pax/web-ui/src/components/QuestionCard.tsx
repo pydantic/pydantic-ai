@@ -6,7 +6,7 @@ import { CheckIcon, QuestionIcon } from './icons'
 
 interface Props {
   request: Questions
-  /** Who asks when the request names no one: CLAI, or the orchestrator. */
+  /** Who asks when the request names no one: Pax, or the orchestrator. */
   asker?: string
   /** Where the answer goes: the shown session's questions by default. */
   onAnswer?: (id: string, answers: AnswerBody[] | null) => Promise<void>
@@ -14,7 +14,7 @@ interface Props {
 }
 
 /** The model's multiple-choice questions, answerable here or in the terminal, whichever comes first. */
-export function QuestionCard({ request, asker = 'CLAI', onAnswer, onError }: Props) {
+export function QuestionCard({ request, asker = 'Pax', onAnswer, onError }: Props) {
   const session = useContext(SessionContext)
   const answer = onAnswer ?? session.answer
   const [picked, setPicked] = useState<Record<string, string[]>>({})

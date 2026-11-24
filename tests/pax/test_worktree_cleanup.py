@@ -162,7 +162,7 @@ def origin(repo: Path) -> Path:
 
 @pytest.fixture
 def launched(checkout: Path) -> Worktree:
-    """The hand-made checkout as CLAI saw it at launch, with a commit made since."""
+    """The hand-made checkout as Pax saw it at launch, with a commit made since."""
     worktree = Worktree(path=checkout, branch='feature', head=git(checkout, 'rev-parse', 'HEAD'), created=False)
     assert current_worktree() == worktree
     git(checkout, 'commit', '--allow-empty', '-m', 'Work')
@@ -783,7 +783,7 @@ def test_pushed_checkout_with_later_work_still_asks(
 def test_pushed_checkout_clai_did_not_open_is_never_removed_without_asking(
     pushed: Worktree, monkeypatch: pytest.MonkeyPatch, moved: bool
 ) -> None:
-    """A checkout CLAI was only launched inside is asked about if it changed, and kept if not."""
+    """A checkout Pax was only launched inside is asked about if it changed, and kept if not."""
     picker = AsyncMock(return_value='keep')
     monkeypatch.setattr(worktrees, 'ask_removal', picker)
     offer_worktree_cleanup(worktree=replace(at_exit(pushed, moved=moved), remove_if_pushed=False))

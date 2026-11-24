@@ -17,7 +17,7 @@ from pydantic_ai_pax.ui.browser import open_browser
 from pydantic_ai_pax.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP, Selection, mouse_report, url_at
 from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.text_clipboard import copy_text
-from pydantic_ai_pax.ui.prompt.transcript_view import TranscriptView
+from pydantic_ai_pax.ui.prompt.transcript_view import SCROLLED_HINT, TranscriptView
 from pydantic_ai_pax.ui.rendering import theme
 
 ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l'
@@ -109,6 +109,8 @@ class PromptSurface(io.StringIO):
         """The cells last painted, which a selection copies from."""
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
+        self._hint_on_transcript = False
+        """Whether `SCROLLED_HINT` covers the last transcript row, as when no editor rule is pinned."""
         self._select_pinned = False
         """Whether a drag can also highlight and copy pinned rows, not only the transcript."""
         self._paint_scheduled = False
@@ -199,10 +201,27 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def markdown(self, *, render: Render, width: int) -> MarkdownBlock:
-        """Start a Markdown part that renders again for a new width or theme."""
+    def markdown(
+        self, *, render: Render, width: int, streaming: bool = False, expanded: Render | None = None
+    ) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock` for `streaming` and `expanded`."""
         with self._lock:
-            return self.transcript.markdown(render=render, width=width, changed=self.changed)
+            return self.transcript.markdown(
+                render=render, width=width, changed=self.changed, streaming=streaming, expanded=expanded
+            )
+
+    def toggle_details(self) -> bool:
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O; returns whether they are expanded.
+
+        The terminal's scrollback cannot change, so results already printed there move the panel to
+        the alternate screen, which paints them from the transcript.
+        """
+        with self._lock:
+            expanded = self.transcript.toggle_details()
+            self.full_screen = self.full_screen or self.transcript.printed_details()
+            self.selection.clear()
+            self._dirty = True
+        return expanded
 
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""
@@ -257,9 +276,7 @@ class PromptSurface(io.StringIO):
 
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
-        # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
-        rows = self._transcript_rows - (self.view.anchor is not None)
-        return url_at(self._frame, cell, rows=rows, joins=self.view.joins())
+        return url_at(self._frame, cell, rows=self._transcript_rows - self._hint_on_transcript, joins=self.view.joins())
 
     def _paint_soon(self) -> None:
         """Paint once the event loop finishes the current callback, or now outside one.
@@ -356,6 +373,8 @@ class PromptSurface(io.StringIO):
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
+        # A URL the hint covers part of is not opened.
+        self._hint_on_transcript = self.view.anchor is not None and _show_scrolled_hint(frame, top=bottom)
         self.selection.highlight(frame, rows=height if self._select_pinned else bottom, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
@@ -492,3 +511,17 @@ class PromptSurface(io.StringIO):
             if printed := self.transcript.printed(width=width):
                 self.output.write(printed.replace('\n', '\r\n') if self.output.isatty() else printed)
                 self.output.flush()
+
+
+def _show_scrolled_hint(frame: ScreenBuffer, *, top: int) -> bool:
+    """Paint `SCROLLED_HINT` at the right end of the editor's bottom rule; return whether it went on the transcript.
+
+    That rule is the last pinned row made only of `─`, so the hint covers no text and stays put
+    while the working title above the draft changes. Pinned rows without a rule, such as line input
+    on the alternate screen, get it on the last transcript row.
+    """
+    rules = [y for y in range(top, frame.height) if frame.row_text(y) == '─' * frame.width]
+    y = rules[-1] if rules else top - 1
+    hint = f'{theme.sgr(theme.MUTED)}\x1b[7m{SCROLLED_HINT[: frame.width]}\x1b[0m'
+    frame.region(Rect(0, y, frame.width, 1)).ansi(max(0, frame.width - len(SCROLLED_HINT)), 0, hint)
+    return y < top

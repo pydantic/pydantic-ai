@@ -5,6 +5,7 @@ import io
 import json
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 
@@ -136,6 +137,27 @@ async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
     assert [segment() for segment in harness.loader.status_segments()] == ['in segment']
     await harness.loader.disable('segment')
     assert harness.loader.status_segments() == []
+
+
+async def test_startup_reads_the_declarations_once_per_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Startup reads the declarations to order them, then once per plugin it loads, not for every lookup."""
+    harness = Harness(tmp_path)
+    for name in ('alpha', 'beta', 'gamma'):
+        harness.write(name)
+    reads = 0
+    declared = ProcessPlugins.declared
+
+    def counted(
+        self: ProcessPlugins[None], project: Mapping[str, PluginSettings], *, console: Console
+    ) -> dict[str, PluginSettings]:
+        nonlocal reads
+        reads += 1
+        return declared(self, project, console=console)
+
+    monkeypatch.setattr(ProcessPlugins, 'declared', counted)
+    await harness.loader.load_all()
+    assert reads == 4
+    await harness.loader.close('eof')
 
 
 @pytest.mark.parametrize(('first', 'shown'), [('zulu', 'zulu'), ('logfire', 'observability')])
@@ -331,7 +353,7 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     (package / 'plugin.py').write_text('import clai_missing_dependency\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
-    # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
+    # Saved by a Pax version that shipped a `retired` built-in; this one does not.
     harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
@@ -463,7 +485,7 @@ async def test_a_cancelled_turn_still_ends_the_plugins_it_unloaded(tmp_path: Pat
 
 
 async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
-    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+    """Another Pax process may replace the declaration while this one has the plugin loaded."""
 
     class Chosen(BaseModel):
         level: int
@@ -1091,7 +1113,7 @@ class Shared(Plugin):
 
 
 def two_sessions(tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> tuple[Harness, Harness]:
-    """Two live sessions of one process, as a CLAI serving several sessions will hold them."""
+    """Two live sessions of one process, as a Pax serving several sessions will hold them."""
     process = ProcessPlugins[None](store=SettingsStore(tmp_path / 'config.db'), builtin=builtin)
     return Harness(tmp_path, process=process, name='a'), Harness(tmp_path, process=process, name='b')
 

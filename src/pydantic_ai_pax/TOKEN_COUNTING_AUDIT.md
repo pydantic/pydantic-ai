@@ -1,6 +1,6 @@
 # Token counting audit
 
-Symptom: CLAI seemed to reach its context limits early. This audit lists every place CLAI 2, and the
+Symptom: Pax seemed to reach its context limits early. This audit lists every place Pax, and the
 harness pieces it binds, counts, estimates, sums, or shows tokens, and checks each one for overcounts.
 
 Method: a read of the code, plus a replay of the 25 most recent saved sessions in a local
@@ -18,7 +18,7 @@ would change a finding.
 
 No code uses `tiktoken` or a provider count-tokens endpoint. Every figure is either provider-reported
 `RequestUsage` or the harness heuristic of 4 characters per token. In Pydantic AI, `input_tokens`
-already includes cache reads and writes; no CLAI sum adds them again.
+already includes cache reads and writes; no Pax sum adds them again.
 
 | Surface | Source | What the number means |
 | --- | --- | --- |
@@ -50,7 +50,7 @@ When the latest instructions differ from those the usage anchor was measured wit
 `estimate_context_tokens` added the whole new set on top of the anchor, which already contains the
 old set. The next request sends one set, not both. The estimate now swaps the old set for the new one.
 
-CLAI's instructions change whenever the opt-in `logfire_mcp` plugin's "current UTC time is within
+Pax's instructions change whenever the opt-in `logfire_mcp` plugin's "current UTC time is within
 the hour" line ticks over. In the replay, 10 of 25 sessions crossed an hour. Each crossing overcounted by
 12,788 tokens, the full instructions. That pushed every trigger above (compaction, tool result
 clearing, and the model-facing near-limit warning `Coder` bound until #9969) and the gauge earlier,
@@ -117,7 +117,7 @@ which leaves files out, as `FilePart` and user-prompt images already were.
    browser's `tok` count every request's whole input again, so they grow roughly quadratically.
    They are correct as usage, but should not be compared with the window.
 10. **Imported histories.** A resumed Claude Code or Codex session anchors on usage that included
-    that agent's own system prompt and tools, so the first CLAI request overestimates until the
+    that agent's own system prompt and tools, so the first Pax request overestimates until the
     response re-anchors.
 11. **Request limit.** The default is 10,000 requests per prompt. The summary call and forwarded
     subagent requests count against it by design. This is not an early-limit cause unless

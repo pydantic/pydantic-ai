@@ -222,7 +222,7 @@ async def test_shell_and_arguments_are_ignored_but_edits_and_writes_print_as_in_
         FileWrittenEvent(path='b.py', root_dir='/tmp', content_hash='h', tool_call_id='write_file-2')
     )
     await renderer.finish()
-    assert output.getvalue() == '● shell 1\n\n● edit_file a.py\n\n-old\n+new\n\n● write_file b.py\n\n\n'
+    assert output.getvalue() == '● shell 1\n\n● edit_file a.py\n\n-old\n+new\n\n● write_file b.py\n\n'
 
 
 async def test_a_diff_ends_a_group_opened_after_its_call() -> None:
@@ -319,6 +319,7 @@ async def test_detailed_remains_the_default() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
     await feed(renderer, 'shell shell')
+    await renderer.finish()
     assert output.getvalue() == '● shell\n\n● shell\n\n'
 
 

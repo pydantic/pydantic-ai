@@ -135,6 +135,16 @@ if __name__ == '__main__':
 
 The `finally` terminates the sandbox even when setup or the run fails. To keep it, store `backend.ref` instead.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[ModalSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another.
+
+The default image has [the display's programs](../computer_use/#what-the-display-needs) but no web browser. A custom `image` gets them installed on first use if it can; add a browser to it if the agent needs one.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Terminate a sandbox with the ref you stored:
@@ -236,7 +246,8 @@ agent = Agent('anthropic:claude-opus-5-5', deps_type=User, capabilities=[UsersMo
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own. Created on a new sandbox. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. |
-| `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
+| `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool (or, with `desktop`, the `computer` tool). Default: `True`. |
 | `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 

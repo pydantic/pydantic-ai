@@ -137,7 +137,7 @@ async def test_questions_are_answered(answers: list[AskUserAnswer] | None, expec
         assert await view.wait(timeout=10) == 'asking'
         [asked] = view.questions.values()
         assert [option.label for option in asked.questions[0].options] == ['Red', 'Blue']
-        with pytest.raises(LookupError, match='CLAI answered 404'):
+        with pytest.raises(LookupError, match='Pax answered 404'):
             await client.answer('unknown', None)
         await view.answer(asked.id, answers)
         assert await view.wait(timeout=10) == 'idle'
@@ -190,7 +190,7 @@ async def test_dialogs_are_answered(tmp_path: Path) -> None:
             assert await view.wait(timeout=10) == 'asking'
             [dialog] = view.dialogs.values()
             assert dialog.title == 'New workspace kind'
-            with pytest.raises(LookupError, match='CLAI answered 404'):
+            with pytest.raises(LookupError, match='Pax answered 404'):
                 await client.answer_dialog('unknown', 'x')
             await view.answer_dialog(dialog.id, 'docs')
         assert TypeAdapter(MenuEdited).validate_json(results[0].content).messages == ['Added workspace kind docs.']
@@ -217,7 +217,7 @@ async def test_refusals(tmp_path: Path) -> None:
         with pytest.raises(LookupError):
             await client.transcript('00000000-0000-0000-0000-000000000000')
         stranger = WebClient(url=client.url, token='wrong')
-        with pytest.raises(PermissionError, match='CLAI answered 403'):
+        with pytest.raises(PermissionError, match='Pax answered 403'):
             await stranger.state()
         await stranger.__aexit__(None, None, None)
     with pytest.raises(ValueError, match='http://HOST:PORT/'):
@@ -227,9 +227,9 @@ async def test_refusals(tmp_path: Path) -> None:
 def test_errors_map_as_the_app_raised_them() -> None:
     request = httpx.Request('GET', 'http://127.0.0.1/')
     conflict = _error(httpx.Response(409, json={'detail': 'Something is running.'}, request=request))
-    assert isinstance(conflict, RuntimeError) and str(conflict) == 'CLAI answered 409: Something is running.'
+    assert isinstance(conflict, RuntimeError) and str(conflict) == 'Pax answered 409: Something is running.'
     invalid = _error(httpx.Response(422, text='not json', request=request))
-    assert isinstance(invalid, ValueError) and str(invalid) == 'CLAI answered 422: not json'
+    assert isinstance(invalid, ValueError) and str(invalid) == 'Pax answered 422: not json'
 
 
 async def test_a_failed_send_takes_back_only_its_own_input(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,8 +1,9 @@
-"""One live CLAI session: its conversation, plugins, commands, input, and the turn it runs."""
+"""One live Pax session: its conversation, plugins, commands, input, and the turn it runs."""
 
 import asyncio
 import math
 import sys
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
@@ -35,7 +36,12 @@ from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEven
 from pydantic_ai_pax.cli.command_context import CommandContext, CommandProvider
 from pydantic_ai_pax.cli.effort import effort_command, effort_completions
 from pydantic_ai_pax.cli.self_update import Relaunch, Updates, WebHandoff
-from pydantic_ai_pax.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
+from pydantic_ai_pax.cli.shell_passthrough import (
+    HELP as SHELL_HELP,
+    run_shell_command,
+    run_workspace_command,
+    shell_command,
+)
 from pydantic_ai_pax.commands import (
     Command,
     Commands,
@@ -86,6 +92,7 @@ from pydantic_ai_pax.runtime.session import (
     StockAgent,
     agent_capabilities,
     current_session_id,
+    shell_line_workspace,
 )
 from pydantic_ai_pax.runtime.session_settings import SessionSettings
 from pydantic_ai_pax.runtime.sessions import Sessions
@@ -114,6 +121,7 @@ from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.screen import Screen
 from pydantic_ai_pax.ui.prompt.terminal import Terminal
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.history import render_history
 from pydantic_ai_pax.ui.rendering.rendering import StreamRenderer, print_prompt
 from pydantic_ai_pax.ui.rendering.spinners import Spinner, Spinners
@@ -137,8 +145,8 @@ async def _default_model(
 
 
 _RESTART_ELSEWHERE = (
-    '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
-    'or with no terminal, in the session CLAI started with.'
+    '/reload and /update restart Pax. Enter them in the session the terminal shows, '
+    'or with no terminal, in the session Pax started with.'
 )
 
 
@@ -226,10 +234,10 @@ def create_shell(
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
-    what the session shares with the others in this CLAI, its built-in plugins included; without one,
+    what the session shares with the others in this Pax, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
-    `settings_for` gives the settings CLAI starts with beside a project file, which `/project` applies from.
+    `settings_for` gives the settings Pax starts with beside a project file, which `/project` applies from.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -479,19 +487,19 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
+    commands.register(Command(name='exit', description='Quit Pax', handler=lambda _: 'Goodbye.'))
     updates = Updates(channel=lambda: context.settings.update_channel)
 
     commands.register(
         Command(
             name='update',
-            description='Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
+            description='Show whether a newer Pax is out on updates.channel (stable or main); /update now installs it',
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
                 context,
                 updates,
-                # Whichever session's page asks, the install runs in the session CLAI restarts from.
+                # Whichever session's page asks, the install runs in the session Pax restarts from.
                 run=lambda text: shell.restarter().send_input(text),
                 refusal=lambda: shell.restarter().restart_refusal(),
                 # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
@@ -592,7 +600,7 @@ def create_shell(
         updates=updates,
     )
     commands.register(
-        Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
+        Command(name='reload', description='Reload Pax code without restarting', handler=shell.request_reload)
     )
     commands.register(
         Command(
@@ -730,14 +738,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     spinners: Spinners
     updates: Updates
     terminal: 'Terminal[DepsT, OutputT] | None' = None
-    """The terminal showing this session; `None` while it shows another, or in a CLAI without one."""
+    """The terminal showing this session; `None` while it shows another, or in a Pax without one."""
     images: ImageInput = field(default_factory=ImageInput)
     """Images pasted for the next prompt: the terminal's while it shows this session."""
     submitted: list[str] | None = None
     """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
     served: bool = False
-    """Whether it runs with no terminal of its own, as one the browser opened: it restarts CLAI only while shown."""
+    """Whether it runs with no terminal of its own, as one the browser opened: it restarts Pax only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -872,7 +880,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.live_session.changed()
 
     def handoff(self) -> WebHandoff | None:
-        """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
+        """The web UI to serve again once `/update` restarts Pax as this session; `None` when it does not, or none runs."""
         return self.updates.web
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
@@ -1021,7 +1029,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if not (self.speculation.enabled or self.context.settings.code_mode):
             raise ValueError('Code mode is off, so there is no Monty sandbox. Turn it on with /set run.code_mode true.')
         if self.session.repl_states is None:
-            raise ValueError('This CLAI saves no sessions, so no Monty state outlives a run.')
+            raise ValueError('This Pax saves no sessions, so no Monty state outlives a run.')
         self.session.plugins = self.run_plugins()
         cell = await self.session.run_in_monty(code)
         if cell.failed:
@@ -1033,12 +1041,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
         A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
         editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
-        used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+        used when Pax's output is not a terminal, reads only its own input, so it takes none.
 
         `images` are attached as pasted ones are, by markers in the text that the turn resolves.
         """
         if self.prompt is not None and self.editor is None:
-            raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
+            raise RuntimeError('This Pax reads its prompts line by line, as its output is not a terminal.')
         text = expand_bare_command(text.strip())
         if images:
             if input_kind(text) != 'prompt':
@@ -1066,7 +1074,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             raise ValueError('Usage: /reload')
         self._refuse_restart_while_others_run()
         self.reload_requested = True
-        return 'Reloading CLAI2...'
+        return 'Reloading Pax...'
 
     async def update(self, args: list[str]) -> str:
         """`/update` opens the update menu and `/update now` installs, refused while another session runs a turn.
@@ -1091,24 +1099,24 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             raise ValueError(refusal)
 
     def restarts_clai(self) -> bool:
-        """Whether CLAI restarts from this session: the one the terminal shows, or with no terminal, the one it started with."""
+        """Whether Pax restarts from this session: the one the terminal shows, or with no terminal, the one it started with."""
         return self.terminal is not None or (
             not self.served and self.process.live.focused in (None, self.live_session.id)
         )
 
     def restarter(self) -> Served:
-        """The live session CLAI restarts from, as the web UI's About installs in it; this one when none is."""
+        """The live session Pax restarts from, as the web UI's About installs in it; this one when none is."""
         return self.process.live.restarter() or self
 
     def restart_refusal(self) -> str | None:
-        """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
+        """Why `/reload` and `/update` cannot restart Pax from this session now; `None` when they can."""
         if not self.restarts_clai():
             return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:
-            # The restart resumes this conversation where CLAI started, which works only in its own folder.
+            # The restart resumes this conversation where Pax started, which works only in its own folder.
             return (
-                f'CLAI restarts in {home.session.workspace}, where it started, and this session works in '
+                f'Pax restarts in {home.session.workspace}, where it started, and this session works in '
                 f'{self.session.workspace}; restart it from a session there.'
             )
         running = sum(
@@ -1135,9 +1143,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 async with self.process.tasks.opened(view=self.tasks) as owner:
                     if isinstance(self.agent, StockAgent):
                         self.session.delegations = owner
-                    # Reports a task left while no CLAI ran are known once the owner opened.
+                    # Reports a task left while no Pax ran are known once the owner opened.
                     if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
+                    # The first window lookup imports the model's provider SDK, a fifth of a second for OpenAI's.
+                    # Done here on a worker thread, keys typed at the new prompt echo meanwhile.
+                    if (profiled := self._window_model()) is not None:
+                        await to_thread.run_sync(infer_model_profile, profiled)
                     reason = await self._read_loop()
                     return reason
         finally:
@@ -1312,20 +1324,29 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if self.status.context_tokens is not None and model == self._measured_model:
             # A request left the window unresolved, as for a fallback model: the selected one's would be a guess.
             self.status.model_window = None
-        elif self.session.model is None and isinstance(agent_model, Model):
-            self.status.model_window = agent_model.context_window
-        else:
-            profiled = base_model(self.loader.settings_model(model))
+        elif (profiled := self._window_model()) is not None:
             self.status.model_window = infer_model_profile(profiled).get('context_window')
+        else:
+            assert isinstance(agent_model, Model), "only the agent's own `Model` gives no model to profile"
+            self.status.model_window = agent_model.context_window
         if self.status.context_tokens is None:
             self.status.context_tokens = _last_context_tokens(self.session.messages)
+
+    def _window_model(self) -> str | None:
+        """The model whose profile gives the selected model's window, a plugin model's `settings_from` one.
+
+        `None` when the agent's own `Model` runs the prompt and knows its window.
+        """
+        if self.session.model is None and isinstance(self.agent.model, Model):
+            return None
+        return base_model(self.loader.settings_model(self.session.model or _model_label(self.agent)))
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
         self.status.status_segments = tuple(self.loader.status_segments())
 
     def _live_segment(self) -> str:
-        """How many sessions are live in this CLAI, shown in the terminal once the browser opened others."""
+        """How many sessions are live in this Pax, shown in the terminal once the browser opened others."""
         live = len(self.process.live.listing())
         return f'{live} live' if self.terminal is not None and live > 1 else ''
 
@@ -1400,16 +1421,30 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
-                context = await run_shell_command(
-                    command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
-                )
-                await self.session.commit_messages(
-                    [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
-                )
+                context = await self._shell_line(command)
+                if context is not None:
+                    await self.session.commit_messages(
+                        [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
+                    )
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
         return await self._prompt(text)
+
+    async def _shell_line(self, command: str) -> str | None:
+        """Run a `!` line where the conversation's runs work, its sandbox or this machine; return what to save."""
+        # The capabilities a run's workspace is chosen from: the agent's own, then the next run's.
+        configured = [*(agent_capabilities(self.session.agent) or ()), *self.run_plugins()]
+        try:
+            place = shell_line_workspace(configured, self.session.messages)
+        except Exception as exc:  # noqa: BLE001 -- a sandbox that cannot be opened, as when deleted, must not end the shell.
+            self.console.print(error_message(exc), style=theme.color(theme.ERROR), markup=False)
+            return None
+        if place is not None:
+            return await run_workspace_command(command, place=place, console=self.console, interrupts=self.interrupts)
+        return await run_shell_command(
+            command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
+        )
 
     async def _prompt(self, text: str) -> bool:
         if self.session.model is None and self.agent.model is None:
@@ -1463,7 +1498,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             ended.append(await _execute_command(self.commands, text, console=self.console))
 
     def _without_terminal(self, text: str) -> AbstractContextManager[None]:
-        """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
+        """Fail the terminal menus and prompts command `text` opens while Pax has no terminal for them.
 
         That is when no terminal shows this session and stdin is not one either, as under `pax --web`
         started from a script: a menu would read EOF and close as cancelled. What can ask through a
@@ -1511,6 +1546,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             ended = await self.run_turn(start, images=images, automated=automated)
 
         previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
+        started = time.monotonic()
         completed = await self.interrupts.run(run_turn())
         if not completed:
             for record in self.tasks.records():
@@ -1523,7 +1559,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.sessions.namer.submit(self.session.summary.id, client=self.sessions.naming)
         if self.editor is not None:
             await self.editor.output.drain()
-        _report_interrupt(completed, self.console)
+        if not completed:
+            _report_muted('Interrupted. Type what to do instead.', self.console)
+        elif ended is not None and ended.outcome == 'completed':
+            _report_muted(f'Done in {format_duration(time.monotonic() - started)}', self.console)
         if not completed and (cancelled := self.forks.cancel_running()):
             self.console.print(
                 f'Cancelled {cancelled} running fork(s) with the turn.',
@@ -1570,12 +1609,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         except ValidationError as exc:
             self.console.print(
                 f'Invalid saved model settings for {model}. Fix or reset them with /model settings {model}.',
-                style=theme.ERROR,
+                style=theme.color(theme.ERROR),
                 markup=False,
             )
             for error in exc.errors(include_input=False, include_url=False):
                 location = '.'.join(str(part) for part in error['loc'])
-                self.console.print(f'{location}: {error["msg"]}', style=theme.ERROR, markup=False)
+                self.console.print(f'{location}: {error["msg"]}', style=theme.color(theme.ERROR), markup=False)
             self.console.print()
             return TurnEnd(text=start.text, outcome='failed', error=exc)
         if headless:
@@ -1632,10 +1671,9 @@ def _last_context_tokens(messages: Sequence[ModelMessage]) -> int | None:
     return None if response is None else context_tokens(response) or None
 
 
-def _report_interrupt(completed: bool, console: Console) -> None:
-    if not completed:
-        console.print('Turn cancelled. Use /exit to quit.', style=theme.color(theme.MUTED), highlight=False)
-        console.print()
+def _report_muted(text: str, console: Console) -> None:
+    console.print(text, style=theme.color(theme.MUTED), highlight=False)
+    console.print()
 
 
 async def _execute_command(commands: Commands, text: str, *, console: Console) -> CommandEnd:

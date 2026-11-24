@@ -326,6 +326,7 @@ def test_profile() -> None:
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=False,
         supports_thinking=True,
         # Grok Voice answers the user while a tool call is outstanding (verified live).
         async_tool_call_mode='always',

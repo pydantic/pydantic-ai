@@ -1,4 +1,4 @@
-name: CLAI 2 web
+name: Pax web
 
 on:
   workflow_call:
@@ -52,7 +52,7 @@ jobs:
             exit 0
           fi
           if grep -qv "^$STATIC/" <<< "$changed"; then
-            echo "::error::Do not commit the built web UI in $STATIC: after this merges, the 'CLAI 2 web bundle' workflow rebuilds it on main. Restore it with: git checkout origin/main -- $STATIC"
+            echo "::error::Do not commit the built web UI in $STATIC: after this merges, the 'Pax web bundle' workflow rebuilds it on main. Restore it with: git checkout origin/main -- $STATIC"
             exit 1
           fi
           if ! git diff --quiet -- "$STATIC" || [[ -n "$(git status --porcelain --untracked-files=all -- "$STATIC")" ]]; then
@@ -89,7 +89,7 @@ jobs:
             "$RUNNER_TEMP/clai2-web-package/bin/python" -I src/pydantic_ai_pax/scripts/check_web_assets.py src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
           done
 
-      - name: Install CLAI 2 and test dependencies
+      - name: Install Pax and test dependencies
         run: uv sync --locked --package pydantic-ai-pax --group dev --group clai2-browser
 
       - name: Install Chromium

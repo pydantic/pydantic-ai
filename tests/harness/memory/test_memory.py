@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     AgentSpec,
     DeferredToolRequests,
     DeferredToolResults,
@@ -290,6 +291,48 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
             else:
                 contexts.extend(text for text in texts if text.startswith('<memory>\n'))
     return contexts
+
+
+@dataclass
+class _CompactAtStepTwo(AbstractCapability[None]):
+    """Replaces the history with an OpenAI compaction and the current request on the run's second step."""
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 2:
+            compaction = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'x'})
+            ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
+            request_context.messages = list(ctx.messages)
+        return request_context
+
+
+async def _rerun_unreadable_after_compaction(
+    history: list[ModelMessage], workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> AgentRunResult[str]:
+    """Run on `history` again with a `.memory` store that can't be read, compacting after one tool call."""
+
+    async def unreadable(self: FileMemoryStore, path: str, *, max_chars: int) -> MemoryFile | None:
+        raise OSError('the store is unreachable')
+
+    monkeypatch.setattr(FileMemoryStore, 'read', unreadable)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[_CompactAtStepTwo(), Memory(store=FileMemoryStore('.memory'))],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    return await agent.run('next', message_history=history, workspace=workspace)
 
 
 def _snapshot_parts(messages: list[ModelMessage]) -> list[MemorySnapshotPart]:
@@ -1693,38 +1736,7 @@ class TestInjection:
             'go', workspace=workspace
         )
 
-        async def unreadable(self: FileMemoryStore, path: str, *, max_chars: int) -> MemoryFile | None:
-            raise OSError('the store is unreachable')
-
-        monkeypatch.setattr(FileMemoryStore, 'read', unreadable)
-
-        @dataclass
-        class CompactMidRun(AbstractCapability[None]):
-            async def before_model_request(
-                self, ctx: RunContext[None], request_context: ModelRequestContext
-            ) -> ModelRequestContext:
-                if ctx.run_step == 2:
-                    compaction = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'x'})
-                    ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
-                    request_context.messages = list(ctx.messages)
-                return request_context
-
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
-                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            FunctionModel(model),
-            deps_type=type(None),
-            capabilities=[CompactMidRun(), Memory(store=FileMemoryStore('.memory'))],
-        )
-
-        @agent.tool_plain
-        def lookup() -> str:
-            return 'found'
-
-        result = await agent.run('next', message_history=first.all_messages(), workspace=workspace)
+        result = await _rerun_unreadable_after_compaction(first.all_messages(), workspace, monkeypatch)
 
         [put_back] = _snapshot_parts(post_compaction_window(result.all_messages()))
         assert isinstance(put_back.source, WorkspaceSource)
@@ -1755,38 +1767,7 @@ class TestInjection:
             ModelResponse(parts=[TextPart('ok')]),
         ]
 
-        async def unreadable(self: FileMemoryStore, path: str, *, max_chars: int) -> MemoryFile | None:
-            raise OSError('the store is unreachable')
-
-        monkeypatch.setattr(FileMemoryStore, 'read', unreadable)
-
-        @dataclass
-        class CompactMidRun(AbstractCapability[None]):
-            async def before_model_request(
-                self, ctx: RunContext[None], request_context: ModelRequestContext
-            ) -> ModelRequestContext:
-                if ctx.run_step == 2:
-                    compaction = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'x'})
-                    ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
-                    request_context.messages = list(ctx.messages)
-                return request_context
-
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
-                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            FunctionModel(model),
-            deps_type=type(None),
-            capabilities=[CompactMidRun(), Memory(store=FileMemoryStore('.memory'))],
-        )
-
-        @agent.tool_plain
-        def lookup() -> str:
-            return 'found'
-
-        result = await agent.run('next', message_history=history, workspace=workspace)
+        result = await _rerun_unreadable_after_compaction(history, workspace, monkeypatch)
 
         [put_back] = _snapshot_parts(post_compaction_window(result.all_messages()))
         assert put_back.content == '- a legacy fact'

@@ -77,7 +77,9 @@ class Sessions(Generic[DepsT, OutputT]):
         """The conversation ID launch options picked, carried across `/reload`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
-        self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
+        self.naming = NamingClient(
+            generate=self.generate, enabled=lambda: self.context.settings.session_namer, may_see=self.naming_may_see
+        )
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
         self.join()
@@ -110,7 +112,7 @@ class Sessions(Generic[DepsT, OutputT]):
         With `relocate`, the session first moves into the directory it was saved in, unless the
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
-        One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
+        One another live session of this Pax holds raises `ValueError`: a conversation is live in one session.
         In the terminal, that session is shown instead, and this one stays live as it is.
         """
         if (shown := await self.show_live(conversation_id)) is not None:
@@ -165,6 +167,22 @@ class Sessions(Generic[DepsT, OutputT]):
             return None
         return await generate_name(model=model, prompt=prompt)
 
+    def naming_may_see(self, summary: ConversationSummary) -> bool:
+        """Whether a naming request may carry `summary`'s excerpts or title.
+
+        When naming is on only by default, it uses only sessions held with the current model, so a model is never
+        sent another conversation's text it was not already sent. Saving `sessions.naming true` or choosing a
+        `sessions.naming_model` opts into naming every session, as it did while naming was opt-in.
+        """
+        settings = self.context.settings
+        if 'session_namer' in settings.model_fields_set or settings.session_namer_model is not None:
+            return True
+        if summary.model != self.session.model:
+            return False
+        # No recorded model means Pax's default, unless the session came from another agent: an import, or a
+        # fork of one, which leads its tags with the source and whose model is unknown.
+        return summary.model is not None or not (summary.tags and import_source(summary.tags[0]))
+
     async def usage(self, *, console: Console) -> str:
         """Report auxiliary tokens separately from retained foreground-history cost."""
         report = usage_command(self.session.messages, console=console)
@@ -214,7 +232,7 @@ class Sessions(Generic[DepsT, OutputT]):
         return self.launched == self.session.conversation_id
 
     async def import_session(self, source: ImportSource, native_id: str) -> str:
-        """Copy a Claude Code or Codex session into the store by its own ID, returning its CLAI ID.
+        """Copy a Claude Code or Codex session into the store by its own ID, returning its Pax ID.
 
         As with a saved session's ID, one from another directory is refused, before anything is saved.
         """
@@ -283,7 +301,7 @@ class Sessions(Generic[DepsT, OutputT]):
         """Hide a saved conversation from listings, deleting nothing; not the current one, nor one running elsewhere."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be archived. Switch to another one first.')
-        # Reserved throughout, so no other live session of this CLAI opens it meanwhile; one holding it refuses.
+        # Reserved throughout, so no other live session of this Pax opens it meanwhile; one holding it refuses.
         with self.session.claim(conversation_id):
             source = (await self.store.get(conversation_id=conversation_id)).summary
             try:
@@ -313,7 +331,7 @@ class Sessions(Generic[DepsT, OutputT]):
         return await self.browse(source, unarchive=unarchive)
 
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
-        """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
+        """Pick from Pax's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
