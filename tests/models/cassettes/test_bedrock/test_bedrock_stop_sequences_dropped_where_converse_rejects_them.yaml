@@ -1,0 +1,56 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-20b-1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 7717a548-f896-4141-8b80-4c5d282d2d0c
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "165"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Count from 1 to 10, separated by spaces. Reply with just the numbers.
+        system: []
+        inferenceConfig: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "423"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1119
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: |-
+                    User asks: "Count from 1 to 10, separated by spaces. Reply with just the numbers."
+
+                    So output: "1 2 3 4 5 6 7 8 9 10".
+            - text: 1 2 3 4 5 6 7 8 9 10
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 85
+          outputTokens: 75
+          serverToolUsage: {}
+          totalTokens: 160
+  recorded_at: 2026-11-17T19:11:50.727542+00:00

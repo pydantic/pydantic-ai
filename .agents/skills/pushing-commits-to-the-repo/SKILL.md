@@ -36,19 +36,23 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green and a clean douwebot approval. An obviously trivial S PR needs CI green only. |
-| M, L, XL | CI green and a clean douwebot approval. |
+| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
+| M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
 Until a size label exists, do not claim the trivial-S exception.
-Clean means douwebot `APPROVE` on the current head, with no douwebot comments on that head.
-Address every douwebot comment, including non-blocking comments.
+Clean means douwebot's latest non-dismissed completed verdict on the current head is `APPROVE`.
+It also means no douwebot findings on that head except settled optional findings.
+A settled optional finding is an inline comment on that approval that starts with `Optional:` and whose review thread is resolved.
+Blocking findings and review-body findings block, resolved or not. An unresolved optional finding blocks.
+Address every douwebot comment, including `Optional:` comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
-Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> -->` receipt.
+Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode|opencode-zai> -->` receipt.
+Legacy receipts omit `engine` or carry `engine=opencode-deepinfra`.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
 Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
@@ -56,6 +60,15 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
+On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
+Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
+If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
+
+`PR Review Checks` passed means its commit status reads `success` on the current head.
+[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
+A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
+Never apply `pr-review-checks:accepted` yourself.
+`PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
 
 ### Who merges
 
@@ -86,6 +99,21 @@ Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh
 After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`.
 [Who merges](#who-merges) says whether you re-enqueue it.
 
+### Flake claims
+
+Claim a flake through its GitHub issue before you fix it, so that two agents never fix the same flake.
+
+1. Search the open issues for the failing test: `gh issue list -R pydantic/pydantic-ai --state open --search '<test name> in:title'`. Also search the closed `flake` issues: `gh issue list -R pydantic/pydantic-ai --state closed --label flake --search '<test name> in:title'`. If a closed issue's fix PR has merged to `main`, merge `main` into your branch instead of fixing the flake again.
+2. If no open issue names the test, file one. Title it `Flaky <test node id>`, label it `flake`, and link the failing CI run in the body.
+3. Cite the issue as evidence that the failure is a known flake.
+4. A claim is a comment on the issue that says you are fixing the flake and names your branch. Agents often share one GitHub account, so a claim is yours only when it names your branch.
+5. A claim expires one hour after it is posted, unless an open fix PR closes the issue. List the PRs that close the issue with `gh issue view <issue> --json closedByPullRequestsReferences`, then read each one's state with `gh pr view <number> --json state`. If an unexpired claim names another branch, do not fix the flake.
+6. A plain assignment with no claim comment is a maintainer's own claim. It does not expire. Leave that flake to them.
+7. To claim an unclaimed issue, or one whose claim expired, post your claim comment. Also assign yourself when you can, as a visible marker. Claim the issue before you write the fix. Open the fix PR within one hour of the claim.
+8. The fix PR closes the issue: put `Closes #<issue>` in its body.
+
+A flake that this PR's diff introduced needs no issue. Fix it in this PR.
+
 ### Flake fixes
 
 A flake fix removes the source of nondeterminism that makes a test fail intermittently, so it passes deterministically.
@@ -93,6 +121,7 @@ The trivial-S exception does not apply: require a clean douwebot approval.
 All of these must hold:
 
 - The PR body links a CI run where the test failed.
+- Unless this PR's own diff introduced the flake, the PR body closes the flake's issue, and you claimed that issue before you wrote the fix, as [Flake claims](#flake-claims) says.
 - The PR body names the root cause and a reproduction that fails without the fix and passes with it.
   Force the failure, for example with a `pytest-randomly` seed, a forced ordering or a frozen clock.
   Or run the test repeatedly, and report its failure count without the fix and zero failures in at least as many runs with it.
@@ -101,7 +130,7 @@ All of these must hold:
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
-- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
 - The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
 
 If any condition fails, hand the PR to a maintainer.
@@ -164,25 +193,52 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+Wrap every closing keyword inside a copied entry in backticks (`close`, `fix` or `resolve` in any form, followed by an issue reference). A bare closing keyword in the body closes that issue when the PR merges.
 The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
 
-For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the same subagent.
+For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the final metadata check's session.
 Reconcile labels whenever the title or body changes.
 
-Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to the subagent.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to that session.
 The checked-in catalog supplies clones and worktrees without label-read requests.
 Run the helper with `--refresh` after creating, renaming, or updating repository labels.
 Commit refreshed catalog changes.
 The helper uses at most two requests and verifies completeness before replacing the catalog.
 Never fetch labels individually or pass raw label API responses.
 
-Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+A bug fix takes `bug:unreleased` in place of `bug` when no release shipped the defect. Remove `bug` if the PR carries it.
+Release notes leave `bug:unreleased` PRs out, because no user saw the bug.
+To check, find the commit that introduced the defect and the PR that merged it.
+A `v1` backport PR names that PR in its body.
+`gh pr list -R pydantic/pydantic-ai --base v1 --state merged --search '<number> in:body' --json mergeCommit` prints each backport's commit.
+Fetch the tags of `pydantic/pydantic-ai`, then run `git tag --contains <sha> --list 'v[0-9]*'` on the introducing commit and each backport commit.
+Ignore pre-release tags such as `v2.0.0b7`.
+When every output is then empty, no release shipped the defect.
+When you cannot identify the introducing commit, use `bug`.
+A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug` or `bug:unreleased`.
+`.github/workflows/package-label.yml` fails such a PR when it lacks `chore` or carries `bug`.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Choose the `area:` and `provider:` topic labels this way:
+
+- Apply one or two `area:` labels when the change touches a subsystem in the catalog. The repo's own agentic workflows and bots take `area:agentic-workflows`; other repository infrastructure (CI, tests, routine dependency updates, contributor docs and skills) takes none.
+  A change to a package's extras or version constraints takes `area:packaging`.
+  Choose the subsystem whose code changes, not the API a reporter called.
+  A Harness capability built on a core concept takes that concept's area.
+  An engine label (`area:temporal`, `area:dbos`, `area:prefect`, `area:absurd` or `area:pgtask`) also takes `area:durable-exec`, which does not count toward the two.
+  A change labelled `pkg:evals`, `pkg:graph`, `pkg:clai2` or `pkg:clai` takes no `area:` label: its package label is its segment. The exception is `area:clai2-web-ui`, for a `pkg:clai2` change to its web UI.
+  `clai web` and `Agent.to_web()` live in `pydantic_ai_slim/pydantic_ai/` (`_cli/web.py`, `ui/_web/`), so a change to them is `pkg:core` and takes `area:web-chat-ui`.
+- Apply zero to two `provider:` labels, only when the behavior depends on a vendor endpoint. Leave them off when the change reproduces with `TestModel`.
+- Label a provider adapter's request or response mapping `area:models`. Label any other adapter change with the area of the feature it implements, such as `area:thinking` or `area:streaming`.
+- For an OpenAI-compatible vendor, apply `provider:<vendor>` when the catalog has one.
+  Add `provider:openai-compatible` when the change lands in the shared OpenAI classes, and apply it alone for a vendor without its own label or a custom `base_url`.
+  Never apply `provider:openai` to a compatible vendor.
+
 Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
 Remove topic labels only when the final scope no longer supports those labels.
-Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change or approves a cluster name under [PR clusters](#pr-clusters).
 Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
 
 Apply exactly one package label: `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph` or `pkg:clai`.
@@ -193,13 +249,46 @@ Labelling needs triage permission on the repo (Pydantic team members and their a
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
+#### PR clusters
+
+Your PR is in a cluster when it shares a theme with at least two other open PRs.
+Merged PRs do not count. A PR in a cluster keeps its label and prefix after the other PRs merge.
+Never delete a `cluster:` label, even after its work stream ends. Deleting it strips the label from every merged PR and erases the record.
+Bug fixes count when they share the theme, such as caching bugs or privilege-escalation bugs.
+Unrelated bug fixes do not form a cluster.
+
+Label every PR in a cluster `cluster:<name>`, and start its title with `[<name>] `.
+Name the cluster with one lowercase word, or two lowercase words joined by a hyphen: `cache`, `voice-authority`.
+Never apply the label without the prefix, or the prefix without the label.
+If creating or applying the label fails, apply neither. Tell the person driving you the cluster name and the error.
+After the prefix, the title follows the root `AGENTS.md` convention.
+
+A `cluster:` label marks a time-bound work stream. It adds to the PR's topic labels and never replaces them.
+It is not an `area:` label. An `area:` label such as `area:ui-adapters` marks a permanent subsystem.
+
+Detect clusters yourself. The people driving agents rarely name them, and a subagent does not know your sibling PRs.
+You usually notice a cluster because you started after another agent's work on the same theme, or because you coordinate with sibling PRs.
+When your PR is in a cluster:
+
+1. If another PR in the cluster carries a `cluster:` label, apply that label and its prefix to your PR, and stop.
+2. Otherwise, propose a cluster name to the person driving you. Do not hold the PR for the answer.
+3. Once that person approves the name, create the label with a one-line description of the theme.
+4. Apply the label and the prefix to your PR.
+5. Tell the agents driving the other PRs in the cluster to apply both to their PRs.
+   If you cannot reach one, tell the person driving you which PRs still lack them.
+
+David (`dsfaccini`) asked for this convention. The prefix makes a cluster easy to spot in PR lists.
+Release notes list PR titles, and a prefix catches the eye more than title text does.
+Release-note readers then notice what the team is focusing on.
+Raise objections to the convention with David instead of dropping the prefix.
+
 ## Prose-only documentation
 
 Prose-only documentation changes only natural-language text, including docstring prose and descriptive instruction wording.
 Substantive changes to instruction or review policy do not qualify.
 Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
 
-Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata-subagent review.
+Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata check.
 Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
 Apply the merge bar, including its trivial-S exception, to required hosted reviews.
 
@@ -244,7 +333,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
-  Use the current harness's native no-history primitive and native read and search tools.
+  Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify: it inherits the candidate's working directory and instructions instead of the policy base's.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
@@ -270,7 +359,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   review material.
 - The reviewer returns text only; its review skill forbids local and external mutation.
 
-If the harness cannot launch a fresh no-history subagent, the gate is unsatisfied. Do not pass it
+If the harness cannot launch a fresh no-history session, the gate is unsatisfied. Do not pass it
 silently. Tell the author the gate cannot be met in this harness and offer the one substitute there
 is: clear the session and review the diff from a fresh read. Say plainly what it costs — you are
 still the agent that wrote the diff, now without the memory of writing it, and a cleared session
@@ -327,7 +416,7 @@ session reads the budget off the log; without it the cap silently resets.
    instructions: whether the reviewer may decompose the diff turns on it, so skipping it would let
    your launch choice decide the review's scope, which the contract forbids you.
 3. Select the review scope above. Prepare the review bundle under the context contract.
-4. Launch the fresh subagent under the context contract above. Require actionable findings or
+4. Launch the fresh reviewer session under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
@@ -335,7 +424,7 @@ session reads the budget off the log; without it the cap silently resets.
    evidence, and a recommendation; record the resulting decision. A remediation changes the
    candidate content. Reapply this gate, including its scope and exemptions, only while the budget remains.
    After a maintainer decision
-   changes the acceptance criteria, dispatch a different fresh subagent when the budget remains.
+   changes the acceptance criteria, dispatch a different fresh reviewer session when the budget remains.
    An evidence-backed dismissal on unchanged reviewed content does not require another pass.
    Escalate persistent disagreement.
 
@@ -382,7 +471,7 @@ To claim an exemption the table does not name, write down the rubric rung the de
 why it cannot, in `pr-decisions.md`.
 
 Never use the implementing agent as the reviewer. The one exception is the substitute the contract
-names for a harness that cannot launch a fresh no-history subagent at all — the author accepts it,
+names for a harness that cannot launch a fresh no-history session at all — the author accepts it,
 and it leaves this gate unsatisfied. Never treat this gate as test execution.
 
 Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
@@ -411,10 +500,25 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-   When a flake fails your CI, fix it in this PR if this PR caused it, or if this PR is labeled `size: S` or `size: M` and the fix stays within the root `AGENTS.md` scope rule.
-   Otherwise, ask the person driving you whether to start a separate worktree and task to fix it.
+   When a flake fails your CI, fix it in this PR if this PR caused it.
+   For any other flake, find or file its issue as [Flake claims](#flake-claims) says.
+   Fix that flake in this PR only if you hold its claim, this PR is labeled `size: S` or `size: M`, and the fix stays within the root `AGENTS.md` scope rule.
+   Otherwise, if the issue's claim belongs to another branch or a maintainer, cite the issue as the flake's evidence and leave the fix to them.
+   In every other case, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
+   - **`PR Review Checks`:** required for every PR. It starts on every push without a label, so watch it while CI runs.
+     Its verdict is a commit status on the PR head, not a check run: the `CI` run and
+     `commits/<sha>/check-runs` both miss it. Read it with
+     `gh api repos/pydantic/pydantic-ai/commits/<sha>/status --jq '.statuses[] | select(.context == "PR Review Checks")'`.
+     No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
+     When the status reads "Awaiting maintainer", the author lacks write access.
+     Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     It does nothing on a PR whose author has write access.
+     A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
+     A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
+     A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
+     When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
      label, or on dispatch
@@ -433,7 +537,7 @@ if the head changes, capture the new SHA and restart the loop.
      that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
      push or touch review threads while the label is present. Require the triggered run to succeed,
      and verify that the PR head still equals the captured SHA after the label is removed.
-     Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
+     Require a clean douwebot approval on that SHA, as the [Merge bar](#merge-bar) defines it.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
 
    Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
@@ -446,7 +550,11 @@ if the head changes, capture the new SHA and restart the loop.
    a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
-   Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
+   Address every douwebot comment, including `Optional:` comments, using the same evidence-based triage.
+   Address every `PR Review Checks` finding the same way, `medium` findings included.
+   Its findings sit inline, keyed `<!-- pr-review-checks finding=… -->`, or in its review body when GitHub rejected inline comments.
+   An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.
+   After you refute a `critical` or `high` finding, the status still fails. Ask a maintainer to apply `pr-review-checks:accepted` to the current head.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
@@ -596,14 +704,14 @@ maintainers run them, not something this repo can show you.
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
 Correct metadata directly, then hand the PR diff to a maintainer after the merge bar and comment triage are complete.
-Skip the subagent steps below.
+Skip the numbered steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
 Any author-selected additional review must also have settled.
 
-1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
-   The metadata subagent has not worked on the PR and never decomposes the diff.
-   Run the subagent on the light tier from [Model tiers](#model-tiers).
+1. Capture the current title, body, and labels. Start a fresh session under the context contract above.
+   The metadata session has not worked on the PR and never decomposes the diff.
+   Run the session on the light tier from [Model tiers](#model-tiers).
    Set effort from the PR's complexity. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
@@ -621,7 +729,7 @@ Any author-selected additional review must also have settled.
    The edit is done when all three hold:
    - The edited title, body, and labels follow every rule a kept correction cites.
    - The edited title, body, and labels break no rule that the current ones follow.
-   - The edit applies no subagent text that no kept correction covers.
+   - The edit applies no metadata-session text that no kept correction covers.
 
    Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 7. Verify the live title, body, and labels match the checked metadata.

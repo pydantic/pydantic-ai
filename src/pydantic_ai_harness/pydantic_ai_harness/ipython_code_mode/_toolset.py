@@ -23,6 +23,7 @@ from pydantic_ai_harness._code_tools import (
     partition_callable_tools,
     record_nested_call,
     run_nested_call,
+    schema_arg_names,
     signatures_and_conflicts,
 )
 from pydantic_ai_harness.ipython_code_mode._kernel import CellResult, IPythonKernel
@@ -30,7 +31,7 @@ from pydantic_ai_harness.ipython_code_mode._kernel import CellResult, IPythonKer
 RUN_CODE_TOOL_NAME = 'run_code'
 
 
-class _RunCodeArguments(TypedDict):
+class _RunCodeArgs(TypedDict):
     code: Annotated[str, Field(description='The Python code to run in the IPython kernel.')]
     restart: NotRequired[
         Annotated[
@@ -45,7 +46,7 @@ class _FunctionCall(TypedDict):
     args: dict[str, Any]
 
 
-_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
+_RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArgs)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 _FUNCTION_CALL_ADAPTER = TypeAdapter(_FunctionCall)
@@ -150,7 +151,9 @@ class _Cell:
         # Reserved before the call runs, so `ToolReturn.content` reaches the model in call order.
         self.user_content[tool_call_id] = []
         call_part = ToolCallPart(
-            tool_name=self.tool.sanitized_to_original.get(name, name), args=call['args'], tool_call_id=tool_call_id
+            tool_name=self.tool.sanitized_to_original.get(name, name),
+            args=schema_arg_names(self.tool.callable_defs[name], call['args']),
+            tool_call_id=tool_call_id,
         )
         outcome = await run_nested_call(self.tool_manager, call_part)
         record_nested_call(call_part, outcome, calls=self.calls, returns=self.returns, user_content=self.user_content)

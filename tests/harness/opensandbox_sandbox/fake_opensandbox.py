@@ -23,6 +23,7 @@ import asyncio
 import codecs
 import json
 import os
+import shlex
 import signal
 import time
 import uuid
@@ -36,13 +37,20 @@ from urllib.parse import parse_qsl
 import anyio
 import httpx
 from opensandbox.config import ConnectionConfig
+from pydantic import TypeAdapter
+
+from ..computer_use._fake_x_display import FakeDisplay
 
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
 """A name that cannot resolve, so a request that skips the fake's transport fails instead of leaving the host."""
 EXECD_PORT = 44772
 _NOT_FOUND = 'DOCKER::SANDBOX_NOT_FOUND'
-_DRAIN_GRACE = 0.05
+_IDLE_TURNS_AFTER_EXIT = 1000
+"""Event loop turns with nothing to deliver after a command exits, which the readers need to queue what it wrote."""
+_MAX_CHARS_AFTER_EXIT = 1 << 20
+"""Characters of output after a command exits: more than it can have left unread in a full pipe, far below the backend's
+limit."""
 
 
 def _now() -> str:
@@ -59,6 +67,10 @@ def _error(status: int, code: str, message: str) -> httpx.Response:
     return _json(status, {'code': code, 'message': message})
 
 
+_CREDENTIALS = TypeAdapter(list[dict[str, object]])
+"""The credentials the SDK sends to the vault, each with a `name`."""
+
+
 @dataclass
 class FakeSandbox:
     id: str
@@ -68,10 +80,15 @@ class FakeSandbox:
     resource: dict[str, str]
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
+    credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
+    credential_vault: dict[str, object] | None = None
+    """What the egress sidecar's Credential Vault was created with, values included."""
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
+    stream_breaks: int = 0
+    """How often its streams were broken, so a command starting meanwhile can tell."""
 
     def info(self) -> dict[str, Any]:
         info: dict[str, Any] = {
@@ -119,6 +136,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         """Send output lines without their newline, as execd before 1.1.1 does."""
         self.image_working_dir = '/'
         """Where a command sent with no `cwd` starts, as execd starts it in the image's working directory."""
+        self.display: Callable[[str, float | None], tuple[str, str, int]] | None = None
+        """Answers the X display's commands, as a sandbox with a desktop does; every other command still runs."""
         self.connection = ConnectionConfig(domain=DOMAIN, api_key=API_KEY, transport=self)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -128,7 +147,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             raise httpx.ConnectError('connection refused')
         if self.refuse is not None:
             return _error(*self.refuse, f'refused: {self.refuse[1]}')
-        if request.url.host != DOMAIN:
+        # Any API address reaches the fake, so tests can set the domain clients see.
+        if request.url.host == f'execd.{DOMAIN}':
             return await self._execd(request)
         if self.api_key is not None and request.headers.get('open-sandbox-api-key') != self.api_key:
             return _error(401, 'INVALID_API_KEY', 'Authentication credentials are invalid.')
@@ -168,6 +188,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
+            credential_proxy=body.get('credentialProxy'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
@@ -235,7 +256,9 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
 
     def break_streams(self, sandbox_id: str, sandbox: FakeSandbox | None = None) -> None:
         """Break the sandbox's command streams without stopping its commands, as a network failure does."""
-        for queue in (sandbox or self.sandboxes[sandbox_id]).streams:
+        sandbox = sandbox or self.sandboxes[sandbox_id]
+        sandbox.stream_breaks += 1
+        for queue in sandbox.streams:
             queue.put_nowait(('broken', None))
 
     async def _execd(self, request: httpx.Request) -> httpx.Response:
@@ -253,6 +276,22 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if sandbox.state != 'Running':
                     raise httpx.ConnectError('connection refused')
                 return await self._command(sandbox, json.loads(request.content))
+            case ['credential-vault'] if request.method == 'POST':
+                # The egress sidecar's vault, which answers with sanitized metadata only.
+                vault: dict[str, object] = json.loads(request.content)
+                sandbox.credential_vault = vault
+                credentials = _CREDENTIALS.validate_python(vault['credentials'])
+                return _json(
+                    201,
+                    {
+                        'revision': 1,
+                        'credentials': [
+                            {'name': credential['name'], 'sourceType': 'inline', 'revision': 1}
+                            for credential in credentials
+                        ],
+                        'bindings': [],
+                    },
+                )
             # A request the backend never makes.
             case _:  # pragma: no cover
                 raise AssertionError(f'unexpected execd request {request.url.path}')
@@ -261,10 +300,17 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         cwd = body.get('cwd') or self.image_working_dir
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
+        stream_breaks = sandbox.stream_breaks
+        command = body['command']
+        if self.display is not None and FakeDisplay.answers(command):
+            envs: dict[str, str] = body.get('envs') or {}
+            assert envs.get('DISPLAY') == ':1'
+            stdout, stderr, exit_code = self.display(command, None)
+            command = f'printf %s {shlex.quote(stdout)}; printf %s {shlex.quote(stderr)} >&2; exit {exit_code}'
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
-            body['command'].replace('/tmp/pydantic-ai', self.pid_dir),
+            command.replace('/tmp/pydantic-ai', self.pid_dir),
             cwd=cwd,
             env={'PATH': os.environ['PATH'], **sandbox.env, **(body.get('envs') or {})},
             stdin=asyncio.subprocess.DEVNULL,
@@ -277,6 +323,13 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         self.processes.append(process)
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         sandbox.streams.append(queue)
+        # The command can run before this registers it, so a kill or a stream break that came meanwhile, and saw
+        # neither the process nor its stream, takes effect here.
+        if sandbox.state != 'Running':  # pragma: lax no cover
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+        if sandbox.stream_breaks != stream_breaks:  # pragma: lax no cover
+            queue.put_nowait(('broken', None))
         return httpx.Response(
             200,
             headers={'content-type': 'text/event-stream'},
@@ -316,26 +369,31 @@ class _EventStream(httpx.AsyncByteStream):
             asyncio.create_task(self._wait()),
         ]
         # execd reports the exit as soon as the command exits, even while a background child holds its output
-        # open: once the command has exited, output still arriving is read for a moment, the rest dropped.
+        # open. What the command wrote is in its pipes by then, and is delivered whatever the machine's speed: the
+        # drain only counts turns with nothing queued, and stops for a background child's output only after more
+        # than any pipe holds. The rest is dropped.
         code: int | None = None
-        deadline: float | None = None
+        idle_turns_left = _IDLE_TURNS_AFTER_EXIT
+        chars_after_exit = 0
         open_pipes = 2
         while code is None or open_pipes:
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                break
-            try:
-                kind, value = await asyncio.wait_for(self._queue.get(), remaining)
-            except TimeoutError:
-                break
+            if code is not None:
+                if not idle_turns_left or chars_after_exit > _MAX_CHARS_AFTER_EXIT:
+                    break
+                if self._queue.empty():
+                    idle_turns_left -= 1
+                    await asyncio.sleep(0)
+                    continue
+            kind, value = await self._queue.get()
             if kind == 'broken':
                 raise httpx.RemoteProtocolError('peer closed connection without sending complete message body')
             if kind == 'exit':
                 code = value
-                deadline = time.monotonic() + _DRAIN_GRACE
             elif kind == 'eof':
                 open_pipes -= 1
             else:
+                if code is not None:
+                    chars_after_exit += len(value)
                 yield event({'type': kind, 'text': value})
         self._sandbox.processes.pop(self._id, None)
         if code == 0:

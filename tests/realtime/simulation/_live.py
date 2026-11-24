@@ -113,6 +113,8 @@ class LiveServer:
         self.queued_texts: list[tuple[list[str], str | None]] = []
         """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
         self.delegations: dict[str, _Delegation] = {}
+        self.held_delegations = 0
+        """Delegations the model decided on while another was open, which Live opens once none is (see `decide()`)."""
         self.seconds = 0.0
         self.backend_terminals_read = 0
         self.backends_failed = 0
@@ -326,6 +328,17 @@ class LiveServer:
             self._spoken_response()
         self.delegate(client_event_id=client_event_id)
 
+    def decide(self) -> None:
+        """The model decides on its own to hand a request to its Responses backend.
+
+        Live works on one delegation at a time: one it decides on while another is open (waiting for a tool's result,
+        say) opens only once that one settles (seen live).
+        """
+        if self.delegations:
+            self.held_delegations += 1
+        else:
+            self.delegate()
+
     def delegate(self, client_event_id: str | None = None) -> str:
         """The model hands the request to its Responses backend."""
         self._end_held()
@@ -483,6 +496,9 @@ class LiveServer:
             del self.delegations[delegation.id]
             # A settled delegation restarts the turn clock, as the model's voice does.
             self.last_voice = self._now()
+            if self.held_delegations and not self.delegations:
+                self.held_delegations -= 1
+                self.delegate()
         # Otherwise the backend waits for the results and the client's `response.create` to continue it.
         if self.queued_texts and self.running_delegation() is None:
             texts, client_event_id = self.queued_texts.pop(0)
@@ -577,7 +593,7 @@ class LiveSimulation(Simulation):
 
     @step
     def delegate(self, deliver: bool = True, ticks: int | None = None) -> None:
-        self.server.delegate()
+        self.server.decide()
         self._after_server(deliver, ticks)
 
     @step

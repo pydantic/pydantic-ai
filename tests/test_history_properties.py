@@ -189,7 +189,9 @@ async def _openai_responses_body(history: list[ModelMessage]) -> Body:
 
 @cache
 def _anthropic_model() -> AnthropicModel:
-    return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='test-key'))
+    # A model with the native mid-conversation `system` role, which the rejections below were probed against on
+    # `claude-sonnet-5-5` before it moved to the sealed `<system>` rendering.
+    return AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='test-key'))
 
 
 async def _anthropic_body(history: list[ModelMessage]) -> Body:

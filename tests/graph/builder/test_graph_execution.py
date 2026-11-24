@@ -15,8 +15,7 @@ from pydantic_graph.graph_builder import EndMarker, GraphTask, _GraphIterator  #
 from pydantic_graph.id_types import ForkID, JoinID, NodeRunID, TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 from pydantic_graph.node import Fork
-
-READINESS_WAIT_TIMEOUT = 5
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 @dataclass
@@ -25,7 +24,6 @@ class ExecutionState:
     counter: int = 0
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`Graph.run_sync` must replace a closed thread-current event loop."""
     builder = GraphBuilder(state_type=ExecutionState, output_type=int)

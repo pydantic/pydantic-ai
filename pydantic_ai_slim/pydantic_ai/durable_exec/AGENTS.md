@@ -24,7 +24,7 @@ Choose the backend tier from the engine SDK's execution model:
 - Subclass `RegisteredOperationBackend` when handlers must be registered before a worker starts.
   Implement `register` to return the bound caller and all SDK registration handles. Expose those
   registrations from the engine capability without rebuilding or reordering them. The base binds
-  the four model operations during agent assembly, so `registrations()` is complete before worker
+  the five model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
 When durable units can run in another process (Temporal activities, Render child tasks), give the
@@ -35,8 +35,8 @@ restoration into the integration.
 
 Set the public `engine_spec` once using `DurabilityEngineSpec`. Declare the engine name, durable
 unit noun, durable container noun, codec, unsupported runtime toolset kinds, wrapped toolset kinds,
-toolset lifecycles, tool-call result upgrade policy, discovery policy, sequential tool policy, and
-tool config key deliberately. Use `IDENTITY_CODEC` when the engine SDK serializes Python values
+toolset lifecycles, tool-call result upgrade policy, discovery policy, sequential tool policy,
+tool config key, and cancellation-token policy deliberately. Use `IDENTITY_CODEC` when the engine SDK serializes Python values
 itself. Use `JSON_CODEC` when the integration must reduce values to JSON-compatible payloads before
 journaling them.
 
@@ -50,7 +50,7 @@ intentional and reviewed.
 Resolve base and per-tool configuration with `OperationConfigRole` and `DurableOperationId`.
 Handle known ID variants and retain a default branch because the public union grows in minor
 releases. The union includes model requests, suspended-response
-cancellation, message compaction, event handling, discovery, validation, calls, and
+cancellation, message compaction, token counting, event handling, discovery, validation, calls, and
 `CapabilityOperationId`. Capability methods marked with `@durable_operation` arrive through the
 same backend and config resolver as framework operations, so do not maintain a second registration
 path for them.

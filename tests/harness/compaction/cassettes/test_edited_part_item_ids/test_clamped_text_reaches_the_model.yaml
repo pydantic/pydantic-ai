@@ -1,0 +1,382 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "270"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1. No preamble."
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "15896"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0937379ddc6ae407006aebb437acf887d1a54ddd5e351caf1b
+        object: response
+        created_at: 1793831991
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793832007
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_0937379ddc6ae407006aebb4385ed487d1a81e8e219f7c9887
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq67RHVQn9_3ONXQ1IZulIFyAA76PRNPb31lDMW3s8vXndhr2kTmqJhekOOOb8y4C8SfIBOaZuv4S9U2q6ilTS_tcSdOK4RJRFPDN57RFMYicY1sv9nN1yJThm3s4gl50dF9gFevwWqIJnPDqOJviDkS5-hnv3MJ5LBTRJZLxQBiLhgM3egZ7yvs40IgtSpAdBqMZw4iwEyayLdM8iVEecdAf8GsLu5DWj480FmQ8GLCqWyYHXEynQuaiwB73dVAENNuBfGLQrbOoT2bjZdHdx-oXPDCNocVmhn8qYriVUGlLp-am-z7Ot0f1C2m_u5EBWHz9eMms11I97ubCe7-aTTwxyhpRhrOFd3UMnl5O5DP_Mnlz_wTU-t9icNW4cKvwB6dXLIP5vVdlk7R9IAnlHYIPm2tqi_sHa-eXoBm3VZQV2Lo_O4g1_TVsD9BkDo39KcJ9gRjrvUpSCJ1h1XOT1NwooyvsRXmzM5RHyO21DnqWPpKBIkjFkhxsLA1nslLQgll8hOes4eTmYSXvl90ye8061nYk3cMaUtM7-ri_t97IkvuWb48KBBOtj4upEOvsfMINsth4uB3sYEu_AoGjG2T9A3A2_4oeGyltRlc5u-OwTx3q9e1POhvBd_kVSobh8yyKlMiSRRTIZa9ojqTdqCnRc1tDDLlN8nNzpr52z08y5h80tXfA7HSo90F2gNUD9eunId53GjXfQrtPkQHa_aRalAvkrqQ7jaFZCd22DCxMxkqugMKYzxJRL6Pn9m2KH1GnJWqi0iNyOC_cTJe2bJwQO_YOCiut1IjhOPhPC_XUEKC3Z3kCCyzuCucbIFE3Hawl2JR2wmiCRtA7WfTvydrL9R-58n00Cbt2XamGVpOMU-Qfs5R1WyQvM2mFkU9kX405sumXsDRoOmVCMavEPBOWKsX45_WuzFeuWFcbyqCusiDCzmYPicBrgisbxrTvJyk4nTfSibfhvTsz_ZIbameOLyOgQfOW3vXLqLxEAiM87rN4wqkVPzBuK3PoYeEvnq7wTSWOhxAc-Ugkooa4MdB151RLyLNgSXNpCpbVevAFBLGF7hNMNWIhq9DA829u6uBXBLAXDTUMzjEz-UnyaF_bS1LISUeZl3kn8daYuAHZhd2eWFdmXMUWaOHI1zkFtIUcHDsFoZMjXGe0cMD8PZLYKFJe0zpXTKMQ3gCzHtJQ0psuf1dUAJgLOx3Z9qiYIHCKUYIs4PXvKORulNBspXJstsLK4UalQMdfevVIl5DKuuXb1Nc2XhNWarP2NujAVvd5vl6BrdNbDevIy0fbrUQOOlpgpdfjNE8X5UX2PSAXi4PwXsr32sETQsVYbcOefxCfYllNVNAMGhS-75nf2ADfLBhDq1z7NGw12Py7KwC8xaImp5erJvbnE6qI-Zhd-ZjmWrqw2soYLKDNPY2r-M8KG-DCpMMwfIDNO6586200YwR9bzHnnCmIPmDg3dL6Op9BTTVGpuyqo5H_EctNKYm4kNh32_ZtvL3YTKixfRSFAEIGPNLQ_kZ-ApU16tIPKfb4qcneodyJzc4QGxr6m9WQ_uGy332ycU40B9j9Xlpvf4Mt0lnzhOzagbGO1xYt4-OWD28Mg_BjwCF6WGVc1E3BnlBqPljJep4AAIZ-HYb8gSjLBwzQSQYV1Gqt7B5Jt6F-jLbo_VHQH0FG2OeT8Bnx6fqCW1Dg0UD6ScR53feDiEtDTBkOA_xYnNsKpFOK3-2NJ-6D1QAg_Aa-VVZBC3P0pz7b6TuuHPDbQRHrH8hvZHa2um_1FMou53G4zTtYdD3b5LnY07grXUHgIbzvLQcAPtN3jLaCJS4Eda1A_bvOjUWFjwW6w42a6uPurHqvkuBLCtcxfFPzgX0OQHCkRgNCTj9H4lNeSIgNvCpcxAYLYRCAITwp9cIgUjPVTvQMFJFSKzOSPCHivLFGjuzsRSAdHwINbzH72vo2Uk9NvkgGDyq2OG4a6yIYiorzVruFToPzLQo62w7RisGa87an4A3gzEusvfzGpUtJosnFrDNArYFq-2tYexbdYFvCDcxDtPJ_bkUfzQH-ge3ej-uQTnXWDJarzfCqRE9KNEihhOOksVbDPZqdBS1peq6JPJ6yOauhVnoZrjVxis9wWHyNTB276arHAFmmxZuvIt_msUdb5LnRTYCc3gz9sP9JZEozcP25OQ3_kATXyv85r5AKpsPh4M_4pjghcbTwPm2JYL6ve6RryuHsNUuxsYTohGb23TTESMXxvEtZwpD3PP1ZgmiuJe1PcGmWsQ_4qBX6jf98CkBHX-JphPmfhR5Y03XB20hBhnjlHa3qaWqEYRDwyMZPyWV55xnIS29ldbT_xPjvu4h5Hud4uU5VigAixU43OhTxAdKS6VoBi4dGD_-iPmnf0--1qLf8WzDSSmlBi3bN6R0sArHbL4szICUyFRodErRF8rZYxXTfm3zgeM9z6jgKPT9sdIaumPjqxHI3UshibX_v9FmF-TqxT1jH8u7IVbBRMwbMWeMWbeFHNRZK6831huvqJtPdcurEAx8weEUlrjKTfIWslRSHNbUNMLyYDBiC_aj-g8t-3jxg3r8pqbrGJ1Z3n9oWeKAvyseMEYfjVhT-EnAkvWsyFKICfMzQfcbM-g6onndU8kw7q3TgRNKKglD8T3XYdqk8tr3KyiE-DAnM2sRBD1OekstU3ZbBCaaBTJE6qzh2v47lJGcE16hh0bx-KnnAyjLz8HmqATaY-swx6OyBVzKav_F-9wXzCoLW63pfP8QoM8Tgl-FJu96IQTOJyIEsUTqBG8qc2UUyuOfOU6fwxyogrLHiTStIa4Y1LWVkd2vDnK8vA-n-2qsRShTJOy7S9A7JKEBpmgjV8842NyNxL8Lx6dzL6P3ubbVPUlBhEwvFQOjYmX6hQbZV73yVVAKpy2N9lyxVkxluLitPaI6DQevQlS5PIlZGRsXMZsjxD5xCbJFY5Qy4uaduLvyPrdlf_sn7pmxLQexAfPSE=
+          summary: []
+        - id: msg_0937379ddc6ae407006aebb439b15487d18614b5b165336da3
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: |-
+              LINE 1: amber river lantern meadow velvet orbit whisper cedar
+              LINE 2: biscuit thunder garden silver pebble window rabbit melody
+              LINE 3: candle forest marble golden pillow compass feather bridge
+              LINE 4: morning island pocket gentle walnut bicycle shadow tulip
+              LINE 5: planet ribbon coffee dolphin autumn basket crystal jungle
+              LINE 6: button valley orange kitten blanket harbor distant spark
+              LINE 7: lemon castle quiet engine blossom ocean ladder copper
+              LINE 8: paper mountain silver noodle breeze kitten fossil picnic
+              LINE 9: velvet mirror thunder acorn village candle ladder melon
+              LINE 10: pillow dragon meadow cookie lantern puzzle winter basket
+              LINE 11: coral trumpet shadow pebble garden rocket honey window
+              LINE 12: gentle forest button sunset rabbit marble kettle island
+              LINE 13: feather planet cabin orange velvet bicycle thunder apple
+              LINE 14: melody river blanket crystal pocket dandelion harbor spoon
+              LINE 15: walnut meadow candle silver compass noodle garden rabbit
+              LINE 16: tulip engine biscuit ocean shadow ribbon ladder coffee
+              LINE 17: kitten lantern mountain velvet blossom paper puzzle cedar
+              LINE 18: distant basket orange marble thunder picnic island feather
+              LINE 19: golden window lemon garden pillow river spark bicycle
+              LINE 20: autumn dragon copper melody pocket forest candle pebble
+              LINE 21: jungle button silver harbor walnut tulip mirror biscuit
+              LINE 22: rocket meadow blanket whisper ocean marble rabbit sunset
+              LINE 23: ladder crystal feather coffee planet garden lantern orange
+              LINE 24: shadow apple velvet cabin thunder spoon river dolphin
+              LINE 25: basket candle mountain gentle coral window pebble winter
+              LINE 26: bicycle honey puzzle cedar meadow ribbon kitten silver
+              LINE 27: island engine blossom marble pocket trumpet autumn garden
+              LINE 28: orange fossil whisper lantern river walnut blanket compass
+              LINE 29: picnic copper tulip thunder feather pillow ocean button
+              LINE 30: rabbit sunset velvet lemon ladder candle forest paper
+              LINE 31: melody garden dragon silver window biscuit harbor crystal
+              LINE 32: pebble planet blanket orange kettle meadow shadow ribbon
+              LINE 33: coffee lantern distant walnut blossom river bicycle coral
+              LINE 34: winter puzzle apple mountain feather pocket gentle spark
+              LINE 35: cedar ocean kitten marble trumpet garden silver island
+              LINE 36: honey basket whisper engine tulip velvet candle dolphin
+              LINE 37: pocket autumn ladder orange forest biscuit thunder mirror
+              LINE 38: crystal rabbit meadow paper harbor walnut sunset lemon
+              LINE 39: shadow bicycle garden feather copper planet pillow lantern
+              LINE 40: blossom river button picnic velvet mountain spoon orange
+              LINE 41: kettle silver island melody dragon blanket cedar window
+              LINE 42: tulip forest compass biscuit ocean ribbon kitten marble
+              LINE 43: distant candle garden walnut puzzle thunder feather harbor
+              LINE 44: orange meadow crystal ladder rabbit pocket velvet apple
+              LINE 45: lantern coral sunset bicycle shadow lemon mountain paper
+              LINE 46: whisper engine blanket island golden pebble coffee garden
+              LINE 47: trumpet walnut river kitten autumn mirror blossom silver
+              LINE 48: picnic planet feather copper candle ocean button meadow
+              LINE 49: velvet ladder honey forest pillow orange cedar thunder
+              LINE 50: rabbit crystal garden window tulip bicycle marble sunset
+              LINE 51: apple lantern meadow pocket silver dragon river blanket
+              LINE 52: coffee island shadow feather kettle orange biscuit mountain
+              LINE 53: walnut trumpet garden velvet picnic cedar lemon engine
+              LINE 54: ocean puzzle candle rabbit copper meadow blossom window
+              LINE 55: silver tulip thunder basket mirror autumn feather coral
+              LINE 56: pillow river orange ladder kitten crystal forest honey
+              LINE 57: meadow bicycle whisper lantern paper dragon island marble
+              LINE 58: sunset pocket garden walnut blanket dolphin candle spark
+              LINE 59: cedar feather mountain lemon silver biscuit ocean trumpet
+              LINE 60: button velvet river picnic shadow tulip engine coral
+              LINE 61: crystal garden rabbit orange window melody copper forest
+              LINE 62: lantern honey blanket autumn ladder marble whisper island
+              LINE 63: dragon paper meadow spoon bicycle sunset walnut kitten
+              LINE 64: ocean feather puzzle silver candle mountain apple ribbon
+              LINE 65: harbor lemon trumpet velvet garden pocket river biscuit
+              LINE 66: shadow tulip copper engine coral blanket meadow lantern
+              LINE 67: winter rabbit crystal forest walnut orange ladder melody
+              LINE 68: picnic cedar window ocean feather button silver garden
+              LINE 69: blossom marble thunder island pillow coffee sunset paper
+              LINE 70: velvet candle mountain bicycle honey river compass orange
+              LINE 71: kitten garden copper ribbon meadow dragon lemon pocket
+              LINE 72: feather ocean ladder silver basket walnut whisper tulip
+              LINE 73: engine coral blanket crystal forest apple lantern picnic
+              LINE 74: meadow sunset button river marble rabbit candle winter
+              LINE 75: orange paper harbor trumpet silver mountain cedar pillow
+              LINE 76: walnut island melody feather garden bicycle shadow honey
+              LINE 77: ladder velvet ocean biscuit tulip pocket thunder crystal
+              LINE 78: candle rabbit meadow copper window autumn lantern lemon
+              LINE 79: silver forest picnic dragon blanket river blossom engine
+              LINE 80: compass orange kitten garden marble whisper cedar sunset
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 36
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 1190
+          output_tokens_details:
+            reasoning_tokens: 124
+          total_tokens: 1226
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T22:40:07.607545+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4024"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`, numbered from 1. No preamble."
+        - id: rs_0937379ddc6ae407006aebb4385ed487d1a81e8e219f7c9887
+          summary: []
+          encrypted_content: >-
+            gAAAAABq67RHVQn9_3ONXQ1IZulIFyAA76PRNPb31lDMW3s8vXndhr2kTmqJhekOOOb8y4C8SfIBOaZuv4S9U2q6ilTS_tcSdOK4RJRFPDN57RFMYicY1sv9nN1yJThm3s4gl50dF9gFevwWqIJnPDqOJviDkS5-hnv3MJ5LBTRJZLxQBiLhgM3egZ7yvs40IgtSpAdBqMZw4iwEyayLdM8iVEecdAf8GsLu5DWj480FmQ8GLCqWyYHXEynQuaiwB73dVAENNuBfGLQrbOoT2bjZdHdx-oXPDCNocVmhn8qYriVUGlLp-am-z7Ot0f1C2m_u5EBWHz9eMms11I97ubCe7-aTTwxyhpRhrOFd3UMnl5O5DP_Mnlz_wTU-t9icNW4cKvwB6dXLIP5vVdlk7R9IAnlHYIPm2tqi_sHa-eXoBm3VZQV2Lo_O4g1_TVsD9BkDo39KcJ9gRjrvUpSCJ1h1XOT1NwooyvsRXmzM5RHyO21DnqWPpKBIkjFkhxsLA1nslLQgll8hOes4eTmYSXvl90ye8061nYk3cMaUtM7-ri_t97IkvuWb48KBBOtj4upEOvsfMINsth4uB3sYEu_AoGjG2T9A3A2_4oeGyltRlc5u-OwTx3q9e1POhvBd_kVSobh8yyKlMiSRRTIZa9ojqTdqCnRc1tDDLlN8nNzpr52z08y5h80tXfA7HSo90F2gNUD9eunId53GjXfQrtPkQHa_aRalAvkrqQ7jaFZCd22DCxMxkqugMKYzxJRL6Pn9m2KH1GnJWqi0iNyOC_cTJe2bJwQO_YOCiut1IjhOPhPC_XUEKC3Z3kCCyzuCucbIFE3Hawl2JR2wmiCRtA7WfTvydrL9R-58n00Cbt2XamGVpOMU-Qfs5R1WyQvM2mFkU9kX405sumXsDRoOmVCMavEPBOWKsX45_WuzFeuWFcbyqCusiDCzmYPicBrgisbxrTvJyk4nTfSibfhvTsz_ZIbameOLyOgQfOW3vXLqLxEAiM87rN4wqkVPzBuK3PoYeEvnq7wTSWOhxAc-Ugkooa4MdB151RLyLNgSXNpCpbVevAFBLGF7hNMNWIhq9DA829u6uBXBLAXDTUMzjEz-UnyaF_bS1LISUeZl3kn8daYuAHZhd2eWFdmXMUWaOHI1zkFtIUcHDsFoZMjXGe0cMD8PZLYKFJe0zpXTKMQ3gCzHtJQ0psuf1dUAJgLOx3Z9qiYIHCKUYIs4PXvKORulNBspXJstsLK4UalQMdfevVIl5DKuuXb1Nc2XhNWarP2NujAVvd5vl6BrdNbDevIy0fbrUQOOlpgpdfjNE8X5UX2PSAXi4PwXsr32sETQsVYbcOefxCfYllNVNAMGhS-75nf2ADfLBhDq1z7NGw12Py7KwC8xaImp5erJvbnE6qI-Zhd-ZjmWrqw2soYLKDNPY2r-M8KG-DCpMMwfIDNO6586200YwR9bzHnnCmIPmDg3dL6Op9BTTVGpuyqo5H_EctNKYm4kNh32_ZtvL3YTKixfRSFAEIGPNLQ_kZ-ApU16tIPKfb4qcneodyJzc4QGxr6m9WQ_uGy332ycU40B9j9Xlpvf4Mt0lnzhOzagbGO1xYt4-OWD28Mg_BjwCF6WGVc1E3BnlBqPljJep4AAIZ-HYb8gSjLBwzQSQYV1Gqt7B5Jt6F-jLbo_VHQH0FG2OeT8Bnx6fqCW1Dg0UD6ScR53feDiEtDTBkOA_xYnNsKpFOK3-2NJ-6D1QAg_Aa-VVZBC3P0pz7b6TuuHPDbQRHrH8hvZHa2um_1FMou53G4zTtYdD3b5LnY07grXUHgIbzvLQcAPtN3jLaCJS4Eda1A_bvOjUWFjwW6w42a6uPurHqvkuBLCtcxfFPzgX0OQHCkRgNCTj9H4lNeSIgNvCpcxAYLYRCAITwp9cIgUjPVTvQMFJFSKzOSPCHivLFGjuzsRSAdHwINbzH72vo2Uk9NvkgGDyq2OG4a6yIYiorzVruFToPzLQo62w7RisGa87an4A3gzEusvfzGpUtJosnFrDNArYFq-2tYexbdYFvCDcxDtPJ_bkUfzQH-ge3ej-uQTnXWDJarzfCqRE9KNEihhOOksVbDPZqdBS1peq6JPJ6yOauhVnoZrjVxis9wWHyNTB276arHAFmmxZuvIt_msUdb5LnRTYCc3gz9sP9JZEozcP25OQ3_kATXyv85r5AKpsPh4M_4pjghcbTwPm2JYL6ve6RryuHsNUuxsYTohGb23TTESMXxvEtZwpD3PP1ZgmiuJe1PcGmWsQ_4qBX6jf98CkBHX-JphPmfhR5Y03XB20hBhnjlHa3qaWqEYRDwyMZPyWV55xnIS29ldbT_xPjvu4h5Hud4uU5VigAixU43OhTxAdKS6VoBi4dGD_-iPmnf0--1qLf8WzDSSmlBi3bN6R0sArHbL4szICUyFRodErRF8rZYxXTfm3zgeM9z6jgKPT9sdIaumPjqxHI3UshibX_v9FmF-TqxT1jH8u7IVbBRMwbMWeMWbeFHNRZK6831huvqJtPdcurEAx8weEUlrjKTfIWslRSHNbUNMLyYDBiC_aj-g8t-3jxg3r8pqbrGJ1Z3n9oWeKAvyseMEYfjVhT-EnAkvWsyFKICfMzQfcbM-g6onndU8kw7q3TgRNKKglD8T3XYdqk8tr3KyiE-DAnM2sRBD1OekstU3ZbBCaaBTJE6qzh2v47lJGcE16hh0bx-KnnAyjLz8HmqATaY-swx6OyBVzKav_F-9wXzCoLW63pfP8QoM8Tgl-FJu96IQTOJyIEsUTqBG8qc2UUyuOfOU6fwxyogrLHiTStIa4Y1LWVkd2vDnK8vA-n-2qsRShTJOy7S9A7JKEBpmgjV8842NyNxL8Lx6dzL6P3ubbVPUlBhEwvFQOjYmX6hQbZV73yVVAKpy2N9lyxVkxluLitPaI6DQevQlS5PIlZGRsXMZsjxD5xCbJFY5Qy4uaduLvyPrdlf_sn7pmxLQexAfPSE=
+          type: reasoning
+        - role: assistant
+          content: |-
+            LINE 1: amber river lantern meadow velvet orbit whisper cedar
+            LINE 2: biscuit thunder garden silver
+            [clamped: removed 5038 of 5238 characters]
+            ragon blanket river blossom engine
+            LINE 80: compass orange kitten garden marble whisper cedar sunset
+          phase: final_answer
+        - role: user
+          content: >-
+            Look at your earlier output as it appears in this conversation, including any
+            tool call arguments. Reply with only the largest N such that `LINE N:` is visible
+            consecutively from 1, with no gap.
+        prompt_cache_options:
+          comparison_response_id: resp_0937379ddc6ae407006aebb437acf887d1a54ddd5e351caf1b
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2064"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0937379ddc6ae407006aebb447c38087d1874bb38b8fca2e7e
+        object: response
+        created_at: 1793832007
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793832009
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_0937379ddc6ae407006aebb4486abc87d1b0a4bb3a7733bfcc
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq67RJdRnWrvlX9S_pkgznOO4EeGBqIuoTnAJl4_dd1AhgB5TjpeN0mkRdnHCWio32aC-oAlCv82_VNC-NC1S74wvp7az-CMq9a4OYD0ms0vSKO_Yn-gbkt80c_uQdVAHQKBWk4DQqEOBTYlMz6rYq9uEARL-snjsyujwC9Lum3UwzvAa4mE_j82yPCP-1Bau54bsri65zMaF8zQxFjp0DzsNxvR0bzZ6hYKgAHw0_HiocLL0q6bGTe7FvIBZa973XBOYFCwQqFndWk_IADsRsXHEiwjh164PWIGbVOxJx6mowTz0nICwb1vxnw7_3yo3UpGCvehLL4Cjr3qw8iAhScbvuZ2e1MOY--5zXpXfJvXzRZHx4caekrtmk5W7Kr-cxfreDSO0hUMj3s7rbK18ANDg1ZjnGbxajsZvdcnBjs_NetXuqQqIc7gDpI9nvG53ymxf2zJd7zJXnAPobC3AJ1zximJj8RNG8-g8jd00Tm6WQcRDHfPiJaAu_o053c1U4Jxhk7QPU3P81teQTmjH5m5OPO_INo5qkDfEV19nUJaDd-9WqrXN9yKwwfF_h41GX0Ng1ZQAjCFuG8SCWgHS6csBEWRriJHL5VS6h4GSnuzyqFg-iUZmhbe3E3-diwpWfTmCpjp--bePR8KWcDx8D70X4fRBDIb8N1qNIJoxmFEVEatkOX98YqHDeqd8O8cJiUktjpMU732xK2ranuxOTaNPGT60pMCAYe-dV4JWvlMmUPrQQF3BwWJonWNaBiJyhSG2QioUOVgLCw3yigL2LRVMgf15vX6-5wZMPznoyx-gR165vQn_hRGsYEkq4g2G-ka6shKzxCUbUi1QkKYJ7RA3kiDCl5aiXLl1l_xE4qDassHJ1FkfmdLq5c_JHuclSNnOrr_cm2Y8JJhklT2nHzQmCmEuW0WKD1-mCZ4D9teS_Z6c1bXw2iFg_qwwL4I2YHuuCjqolMydeMCLgCNkx9c31CcmjiNNhid5A30bg6ONV4POQno8L6drbLsFxAMXY9s616j_pmrAPhEATuin1gu6jFMochbEc4DbYIdh82-TB-ii7fT-8j3ymVkwejdhYn1Ct5Rw96Idga9BgOwDRggW8DEa2KJk5z4-7m7-4INpv8P4FE_yjJAy3p6mK7qB1dVetRyvRl75quYvmQ_Wpn04nsyycHPv8nyQOhmGeSxnmB_1EeEWdfZO2YhgwbOFSqxIYq4V3GX5MPLPvnc1TBYm0pxKlW6JvIeJ1QgCBfWvhP9uwmu8vP_iN4hrQVqu9hbSWZn_4ll9_v9xaV_rG6p6bqi-x97_E5sWCLtj-yh5asSVm37u5ZeRs6l-vD2GhAqwoP3-GLeZI9mv2rTxX1gTdJglNIAha4kjhZCKvvnXUdCrEqOVt-IkehRGZ7vdHRY67u8qlBDaGxVvfcuqxBV1B9QrClmw-2OHl7QmMcTPU_dlK8B2ydFuybaox8_qAgTURyPn6agTPO-bZWKiX4atA-cF3zbBdL0LCNoobQtKUxWEkGEi-UJS3esoEdUj0SUGpOUxFHC0l87YWIVjoaRpWMTT9Nq2svXR1WSocL5C2tjVSEZgZ2uDkXMClTNmQqL5etN2YNXrxqJ9U3R5uUSKe_-ljOQxX9JmiprzN8pca9AGPkMsU7-X5196028hpwNWdM-h83gms2b6jfGh1AjLet0Ehz5-a0NNq3GSZWl9e_bxmENrvFfmgSBP1fAz4UNnWqZq80Fwx3ATsEi9AZW1qvQnQwS-m8bCQpaoVeA7GwlS6IiT3ggmb0eFzma3ADzJ6NU-P2Ej7BZn3h2d08n9cspSgEAR9-f80-ipxty8ruVMVJ4ptVq-qgAeWZo0tq9EOuVIPabItFDYRCoDZzk3e_mOBZLqF_83_HhUWYhHRm-h3FNRw39wJVbnHnW8LoAjDYIM0dBDka2I_hYV6_WyKpB7921tz6upXYpj0GJlGEkzZWvp39eWR2qCyZqLFKCsarNYXkGLQZOIPsJln87pJyOMk54jUVtzw0bNVO_nQ57OsDV4I9j7N4EDES_-g7nQsZFGd8QuTdMejNeVWKxK830CGtPi0Y8qNNpBg1KanIWkM7-ESdwRNjqunYouWZ2b9rA9_GEzIaTHvSfn7TTLVMP2eC2p3p9sfHdA8NM1pnoqp_ktmhULBy79bnq4GqwlijfuO_T86gnJWj2zp1aM5eSILKjJi7b1BFEDiZdWiJ_iJ5pEu4T7gajp_A3HxOArJ7VCfZnwmTrbLcuQ3YZrKfmjfJPPETYazdAe1d6WMwRm6bIhHNb9jXYKf3G976GLEFGSJGkOJwgss5dAhikTnkNKrfaQXxTYDoLA_zHFjsSFUxvxvp7cTXlTpnabMH6jV_5mBo1FXEbH9tKmv-enLZrfVPvMZCDMWVD1uADYtSORkEtZRdg0p23KIVl5BHL2-0_ni60todIbnPuPLae0V-Z6ePqiZEQ2wEBdNLc8S77ZlRsd_4pekhaYiuWg757TxH9ZJWgood29ZC62qF4knLykoTyR4T6L0ouKGxwbOojFvSANR1bb0roApqUx_aZidT-MVJIfGgD09iM0ojgMX-Gc8YF__lY3uXJmhAiSAeklthYB3SWSu79H_zWnrePO6re2UedCWkQtCp2nn7urIWoPyr59eM2xyd_ToSmG0kgiNv7nc-RHGbzkl8t_H88DJoYIz99U9g_BhkCzmtUdv9NneL2D6RsGbI1DT2mMBpme7T_RWv-6_OPPHAW8ycPKjYNw6LQJ_MYxXpyeGIUa03TYppKKbqFnXkn0Sq05JhRtmavD3N5NSXZtI5LSDo3Tnhwx9-5Xs9BqSEs6bFo63xQCY86EQERh1aZNU-XIqB5z93vqWEWn3zdTJjP4-l8mwjJWXVMfgyCK6o5IqGFfJB4sEzM8Wab_QkHH7z_zSlGP-gsiMLuzdaxt-oGdt5ScKyQN2WEYgb7P3rTM28gjGYznnUC0R930oUdZbSRSX1Tc=
+          summary: []
+        - id: msg_0937379ddc6ae407006aebb449902c87d198547276d28924fe
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "2"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_0937379ddc6ae407006aebb437acf887d1a54ddd5e351caf1b
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 269
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 137
+          output_tokens_details:
+            reasoning_tokens: 130
+          total_tokens: 406
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-04T22:40:09.861487+00:00

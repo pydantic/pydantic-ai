@@ -14,26 +14,34 @@ integrations.
 import sys
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any, TypeAlias, TypeVar
+from dataclasses import dataclass, field
+from typing import Any, Literal, TypeAlias, TypeVar
 
+from pydantic_ai._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from pydantic_ai._utils import disable_threads
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import Agent, EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._request_timeout import RequestDeadline
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RequestUsage
 
 from ._operation_backend import durable_unit_scope
 
 __all__ = [
+    'CountTokensResult',
     'DurableModel',
     'SegmentExecutor',
     'StreamedActivityResult',
     'StreamedModelRequestResult',
+    'agent_instrumentation_settings',
     'disable_threads',
     'consume_event_stream',
     'managed_model_scope',
@@ -42,6 +50,18 @@ __all__ = [
     'streamed_before_failing',
     'unwrap_model',
 ]
+
+
+def agent_instrumentation_settings(agent: AbstractAgent[Any, Any]) -> InstrumentationSettings | None:
+    """The instrumentation the agent's runs resolve, for a durable unit that has the agent but not the run.
+
+    An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
+    `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
+    """
+    explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
+    if explicit:
+        return explicit[-1].settings
+    return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
 
 @asynccontextmanager
@@ -118,6 +138,25 @@ StreamedModelRequestResult: TypeAlias = ModelResponse | StreamedActivityResult
 """What a streamed model request's durable unit returns: the final response, or a recorded `StreamedActivityResult`."""
 
 
+@dataclass(kw_only=True)
+class CountTokensResult:
+    """What a token-counting durable unit returns, recorded so that a replay sees what the count did.
+
+    Attributes:
+        usage: The counted usage, or `None` when counting raised `error`.
+        framework_metadata: The `__pydantic_ai__` metadata keys the count added to or changed on the request it
+            counted. The run copies them onto its own request: the unit counted a deserialized copy, or the
+            journal served its recorded result without counting.
+        error: The class name and message of the `NotImplementedError` (a model that can't count) or `UserError`
+            (a request it can't count) that counting raised. It crosses as data, so an engine records it instead
+            of retrying the unit, and the run raises it as its original class.
+    """
+
+    usage: RequestUsage | None = None
+    framework_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    error: tuple[Literal['NotImplementedError', 'UserError'], str] | None = None
+
+
 _STREAMED_BEFORE_FAILING = '_pydantic_ai_streamed_before_failing'
 
 
@@ -188,8 +227,8 @@ class DurableModel(WrapperModel):
     continuation loop (Anthropic `pause_turn`, OpenAI background mode) checkpoints every
     suspended segment durably and a failed segment retries alone, while everything else
     (`profile`, `settings`, `continuation_delay`, ...) is answered by the wrapped
-    workflow-side model. Everything engine-specific lives in the four executors, each
-    running one request / streamed request / cancellation inside the engine's
+    workflow-side model. Everything engine-specific lives in the executors, each running one
+    request / streamed request / compaction / cancellation / token count inside the engine's
     activity, step, or task. Installing it before the before-hook chain also routes model-side
     compaction through the durable operation.
     """
@@ -202,12 +241,14 @@ class DurableModel(WrapperModel):
         request_stream_segment: SegmentExecutor[StreamedModelRequestResult],
         compact_messages_segment: Callable[[ModelRequestContext, str | None], Awaitable[ModelResponse]],
         cancel_suspended_response_segment: Callable[[ModelResponse], Awaitable[None]],
+        count_tokens_segment: SegmentExecutor[RequestUsage],
     ):
         super().__init__(wrapped)
         self._request_segment = request_segment
         self._request_stream_segment = request_stream_segment
         self._compact_messages_segment = compact_messages_segment
         self._cancel_suspended_response_segment = cancel_suspended_response_segment
+        self._count_tokens_segment = count_tokens_segment
 
     async def request(
         self,
@@ -237,6 +278,14 @@ class DurableModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+
+        def replay_request_parameters() -> ModelRequestParameters:
+            # The replay classifies each part against the parameters the unit's model sent, such as the output mode
+            # `'auto'` resolves to. They're prepared once the unit returns, so a request the model rejects still fails
+            # inside the unit; the unit's model already warned about the settings it ignores.
+            with suppress_unsupported_setting_warnings():
+                return self.wrapped.prepare_request(model_settings, model_request_parameters)[1]
+
         try:
             result = await self._request_stream_segment(segment_context)
         except Exception as error:
@@ -245,14 +294,28 @@ class DurableModel(WrapperModel):
             # The stream failed after it produced output, so it's handed over as a stream that fails partway
             # through rather than one that failed to open.
             stream: CompletedStreamedResponse = _StreamedThenFailed(
-                partial, model_request_parameters=model_request_parameters, error=error
+                partial, model_request_parameters=replay_request_parameters(), error=error
             )
         else:
-            stream = _completed_stream(result, model_request_parameters)
+            stream = _completed_stream(result, replay_request_parameters())
         yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         await self._cancel_suspended_response_segment(response)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        segment_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        )
+        return await self._count_tokens_segment(segment_context)
 
     def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
         # This side only gets a streamed segment once the durable unit has consumed it, so the unit enforces the
@@ -270,6 +333,7 @@ class DurableModel(WrapperModel):
             request_stream_segment=self._request_stream_segment,
             compact_messages_segment=self._compact_messages_segment,
             cancel_suspended_response_segment=self._cancel_suspended_response_segment,
+            count_tokens_segment=self._count_tokens_segment,
         )
 
     async def compact_messages(

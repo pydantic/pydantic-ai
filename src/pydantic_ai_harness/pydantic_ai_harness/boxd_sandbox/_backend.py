@@ -1,7 +1,7 @@
 """A [boxd](https://boxd.sh) machine behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK behavior verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster. Re-check these before
-changing acquisition, command, file, or error handling:
+SDK behavior verified 2026-10-28 against boxd 0.2.20, and again 2026-11-13 against boxd 0.3.2, on boxd's
+production cluster. Re-check these before changing acquisition, command, file, or error handling:
 
 - `machines.create` returns once the machine is scheduled. A name is unique in its org: creating a second
   machine under it raises `ConflictError`, and `machines.get` finds a machine by id or name.
@@ -17,7 +17,8 @@ changing acquisition, command, file, or error handling:
   the writes it had not flushed.
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
   raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine for a
-  moment.
+  moment. Conversely, when `create` returns a machine as `starting`, `get` can raise `NotFoundError` for it for over
+  30 seconds before it finds it (seen in live test runs, not reproduced on demand).
 - An isolated machine's metadata endpoint refuses token requests (403), and boxd's env vars and integrations
   are not installed in it. A machine created from a snapshot keeps the named `networks` of the machine the
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
@@ -32,6 +33,10 @@ changing acquisition, command, file, or error handling:
   A failure is the matching builtin `OSError` (`FileNotFoundError`, `IsADirectoryError`, ...), a symlink loop
   is `ELOOP`, and `remove` deletes a symlink itself. A machine whose boxd agent predates the file API, such as
   one restored from an older snapshot, raises `MachineAgentOutdatedError` until it reboots.
+- Verified 2026-11-16: `machines.create` refuses `isolated` or `vcpu` beside a `spec` (`MachineSpecError`), so
+  a machine with `secrets` gets both from the spec, its size as `'{vcpu}x{4 * vcpu}'` (vCPUs x GiB of memory).
+  A spec combines with `from_snapshot`. In the machine, a secret's variable holds a `bxds_` stand-in, never
+  the value. A secret can be deleted while a machine still names it; the machine keeps running.
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 import anyio
@@ -74,20 +80,31 @@ from pydantic_ai_harness._workspace_provider import (
     run_to_completion,
     running_on_asyncio,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
+from pydantic_ai_harness.computer_use._display import LazyDisplay, checked_desktop_size
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd, FsEntry, Machine
+    from boxd.resources.computer import AsyncComputer
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('BoxdSandboxBackend',)
 
-_T = TypeVar('_T')
-
 try:
     import boxd
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[boxd]` to use BoxdSandbox.') from _import_error
+
+from pydantic_ai_harness.boxd_sandbox._desktop import (
+    DESKTOP_LOG,
+    DISPLAY,
+    INSTALL_PANEL,
+    START_PANEL,
+    BoxdDisplayDriver,
+)
+
+_T = TypeVar('_T')
 
 _AUTH_MESSAGE = (
     'boxd did not accept the credentials. Set BOXD_API_KEY, run inside a boxd machine, '
@@ -103,6 +120,9 @@ _SILENT_COMMAND_MESSAGE = (
 _NAME_PREFIX = 'pydantic-ai-'
 # Bound machine creation, attachment, and deletion so a wedged control plane cannot hang a run.
 _LIFECYCLE_TIMEOUT = 120.0
+# How long after creating a machine the backend keeps looking it up while boxd does not list it yet; boxd
+# has taken longer than 37 s to list one. The rest of `_LIFECYCLE_TIMEOUT` is left for booting it.
+_UNLISTED_TIMEOUT = 90.0
 _REQUEST_TIMEOUT = 30.0
 _TEARDOWN_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.25
@@ -159,6 +179,14 @@ def _refusal(machine: Machine) -> str | None:
             'from; save snapshots from a machine on no network.'
         )
     return None
+
+
+def _check_attachable(machine_id: str, machine: Machine) -> None:
+    """Raise `WorkspaceUnavailableError` if `BoxdSandbox` refuses `machine`, or boxd deleted it or it failed."""
+    if (refusal := _refusal(machine)) is not None:
+        raise WorkspaceUnavailableError(refusal)
+    if machine.status in ('destroyed', 'failed'):
+        raise WorkspaceUnavailableError(_gone_message(machine_id))
 
 
 def _credentials_rejected(error: Exception) -> bool:
@@ -247,6 +275,23 @@ async def _mapped_errors(
         raise translated from error
 
 
+async def _start_panel(client: AsyncBoxd, machine_id: str) -> None:
+    """Start the desktop's panel. Without it the screen still works, but shows the agent nothing to open.
+
+    No timeout: each wait in `START_PANEL` has its own bound. apt has its lock and network timeouts, the panel's
+    window gets 10 seconds, and the start lock is held only by another such start.
+    """
+    try:
+        result = await client.machines.exec(machine_id, START_PANEL)
+    except boxd.BoxdError:
+        logger.warning(
+            'The panel did not start on boxd machine %s; see %s there', machine_id, DESKTOP_LOG, exc_info=True
+        )
+        return
+    if result.exit_code != 0:
+        logger.warning('The panel did not start on boxd machine %s; see %s there', machine_id, DESKTOP_LOG)
+
+
 async def _probe(client: AsyncBoxd, machine_id: str) -> WorkspaceUnavailableError | None:
     """`WorkspaceUnavailableError` if boxd deleted or stopped the machine; an inconclusive lookup counts as running."""
     try:
@@ -275,9 +320,28 @@ async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine 
     try:
         if org is None:
             return await client.machines.get(name)
-        return next((m for m in await client.machines.list(org=org) if m.name == name), None)
+        # boxd 0.3.4's `RegionalList` subclasses an unparameterized `list`, which hides its item type from Pyright
+        # (https://github.com/boxd-sh/sdk/issues/3, 2026-11-23).
+        machines: list[Machine] = list(await client.machines.list(org=org))
+        return next((m for m in machines if m.name == name), None)
     except boxd.BoxdError:
         return None
+
+
+async def _look_up_machine(client: AsyncBoxd, machine_id: str, *, listed_by: float | None) -> Machine | None:
+    """The machine's record; `None` if boxd does not list it yet and the clock has not reached `listed_by`.
+
+    Otherwise a machine boxd does not find raises `WorkspaceUnavailableError`.
+    """
+    try:
+        return await client.machines.get(machine_id)
+    except boxd.NotFoundError as error:
+        if listed_by is not None and anyio.current_time() < listed_by:
+            return None
+        raise WorkspaceUnavailableError(
+            f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
+            "for these credentials). Pass `workspace='new'` to start a fresh machine."
+        ) from error
 
 
 async def _launch(
@@ -360,7 +424,7 @@ class _Output:
         return self.stdout.decode(errors='replace'), self.stderr.decode(errors='replace')
 
 
-class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
+class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath, SupportsDisplay):
     """A [boxd](https://boxd.sh) machine as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside an isolated boxd microVM, and file operations use boxd's file API as the same
@@ -396,6 +460,14 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
+        secrets: Names of existing boxd secrets a newly created machine gets, applied as
+            `boxd.spec.secrets(*secrets)` in its machine spec. A secret tied to domains reaches the
+            machine only as a placeholder, and boxd swaps in the real value as requests leave for those
+            domains. A secret without domains is set as its real value. An attached machine keeps the
+            ones it was created with.
+        desktop: Give the agent the machine's desktop for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800,
+            or a `(width, height)`.
     """
 
     def __init__(
@@ -409,11 +481,15 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         auto_suspend_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        secrets: Sequence[str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             _check_ref(ref)
         if snapshot is not None and vcpu is not None:
             raise ValueError('pass either `snapshot` or `vcpu`, not both: a snapshot keeps the size it was saved at')
+        if isinstance(secrets, str):
+            raise ValueError(f'`secrets` takes a list of secret names, such as [{secrets!r}], not a string')
         check_env(env)
         self._ref = ref
         self._client = client
@@ -423,6 +499,22 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._vcpu = vcpu
         self._auto_suspend_timeout = auto_suspend_timeout
         self._env = dict(env or {})
+        desktop_size = checked_desktop_size(desktop)
+        if desktop_size:
+            # Commands get `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
+            self._env = {'DISPLAY': DISPLAY, **self._env}
+        self._display = (
+            None
+            if desktop_size is None
+            else LazyDisplay(
+                BoxdDisplayDriver(self._computer_api),
+                partial(self._start_display, desktop_size),
+                operation=self._display_operation,
+            )
+        )
+        # Set by each start of the display, so the next screen call starts the panel.
+        self._panel_start_pending = False
+        self._secrets = tuple(secrets or ())
         self._working_dir = absolute_path('working_dir', working_dir)
         # Written to stderr, and nothing else, by a command whose working directory is missing.
         self._missing_cwd_marker = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
@@ -432,6 +524,9 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._resolved_working_dir: str | None = None
         # A machine this backend created still needs its `working_dir` made.
         self._working_dir_pending = False
+        # Until this time, a machine this backend created that boxd does not list yet is looked up again.
+        # Cleared once a lookup finds it, so a later not-found means it is gone.
+        self._listed_by: float | None = None
         # Set once the machine's boxd agent turns out to predate the file API; files then go through the shell.
         self._agent_outdated = False
         self._lock = anyio.Lock()
@@ -447,6 +542,47 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         For a machine this backend created, the `id` is boxd's machine id.
         """
         return self._ref
+
+    @property
+    def display(self) -> Display | None:
+        """The machine's desktop, or `None` when the backend was created without `desktop`."""
+        return self._display
+
+    @asynccontextmanager
+    async def _display_operation(self) -> AsyncGenerator[None]:
+        async with self._operation():
+            client, machine_id = await self._acquire()
+            async with _mapped_errors('The boxd desktop failed', client=client, machine_id=machine_id):
+                try:
+                    yield
+                except UnsupportedActionError:
+                    raise
+                except WorkspaceError as error:
+                    # A desktop failure, such as a mouse button that couldn't be let go, may mean the machine is gone.
+                    if (gone := await _probe(client, machine_id)) is not None:
+                        raise gone from error
+                    raise
+
+    async def _computer_api(self) -> tuple[AsyncComputer, str]:
+        """The computer API and the machine's ID, after starting the panel if a display start left it pending.
+
+        The display calls this only inside `_display_operation`, which has already connected to the machine.
+        """
+        assert self._client is not None and self._ref is not None
+        client, machine_id = self._client, self._ref.id
+        if self._panel_start_pending:
+            # Cleared only once the start returns, so a call cancelled during it tries again next time.
+            await _start_panel(client, machine_id)
+            self._panel_start_pending = False
+        return client.machines.computer, machine_id
+
+    async def _start_display(self, size: tuple[int, int]) -> None:
+        """Fix the screen at `size`, which starts boxd's desktop if it isn't running."""
+        assert self._client is not None and self._ref is not None
+        # Fixing the size makes boxd's console scale the screen instead of resizing it.
+        await self._client.machines.computer.set_screen_size(self._ref.id, *size)
+        # Not started here, where a shell command would wait for its install too, but before the next screen call.
+        self._panel_start_pending = True
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
@@ -522,6 +658,17 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         if self._create_name is None:
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
+        spec = None
+        if self._secrets or self._display is not None:
+            # boxd refuses `isolated` and `vcpu` next to a spec, so the spec carries them.
+            spec = boxd.spec.spec().isolated()
+            if self._secrets:
+                spec = spec.with_(boxd.spec.secrets(*self._secrets))
+            if self._display is not None:
+                # boxd runs it as root once the machine boots, while the agent's first steps run.
+                spec = spec.packages(INSTALL_PANEL)
+            if self._vcpu is not None:
+                spec = spec.size(f'{self._vcpu}x{4 * self._vcpu}')
         machine = await _launch(
             client,
             name,
@@ -529,9 +676,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 name,
                 org=self._org,
                 from_snapshot=self._snapshot,
-                isolated=True,
-                vcpu=self._vcpu,
+                isolated=spec is None,
+                vcpu=self._vcpu if spec is None else None,
                 auto_suspend_timeout=self._auto_suspend_timeout,
+                spec=spec,
             ),
             org=self._org,
             verb='create',
@@ -541,6 +689,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
     def _record_created(self, machine: Machine) -> WorkspaceRef:
         self._ref = ref = WorkspaceRef(provider='boxd', id=machine.id)
         self._working_dir_pending = self._working_dir is not None
+        self._listed_by = anyio.current_time() + _UNLISTED_TIMEOUT
         # Logged at creation, so the id can be found whatever ends the run before it is stored.
         logger.info('Created boxd machine %s (%s)', machine.id, machine.name)
         return ref
@@ -550,22 +699,18 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
 
         A suspended or hibernated machine is woken by the probe command itself. A machine that is not
         isolated, or that is on a named network, is refused: other machines could reach it, and a ref
-        from tampered message history must not point the agent at one of them.
+        from tampered message history must not point the agent at one of them. A machine this backend
+        created that boxd does not list yet is looked up again until `_UNLISTED_TIMEOUT` after its creation;
+        once a lookup has found it, and for any other machine, not found means it is unavailable at once.
         """
         with anyio.move_on_after(_LIFECYCLE_TIMEOUT):
             async with _mapped_errors(f'Could not attach to boxd machine {machine_id!r}'):
                 while True:
-                    try:
-                        machine = await client.machines.get(machine_id)
-                    except boxd.NotFoundError as error:
-                        raise WorkspaceUnavailableError(
-                            f'The boxd machine {machine_id!r} was not found (it was deleted, or never existed '
-                            "for these credentials). Pass `workspace='new'` to start a fresh machine."
-                        ) from error
-                    if (refusal := _refusal(machine)) is not None:
-                        raise WorkspaceUnavailableError(refusal)
-                    if machine.status in ('destroyed', 'failed'):
-                        raise WorkspaceUnavailableError(_gone_message(machine_id))
+                    if (machine := await _look_up_machine(client, machine_id, listed_by=self._listed_by)) is None:
+                        await anyio.sleep(_POLL_INTERVAL)
+                        continue
+                    self._listed_by = None
+                    _check_attachable(machine_id, machine)
                     try:
                         if machine.status == 'stopped':
                             await client.machines.start(machine.id)
@@ -625,8 +770,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         client, self._client = self._client, None
         self._ready = False
         self._resolved_working_dir = None
-        # A later connection may find the machine rebooted with a newer agent.
+        # On a later connection, the machine may have rebooted with a newer boxd agent and a desktop of another size.
         self._agent_outdated = False
+        if self._display is not None:
+            self._display.mark_stopped()
         return client
 
     @asynccontextmanager
@@ -670,6 +817,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             check_env(env)
             # Acquiring the machine has its own bound; the timeout is the command's alone.
             client, machine_id = await self._acquire()
+            if self._display is not None:
+                await self._display.start()
             line = _command_line(
                 argv, cwd=self._working_dir, env={**self._env, **(env or {})}, marker=self._missing_cwd_marker
             )

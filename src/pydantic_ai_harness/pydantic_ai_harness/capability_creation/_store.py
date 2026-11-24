@@ -206,6 +206,9 @@ class CapabilityStore:
     def load_active(self) -> list[AbstractCapability[object]]:
         """Construct every active authored capability for per-run injection.
 
+        This runs the code in `directory` without checking who controls it: `CapabilityCreation.load_active`
+        refuses a directory below `'operator'` authority first.
+
         Re-imports, re-constructs, and re-validates each active entry with the same
         checks as `write`. Entries that fail (corrupt source, construction error, a
         getter with a wrong return type, a module file outside `directory`) are

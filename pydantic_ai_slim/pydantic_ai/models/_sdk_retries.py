@@ -26,9 +26,10 @@ def with_max_retries(
     """The client to send one request with: `client` itself, or a copy carrying `ModelSettings['max_retries']`.
 
     These SDKs take `max_retries` only per client, not per request, so a request that sets it goes through a
-    copy. The copy is handed the original's HTTP client explicitly: `AsyncAnthropicBedrock.with_options()`
-    would otherwise build a fresh one, dropping the caller's transport and connection pool. `carry_over` passes
-    other constructor arguments that a client's `with_options()` doesn't copy itself.
+    copy. The copy is handed the original's HTTP client explicitly: below anthropic 2.6,
+    `AsyncAnthropicBedrock.with_options()` would otherwise build a fresh one, dropping the caller's transport and
+    connection pool. `carry_over` passes other constructor arguments that a client's `with_options()` doesn't copy
+    itself; passing one it already copies raises a `TypeError`.
     """
     if (max_retries := model_settings.get('max_retries')) is None:
         return client

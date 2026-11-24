@@ -67,7 +67,7 @@ Choose one state strategy per observed contract:
 | OpenAI source | Meaning | Target owner |
 |---|---|---|
 | `result.to_input_list()` | caller-managed replay-ready conversation input | core `message_history`, serialized with `ModelMessagesTypeAdapter`; application owns storage |
-| `Session` | SDK loads, merges, and persists client-managed history | application history repository, or Harness `StepPersistence` only when its settled snapshots/event/effect semantics are wanted |
+| `Session` | SDK loads, merges, and persists client-managed history | Core `ConversationStore` or an application history repository; add Harness `StepPersistence` only when its settled snapshots/event/effect semantics are wanted |
 | `previous_response_id` | OpenAI Responses server-side chain | `OpenAIResponsesModelSettings.openai_previous_response_id`; verify storage/ZDR and reasoning continuity |
 | OpenAI `conversation_id` | OpenAI Conversations API state | `OpenAIResponsesModelSettings.openai_conversation_id`; do not confuse it with Pydantic AI's correlation `conversation_id` |
 | `RunState` plus interruptions | resumable paused execution with approval decisions | core deferred tools with inline `HandleDeferredToolCalls` or stored `DeferredToolRequests`/`DeferredToolResults`, Harness step persistence, or a durable integration according to crash/replay requirements |

@@ -212,12 +212,12 @@ def test_label_updates(tmp_path: Path, script: str, initial_sizes: list[str], wr
                 ('tests/README.md', 4, 0),
                 ('uv.lock', 9999, 9999),
                 ('tests/cassettes/provider/response.yaml', 9999, 9999),
-                ('src/cassettes/response.json', 9999, 9999),
-                ('docs/cassettes/README.md', 9999, 9999),
             ],
             97,  # 80 code + floor(25 docs / 2) + floor(11 tests / 2).
             'size: S',
         ),
+        # Only a `.yaml` cassette is generated, so code under a `cassettes/` directory still counts.
+        ([('pydantic_ai_slim/pydantic_ai/cassettes/model.py', 900, 0)], 900, 'size: L'),
         ([('tests/README.md', 200, 0)], 100, 'size: S'),
     ],
 )
@@ -310,12 +310,12 @@ def test_api_errors(tmp_path: Path, script: str, overrides: dict[str, str], expe
     ('filename', 'score'),
     [
         ('.github/workflows/pydantic-ai-pr-review.lock.yml', 0),
-        ('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/index.html', 0),
-        ('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/assets/app.js', 0),
-        ('src/pydantic_clai2/web-ui/package-lock.json', 0),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/index.html', 0),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/assets/app.js', 0),
+        ('src/pydantic_ai_pax/web-ui/package-lock.json', 0),
         ('.github/workflows/pydantic-ai-pr-review.md', 1000),
-        ('src/pydantic_clai2/web-ui/src/app.ts', 2000),
-        ('src/pydantic_clai2/web-ui/package.json', 2000),
+        ('src/pydantic_ai_pax/web-ui/src/app.ts', 2000),
+        ('src/pydantic_ai_pax/web-ui/package.json', 2000),
     ],
 )
 def test_generated_files(tmp_path: Path, script: str, filename: str, score: int):

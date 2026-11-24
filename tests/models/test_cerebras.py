@@ -18,6 +18,8 @@ from ..cassette_utils import request_json
 from ..conftest import RequestCapture, iter_message_parts, try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
     from pydantic_ai.models.cerebras import (
         CerebrasModel,
         CerebrasModelSettings,
@@ -25,6 +27,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.openai import OpenAIChatModelSettings
     from pydantic_ai.providers.cerebras import CerebrasProvider
+
+    from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -265,18 +269,34 @@ async def test_cerebras_clear_thinking_default_for_tags_path():
     assert cast(dict[str, Any], zai_override.get('extra_body', {})).get('clear_thinking') is True
 
 
-async def test_cerebras_thinking_false_by_model():
-    """`thinking=False` turns reasoning off where Cerebras can (zai/GLM), and sends gpt-oss's lowest effort, since it
-    can't stop reasoning. Not recorded (no Cerebras key at hand): the efforts come from
-    https://inference-docs.cerebras.ai/capabilities/reasoning."""
-    provider = CerebrasProvider(api_key='mock-api-key')
-    efforts = {
-        model_name: (
-            CerebrasModel(model_name, provider=provider).prepare_request(
-                CerebrasModelSettings(thinking=False), ModelRequestParameters()
-            )[0]
-            or {}
-        ).get('openai_reasoning_effort')
-        for model_name in ('zai-glm-4.7', 'gpt-oss-120b')
-    }
-    assert efforts == {'zai-glm-4.7': 'none', 'gpt-oss-120b': 'low'}
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        # Hybrid: `none` turns reasoning off; other levels are omitted, as Cerebras reasons by default.
+        ('qwen-3.8-27b', {False: 'none', 'minimal': None, 'medium': None, 'xhigh': None}),
+        # Always on, accepting only `low`, `high` and `max`.
+        ('kimi-k3', {False: 'low', 'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}),
+        ('zai-glm-5.3', {False: 'low', 'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}),
+        ('zai-glm-5.3-flash', {False: 'low', 'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}),
+        # Can still disable.
+        ('zai-glm-4.7', {False: 'none', 'minimal': None, 'medium': None, 'xhigh': None}),
+        # Always on, documenting `low`/`medium`/`high`.
+        ('gpt-oss-120b', {False: 'low', 'minimal': None, 'medium': None, 'xhigh': None}),
+    ],
+)
+async def test_cerebras_reasoning_effort_by_model(
+    allow_model_requests: None, model_name: str, expected: dict[Any, str | None]
+):
+    """The `reasoning_effort` each unified `thinking` level sends. Not recorded (no Cerebras key at hand): the
+    accepted efforts come from https://inference-docs.cerebras.ai/capabilities/reasoning."""
+    sent: dict[Any, str | None] = {}
+    for thinking in expected:
+        mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='OK', role='assistant')))
+        model = CerebrasModel(model_name, provider=CerebrasProvider(openai_client=mock_client))
+        await model_request(
+            model, [ModelRequest.user_text_prompt('hello')], model_settings=CerebrasModelSettings(thinking=thinking)
+        )
+        [kwargs] = get_mock_chat_completion_kwargs(mock_client)
+        effort = kwargs.get('reasoning_effort')
+        sent[thinking] = effort if isinstance(effort, str) else None
+    assert sent == expected

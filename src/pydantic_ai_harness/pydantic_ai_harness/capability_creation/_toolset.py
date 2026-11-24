@@ -13,6 +13,9 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore, rejected_module_file
 
+AUTHORING_TOOL_METADATA_KEY = 'capability_creation_tool'
+"""Marks this toolset's tools, under whatever name a wrapper gives them, for `CapabilityCreation` to check."""
+
 
 @dataclass(frozen=True)
 class CapabilityCreationOperations:
@@ -48,10 +51,18 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         self.add_function(
             self.author_capability,
             name='author_capability',
-            metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+            metadata={'code_arg_name': 'code', 'code_arg_language': 'python', AUTHORING_TOOL_METADATA_KEY: True},
         )
-        self.add_function(self.list_authored_capabilities, name='list_authored_capabilities')
-        self.add_function(self.disable_authored_capability, name='disable_authored_capability')
+        self.add_function(
+            self.list_authored_capabilities,
+            name='list_authored_capabilities',
+            metadata={AUTHORING_TOOL_METADATA_KEY: True},
+        )
+        self.add_function(
+            self.disable_authored_capability,
+            name='disable_authored_capability',
+            metadata={AUTHORING_TOOL_METADATA_KEY: True},
+        )
 
     async def author_capability(self, name: str, code: str) -> str:
         """Author a new pydantic-ai capability from Python source.

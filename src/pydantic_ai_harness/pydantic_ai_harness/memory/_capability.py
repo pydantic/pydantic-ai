@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Literal, TypeAlias
+from typing import Final, Literal, TypeAlias
 
-from pydantic_ai._framing import neutralize_tags
+from opentelemetry.trace import Span
+
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    DataCapabilityPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelSource,
     TextContent,
     ToolReturnPart,
     UserPromptPart,
@@ -27,15 +30,13 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
-from pydantic_ai_harness.memory._file import FileStore
-from pydantic_ai_harness.memory._in_memory import InMemoryStore
+from pydantic_ai_harness.memory._file import FileMemoryStore
+from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
-    MEMORY_DATA_PREFIX,
-    MEMORY_DATA_SUFFIX,
     MEMORY_ORIGIN,
     MemoryDeleteResult,
     MemorySearchResponse,
@@ -66,9 +67,24 @@ _DEFAULT_GUIDANCE = (
     'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
 
+
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
-_MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
-"""The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
+@dataclass(kw_only=True)
+class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snapshot', tag='memory'):
+    """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
+
+    Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
+    application's voice, with a note saying who wrote it. It goes in as stored: text in it that looks like a framework
+    frame, or opens or closes `<memory>`, gets a note saying it's the agent's, not the application's. Find snapshots in
+    history by this type.
+    """
+
+    scope_hash: str
+    """A hash of the memory scope the snapshot shows. Never sent to the model."""
+
+    memory_id: str
+    """The `id` of the `Memory` capability that recorded it, or `''`. Never sent to the model."""
+
 
 WriteMetadataFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None]
 """Resolves the metadata recorded with one `write_memory` write, or `None` to record none."""
@@ -80,17 +96,17 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     A snapshot of `MEMORY.md` is recorded in the conversation as user-role data,
     once per run in which it changed, and longer topic files are available
-    through `read_memory` and `search_memory`. When a `FileStore` keeps the
+    through `read_memory` and `search_memory`. When a `FileMemoryStore` keeps the
     files in the run's workspace, `read_memory` steps aside for `FileSystem`'s
     `read_file`, and the snapshot gives the directory. Automatic snapshot
     loading is journaled by durability engines that support capability
     operations.
     """
 
-    store: MemoryStore = field(default_factory=InMemoryStore)
+    store: MemoryStore = field(default_factory=InMemoryMemoryStore)
     """Storage backend. The default persists only for the process lifetime.
 
-    `FileStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
+    `FileMemoryStore` keeps Markdown files in the run's workspace, or in a workspace of its own."""
 
     store_resolver: Callable[[RunContext[AgentDepsT]], MemoryStore] | None = None
     """Optional per-run store resolver. Resolver failures always propagate."""
@@ -193,11 +209,11 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._run_started = False
         clone._run_continues = False
         store, scope = clone._resolve_scope(ctx)
-        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
+        clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileMemoryStore) else store, scope)
         return clone
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Note what the run starts from, and fail it when a `FileStore` has no workspace to keep its files in.
+        """Note what the run starts from, and fail it when a `FileMemoryStore` has no workspace to keep its files in.
 
         Read here rather than in `for_run`, which a durable engine also calls to rebuild the capability inside an
         activity, where the run's prompt and history aren't carried.
@@ -208,20 +224,20 @@ class Memory(AbstractCapability[AgentDepsT]):
         # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
         # a provider can compact in the very response that asked for the approval being resumed.
         self._run_snapshot = _latest_snapshot(ctx.messages, snapshot_metadata(scope, self.id))
-        if isinstance(store, FileStore) and store.workspace is None and not ctx.workspace.attached:
+        if isinstance(store, FileMemoryStore) and store.workspace is None and not ctx.workspace.attached:
             raise UserError(
-                "`Memory(store=FileStore(...))` keeps memory files in the run's workspace, but none is attached "
+                "`Memory(store=FileMemoryStore(...))` keeps memory files in the run's workspace, but none is attached "
                 "to this run. Attach one, such as `LocalWorkspace('.')`, or pass "
-                '`FileStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
+                '`FileMemoryStore(..., workspace=LocalWorkspaceBackend(...))` to keep them somewhere else.'
             )
 
     def resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         """Return the cached run scope, or resolve one for direct toolset use.
 
-        A `FileStore` without a workspace of its own is bound to `ctx.workspace`.
+        A `FileMemoryStore` without a workspace of its own is bound to `ctx.workspace`.
         """
         store, scope = self._resolved_scope if self._resolved_scope is not None else self._resolve_scope(ctx)
-        return (store.bind(ctx.workspace) if isinstance(store, FileStore) else store), scope
+        return (store.bind(ctx.workspace) if isinstance(store, FileMemoryStore) else store), scope
 
     def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         store = self.store_resolver(ctx) if self.store_resolver is not None else self.store
@@ -331,7 +347,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
                 # so it goes there, after any tool results, rather than anywhere the provider would trim.
-                ctx.enqueue(UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata))
             return request_context
         self._run_snapshot = latest
         with ctx.tracer.start_as_current_span(
@@ -347,24 +363,16 @@ class Memory(AbstractCapability[AgentDepsT]):
             try:
                 main, subfiles, files_truncated, error_type = await self._load_snapshot(ctx)
             except Exception as exc:
-                if span.is_recording():
-                    span.set_attributes(
-                        {
-                            'memory.outcome': 'error',
-                            'memory.exception_type': type(exc).__name__,
-                        }
-                    )
+                _record_load_error(span, type(exc).__name__)
                 if self.injection_errors == 'raise':
                     raise
                 return request_context
 
             if error_type is not None:
-                if span.is_recording():
-                    span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': error_type})
+                _record_load_error(span, error_type)
                 return request_context
 
             main, withheld = self._withhold_flagged(ctx, main)
-            has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
             snapshot = self._render_snapshot(
                 main,
                 subfiles,
@@ -372,34 +380,41 @@ class Memory(AbstractCapability[AgentDepsT]):
                 file_reader(ctx, store, scope),
                 reserved=len(directory_instruction(self, store, scope) or ''),
             )
-            rendered = None if snapshot is None else snapshot[0]
-            # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
-            # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
-            # is just this request and holds no snapshot (a promptless resume after a failed first request merges the
-            # old one into it), and recorded once per run in which it isn't already the latest snapshot.
-            if snapshot is not None and snapshot[1] and len(ctx.messages) <= 1 and latest is None:
-                rendered = None
-            appended = rendered if rendered is not None and rendered != latest else None
+            appended = _snapshot_to_append(ctx.messages, snapshot, latest)
             if appended is not None:
                 # When an earlier hook retried the first request, this lands after its retry feedback: still
                 # ahead of any response, so nothing the model has seen changes.
-                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
+                ctx.enqueue(_snapshot_part(appended, metadata))
                 self._run_snapshot = appended
-            if span.is_recording():
-                span.set_attributes(
-                    {
-                        # The guidance can fill the whole budget, leaving no room to inject what is stored.
-                        'memory.outcome': 'ok' if snapshot is not None or not has_memory else 'budget_exhausted',
-                        'memory.main_chars': 0 if main is None else len(main.content),
-                        'memory.files': len(subfiles),
-                        'memory.files_truncated': files_truncated,
-                        'memory.main_truncated': main is not None and main.truncated,
-                        'memory.appended': appended is not None,
-                        'memory.injected_chars': len(appended or ''),
-                        **({} if self.scanner is None else {'memory.main_withheld': withheld}),
-                    }
-                )
+            self._record_injection(span, main, subfiles, files_truncated, snapshot, appended, withheld)
         return request_context
+
+    def _record_injection(
+        self,
+        span: Span,
+        main: MemoryFile | None,
+        subfiles: list[str],
+        files_truncated: bool,
+        snapshot: tuple[str, bool] | None,
+        appended: str | None,
+        withheld: bool,
+    ) -> None:
+        if not span.is_recording():
+            return
+        has_memory = bool((main is not None and main.content) or subfiles or files_truncated)
+        span.set_attributes(
+            {
+                # The guidance can fill the whole budget, leaving no room to inject what is stored.
+                'memory.outcome': 'ok' if snapshot is not None or not has_memory else 'budget_exhausted',
+                'memory.main_chars': 0 if main is None else len(main.content),
+                'memory.files': len(subfiles),
+                'memory.files_truncated': files_truncated,
+                'memory.main_truncated': main is not None and main.truncated,
+                'memory.appended': appended is not None,
+                'memory.injected_chars': len(appended or ''),
+                **({} if self.scanner is None else {'memory.main_withheld': withheld}),
+            }
+        )
 
     def _withhold_flagged(self, ctx: RunContext[AgentDepsT], main: MemoryFile | None) -> tuple[MemoryFile | None, bool]:
         """`main` with a notice in place of its content when the `scanner` flags it, and whether it did."""
@@ -422,8 +437,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         reserved: int = 0,
     ) -> tuple[str, bool] | None:
         """The framed snapshot, and whether a fresh conversation can skip it, or `None` when it doesn't fit the budget."""
-        main_content = '' if main is None else _neutralize(main.content)
-        subfiles = [_neutralize(name) for name in subfiles]
+        main_content = '' if main is None else main.content
         guidance = self._render_guidance()
         # The `directory` instruction, when there is one, shares `max_tokens` with the guidance and the snapshot.
         content_budget = snapshot_content_budget(self.max_tokens, guidance) - reserved
@@ -435,7 +449,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             empty = empty_snapshot_body(self.heading, None if reader is None else reader[1])
             if len(empty) > content_budget:
                 return None
-            return f'{MEMORY_DATA_PREFIX}{empty}{MEMORY_DATA_SUFFIX}', True
+            return empty, True
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -448,7 +462,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             read_main=read_call(reader, MAIN_FILENAME),
             location=None if reader is None else reader[1],
         )[:content_budget]
-        return f'{MEMORY_DATA_PREFIX}{rendered}{MEMORY_DATA_SUFFIX}', False
+        return rendered, False
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(
@@ -501,9 +515,9 @@ class Memory(AbstractCapability[AgentDepsT]):
             raise ValueError('database is only valid with backend="sqlite"')
 
         if backend == 'memory':
-            store: MemoryStore = InMemoryStore()
+            store: MemoryStore = InMemoryMemoryStore()
         elif backend == 'file':
-            store = FileStore(directory)
+            store = FileMemoryStore(directory)
         elif backend == 'sqlite':
             store = SqliteMemoryStore(database=database)
         else:
@@ -533,32 +547,78 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
-def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
-    """The text of the latest snapshot for this scope in history, or `None` when there is none.
+_MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
+"""Who wrote a memory snapshot: the agent, through its memory tools. Stores don't record which entries a user edited."""
 
-    Snapshots are recognized by the metadata `Memory` sets on them, never by their text. Versions before
-    snapshots were kept in history marked them with a plain string, which still identifies them.
+
+def _snapshot_part(content: str, metadata: dict[str, str]) -> MemorySnapshotPart:
+    """A snapshot as `Memory` records it: `content` is the frame's body, its line breaks included."""
+    return MemorySnapshotPart(
+        content=content,
+        # The agent writes memory with its memory tools, in earlier runs: another model's text, with no authority.
+        source=_MEMORY_SOURCE,
+        scope_hash=metadata['scope'],
+        memory_id=metadata['id'],
+    )
+
+
+def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
+    """The content of the latest snapshot for this scope in history, or `None` when there is none.
+
+    Snapshots are `MemorySnapshotPart`s, recognized by their type, scope and capability id, never by their text.
+    Earlier versions recorded them as user text marked with metadata, or before that a plain string, which still
+    identifies them. That text includes the `<memory>` frame, which is left out, so a snapshot that matches the
+    current memory isn't recorded again.
     """
     legacy = (f'{MEMORY_ORIGIN}:{metadata["scope"]}', MEMORY_ORIGIN)
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
-            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                continue
-            for item in reversed(part.content):
-                if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
-                    return item.content
+            if (snapshot := _part_snapshot(part, metadata, legacy)) is not None:
+                return snapshot
     return None
 
 
-def _neutralize(text: str) -> str:
-    """Escape every framing tag in stored memory, and `<memory>` itself, so it can't end its block or forge one.
+def _snapshot_to_append(
+    messages: list[ModelMessage], snapshot: tuple[str, bool] | None, latest: str | None
+) -> str | None:
+    """The snapshot to record: `None` when it does not fit the budget, can be skipped, or is already the latest."""
+    if snapshot is None:
+        return None
+    rendered, skippable = snapshot
+    # Memory just emptied could still be shown by anything earlier in the history: an older snapshot, or a
+    # summary that kept its facts. So an empty snapshot is skipped only in a fresh conversation, whose history
+    # is just this request and holds no snapshot (a promptless resume after a failed first request merges the
+    # old one into it), and recorded once per run in which it isn't already the latest snapshot.
+    if skippable and len(messages) <= 1 and latest is None:
+        return None
+    return rendered if rendered != latest else None
 
-    Memory is model- or user-written data: a `<system>` in it must not read as the application speaking.
+
+def _record_load_error(span: Span, exception_type: str) -> None:
+    if span.is_recording():
+        span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': exception_type})
+
+
+def _part_snapshot(part: ModelRequestPart, metadata: dict[str, str], legacy: tuple[str, str]) -> str | None:
+    """The content of the snapshot for this scope that `part` is or holds, or `None` when it has none.
+
+    `legacy` is the plain-string metadata older versions marked a snapshot with.
     """
-    # TODO: switch to `pydantic_ai.framing.wrap()` with `memory` registered as a framing tag (#10957).
-    return _MEMORY_TAG_RE.sub('&lt;', neutralize_tags(text))
+    if (
+        isinstance(part, MemorySnapshotPart)
+        and part.scope_hash == metadata['scope']
+        and part.memory_id == metadata['id']
+    ):
+        return part.content
+    if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+        return None
+    for item in reversed(part.content):
+        if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
+            # A legacy snapshot's body sits on lines of its own, between the tags.
+            return item.content.removeprefix('<memory>\n').removesuffix('\n</memory>')
+    return None
 
 
 def _responded_in_run(ctx: RunContext[AgentDepsT]) -> bool:

@@ -490,6 +490,10 @@ class FakeSandbox:
         )
         assert process.stdout is not None and process.stderr is not None
         self._host_processes.add(process)
+        # The command can run before this thread registers it, so a `terminate` that did not see it kills it here.
+        if self.shutting_down:  # pragma: lax no cover
+            with suppress(OSError):
+                os.killpg(process.pid, signal.SIGKILL)
         streams = {process.stdout: bytearray(), process.stderr: bytearray()}
         active = list(streams)
         for stream in streams:

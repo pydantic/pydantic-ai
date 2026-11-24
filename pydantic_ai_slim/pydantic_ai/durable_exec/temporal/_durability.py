@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
@@ -13,10 +14,13 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
+from pydantic_ai._durable_replay import replay_scope
 from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
+from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
@@ -56,6 +60,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._function_toolset import gate_tool_instance_defaults
 from ._operation_backend import (
     TemporalBoundOperation,
     TemporalOperationBackend,
@@ -84,6 +89,9 @@ from ._transports import (
 
 _STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
 """`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
+
+_DURABLE_COUNT_TOKENS_PATCH = 'pydantic_ai:durable_count_tokens'
+"""`workflow.patched()` ID marking histories in which a count ahead of a request runs in an activity."""
 
 _DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelRequestRejectedError,
@@ -141,6 +149,11 @@ It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including th
 arguments the workflow's run method needs to resume. Returning without calling it defers the
 continuation to the next model request.
 """
+
+
+def _replaying_history() -> bool:
+    """Workflow code running while Temporal replays history already ran, and recorded its telemetry, before."""
+    return workflow.in_workflow() and workflow.unsafe.is_replaying_history_events()
 
 
 @dataclass(init=False, kw_only=True)
@@ -256,7 +269,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]),
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
                 [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. A list you pass replaces
-                the default, and `()` lets the retry policy retry every model error.
+                the default, and `()` lets the retry policy retry every model error. When the agent is built
+                with [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors], every model error is
+                non-retryable, so that capability is the one that retries them, and the retry policy still
+                covers worker crashes and activity timeouts. A `non_retryable_model_errors` other than the default
+                is then ignored, with a `UserWarning`. A `RetryOnModelErrors` that only a
+                `DynamicCapability` returns for the run raises a `UserError` inside a workflow instead.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -332,6 +350,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
         self._child_workflow_metadata_capability = False
+        self._retry_on_model_errors = False
+        """Whether the agent was built with `RetryOnModelErrors`, so the model activity doesn't retry model errors."""
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -352,6 +372,21 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         assert self._deps_type is not None
         self._child_workflow_metadata_capability = False
         agent.root_capability.apply(self._detect_child_workflow_metadata)
+        non_retryable_model_errors = self._non_retryable_model_errors
+        self._retry_on_model_errors = _has_retry_on_model_errors(agent.root_capability)
+        if self._retry_on_model_errors:
+            # `RetryOnModelErrors` retries model errors in the workflow, waiting on a durable timer, so the activity
+            # doesn't retry them too: its retry policy is left to crashes and timeouts, which never reach a hook.
+            if non_retryable_model_errors != _DEFAULT_NON_RETRYABLE_MODEL_ERRORS:
+                warnings.warn(
+                    '`non_retryable_model_errors` is ignored because the agent has `RetryOnModelErrors`: that '
+                    'capability does the retrying of model errors, so the model request activity treats every model '
+                    'error as non-retryable. Configure which errors are retried with `RetryOnModelErrors(retry_on=...)` '
+                    'instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            non_retryable_model_errors = (ModelAPIError,)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,
             deps_type=self._deps_type,
@@ -359,7 +394,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
-            non_retryable_model_errors=self._non_retryable_model_errors,
+            non_retryable_model_errors=non_retryable_model_errors,
             runtime=self,
             parameter_transports=TemporalParameterTransports(self),
         )
@@ -393,14 +428,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         request_stream = self._bound_model_operations.request_stream
         compact_messages = self._bound_model_operations.compact_messages
         cancel_suspended_response = self._bound_model_operations.cancel_suspended_response
+        count_tokens = self._bound_model_operations.count_tokens
         assert isinstance(request, TemporalBoundOperation)
         assert isinstance(request_stream, TemporalBoundOperation)
         assert isinstance(compact_messages, TemporalBoundOperation)
         assert isinstance(cancel_suspended_response, TemporalBoundOperation)
+        assert isinstance(count_tokens, TemporalBoundOperation)
         self.request_activity = request.registration
         self.request_stream_activity = request_stream.registration
         self.compact_messages_activity = compact_messages.registration
         self.cancel_suspended_response_activity = cancel_suspended_response.registration
+        self.count_tokens_activity = count_tokens.registration
 
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(backend)
@@ -439,6 +477,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         config.update(self._toolset_activity_config.get(toolset_id, {}))
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
         return config
+
+    def _function_tools_listing_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT]
+    ) -> AbstractContextManager[None]:
+        return gate_tool_instance_defaults(toolset)
 
     @contextmanager
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
@@ -528,7 +571,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
                 'child workflow because direct activity registration would omit required workflow definitions. '
                 'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
-                'the workflow via `__pydantic_ai_agents__`.'
+                'the workflow via `__pydantic_ai_agents__`. For an activity-only worker, use '
+                '`AgentPlugin(agent, register_workflows=False)`.'
             )
         return activities
 
@@ -555,6 +599,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 
+    def _counts_tokens_in_durable_unit(self) -> bool:
+        return workflow.patched(_DURABLE_COUNT_TOKENS_PATCH)
+
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
@@ -568,12 +615,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows."""
+        """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
         if not self.in_durable_context:
             return await handler()
+        if (
+            not self._retry_on_model_errors
+            and ctx.root_capability is not None
+            and _has_retry_on_model_errors(ctx.root_capability)
+        ):
+            # The model activity's retry policy is set when the agent is bound, so it would retry model errors too.
+            raise UserError(
+                'Under Temporal, `RetryOnModelErrors` must be one of the capabilities the agent is built with, so the '
+                'model request activity leaves retrying model errors to it. Add it to the agent instead of the run.'
+            )
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            return await handler()
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+            return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""
@@ -749,8 +806,14 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
         return result
 
 
-def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Callable[..., Any]], list[type]]:
-    """Return the activities and workflow definitions a worker must register for `durability`."""
+def worker_registrations(
+    durability: TemporalDurability[Any], *, include_workflows: bool = True
+) -> tuple[list[Callable[..., Any]], list[type]]:
+    """Return the activities and workflow definitions a worker must register for `durability`.
+
+    With `include_workflows=False`, return no workflow definitions and leave `registered_child_workflow_names` alone,
+    since the worker isn't configured with them.
+    """
     backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
     if backend is None:
         return [], []
@@ -759,6 +822,8 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
     # A worker only registers the child workflows of toolsets that select one, so workers for agents that don't use
     # the feature keep exactly their activity registrations.
     workflows: list[type] = []
+    if not include_workflows:
+        return activities, workflows
     for registration in registrations:
         if not isinstance(registration, type):
             continue
@@ -767,3 +832,21 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
             workflows.append(registration)
             registered_child_workflow_names.add(workflow_name)
     return activities, workflows
+
+
+def _has_retry_on_model_errors(capability: AbstractCapability[Any]) -> bool:
+    """Whether the agent's capabilities include `RetryOnModelErrors`, including one a wrapper capability wraps.
+
+    `apply` doesn't visit what a wrapper wraps, like the capability a `DynamicCapability` returned for the run, whose
+    hooks still run, so wrappers are unwrapped here.
+    """
+    found = False
+
+    def visit(cap: AbstractCapability[Any]) -> None:
+        nonlocal found
+        if isinstance(cap, WrapperCapability):
+            found = found or _has_retry_on_model_errors(cap.wrapped)
+        found = found or isinstance(cap, RetryOnModelErrors)
+
+    capability.apply(visit)
+    return found

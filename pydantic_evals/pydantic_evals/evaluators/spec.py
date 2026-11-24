@@ -13,6 +13,7 @@ short forms for convenience when defining evaluators in YAML or JSON dataset fil
 
 In particular, each of the following forms is supported for specifying an evaluator with name `MyEvaluator`:
 * `'MyEvaluator'` - Just the (string) name of the Evaluator subclass is used if its `__init__` takes no arguments
-* `{'MyEvaluator': first_arg}` - A single argument is passed as the first positional argument to `MyEvaluator.__init__`
+* `{'MyEvaluator': first_arg}` - A single argument is passed as the first positional argument to `MyEvaluator.__init__`,
+  unless it is a mapping with string keys, which is read as kwargs as below
 * `{'MyEvaluator': {k1: v1, k2: v2}}` - Multiple kwargs are passed to `MyEvaluator.__init__`
 """

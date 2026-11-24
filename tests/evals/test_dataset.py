@@ -7,6 +7,7 @@ import math
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
@@ -16,6 +17,8 @@ import pytest
 import yaml
 from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
+
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._inline_snapshot import snapshot
 from ..clock_utils import LONG_TIMEOUT, Clock
@@ -35,10 +38,13 @@ with try_import() as imports_successful:
         EvaluatorFailure,
         EvaluatorOutput,
         EvaluatorSpec,
+        HasMatchingSpan,
         LLMJudge,
+        MaxDuration,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.generation import generate_dataset
+    from pydantic_evals.otel.span_tree import SpanQuery
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
 
     BareNoneDatasetCase = tuple[
@@ -107,7 +113,6 @@ class TaskOutput(BaseModel):
     confidence: float = 1.0
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must replace a closed thread-current event loop.
 
@@ -127,7 +132,6 @@ def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abs
     assert not asyncio.all_tasks(replacement_loop)
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`evaluate_sync` must create and install an event loop when the thread has none."""
     dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
@@ -1155,6 +1159,27 @@ def test_from_file_schema_mismatch(tmp_path: Path):
 
     with pytest.raises(ValueError, match=r'test_cases\.yaml contains data that does not match the schema for Dataset'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_from_file_roundtrip_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 'yaml']):
+    """A dataset file re-saved with a UTF-8 byte order mark still loads."""
+    dataset = Dataset[int, int, None](name='bom', cases=[Case(name='café ✓ 日本', inputs=1, expected_output=1)])
+    path = tmp_path / f'bom.{fmt}'
+    dataset.to_file(path)
+    path.write_bytes(b'\xef\xbb\xbf' + path.read_bytes())
+
+    assert Dataset[int, int, None].from_file(path) == dataset
+
+
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    path = tmp_path / 'truncated.json'
+    path.write_bytes(content)
+
+    with pytest.raises(UnicodeDecodeError):
+        Dataset[int, int, None].from_file(path)
 
 
 async def test_from_text():
@@ -2649,10 +2674,6 @@ async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOut
     await example_dataset.evaluate(task, lifecycle=lifecycle)
 
 
-# How long a test waits for a background thread it controls; never reached unless the code under test hangs.
-READINESS_WAIT_TIMEOUT = 10
-
-
 async def test_task_timeout_fails_only_the_slow_case():
     cancelled = anyio.Event()
 
@@ -2819,4 +2840,42 @@ async def test_task_timeout_recorded_on_spans(capfire: CaptureLogfire):
             'execute {task}': [('TimeoutError', 'Task timed out after 0.01s')],
             'case: {case_name}': [('TimeoutError', 'Task timed out after 0.01s')],
         }
+    )
+
+
+@needs_logfire
+@pytest.mark.parametrize('fmt', ['yaml', 'json'])
+def test_to_file_roundtrip_duration_evaluators(capfire: CaptureLogfire, tmp_path: Path, fmt: Literal['yaml', 'json']):
+    """Duration bounds still evaluate after `to_file` writes `timedelta` values as ISO-8601 strings."""
+    dataset_file = tmp_path / f'dataset.{fmt}'
+    dataset = Dataset[str, str, None](
+        name='durations',
+        cases=[Case(name='case', inputs='in', evaluators=(MaxDuration(seconds=timedelta(seconds=5)),))],
+        evaluators=[
+            MaxDuration(seconds=60.0),
+            HasMatchingSpan(
+                query=SpanQuery(name_equals='work span', min_duration=timedelta(0), max_duration=timedelta(hours=1)),
+                evaluation_name='bounded',
+            ),
+            HasMatchingSpan(
+                query=SpanQuery(
+                    name_equals='outer span',
+                    some_child_has=SpanQuery(name_equals='work span', max_duration=timedelta(0)),
+                ),
+                evaluation_name='nested_too_slow',
+            ),
+        ],
+    )
+    dataset.to_file(dataset_file)
+    serialized = dataset_file.read_text()
+    assert all(value in serialized for value in ('PT5S', 'PT0S', 'PT1H', '60.0'))
+
+    def run_task(inputs: str) -> str:
+        with logfire.span('outer span'), logfire.span('work span'):
+            return 'out'
+
+    case = Dataset[str, str, None].from_file(dataset_file).evaluate_sync(run_task, progress=False).cases[0]
+    assert case.evaluator_failures == []
+    assert {name: result.value for name, result in case.assertions.items()} == snapshot(
+        {'MaxDuration': True, 'MaxDuration_2': True, 'bounded': True, 'nested_too_slow': False}
     )

@@ -10,7 +10,7 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # CLAI 2.0's published `-p` command is the headless interface used by this
+      # Pax's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
       python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
@@ -23,9 +23,9 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.66.0"
+  version: "0.73.0"
   display-name: Pydantic AI
-  description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
+  description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
   # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
   # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
@@ -86,9 +86,14 @@ engine:
       // reopen a surviving parent's stderr pipe through /proc and replace the
       // public-key header. The Python recorder writes to stderr directly after
       // protecting itself against /proc access.
+      // The capture descriptor can arrive non-blocking, and its open file description is
+      // shared with the processes that started the engine, so the recorder leaves that flag
+      // alone. A frame can be larger than the pipe, so each line is written in a loop that
+      // takes partial writes and waits for the reader to make room when the pipe is full.
       const RECORDING_MODULE = `import ctypes
       import json
       import os
+      import select
       import sys
 
       from cryptography.hazmat.primitives import serialization
@@ -100,13 +105,27 @@ engine:
               raise OSError(ctypes.get_errno(), 'Unable to protect session signing key')
       capture_fd = int(os.environ.pop('GH_AW_SESSION_CAPTURE_FD'))
       os.set_inheritable(capture_fd, False)
-      output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
+      output = os.fdopen(capture_fd, 'wb', buffering=0, closefd=False)
+      capture_poller = select.poll()
+      capture_poller.register(capture_fd, select.POLLOUT)
+
+
+      def write_line(line: str) -> None:
+          remaining = memoryview(f'{line}\\n'.encode())
+          while remaining:
+              written = output.write(remaining)
+              if written is None:
+                  capture_poller.poll()
+              else:
+                  remaining = remaining[written:]
+
+
       key = Ed25519PrivateKey.generate()
       public_key = key.public_key().public_bytes(
           encoding=serialization.Encoding.DER,
           format=serialization.PublicFormat.SubjectPublicKeyInfo,
       ).hex()
-      print(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e', file=output, flush=True)
+      write_line(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e')
       sequence = 0
 
 
@@ -114,7 +133,7 @@ engine:
           global sequence
           payload = json.dumps(event, separators=(',', ':'))
           signature = key.sign(f'{sequence}\\n{payload}'.encode()).hex()
-          print(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}', file=output, flush=True)
+          write_line(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}')
           sequence += 1
       `;
 
@@ -142,6 +161,7 @@ engine:
       import sys
       from datetime import datetime, timezone
       from fnmatch import fnmatchcase
+      from importlib.util import find_spec
       from pathlib import Path
 
       import pydantic_core
@@ -340,7 +360,7 @@ engine:
                   elif isinstance(event.part, ThinkingPart):
                       _emit('assistant.reasoning', {'content': event.part.content})
 
-          def finish(self, exit_code: int) -> None:
+          def finish(self, exit_code: int, metadata: dict[str, object] | None = None) -> None:
               global _finished
               if _finished:
                   return
@@ -360,6 +380,8 @@ engine:
                   if _usage.cache_write_tokens or _usage.cache_read_tokens:
                       usage['input_tokens_include_cache'] = True
               result: dict[str, object] = {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'}
+              if metadata is not None:
+                  result['metadata'] = _json_value(metadata)
               if usage is not None:
                   result['usage'] = usage
               _emit('session.result', result)
@@ -377,7 +399,6 @@ engine:
       elif _configured_agent.lower().endswith(('.json', '.yaml', '.yml')):
           agent = Agent.from_file(_configured_agent)
       else:
-          sys.path.insert(0, os.getcwd())
           _module_name, _separator, _attribute = _configured_agent.rpartition(':')
           if not _separator:
               _module_name, _separator, _attribute = _configured_agent.rpartition('.')
@@ -385,6 +406,13 @@ engine:
               raise ValueError(
                   f'PAI_AGENT expects MODULE:ATTRIBUTE, MODULE.ATTRIBUTE, or a JSON/YAML file; got {_configured_agent!r}'
               )
+          # The checkout joins sys.path, after installed packages, only when nothing installed has the target's
+          # top-level name, because the agent imports some dependencies after this point. Then an installed module
+          # or regular package wins, but a namespace package nothing has imported yet can lose to a checkout
+          # package. A checkout target whose top-level name is also installed is not found.
+          _top_level = _module_name.partition('.')[0]
+          if _top_level not in sys.modules and find_spec(_top_level) is None:
+              sys.path.append(os.getcwd())
           agent = getattr(importlib.import_module(_module_name), _attribute)
           if not isinstance(agent, Agent):
               raise TypeError(f'{_configured_agent} does not refer to a pydantic_ai.Agent')
@@ -405,9 +433,10 @@ engine:
       `;
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
-      // Preload the installed runner before an opt-in PAI_AGENT import adds the
-      // checkout to sys.path. The wrapper is cached before CLAI 2 resolves -a,
-      // so agent code imports once and import failures retain their traceback.
+      // Preload the installed runner before the wrapper resolves PAI_AGENT, which
+      // can append the checkout to sys.path. The wrapper is cached before Pax
+      // resolves -a, so agent code imports once and import failures retain their
+      // traceback.
       const LAUNCHER = `import importlib
       import json
       import os
@@ -423,15 +452,25 @@ engine:
       import gh_aw_recording
 
       target, prompt_file, *cli_args = sys.argv[1:]
+      if os.environ.pop('GH_AW_PREWRITTEN_NOOP', '') == '1':
+          gh_aw_recording.write_event({
+              'type': 'session.result',
+              'data': {'status': 'success', 'sourceType': 'pydantic-ai'},
+              'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+          })
+          raise SystemExit(0)
       module, separator, attribute = target.rpartition(':')
       original_stdout = sys.stdout
       stdout_sink = open(os.devnull, 'w')
       sys.stdout = stdout_sink
       exit_code = 0
       agent_module = None
+      telemetry_enabled = False
+      metadata = None
       try:
           importlib.import_module('pydantic_clai2')
-          if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
+          telemetry_path = os.environ.get('PAI_OTEL_EXPORT_PATH')
+          if telemetry_path or os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
               import atexit
               import tempfile
               import logfire
@@ -440,14 +479,28 @@ engine:
               # before this private directory is removed.
               logfire_dir = tempfile.TemporaryDirectory(prefix='gh-aw-logfire-', dir='/tmp')
               atexit.register(logfire_dir.cleanup)
+              processors = None
+              if telemetry_path:
+                  from opentelemetry.exporter.otlp.json.file import FileSpanExporter
+                  from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+                  telemetry_fd = os.open(
+                      telemetry_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0), 0o600
+                  )
+                  telemetry_output = os.fdopen(telemetry_fd, 'w', encoding='utf-8')
+                  atexit.register(telemetry_output.close)
+                  processors = [SimpleSpanProcessor(FileSpanExporter(stream=telemetry_output))]
               logfire.configure(
-                  send_to_logfire='if-token-present',
+                  send_to_logfire=False if telemetry_path else 'if-token-present',
+                  additional_span_processors=processors,
+                  metrics=False if telemetry_path else None,
                   console=False,
                   distributed_tracing=True,
                   config_dir=logfire_dir.name,
                   data_dir=logfire_dir.name,
               )
               logfire.instrument_pydantic_ai()
+              telemetry_enabled = True
               traceparent = os.environ.get('TRACEPARENT')
               if traceparent:
                   from opentelemetry.context import attach
@@ -463,6 +516,15 @@ engine:
 
           if not isinstance(loaded, Agent):
               raise TypeError(f'{target} is {type(loaded).__name__}, not pydantic_ai.Agent')
+          metadata_target = os.environ.get('PAI_RESULT_METADATA')
+          if metadata_target:
+              metadata_module, metadata_separator, metadata_attribute = metadata_target.rpartition(':')
+              if not metadata_separator:
+                  raise ValueError('PAI_RESULT_METADATA expects MODULE:ATTRIBUTE')
+              loaded_metadata = getattr(importlib.import_module(metadata_module), metadata_attribute)
+              if not isinstance(loaded_metadata, dict) or not all(isinstance(key, str) for key in loaded_metadata):
+                  raise TypeError('PAI_RESULT_METADATA must refer to a dictionary with string keys')
+              metadata = loaded_metadata
           # Read in-process: workflow context can exceed the OS argv limit.
           sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
           runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
@@ -478,11 +540,13 @@ engine:
       finally:
           sys.stdout = original_stdout
           try:
+              if telemetry_enabled:
+                  logfire.force_flush()
               result_emitted = False
               try:
                   recorder = getattr(agent_module, '_recorder', None)
                   if recorder is not None:
-                      recorder.finish(exit_code)
+                      recorder.finish(exit_code, metadata)
                       result_emitted = True
               except Exception as exc:
                   print(f'[pydantic-ai] Unable to finish session recording: {exc}', file=sys.stderr)
@@ -492,6 +556,14 @@ engine:
                       'data': {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'},
                       'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                   }
+                  if metadata is not None:
+                      # Unserializable metadata would cost the run its terminal record and usage.
+                      try:
+                          json.dumps(metadata)
+                      except (TypeError, ValueError) as exc:
+                          print(f'[pydantic-ai] Omitting result metadata that is not JSON: {exc}', file=sys.stderr)
+                      else:
+                          event['data']['metadata'] = metadata
                   try:
                       gh_aw_recording.write_event(event)
                   except Exception as exc:
@@ -523,13 +595,12 @@ engine:
         });
         if (hasNoop) {
           log(`skipping the engine: an earlier step wrote a noop to ${safeOutputs}`);
-          return;
         }
 
         const workspace = process.env.GITHUB_WORKSPACE;
-        if (!workspace) throw new Error("GITHUB_WORKSPACE is required");
+        if (!hasNoop && !workspace) throw new Error("GITHUB_WORKSPACE is required");
         const promptFile = process.env.GH_AW_PROMPT;
-        if (!promptFile) throw new Error("GH_AW_PROMPT is required");
+        if (!hasNoop && !promptFile) throw new Error("GH_AW_PROMPT is required");
         if (process.env.GH_AW_PROTECTED_SESSION_CAPTURE !== "1") {
           throw new Error(
             "This Pydantic AI engine requires a gh-aw runtime with protected session capture; " +
@@ -596,9 +667,15 @@ engine:
         // path is trusted in-process configuration: Python can import from it at
         // startup, before the recorder protects its signing key.
         //
-        // The wrapper adds the checkout only when resolving an imported PAI_AGENT,
-        // after trusted framework packages have loaded.
+        // The wrapper appends the checkout to sys.path, after installed packages,
+        // only when nothing installed has an imported PAI_AGENT's top-level name.
+        // A checkout target whose top-level name is also installed is not found.
         env.PYTHONPATH = [moduleDir, process.env.PYTHONPATH || ""].filter(Boolean).join(":");
+        if (hasNoop) {
+          env.GH_AW_PREWRITTEN_NOOP = "1";
+          process.execve(python, [python, "-P", "-c", LAUNCHER, agentTarget, promptFile || ""], env);
+          return;
+        }
         if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           // Traces-only backends return 404 noise for metrics and logs. A workflow
           // can override either default when its backend accepts those signals.
@@ -748,21 +825,20 @@ engine:
         const mcpConfig = join(process.env.RUNNER_TEMP || "/tmp", "gh-aw", "mcp-config", "mcp-servers.json");
         delete env.GH_AW_MCP_CONFIG;
         if (existsSync(mcpConfig)) env.GH_AW_MCP_CONFIG = mcpConfig;
-        // Log only the origin because endpoint userinfo and query parameters can
+        // Log only endpoint origins because userinfo and query parameters can
         // contain credentials, and workflow run logs are not private.
-        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-        let otlpOrigin = "";
-        if (otlpEndpoint) {
+        const originForLog = url => {
           try {
-            otlpOrigin = new URL(otlpEndpoint).origin;
+            return new URL(url).origin;
           } catch {
-            otlpOrigin = "(unparsable)";
+            return "(unparsable)";
           }
-        }
+        };
+        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
         log(
-          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${baseUrl}` +
+          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${originForLog(baseUrl)}` +
             (configuredAgent ? ` agent=${configuredAgent}` : "") +
-            (otlpOrigin ? ` otlp=${otlpOrigin}` : "")
+            (otlpEndpoint ? ` otlp=${originForLog(otlpEndpoint)}` : "")
         );
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
@@ -920,7 +996,7 @@ engine:
 <!--
 # Pydantic AI
 
-Shared engine definition for CLAI 2 headless execution. Import this file and set
+Shared engine definition for Pax headless execution. Import this file and set
 `engine: id: pydantic-ai`; gh-aw v1.0.1 or newer with the protected session capture
 contract described in `README.md` is required.
 

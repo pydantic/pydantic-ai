@@ -10,11 +10,12 @@ import itertools
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+import warnings
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from types import ModuleType, SimpleNamespace
+from types import AsyncGeneratorType, ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
@@ -32,6 +33,7 @@ from pydantic_ai._utils import (
     format_inlined_text_file,
     get_first_param_type,
     group_by_temporal,
+    has_yaml_structured_suffix,
     is_async_callable,
     is_google_files_api_url,
     is_str_dict,
@@ -42,13 +44,12 @@ from pydantic_ai._utils import (
     using_thread_executor,
 )
 from pydantic_ai.models.test import TestModel
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 @pytest.mark.parametrize(
@@ -99,24 +100,38 @@ def test_get_first_param_type_annotation_type_error():
     assert get_first_param_type(function) is None
 
 
+_VIRTUAL_CLOCK = ('asyncio', {'loop_factory': SimulatedLoop})
+
+
 @pytest.mark.parametrize(
-    'interval,expected',
+    'anyio_backend,interval,expected',
     [
-        (None, snapshot([[1], [2], [3]])),
-        (0, snapshot([[1], [2], [3]])),
-        (0.02, snapshot([[1], [2], [3]])),
-        (0.04, snapshot([[1, 2], [3]])),
-        (0.1, snapshot([[1, 2, 3]])),
+        pytest.param(_VIRTUAL_CLOCK, None, snapshot([[1], [2], [3]]), id='None'),
+        pytest.param('asyncio', 0, snapshot([[1], [2], [3]]), id='0'),
+        pytest.param(_VIRTUAL_CLOCK, 0.025, snapshot([[1], [2], [3]]), id='0.025'),
+        pytest.param(_VIRTUAL_CLOCK, 0.075, snapshot([[1, 2], [3]]), id='0.075'),
+        pytest.param(_VIRTUAL_CLOCK, 0.25, snapshot([[1, 2, 3]]), id='0.25'),
     ],
 )
-async def test_group_by_temporal(interval: float | None, expected: list[list[int]]):
+async def test_group_by_temporal(interval: float | None, expected: list[list[int]], monkeypatch: pytest.MonkeyPatch):
+    """Items 50 ms apart group by the window that opens on each group's first item.
+
+    The window's deadline is soft, so an item due exactly on it may join either group. Every case but `0` runs on a
+    virtual clock that the window reads too, so items arrive exactly when the producer says, and each window ends at
+    least 25 ms from any arrival: asyncio runs every timer due within its clock's resolution of now together, and
+    that resolution is 15.6 ms on Windows before Python 3.13. `0` stays on the real clock: a zero window polls with
+    a zero timeout, which never lets a virtual clock move.
+    """
+    # The window reads the loop's clock: on the real loop that is `time.monotonic()` already.
+    monkeypatch.setattr('pydantic_ai._utils.time', SimpleNamespace(monotonic=asyncio.get_running_loop().time))
+
     async def yield_groups() -> AsyncIterator[int]:
         yield 1
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
         yield 2
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
         yield 3
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
 
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
@@ -157,6 +172,27 @@ def test_group_by_temporal_first_window_starts_on_first_item(monkeypatch: pytest
         loop.advance_clock(interval / 5)
         loop.run_until_idle()
         assert groups.result() == [[1, 2]]
+
+
+@pytest.mark.parametrize('interval', [None, 0.1])
+async def test_group_by_temporal_closes_groups_on_early_exit(interval: float | None):
+    """Leaving `group_by_temporal` closes the groups iterator it handed out, even when the consumer broke out early.
+
+    Left open, that iterator is closed by the garbage collector instead, in a detached `aclose()` task that can still be
+    pending when the caller expects its tasks to be done. Through `stream_text()` or `stream_response()` that depends on
+    when the collector happens to run, so the contract is pinned here: the iterator is held, so only `group_by_temporal`
+    can close it.
+    """
+
+    async def items() -> AsyncIterator[int]:
+        yield 1
+        yield 2
+
+    async with group_by_temporal(items(), soft_max_interval=interval) as groups_iter:
+        async for _ in groups_iter:  # pragma: no branch
+            break
+    assert isinstance(groups_iter, AsyncGeneratorType)
+    assert groups_iter.ag_frame is None
 
 
 def test_check_object_json_schema():
@@ -1488,6 +1524,18 @@ def test_format_inlined_text_file() -> None:
     assert 'abc123' in result
 
 
+def test_has_yaml_structured_suffix() -> None:
+    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure media-type
+    predicate directly.
+    """
+    assert has_yaml_structured_suffix('application/openapi+yaml') is True
+    assert has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
+    assert has_yaml_structured_suffix('application/yaml') is False
+    assert has_yaml_structured_suffix('application/ld+json') is False
+
+
 def test_replace_no_init() -> None:
     """`replace_no_init` swaps declared fields on a copy without touching `__init__`.
 
@@ -1548,3 +1596,33 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
     with pytest.raises(ValueError, match='boom') as exc_info:
         awaiter.result()
     assert exc_info.value.__context__ is None
+
+
+def _run_sync() -> None:
+    Agent(TestModel()).run_sync('hello')
+
+
+def _run_stream_sync() -> None:
+    with Agent(TestModel()).run_stream_sync('hello') as result:
+        result.get_output()
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.parametrize(
+    'entry_point',
+    [
+        pytest.param(_run_sync, id='run_sync'),
+        pytest.param(_run_stream_sync, id='run_stream_sync'),
+    ],
+)
+def test_sync_entry_point_does_not_warn_about_a_missing_event_loop(
+    fresh_event_loop_policy: None, entry_point: Callable[[], None]
+):
+    """On Python 3.12 and 3.13, a sync run in a script used to warn `There is no current event loop` (#1196).
+
+    The warning fires when the policy has never had a loop set, as in a fresh interpreter's main thread, which the
+    `fresh_event_loop_policy` fixture recreates.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        entry_point()

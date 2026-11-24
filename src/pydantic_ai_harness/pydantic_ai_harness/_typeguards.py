@@ -12,3 +12,27 @@ def is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
 
 def is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
+
+
+def is_str_keyed_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return is_object_dict(value) and all(isinstance(key, str) for key in value)
+
+
+def is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def is_object_tuple(value: object) -> TypeGuard[tuple[object, ...]]:
+    return isinstance(value, tuple)
+
+
+def is_object_set(value: object) -> TypeGuard[set[object]]:
+    return isinstance(value, set)
+
+
+def is_object_frozenset(value: object) -> TypeGuard[frozenset[object]]:
+    return isinstance(value, frozenset)
+
+
+def is_object_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
+    return isinstance(value, list | tuple)

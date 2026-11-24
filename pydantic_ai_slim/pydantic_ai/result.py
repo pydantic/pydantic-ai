@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    incomplete_tool_call_message,
     is_incomplete_json,
     run_image_process_hooks,
     run_output_with_hooks,
@@ -75,6 +76,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+    _output_validated: bool = field(default=False, init=False)
+    """Whether `_cached_output` holds the validated final output, which can itself be `None`."""
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
@@ -99,8 +102,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
-        if self._cached_output is not None:
-            yield deepcopy(self._cached_output)
+        if self._output_validated:
+            yield deepcopy(cast(OutputDataT, self._cached_output))
             return
 
         last_response: _messages.ModelResponse | None = None
@@ -124,6 +127,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             #    and may behave differently based on that flag
             # 2. Users can rely on the last yielded item being the fully validated output
             self._cached_output = await self.validate_response_output(response)
+            self._output_validated = True
             yield deepcopy(self._cached_output)
 
     async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
@@ -260,8 +264,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
-        if self._cached_output is not None:
-            return deepcopy(self._cached_output)
+        if self._output_validated:
+            return deepcopy(cast(OutputDataT, self._cached_output))
 
         # Iterate through any stream events
         async for _ in self:
@@ -269,6 +273,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         # Final validation with `allow_partial=False` (default)
         self._cached_output = await self.validate_response_output(self.response)
+        self._output_validated = True
         return deepcopy(self._cached_output)
 
     def _settled_output(self) -> tuple[OutputDataT, str | None]:
@@ -313,11 +318,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_output_tool_call(
-                    tool_call,
-                    schema=self._output_schema,
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=False,
+                return await self._validate_tool_output(
+                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -360,6 +362,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 ) from e
             raise
 
+    async def _validate_tool_output(
+        self, tool_call: _messages.ToolCallPart, *, cut_off: bool, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate an output tool call, whose arguments the token limit may have `cut_off`."""
+        try:
+            return await self._tool_manager.handle_output_tool_call(
+                tool_call,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
+        except ValidationError as e:
+            # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
+            if cut_off and not allow_partial and is_incomplete_json(e):
+                raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
+            raise
+
     async def _validate_text_output(
         self, text_processor: BaseOutputProcessor[OutputDataT], text: str, *, cut_off: bool, allow_partial: bool
     ) -> OutputDataT:
@@ -379,7 +398,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         except ValidationError as e:
             # Say that the token limit cut the output off, as `CallToolsNode` does, rather than only that it's invalid.
             if cut_off and not allow_partial and is_incomplete_json(e):
-                raise exceptions.UnexpectedModelBehavior(truncated_output_message(self._max_tokens_getter())) from e
+                raise exceptions.OutputTokenLimitExceeded(truncated_output_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
@@ -664,6 +683,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         A settled result is for handing the run to code that outlives the stream, which is exactly
         when the span has closed and the ambient trace context is gone, so it cannot be read lazily.
         """
+        self._completion_raised = False
+        """Whether finishing the run raised or was cancelled after the stream was received in full.
+
+        `is_complete` is already `True` by then, and the output can't tell either: a validated output
+        can be `None`, and a tool call can fail after the output was validated.
+        """
 
     @property
     def result(self) -> AgentRunResult[OutputDataT]:
@@ -676,8 +701,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         for this to hand the run to code that outlives the stream.
 
         Raises:
-            UserError: If the stream hasn't finished, or was cancelled before producing an output,
-                so the run has no settled output to settle on.
+            UserError: If the stream hasn't finished, was cancelled before producing an output, or the run
+                stopped before it finished, so the run has no settled output to settle on.
         """
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
@@ -689,6 +714,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UserError(
                     'The run is still streaming, so it has no settled result yet. Await `stream_output()`, '
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
+                )
+            elif self._completion_raised:
+                raise exceptions.UserError(
+                    'The run stopped before it finished, so this run has no settled result. The messages recorded '
+                    'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
             result = AgentRunResult(
@@ -976,7 +1006,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if message is not None:
             self._record_response(message)
         if self._on_complete is not None:
-            await self._on_complete()
+            try:
+                await self._on_complete()
+            # `BaseException`, as a run cancelled while it finishes didn't finish either.
+            except BaseException:
+                self._completion_raised = True
+                raise
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.
