@@ -3250,3 +3250,30 @@ async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
     tool = await resolved.get_tool_for_tool_def(tool_def, ctx)
     assert rebuilt == ['echo']
     assert await resolved.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
+
+
+def test_shared_tool_does_not_inherit_other_toolset_defaults():
+    """Adding a `Tool` to a `FunctionToolset` must not mutate the shared `Tool` for other toolsets."""
+    from pydantic_ai.tools import Tool
+
+    def my_tool(x: str) -> str:
+        return x
+
+    shared = Tool(my_tool)
+    deferred = FunctionToolset([shared], defer_loading=True, strict=True, max_retries=5, requires_approval=True)
+    plain = FunctionToolset([shared])
+
+    assert shared.defer_loading is False
+    assert shared.strict is None
+    assert shared.max_retries is None
+    assert shared.requires_approval is False
+
+    assert deferred.tools['my_tool'].defer_loading is True
+    assert deferred.tools['my_tool'].strict is True
+    assert deferred.tools['my_tool'].max_retries == 5
+    assert deferred.tools['my_tool'].requires_approval is True
+
+    assert plain.tools['my_tool'].defer_loading is False
+    assert plain.tools['my_tool'].strict is None
+    assert plain.tools['my_tool'].max_retries is None
+    assert plain.tools['my_tool'].requires_approval is False

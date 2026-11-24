@@ -756,15 +756,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
+        stored = self.tools[tool.name]
         # `add_tool` applies the toolset's `sequential`, `requires_approval`, and `defer_loading` when they're
         # `True`; a `Tool`'s plain booleans can't distinguish an explicit `False`, so restore the overrides
         # passed here.
-        tool.sequential = sequential
-        tool.requires_approval = requires_approval
-        tool.defer_loading = defer_loading
-        tool._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
-        tool._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
-        return tool
+        stored.sequential = sequential
+        stored.requires_approval = requires_approval
+        stored.defer_loading = defer_loading
+        stored._sequential_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        stored._defer_loading_from_toolset = False  # pyright: ignore[reportPrivateUsage]
+        return stored
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
@@ -778,6 +779,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+        tool = replace(tool)
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
         if tool.strict is None and self.strict is not None:
