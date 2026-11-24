@@ -18,7 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
-| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display; `KubernetesSandbox(warm_pool=..., desktop=True)` on your cluster |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -415,10 +415,6 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
-- `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 desktop for `ComputerUse()`, or pass
-  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have the
-  display's programs (listed under "What the display needs" in the `ComputerUse` docs); otherwise every command and
-  file operation refuses, naming what is missing.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -434,10 +430,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 ### KubernetesSandbox
 
 `KubernetesSandbox(*, warm_pool, namespace='default', connection='port-forward', sandbox_timeout=86_400,
-working_dir=None, env=None, desktop=False)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a
-pod from a [kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use.
-Credentials are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs
-`kubectl`.
+working_dir=None, env=None)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a pod from a
+[kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use. Credentials
+are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs `kubectl`.
 
 - The pool's `SandboxTemplate` must run sandboxd; commands run in that container, so its image decides the
   tools. Commands start in sandboxd's root directory (`/workspace` by default).
@@ -446,8 +441,6 @@ Credentials are your kubeconfig (or the pod's service account in the cluster); `
 - From inside the cluster use `connection='in-cluster-pod-ip'` or `'in-cluster-service'`; the template's
   NetworkPolicy must admit the agent on ports 8080 and 9090. Port-forward does not work on gVisor or Kata.
 - File operations go through the sandbox's shell.
-- `desktop=True` or `(w, h)` gives the pod a desktop for `ComputerUse()`; see the desktop bullet above for what the
-  image needs.
 
 ### SmolSandbox
 
