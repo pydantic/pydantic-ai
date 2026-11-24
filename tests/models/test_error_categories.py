@@ -624,14 +624,14 @@ CASES = [
     Case(
         id='openrouter-http-metadata-raw-context-window-json',
         model=_openrouter,
-        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
     Case(
         id='openrouter-http-metadata-raw-context-window-json-stream',
         model=_openrouter,
-        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         stream=True,
@@ -826,7 +826,7 @@ CASES = [
     Case(
         id='openrouter-body-metadata-raw-context-window',
         model=_openrouter,
-        handler=_json(200, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        handler=_json(200, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
