@@ -423,6 +423,29 @@ def test_baggage_cannot_set_logfire_scorer_attrs(capfire: CaptureLogfire):
     assert _baggage.get_all(record.context) == {}
 
 
+def test_baggage_cannot_set_gen_ai_evaluation_or_error_type_attrs(capfire: CaptureLogfire):
+    """Baggage keys in the `gen_ai.evaluation.*` namespace and `error.type` are dropped where the record omits them."""
+    ctx = _baggage.set_baggage('gen_ai.evaluation.score.value', '1.0')
+    ctx = _baggage.set_baggage('error.type', 'ValueError', ctx)
+    ctx = _baggage.set_baggage('tenant', 'acme', ctx)
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', 'pass')],
+            failures=[],
+            target=_target('f'),
+            scoring_run_id=_RUN_ID,
+            include_baggage=True,
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'gen_ai.evaluation.score.value' not in attrs
+    assert 'error.type' not in attrs
+    assert attrs['tenant'] == 'acme'
+
+
 def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
     """`include_baggage=False` omits baggage entirely."""
     ctx = _baggage.set_baggage('tenant', 'acme')

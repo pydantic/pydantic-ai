@@ -54,6 +54,9 @@ _LOGFIRE_SCORER_PREFIX = 'logfire.scorer.'
 _ATTR_SCORE_TYPE = 'logfire.scorer.score_type'
 _ATTR_RUN_ID = 'logfire.scorer.run_id'
 
+# Baggage keys dropped from events, so baggage cannot set an attribute the event leaves unset.
+_RESERVED_BAGGAGE_PREFIXES = ('gen_ai.evaluation.', _LOGFIRE_SCORER_PREFIX)
+
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
 
@@ -98,7 +101,8 @@ def emit_otel_events(
         include_baggage: When True (the default), each emitted event also carries
             every key from the current OTel baggage as an attribute. Standard
             `gen_ai.*` and `error.type` attributes always win on conflict, and
-            baggage keys in the reserved `logfire.scorer.*` namespace are dropped.
+            baggage keys in the reserved `gen_ai.evaluation.*` and `logfire.scorer.*`
+            namespaces, and the `error.type` key, are dropped.
     """
     if not results and not failures:
         return
@@ -118,8 +122,12 @@ def emit_otel_events(
 
 
 def _baggage_attrs() -> dict[str, Any]:
-    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.scorer.*` keys."""
-    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_SCORER_PREFIX)}
+    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved keys."""
+    return {
+        str(k): v
+        for k, v in baggage.get_all().items()
+        if not str(k).startswith(_RESERVED_BAGGAGE_PREFIXES) and str(k) != _ATTR_ERROR_TYPE
+    }
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
