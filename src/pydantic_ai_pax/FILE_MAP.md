@@ -9,7 +9,7 @@ what exists once on the first and what each session has on the second (see "Per 
 
 | File | Holds |
 |---|---|
-| `cli/cli.py` | argument parsing, startup, `--agent`, `--update` / `update`, `sessions` |
+| `cli/cli.py` | argument parsing, startup, `--agent`, `--update` / `update`, `--version`, `sessions` |
 | `cli/install.py` | which package installed the running Pax (`pydantic-ai-pax`, or the `pydantic-clai2` shim in a `uv tool` environment under that name) and so which command starts it, `pax` or `clai2` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update now`, `pax --update`, the update menu's check (`Updates.check`), and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force --compile-bytecode`, refused while another `pax` holds a lock in the environment's `clai2-running` folder (`hold_environment`, `running_elsewhere`); `InstallProgress` tells plugins how the install goes, and `Relaunch` carries a `WebHandoff` so the new build serves the web UI again |

@@ -77,6 +77,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
 | `--update`, `pax update` | Install the newest Pax from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
+| `--version` | Print the installed Pax version, plus the commit for a `main` install, and exit |
 | `--database PATH` | Use another settings database (and session folder) |
 | `pax config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `pax` too |
 | `pax plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
