@@ -336,7 +336,7 @@ def _version() -> str:
 
     # `pydantic-clai2` pins `pydantic-ai-pax` exactly, so the version is Pax's under either name.
     running = installed()
-    return f'{command_name()} {running.version}' + (f' ({running.commit[:9]})' if running.commit else '')
+    return f'{command_name()} {running.version}' + (f' ({running.label})' if running.commit else '')
 
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
