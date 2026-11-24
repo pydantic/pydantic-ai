@@ -16,11 +16,11 @@ from pydantic_ai.computer_use import Click, ComputerReturnPart, Point
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
-from pydantic_ai_harness._x11 import DESKTOP_PACKAGES
 from pydantic_ai_harness.computer_use import ComputerUse
+from pydantic_ai_harness.computer_use._x11 import DESKTOP_PACKAGES
 from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE, DockerContainer, DockerContainerBackend
 
-from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
+from ..computer_use.display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from ._fake_docker import FakeDocker, install_fake_docker
 
 pytestmark = pytest.mark.skipif(
