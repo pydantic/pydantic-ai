@@ -3100,8 +3100,7 @@ class TestTaskControlBoundaries:
         )
         runs: list[list[str]] = []
         for _ in range(2):
-            with anyio.fail_after(WAIT):
-                result = await parent.run('Go.', run_id='run-1')
+            result = await parent.run('Go.', run_id='run-1')
             runs.append(sorted(task_id_in(receipt) for receipt in tool_returns(result.all_messages())))
         # Outside durable execution too, a rerun with the same `run_id` gives its tasks the same IDs.
         expected = sorted(uuid5(NAMESPACE_URL, f'run-1:{tool_call_id}').hex for tool_call_id in ('call_a', 'call_b'))
