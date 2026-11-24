@@ -1070,6 +1070,9 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-sonnet-4-5',
     'claude-sonnet-4-5-20250929',
+    # Anthropic, retires 2027-01-22: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037

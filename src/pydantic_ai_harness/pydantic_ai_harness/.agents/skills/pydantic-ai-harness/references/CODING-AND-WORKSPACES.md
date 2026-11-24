@@ -18,6 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display; `DaytonaSandbox(desktop=True)` in the cloud |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -423,6 +424,12 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
+  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, or type
+  characters beyond U+FFFF (most emoji). Its VNC server has no password: anyone with a preview token for its port
+  can see and control it, and on a public sandbox anyone with the preview URL can.
+  Where Chromium can't run its own sandbox, as in the default snapshot, it adds `--no-sandbox` through a file in
+  `/etc/chromium.d/` (as root or passwordless `sudo`) that stays after the run, also on an attached sandbox.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
@@ -489,13 +496,14 @@ Python up to 3.14.
 
 ### DockerContainer
 
-`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker', desktop=False)`
 (backend `DockerContainerBackend`) runs commands and file operations in a local container through the
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
   command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
-  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities,
+  unless `desktop=True`: then it builds the desktop image (below).
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
   so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
@@ -508,6 +516,11 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
+- `desktop=True` gives the container a 1280x800 screen for `ComputerUse()`.
+  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox), and later runs reuse
+  it. A custom `image` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`,
+  `tint2` and `xterm` for the desktop, which the first use installs with `apt-get` as root or with passwordless
+  `sudo`. Under durable execution, build the image before the first run and pass it as `image`.
 
 ### OpenSandbox
 

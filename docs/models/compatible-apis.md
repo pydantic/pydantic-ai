@@ -531,6 +531,10 @@ WaveSpeed names models `<vendor>/<model>`, so each model gets the profile of its
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
+## Streamed usage
+
+Chat Completions streams normally report usage once, on the last chunk, and [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] adds up whatever the chunks report. Gemini's OpenAI-compatible endpoint instead repeats its running totals on every chunk, so [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_streaming_repeats_usage_totals`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_repeats_usage_totals] for `gemini*` model names, and each chunk's usage replaces the last. This also applies through a custom `base_url`. A server that serves these names and reports per-chunk deltas turns it off with `openai_chat_streaming_repeats_usage_totals=False` in the model's [profile](overview.md#models-and-providers).
+
 ## Response data Pydantic AI doesn't map
 
 OpenAI-compatible APIs often return more than the Chat Completions API defines: vendor fields on the response, choice or message, or a message's `content` as a list of parts rather than a string. Mistral models on the Albert API, for example, return `[{"type": "text", "text": "..."}, {"type": "reference", "reference_ids": [1]}]` when an answer carries references. `OpenAIChatModel` joins the text parts into the response's text and ignores the rest.

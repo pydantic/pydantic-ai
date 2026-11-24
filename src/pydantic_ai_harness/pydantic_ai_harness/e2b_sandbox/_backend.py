@@ -17,6 +17,10 @@ plane and a `TimeoutException` from envd (its proxy's 502); a 429 is `RateLimitE
 which is not. envd types only a missing path; its other path failures arrive as a 400
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
+
+E2B's `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `xwininfo`, `scrot`, `setsid` and
+`google-chrome` installed. It starts no X server when the sandbox boots: E2B's `e2b-desktop` package starts its
+own, and this backend starts its own with Xvfb.
 """
 
 from __future__ import annotations
@@ -59,6 +63,9 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, start_display_script, wait_until_ready_script, x11_display
 
 if TYPE_CHECKING:
     from e2b import SandboxNetworkOpts
@@ -121,6 +128,30 @@ _SDK_STREAM_UNBOUNDED = 0
 # The local backend's cap and preview: the SDK's handle keeps all of a command's output in memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
+
+_DESKTOP_TEMPLATE = 'desktop'
+
+
+_XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
+
+_XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
+
+_XFCE_IS_VISIBLE = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
+"""A command that succeeds when XFCE's desktop window is visible on `DISPLAY`."""
+
+_START_DESKTOP = start_display_script(_XVFB_LOG, with_desktop=False) + (
+    f'if command -v startxfce4 >/dev/null && ! {_XFCE_IS_VISIBLE}; then '
+    f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
+    + wait_until_ready_script(_XFCE_IS_VISIBLE, '$!', 'the XFCE desktop', _XFCE_LOG)
+    + 'fi'
+)
+"""Start an X display of the size `$1`, such as `1280x800`, unless one runs, then start the XFCE desktop.
+
+XFCE starts whenever its desktop window isn't visible, so an XFCE that crashed comes back. The script then waits up to
+10 seconds for that window, so the first screenshot isn't black. It fails if XFCE exits first or the window never
+appears. A template without XFCE gets a display with no window manager. Output goes to log files, because E2B keeps a
+command open while a program it started in the background still holds the command's output.
+"""
 
 
 # Checked before an operation reaches the SDK: its HTTP and RPC calls run under `asyncio.wait_for`, which
@@ -208,7 +239,7 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
     return message
 
 
-class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside an E2B microVM, not on the host.
@@ -229,6 +260,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
+
+    With `desktop`, the sandbox's display starts the first time it is used. A custom template needs `xdotool`,
+    `xwininfo` (`x11-utils`), `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with
+    `apt-get` if it can. It also needs `startxfce4` for the XFCE desktop, which isn't installed for you.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -260,6 +295,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             unchanged: egress allow and deny lists, and `rules` that set headers on requests to a
             host, from E2B's proxy outside the sandbox. An attached sandbox keeps the options it
             was created with.
+        desktop: Give the sandbox a screen for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or
+            a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template.
     """
 
     def __init__(
@@ -275,6 +313,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         network: SandboxNetworkOpts | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'e2b')
@@ -308,6 +347,16 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._allow_internet_access = allow_internet_access
         self._network = network
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
+        if desktop and template is None:
+            self._template = _DESKTOP_TEMPLATE
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
+            start_script=_START_DESKTOP,
+        )
+        if self._display:
+            self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 
@@ -661,10 +710,17 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         timeout: float | None = None,
     ) -> CommandResult:
         """Run a command, killing it on timeout, cancellation, or a failed result read."""
+        argv = command_argv(command, shell)
+        check_timeout(timeout)
+        if self._display is not None:
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display first. The display's own commands run this way."""
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
-        line = shlex.join(command_argv(command, shell))
-        check_timeout(timeout)
+        line = shlex.join(argv)
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
@@ -701,7 +757,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 handle = await sandbox.commands.run(
                     launch,
                     background=True,
-                    envs={**(self._env or {}), **(env or {})},
+                    envs={**(self._env or {}), **env},
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
@@ -761,6 +817,11 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     except Exception:
                         # A leftover claim is a small directory in `/tmp`; it cannot fence a later command.
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, or `None` when the sandbox was created without `desktop`."""
+        return self._display
 
     async def _stop_command(
         self, sandbox: e2b.AsyncSandbox, *, claim: str, pgid_file: str, identify: str, isolated: bool
