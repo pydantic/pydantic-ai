@@ -384,6 +384,16 @@ including repeated reviews after findings. Reserve the next count before dispatc
 `call N of 3` in the reviewer prompt. The final metadata review does not count against this budget,
 and neither does an additional local review the author asks for after the loop completes.
 
+After the third review, the budget holds one remediation review. Dispatch it for the first
+remediation after the third review that changes runtime behavior. The remediation may fix a review
+finding or a CI failure. A remediation changes runtime behavior when its delta changes a line that
+is not a comment, a docstring, or part of a test or Markdown file. A remediation that changes only
+those gets no review, and neither does a delta the exempt-delta table below exempts. Scope the remediation
+review to the remediation delta: the diff from the last reviewed SHA to the remediation commit,
+plus the affected callers and invariants that [Review scope](#review-scope) names for follow-ups.
+Include `remediation review after call 3 of 3` in the reviewer prompt, and title its record
+`pre-push remediation review at <candidate-head-sha>`.
+
 Record each dispatch in `pr-decisions.md` — not in the session, which does not survive a handoff:
 
 ```bash
@@ -429,15 +439,17 @@ session reads the budget off the log; without it the cap silently resets.
    Escalate persistent disagreement.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
-relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
-review. Budget exhaustion is one of four ways a pushed SHA can go un-reviewed; the others are an
-evidence-backed dismissal on unchanged reviewed content, above, an exempt delta from the table
-below, and a push the author authorized over a gate that could not be met, recorded under their
-name. The first three you may decide. The fourth only they may. Nothing else.
+relevant local checks. Do not dispatch a fourth review other than the remediation review above.
+Remediate the remediation review's findings, run the relevant local checks, and dispatch no further
+review. Continue with the push, CI, and hosted review. Budget exhaustion is one of four ways a
+pushed SHA can go un-reviewed; the others are an evidence-backed dismissal on unchanged reviewed
+content, above, an exempt delta from the table below, and a push the author authorized over a gate
+that could not be met, recorded under their name. The first three you may decide. The fourth only
+they may. Nothing else.
 
 Immediately before pushing, verify the worktree is clean and its tree equals the recorded reviewed tree.
 A different commit with the same tree keeps the verdict; record the new commit alongside the reviewed anchor.
-After third-review remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
+When the budget leaves the last remediation unreviewed, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
 the delta is exempt below.
 
 ### When a later push does not need another review
