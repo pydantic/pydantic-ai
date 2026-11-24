@@ -56,9 +56,6 @@ with try_import() as imports_successful:
     from openai.types import responses as resp
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.models.openai._computer import (
-        _map_computer_action,  # pyright: ignore[reportPrivateUsage]
-    )
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -489,13 +486,13 @@ async def test_a_changed_held_call_that_was_denied_is_not_said_to_have_run(allow
 
 
 async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_requests: None) -> None:
-    # Without the message, GPT would think the click on the read-only workspace ran.
-    provider, computer = InMemoryProvider(), FakeComputer()
+    # Without the message, GPT would think the failed click ran.
+    provider, computer = InMemoryProvider(), FakeComputer(fail_acting=True)
     client = MockOpenAIResponses.create_mock(
         [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
     )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[computer, provider.capability(read_only=True)]).run('Go.')
+    await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
 
     assert computer.actions == []
     _, second = get_mock_responses_kwargs(client)
@@ -504,7 +501,7 @@ async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_re
     assert second['input'][second['input'].index(output) + 1] == {
         'role': 'user',
         'content': '<pyai:tool_result tool_name="computer" tool_call_id="call_1">'
-        'Ran 0 of 1 actions. The next one failed: This workspace is read-only.</pyai:tool_result>',
+        'Ran 0 of 1 actions. The next one failed: The action failed.</pyai:tool_result>',
     }
 
 
@@ -559,10 +556,10 @@ _SCREEN_JSON = {
         ),
         # Without the message, the model would think the refused action ran.
         pytest.param(
-            ['Ran 0 of 1 actions. The next one failed: This workspace is read-only.', _SCREEN],
-            {'performed': 0, 'error': 'This workspace is read-only.'},
+            ['Ran 0 of 1 actions. The next one failed: The action failed.', _SCREEN],
+            {'performed': 0, 'error': 'The action failed.'},
             _SCREEN.data_uri,
-            'Ran 0 of 1 actions. The next one failed: This workspace is read-only.',
+            'Ran 0 of 1 actions. The next one failed: The action failed.',
             id='refused',
         ),
     ],
@@ -1324,18 +1321,50 @@ def _accepted(tool_action: dict[str, Any]) -> bool:
     return True
 
 
-@settings(max_examples=500, derandomize=True, database=None, deadline=None)
+def _actions_from_a_response(raw: Any) -> list[dict[str, Any]]:
+    """The `computer` tool's actions for a `computer_call` holding `raw`, read through `OpenAIResponsesModel.request`."""
+    response = _computer_call()
+    # Built without validation, as the SDK builds a response.
+    response.output = [response.output[0].model_copy(update={'actions': [raw]})]
+    model = OpenAIResponsesModel(
+        'gpt-5.5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
+    )
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    with asyncio.Runner() as runner:
+        (call,) = runner.run(model.request([ModelRequest.user_text_prompt('Go.')], None, params)).parts
+    assert isinstance(call, ToolCallPart)
+    return call.args_as_dict()['actions']
+
+
+@settings(
+    max_examples=500,
+    derandomize=True,
+    database=None,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 @given(_NEAR_ACTION | _JSON)
-def test_any_action_maps_without_raising_and_an_unsupported_one_is_rejected(raw: Any) -> None:
+def test_any_action_maps_without_raising_and_an_unsupported_one_is_rejected(
+    allow_model_requests: None, raw: Any
+) -> None:
     """The tool checks every action before it runs any, so if it rejects one, none of the call runs."""
-    for tool_action in _map_computer_action(raw):
+    for tool_action in _actions_from_a_response(raw):
         assert 'unsupported_openai_action' not in tool_action or not _accepted(tool_action)
 
 
-@settings(max_examples=300, derandomize=True, database=None, deadline=None)
+@settings(
+    max_examples=300,
+    derandomize=True,
+    database=None,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 @given(_VALID_ACTION)
-def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, Any]) -> None:
-    mapped = _map_computer_action(raw)
+def test_every_valid_openai_action_maps_to_actions_the_tool_runs(
+    allow_model_requests: None, raw: dict[str, Any]
+) -> None:
+    mapped = _actions_from_a_response(raw)
     assert mapped
     assert all(_accepted(tool_action) for tool_action in mapped)
 
