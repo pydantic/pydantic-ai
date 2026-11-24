@@ -4288,7 +4288,7 @@ async def test_dbos_mcp_get_tools_and_instructions_reject_enqueue_in_workflow(
 ) -> None:
     """The MCP discovery steps guard enqueue too, like the MCP call step."""
     enqueue_errors: list[str] = []
-    # In-process, and with the hang guard as handshake deadline: a stalled runner can exceed the default 5 s.
+    # The default 5 s init_timeout is shorter than a stalled CI worker can take to finish the initialize handshake.
     mcp_toolset = MCPToolset(
         FastMCPTransport(test_mcp_server),
         init_timeout=READINESS_WAIT_TIMEOUT,

@@ -4360,7 +4360,7 @@ async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bo
             task_names.append(task_run_context.task.name)
             return InstructionPart(content='Server instructions', dynamic=False)
 
-    # In-process, and with the hang guard as handshake deadline: a stalled runner can exceed the default 5 s.
+    # The default 5 s init_timeout is shorter than a stalled CI worker can take to finish the initialize handshake.
     toolset = RecordingMCPToolset(
         FastMCPTransport(test_mcp_server),
         init_timeout=READINESS_WAIT_TIMEOUT,
