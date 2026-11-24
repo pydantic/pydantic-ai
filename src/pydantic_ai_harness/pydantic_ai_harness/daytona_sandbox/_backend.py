@@ -62,7 +62,7 @@ try:
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
-from pydantic_ai_harness._display import LazyDisplay, checked_desktop_size
+from pydantic_ai_harness.computer_use._display import LazyDisplay, checked_desktop_size
 from pydantic_ai_harness.daytona_sandbox._desktop import (
     ADD_CHROMIUM_NO_SANDBOX_FLAG,
     DISPLAY,

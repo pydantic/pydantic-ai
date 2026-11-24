@@ -45,7 +45,7 @@ from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeou
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
-from ..display_fakes import full_display, look_click_then_finish
+from ..computer_use.display_fakes import full_display, look_click_then_finish
 from .fake_daytona import FakeDaytona, FakeSandbox
 
 

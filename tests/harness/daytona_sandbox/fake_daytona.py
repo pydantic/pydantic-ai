@@ -42,7 +42,7 @@ from daytona import (
 )
 from daytona.common.errors import SOURCE_PROXY
 
-from ..display_fakes import FAKE_SCREENSHOT
+from ..computer_use.display_fakes import FAKE_SCREENSHOT
 
 
 class CreateParams(Protocol):

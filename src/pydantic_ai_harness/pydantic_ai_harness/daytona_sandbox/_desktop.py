@@ -54,10 +54,10 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._display import RELEASE_TIMEOUT, png_from_base64
-from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness._workspace_provider import run_to_completion
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use._display import RELEASE_TIMEOUT, png_from_base64
+from pydantic_ai_harness.computer_use._drag import DRAG_STEP_PAUSE, drag_steps
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse
