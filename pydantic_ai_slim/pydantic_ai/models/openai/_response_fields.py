@@ -176,6 +176,22 @@ def map_usage(
 
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+        if (
+            api_flavor == 'chat'
+            and model.lower().startswith('gemini-')
+            and provider_url.lower().startswith('https://generativelanguage.googleapis.com/')
+            and response_usage.completion_tokens_details is None
+        ):
+            total_tokens = usage_data.get('total_tokens')
+            prompt_tokens = usage_data.get('prompt_tokens')
+            completion_tokens = usage_data.get('completion_tokens')
+            if (
+                isinstance(total_tokens, int)
+                and isinstance(prompt_tokens, int)
+                and isinstance(completion_tokens, int)
+                and total_tokens > prompt_tokens + completion_tokens
+            ):
+                usage_data['completion_tokens'] = total_tokens - prompt_tokens
 
     request_usage = usage.RequestUsage.extract(
         response_data,

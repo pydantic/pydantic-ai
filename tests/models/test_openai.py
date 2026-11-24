@@ -8559,3 +8559,66 @@ async def test_non_json_response_body_raises_model_api_error(
 
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_gemini_openai_compat_hidden_thinking_tokens_recovered_non_streamed(allow_model_requests: None):
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    usage = CompletionUsage(prompt_tokens=8, completion_tokens=33, total_tokens=423)
+    completion = completion_message(ChatCompletionMessage(role='assistant', content='Hello'), usage=usage)
+    mock_client = MockOpenAI.create_mock(completion)
+    mock_client.base_url = httpx2.URL('https://generativelanguage.googleapis.com/v1beta/openai/')
+    agent = Agent(OpenAIChatModel('gemini-3-flash-preview', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = await agent.run('Hi')
+
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 415
+    assert result.usage.input_tokens + result.usage.output_tokens == 423
+
+
+async def test_gemini_openai_compat_hidden_thinking_tokens_recovered_streamed(allow_model_requests: None):
+    usage = CompletionUsage(prompt_tokens=8, completion_tokens=33, total_tokens=423)
+    usage_chunk = text_chunk('Hello', finish_reason='stop').model_copy(
+        update={'usage': usage, 'model': 'gemini-3-flash-preview'}
+    )
+    mock_client = MockOpenAI.create_mock_stream([usage_chunk])
+    mock_client.base_url = httpx2.URL('https://generativelanguage.googleapis.com/v1beta/openai/')
+    agent = Agent(OpenAIChatModel('gemini-3-flash-preview', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('Hi') as result:
+        await result.get_output()
+
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 415
+    assert result.usage.input_tokens + result.usage.output_tokens == 423
+
+
+async def test_openai_contract_conforming_usage_not_double_counted(allow_model_requests: None):
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    usage = CompletionUsage(prompt_tokens=8, completion_tokens=33, total_tokens=41)
+    completion = completion_message(ChatCompletionMessage(role='assistant', content='Hello'), usage=usage)
+    mock_client = MockOpenAI.create_mock(completion)
+    mock_client.base_url = httpx2.URL('https://generativelanguage.googleapis.com/v1beta/openai/')
+    agent = Agent(OpenAIChatModel('gemini-3-flash-preview', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = await agent.run('Hi')
+
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 33
+    assert result.usage.input_tokens + result.usage.output_tokens == 41
+
+
+async def test_gemini_openai_compat_agent_run_usage_reconciles(allow_model_requests: None):
+    usage = CompletionUsage(prompt_tokens=8, completion_tokens=33, total_tokens=423)
+    completion = completion_message(ChatCompletionMessage(role='assistant', content='Hello'), usage=usage)
+    mock_client = MockOpenAI.create_mock(completion)
+    mock_client.base_url = httpx2.URL('https://generativelanguage.googleapis.com/v1beta/openai/')
+    agent = Agent(OpenAIChatModel('gemini-3-flash-preview', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = await agent.run('Hi')
+
+    assert result.usage.input_tokens == 8
+    assert result.usage.output_tokens == 415
+    assert result.usage.input_tokens + result.usage.output_tokens == 423
