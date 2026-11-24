@@ -123,6 +123,22 @@ The `finally` removes the container even when setup or the run fails. To keep it
 
 `DockerContainer`'s settings don't apply to a backend you pass as `workspace=`. Give the backend its own.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[DockerContainer(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size applies when the screen first starts.
+
+Without an `image`, the first run builds one from [`DESKTOP_DOCKERFILE`][pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE], with Firefox, and later runs reuse it. That image doesn't get security updates. To update it, build it yourself and pass it as `image`; under [durable execution](../durable_execution/overview.md), do this before the first run, so the build doesn't count against a step's timeout:
+
+```bash
+python -c "from pydantic_ai_harness.docker_container import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --pull --no-cache --tag my-desktop -
+```
+
+Then pass `DockerContainer(image='my-desktop', desktop=True)`. Another custom `image` needs [the display's programs](computer-use.md#what-the-display-needs), which the first use installs if it can.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Remove a container, with its anonymous volumes, with the ref you stored. A container that is already gone returns quietly:
@@ -191,6 +207,7 @@ container = DockerContainer(
 
 - The mount is the only part of your machine's files the commands can change.
 - For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`. Docker refuses a second `--network` next to `--network none`.
+- With `desktop`, don't put the container on the host's network (such as `--network host`). Programs in it could reach an X server on your machine through Linux's abstract socket and control your screen.
 - `docker_args` can't change the container's name, label or entrypoint.
 - A new container gets `--pids-limit 2048`, so a runaway fork loop can't exhaust the process table of the machine running Docker. A command that hits the limit fails with `Cannot fork` or `Resource temporarily unavailable`. Pass your own `--pids-limit` in `docker_args`, or `-1` to remove it.
 
@@ -228,7 +245,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM, 
 
 | Option | What it does |
 | --- | --- |
-| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref. |
+| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`. The capability then only attaches to and removes containers by ref, unless `desktop=True`, which builds the desktop image. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`. `None` uses the image's own: its `WORKDIR`, or `/`. |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing else from your machine's environment reaches the container, except Docker's proxy settings. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
@@ -236,6 +253,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM, 
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 | `authority` | Who wrote the container's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are container paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+| `desktop` | Give the container a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Default: `False`. |
 
 `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command, including after you reattach.
 
@@ -244,7 +262,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM, 
 <span id="how-commands-run"></span>
 
 - The machine running the agent must be Linux or macOS, like [`LocalWorkspace`](../workspace.md#platforms); on Windows, a run raises `NotImplementedError`.
-- Creating or starting the container, including pulling the image, isn't bounded by a command's `timeout`.
+- Creating or starting the container, including pulling the image, isn't bounded by a command's `timeout`. Nor is starting the desktop, including any install of its programs, the first time a command or file operation needs it.
 - File operations run as commands in the container, so large files are slow. Mount a directory for large data.
 - With Docker, a command that leaves a background process holding its output open, such as `server &`, doesn't return until that process exits. Redirect its output, as in `server > server.log 2>&1 &`.
 - On a timeout or cancellation, the command and the processes it started are stopped; one that detached into its own session, like a [Shell](shell.md) background job, keeps running.
@@ -267,3 +285,5 @@ To load specs saved before the rename, pass the deprecated `DockerSandbox` class
 ::: pydantic_ai_harness.docker_container.DockerContainer
 
 ::: pydantic_ai_harness.docker_container.DockerContainerBackend
+
+::: pydantic_ai_harness.docker_container.DESKTOP_DOCKERFILE

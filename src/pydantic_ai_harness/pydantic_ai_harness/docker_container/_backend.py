@@ -23,12 +23,14 @@ as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 
 from __future__ import annotations as _annotations
 
+import hashlib
 import os
 import posixpath
 import re
 import secrets
 import shutil
 from collections.abc import Mapping, Sequence
+from importlib.resources import files
 from typing import Literal
 
 import anyio
@@ -47,8 +49,11 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, start_display_script, x11_display
 
-__all__ = ('DockerContainerBackend', 'remove_container')
+__all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
 
 PROVIDER = 'docker'
 
@@ -234,7 +239,32 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
+DESKTOP_DOCKERFILE = files('pydantic_ai_harness.docker_container').joinpath('desktop.Dockerfile').read_text()
+"""The Dockerfile of the image `DockerContainer(desktop=True)` builds on first use. The image has an X server, a window
+manager, a panel with buttons that open Firefox and a terminal, and fonts for most languages. The window manager's and
+panel's settings are written when the display starts."""
+
+_DESKTOP_IMAGE_TAG = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
+
+
+_START_DESKTOP = start_display_script(f'{_PID_DIR}/xvfb.log')
+"""Starts the container's display and desktop at the size `$1` names."""
+
+
+async def _ensure_desktop_image(runner: LocalWorkspaceBackend, executable: str) -> None:
+    """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it."""
+    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE_TAG])).exit_code == 0:
+        return
+    # The Dockerfile copies nothing in, so it goes on stdin with no build context. Docker documents `build -` for this.
+    # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile. The runner gives a
+    # command no stdin, so `sh` pipes it in.
+    build_script = 'printf %s "$1" | "$2" build --tag "$3" -'
+    result = await runner.run(['/bin/sh', '-c', build_script, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE_TAG])
+    if result.exit_code != 0:
+        raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
+
+
+class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -245,13 +275,19 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
     if it is gone. The backend never removes the container: call
     [`DockerContainer.destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy] with its ref.
 
+    With `desktop`, the container gets a desktop on first use. The image then needs `xdotool`, `xwininfo` (Debian's
+    `x11-utils`), `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`, `tint2` and `xterm` for the desktop,
+    which the first use installs with `apt-get` if it can.
+
     Args:
-        image: The image for a new container. Pass it or `ref`, not both.
+        image: The image for a new container. Pass it or `ref`, not both. With `desktop=True`, leave both out to
+            use an image built from `DESKTOP_DOCKERFILE` on first use.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
-        env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
+        env: Environment variables for every command, on top of the image's. With a desktop, `DISPLAY` is set too.
+            The per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
@@ -259,6 +295,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
+        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+            `True` for 1280x800, or its `(width, height)`.
     """
 
     def __init__(
@@ -271,7 +309,10 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
+        desktop: bool | tuple[int, int] = False,
     ):
+        if desktop and image is None and ref is None:
+            image = _DESKTOP_IMAGE_TAG  # built just before its container is first created
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
         if ref is not None:
@@ -284,8 +325,14 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'Docker workspace {self._name}',
+            start_script=_START_DESKTOP,
+        )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
-        self._env = _checked_env(env or {})
+        self._env = _checked_env({**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
         self._executable = resolve_executable(executable)
@@ -334,6 +381,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
 
     async def _create(self) -> None:
         assert self._image is not None
+        if self._image == _DESKTOP_IMAGE_TAG:
+            await _ensure_desktop_image(self._runner, self._executable)
         if self._ref is None:
             # Set before `docker run`: the daemon may create the container even if the client is cancelled,
             # and whoever holds the ref can then remove it.
@@ -400,7 +449,19 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
     ) -> CommandResult:
         check_timeout(timeout)
         argv = command_argv(command, shell)
-        merged_env = {**self._env, **_checked_env(env or {})}
+        checked_env = _checked_env(env or {})
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=checked_env, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` in the container without starting its display, as the display's own commands do.
+
+        The names in `env` are already checked. `run` checks the names a caller passes, and the display's own names
+        are valid.
+        """
+        merged_env = {**self._env, **env}
         # The first command also creates the container, which isn't bounded by the command's timeout:
         # pulling an image can take minutes.
         # Commands start where `working_dir()` says they do, even if a symlink on the way changes.
@@ -461,3 +522,8 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands):
         # exec stops it. Best effort: a daemon that stalls now has nothing to report.
         argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
+
+    @property
+    def display(self) -> Display | None:
+        """The container's display, when created with `desktop=True`."""
+        return self._display
