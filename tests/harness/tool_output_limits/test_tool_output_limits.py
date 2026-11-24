@@ -1459,3 +1459,14 @@ class TestAgentIntegration:
         assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
         assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
         assert returns[1].content == 'Order A1: refunded'
+
+    async def test_lone_surrogate_does_not_fail_with_passthrough(self):
+        """Non-UTF-8 surrogates must not raise UnicodeEncodeError before Passthrough (#13531)."""
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=0, action=Passthrough())])
+        out = await _run(cap, 'text \ud800')
+        assert out == 'text \ud800'
+
+        cap_truncate: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=4, strategy='head'))])
+        out_truncated = await _run(cap_truncate, 'text \ud800')
+        assert isinstance(out_truncated, str)
+        assert out_truncated.startswith('t')

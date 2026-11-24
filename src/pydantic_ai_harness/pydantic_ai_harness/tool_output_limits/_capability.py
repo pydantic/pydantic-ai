@@ -109,9 +109,15 @@ class _Unit:
 
     binary: bool
     text: str | None
-    data: bytes
+    data: bytes | None
     value: ToolReturnContent
     suffix: str
+
+    def byte_length(self) -> int:
+        if self.data is None:
+            assert self.text is not None
+            self.data = self.text.encode('utf-8')
+        return len(self.data)
 
 
 @dataclass
@@ -356,7 +362,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         else:
             value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
             new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
-            value_bytes = len(value_unit.data)
+            value_bytes = value_unit.byte_length() if value_handle is not None else 0
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
         if new_value is None and content_text is None:
@@ -397,7 +403,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         reduced, handle = await self._reduce(ctx, call, bands, unit)
         if reduced is None:
             return None, None, 0
-        return [reduced, *files], handle, len(unit.data)
+        return [reduced, *files], handle, unit.byte_length() if handle is not None else 0
 
     def _assemble(
         self,
@@ -452,7 +458,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             text = to_text(value)
         if self.strip_ansi:
             text = strip_ansi(text)
-        return _Unit(binary=False, text=text, data=text.encode('utf-8'), value=value, suffix=suffix)
+        return _Unit(binary=False, text=text, data=None, value=value, suffix=suffix)
 
     async def _reduce(
         self,
@@ -467,7 +473,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         when the unit was spilled.
         """
         size = (
-            len(unit.data)
+            unit.byte_length()
             if unit.binary
             else measure(unit.text or '', over_tokens=self.over_tokens, tokenizer=self.tokenizer)
         )
@@ -549,6 +555,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         key = _handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
+            assert unit.data is not None
             payload = base64.b64encode(unit.data).decode('ascii')
         else:
             assert unit.text is not None
@@ -772,8 +779,8 @@ def _with_handles(
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_description = f'{len(unit.data):,} bytes (binary)'
-        body = f'<{len(unit.data):,} bytes of binary data>'
+        size_description = f'{unit.byte_length():,} bytes (binary)'
+        body = f'<{unit.byte_length():,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''
