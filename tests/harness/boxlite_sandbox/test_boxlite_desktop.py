@@ -58,12 +58,14 @@ async def test_a_desktop_box_without_network_needs_an_image_with_the_display_pro
     fake_boxlite: FakeBoxLite, display: FakeDisplay, tmp_path: Path
 ) -> None:
     with pytest.raises(UserError, match='needs `allow_internet_access=True`'):
-        await BoxLiteSandboxBackend(desktop=True).get_sandbox()
-    assert fake_boxlite.boxes == {}
+        BoxLiteSandboxBackend(desktop=True)
 
     await BoxLiteSandboxBackend(working_dir=str(tmp_path.resolve()), image='my-desktop', desktop=True).get_sandbox()
     (box,) = fake_boxlite.boxes.values()
     assert box.options.image == 'my-desktop'
+
+    # An existing box already has whatever its display needs.
+    BoxLiteSandboxBackend(sandbox=box, desktop=True)
 
 
 async def test_a_shell_command_finds_the_desktop_running(
