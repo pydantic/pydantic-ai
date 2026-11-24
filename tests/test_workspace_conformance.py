@@ -11,13 +11,14 @@ from pathlib import Path
 import anyio.to_thread
 import pytest
 
+from pydantic_ai import PydanticAIDeprecationWarning
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     WorkspaceBackend,
     WorkspaceRef,
     _host as host_module,
 )
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .workspace_fakes import (
@@ -63,6 +64,10 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, tmp_path: Path) -> LocalWorkspaceBackend:
         return LocalWorkspaceBackend(tmp_path)
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the working directory exists before first use')
 
     @pytest.fixture
     def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
@@ -115,6 +120,18 @@ class TestFilesystemOnlyWorkspaceBackend(WorkspaceBackendSuite):
     def backend(self) -> FilesystemOnlyWorkspaceBackend:
         return FilesystemOnlyWorkspaceBackend(FakeWorkspace('filesystem-only-conformance'))
 
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the in-memory fake has no environment to create')
+
+    @pytest.fixture
+    def attach_backend(self) -> Unsupported:
+        return Unsupported('the in-memory fake has no environment to attach to')
+
+    @pytest.fixture
+    def destroy_environment(self) -> Unsupported:
+        return Unsupported('the in-memory fake has no environment to destroy')
+
 
 class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
     """Certifies the file operations `Workspace` derives through the shell for a command-only backend."""
@@ -122,6 +139,10 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, tmp_path: Path) -> RunOnlyWorkspaceBackend:
         return RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the working directory exists before first use')
 
     @pytest.fixture
     def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:
@@ -189,3 +210,15 @@ async def test_native_realpath_rule_runs_without_commands() -> None:
     await rule(_NormalizingRealpathBackend(FakeWorkspace('normalizing-realpath')))
     with pytest.raises(AssertionError):
         await rule(_RelativeRealpathBackend(FakeWorkspace('relative-realpath')))
+
+
+async def test_an_undeclared_factory_fixture_warns_and_skips_its_rule() -> None:
+    """A factory fixture left at its default `None` skips its rule with a deprecation warning, until v3 fails it."""
+    rule = WorkspaceBackendSuite().test_concurrent_first_use_shares_one_environment
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'^`fresh_backend` is not provided: provide it, or return `Unsupported\(<why>\)` from it\. '
+        r'From v3, a rule whose fixture is neither fails\.$',
+    ):
+        with pytest.raises(pytest.skip.Exception, match='`fresh_backend` is not provided'):
+            await rule(None)

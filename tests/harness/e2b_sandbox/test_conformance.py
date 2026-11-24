@@ -14,10 +14,14 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeE2B
+
+# Strict expected failures: each one fails CI once its backend is fixed, so the mark comes off with the fix.
+_QUOTED_TWICE = pytest.mark.xfail(strict=True, reason='E2B quotes an argv item twice, past the limit on one argument')
+_READS_DEVICES = pytest.mark.xfail(strict=True, reason='E2B reads a device file instead of refusing it')
 
 
 def _attach(ref: WorkspaceRef) -> WorkspaceBackend:
@@ -51,6 +55,16 @@ class TestFakeE2BSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _kill
+
+    @_QUOTED_TWICE
+    async def test_a_large_quote_heavy_argv_item_is_literal(self, backend: WorkspaceBackend) -> None:
+        await super().test_a_large_quote_heavy_argv_item_is_literal(backend)
+
+    @_READS_DEVICES
+    async def test_reading_a_device_raises_os_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        await super().test_reading_a_device_raises_os_error(backend, has_real_posix_shell)
 
 
 # The live tier runs without coverage; in CI only its gate fixtures run, to skip it.
@@ -99,3 +113,17 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _kill
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the fake tier checks concurrent first use, so the live tier creates no sandbox for it')
+
+    @_QUOTED_TWICE
+    async def test_a_large_quote_heavy_argv_item_is_literal(self, backend: WorkspaceBackend) -> None:
+        await super().test_a_large_quote_heavy_argv_item_is_literal(backend)
+
+    @_READS_DEVICES
+    async def test_reading_a_device_raises_os_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        await super().test_reading_a_device_raises_os_error(backend, has_real_posix_shell)

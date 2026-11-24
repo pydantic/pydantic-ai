@@ -14,11 +14,14 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 from .fake_daytona import FakeDaytona
+
+# A strict expected failure: it fails CI once the backend is fixed, so the mark comes off with the fix.
+_READS_DEVICES = pytest.mark.xfail(strict=True, reason='Daytona reads a device file instead of refusing it')
 
 
 def _attach(ref: WorkspaceRef) -> WorkspaceBackend:
@@ -57,6 +60,12 @@ class TestFakeDaytonaSandboxBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _delete
+
+    @_READS_DEVICES
+    async def test_reading_a_device_raises_os_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        await super().test_reading_a_device_raises_os_error(backend, has_real_posix_shell)
 
 
 @pytest.mark.daytona_live
@@ -116,3 +125,13 @@ class TestLiveDaytonaSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no co
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _delete
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the fake tier checks concurrent first use, so the live tier creates no sandbox for it')
+
+    @_READS_DEVICES
+    async def test_reading_a_device_raises_os_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        await super().test_reading_a_device_raises_os_error(backend, has_real_posix_shell)

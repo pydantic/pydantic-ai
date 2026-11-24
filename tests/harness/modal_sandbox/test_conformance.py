@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
 from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT, skip_or_fail_live_tier
@@ -99,3 +99,7 @@ class TestLiveModalSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cove
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _terminate
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the fake tier checks concurrent first use, so the live tier creates no sandbox for it')

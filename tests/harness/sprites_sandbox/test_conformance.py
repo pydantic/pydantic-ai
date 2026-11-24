@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai_harness.sprites_sandbox import SpritesSandboxBackend
 
 from .fake_sprites import SpriteTransport
@@ -60,7 +60,7 @@ class TestFakeSpritesSandboxBackend(WorkspaceBackendSuite):
         return _attach
 
     @pytest.fixture
-    def destructive_backend(self, transport: SpriteTransport) -> Callable[[], WorkspaceBackend]:
+    def fresh_backend(self, transport: SpriteTransport) -> Callable[[], WorkspaceBackend]:
         del transport
         return SpritesSandboxBackend
 
@@ -133,3 +133,7 @@ class TestLiveSpritesSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _delete
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the fake tier checks concurrent first use, so the live tier creates no sandbox for it')

@@ -7,13 +7,18 @@ Requires pytest and the anyio pytest plugin.
 
 from __future__ import annotations
 
+import math
 import uuid
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
+from typing import TypeVar
 
 import anyio
 import pytest
 
+from .._warnings import PydanticAIDeprecationWarning
 from .protocol import (
     CommandResult,
     SupportsCommands,
@@ -25,7 +30,36 @@ from .protocol import (
 )
 from .workspace import Workspace
 
-__all__ = ('WorkspaceBackendSuite',)
+__all__ = ('Unsupported', 'WorkspaceBackendSuite')
+
+
+@dataclass(frozen=True)
+class Unsupported:
+    """Return from an optional `WorkspaceBackendSuite` fixture the backend can't provide.
+
+    The rules that need the fixture skip, with `reason` as the skip message.
+    """
+
+    reason: str
+
+
+_Factory = TypeVar('_Factory')
+
+
+def _provided(name: str, factory: _Factory | Unsupported | None) -> _Factory:
+    """The factory an optional fixture returned, or a skip of the rule that needs it."""
+    if isinstance(factory, Unsupported):
+        pytest.skip(factory.reason)
+    if factory is None:
+        # TODO(v3): fail the rule instead of skipping it.
+        warnings.warn(
+            f'`{name}` is not provided: provide it, or return `Unsupported(<why>)` from it. '
+            'From v3, a rule whose fixture is neither fails.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        pytest.skip(f'`{name}` is not provided')
+    return factory
 
 
 def _commands(backend: WorkspaceBackend) -> SupportsCommands:
@@ -104,6 +138,39 @@ async def _symlink(backend: WorkspaceBackend, target: str, link: str, *, directo
     return result.exit_code == 0
 
 
+async def _assert_argv_item_is_literal(backend: WorkspaceBackend, payload: str) -> None:
+    commands = _commands(backend)
+    if not _windows(backend):
+        result = await commands.run(['sh', '-c', 'printf "%s" "$1"', 'sh', payload])
+        assert (result.exit_code, result.stdout) == (0, payload)
+        return
+    workspace = Workspace(backend)
+    async with _scratch_dir(workspace) as root:
+        # `-File` hands the script its arguments as given, without parsing them as PowerShell.
+        script = workspace.paths.join(root, 'echo.ps1')
+        await workspace.write_text(script, '[Console]::Out.Write($args[0])')
+        powershell = (await commands.run('[Console]::Out.Write((Get-Process -Id $PID).Path)', shell=True)).stdout
+        result = await commands.run(
+            [powershell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, payload]
+        )
+    assert (result.exit_code, result.stdout) == (0, payload)
+
+
+async def _wait_until_gone(backend: WorkspaceBackend, pid: str) -> None:
+    """Wait for the process `pid` to end, as the backend's own commands see it."""
+    with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
+        while (
+            await _script(
+                backend, 'kill -0 "$1"', 'if (-not (Get-Process -Id $a0 -ErrorAction Ignore)) { exit 1 }', pid
+            )
+        ).exit_code == 0:
+            await anyio.sleep(0.05)  # pragma: lax no cover - depends on how fast the process dies
+
+
+_BACKGROUND_CHILD = 'sleep 3600 & echo $! > "$1"; wait'
+"""Shell that starts a background child, writes its PID to the file `$1`, and waits for it."""
+
+
 @asynccontextmanager
 async def _scratch_dir(workspace: Workspace) -> AsyncGenerator[str]:
     """A fresh directory under the working directory, removed afterwards."""
@@ -120,8 +187,10 @@ class WorkspaceBackendSuite:
 
     Each test checks one rule of the backend contract. Command rules skip for a backend without
     `SupportsCommands`; filesystem rules run through [`Workspace`][pydantic_ai.workspaces.Workspace], so a
-    command-only backend is checked on the file operations derived through its shell. The reattach
-    rules need the optional fixtures below and skip without them.
+    command-only backend is checked on the file operations derived through its shell. The first-use, reattach
+    and destroy rules need the optional factory fixtures below: return
+    [`Unsupported`][pydantic_ai.workspaces.conformance.Unsupported] from one the backend can't provide, and its
+    rules skip with that reason. A factory fixture left at its default skips its rules with a deprecation warning.
     """
 
     pytestmark = pytest.mark.anyio
@@ -131,25 +200,25 @@ class WorkspaceBackendSuite:
         raise NotImplementedError('provide a `backend` fixture')
 
     @pytest.fixture
-    def fresh_backend(self) -> Callable[[], WorkspaceBackend] | None:
-        """Build an uninitialized backend to check concurrent first use, if supported."""
+    def fresh_backend(self) -> Callable[[], WorkspaceBackend] | Unsupported | None:
+        """Build an uninitialized backend to check concurrent first use."""
         return None
 
     @pytest.fixture
     def destructive_backend(
-        self, fresh_backend: Callable[[], WorkspaceBackend] | None
-    ) -> Callable[[], WorkspaceBackend] | None:
+        self, fresh_backend: Callable[[], WorkspaceBackend] | Unsupported | None
+    ) -> Callable[[], WorkspaceBackend] | Unsupported | None:
         """Build an independent environment for destruction; defaults to `fresh_backend`."""
         return fresh_backend
 
     @pytest.fixture
-    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend] | None:
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend] | Unsupported | None:
         """Build a second backend that attaches to `ref`. Enables the reattach rules."""
         return None
 
     @pytest.fixture
-    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]] | None:
-        """Destroy the environment behind `backend`. Enables the reattach-after-destroy rule."""
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]] | Unsupported | None:
+        """Destroy the environment behind `backend`. Enables the destroy rules."""
         return None
 
     async def test_has_the_required_members(self, backend: WorkspaceBackend) -> None:
@@ -249,22 +318,11 @@ class WorkspaceBackendSuite:
         assert result.exit_code == 127
 
     async def test_argv_items_are_literal(self, backend: WorkspaceBackend) -> None:
-        payload = ' literal $() `quoted`; && '
-        commands = _commands(backend)
-        if not _windows(backend):
-            result = await commands.run(['sh', '-c', 'printf "%s" "$1"', 'sh', payload])
-            assert (result.exit_code, result.stdout) == (0, payload)
-            return
-        workspace = Workspace(backend)
-        async with _scratch_dir(workspace) as root:
-            # `-File` hands the script its arguments as given, without parsing them as PowerShell.
-            script = workspace.paths.join(root, 'echo.ps1')
-            await workspace.write_text(script, '[Console]::Out.Write($args[0])')
-            powershell = (await commands.run('[Console]::Out.Write((Get-Process -Id $PID).Path)', shell=True)).stdout
-            result = await commands.run(
-                [powershell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, payload]
-            )
-        assert (result.exit_code, result.stdout) == (0, payload)
+        await _assert_argv_item_is_literal(backend, ' literal $() `quoted`; && ')
+
+    async def test_a_large_quote_heavy_argv_item_is_literal(self, backend: WorkspaceBackend) -> None:
+        """Quoting an item for a shell more than once multiplies its size past the system's argument limit."""
+        await _assert_argv_item_is_literal(backend, "'a' " * 4096)
 
     async def test_working_dir_is_canonical(self, backend: WorkspaceBackend) -> None:
         """Absolute, symlinks resolved, no `.`/`..`: the directory commands actually start in."""
@@ -290,6 +348,28 @@ class WorkspaceBackendSuite:
         with pytest.raises(WorkspaceTimeoutError):
             await _script(backend, 'sleep 3600', 'Start-Sleep -Seconds 3600', timeout=1.0)
 
+    async def test_an_invalid_timeout_raises_value_error(self, backend: WorkspaceBackend) -> None:
+        """A timeout is a positive finite number of seconds, or `None`."""
+        for timeout in (math.nan, -1.0):
+            with pytest.raises(ValueError):
+                await _script(backend, 'exit 0', 'exit 0', timeout=timeout)
+        with pytest.raises(ValueError):
+            await _script(backend, 'exit 0', 'exit 0', timeout='5')  # pyright: ignore[reportArgumentType]
+
+    async def test_timeout_stops_background_children(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell or _windows(backend):
+            pytest.skip('backend has no POSIX background child to stop')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            pid_file = workspace.paths.join(root, 'pid')
+            with pytest.raises(WorkspaceTimeoutError):
+                await _script(backend, _BACKGROUND_CHILD, '', pid_file, timeout=1.0)
+            if not await workspace.exists(pid_file):
+                pytest.skip('the timeout ended the command before it started its child')  # pragma: no cover
+            await _wait_until_gone(backend, (await workspace.read_text(pid_file)).strip())
+
     async def test_cancellation_stops_foreground_work(
         self, backend: WorkspaceBackend, has_real_posix_shell: bool
     ) -> None:
@@ -313,14 +393,23 @@ class WorkspaceBackendSuite:
                     while not await workspace.exists(pid_file):
                         await anyio.sleep(0.05)
                 tg.cancel_scope.cancel()
-            pid = (await workspace.read_text(pid_file)).strip()
-            with anyio.fail_after(60):
-                while (
-                    await _script(
-                        backend, 'kill -0 "$1"', 'if (-not (Get-Process -Id $a0 -ErrorAction Ignore)) { exit 1 }', pid
-                    )
-                ).exit_code == 0:
-                    await anyio.sleep(0.05)  # pragma: lax no cover - depends on how fast the process dies
+            await _wait_until_gone(backend, (await workspace.read_text(pid_file)).strip())
+
+    async def test_cancellation_stops_background_children(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        if not has_real_posix_shell or _windows(backend):
+            pytest.skip('backend has no POSIX background child to stop')
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            pid_file = workspace.paths.join(root, 'pid')
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(_script, backend, _BACKGROUND_CHILD, '', pid_file)
+                with anyio.fail_after(30):
+                    while not await workspace.exists(pid_file):
+                        await anyio.sleep(0.05)
+                tg.cancel_scope.cancel()
+            await _wait_until_gone(backend, (await workspace.read_text(pid_file)).strip())
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         result = await _script(
@@ -337,11 +426,9 @@ class WorkspaceBackendSuite:
         assert before in (None, created)
 
     async def test_concurrent_first_use_shares_one_environment(
-        self, fresh_backend: Callable[[], WorkspaceBackend] | None
+        self, fresh_backend: Callable[[], WorkspaceBackend] | Unsupported | None
     ) -> None:
-        if fresh_backend is None:
-            pytest.skip('backend does not provide a fresh_backend factory')
-        backend = fresh_backend()
+        backend = _provided('fresh_backend', fresh_backend)()
         assert backend.ref is None
         workspace = Workspace(backend)
         paths = [f'concurrent-{uuid.uuid4().hex}' for _ in range(5)]
@@ -487,6 +574,16 @@ class WorkspaceBackendSuite:
                 with pytest.raises(OSError):
                     await workspace.read_bytes(fifo)
 
+    async def test_reading_a_device_raises_os_error(
+        self, backend: WorkspaceBackend, has_real_posix_shell: bool
+    ) -> None:
+        """Only a regular file has an end to read to: `/dev/zero` never ends."""
+        if not has_real_posix_shell or _windows(backend):
+            pytest.skip('in-memory fakes and Windows have no device files')
+        with anyio.fail_after(30):
+            with pytest.raises(OSError):
+                await Workspace(backend).read_bytes('/dev/null')
+
     @pytest.fixture
     def enforces_parent_file_errors(self) -> bool:
         """Opt out only for an in-memory test double without real path traversal."""
@@ -614,18 +711,17 @@ class WorkspaceBackendSuite:
         assert await backend.realpath(missing) == missing
 
     async def test_a_backend_attached_by_ref_reaches_the_same_environment(
-        self, backend: WorkspaceBackend, attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None
+        self, backend: WorkspaceBackend, attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | Unsupported | None
     ) -> None:
         """Durable execution rebuilds the backend from its ref for every call, so this is what it relies on."""
-        if attach_backend is None:
-            pytest.skip('provide the `attach_backend` fixture to enable this rule')
+        attach = _provided('attach_backend', attach_backend)
         workspace = Workspace(backend)
         async with _scratch_dir(workspace) as root:
             path = workspace.paths.join(root, 'file')
             await workspace.write_bytes(path, b'reattached')
             ref = backend.ref
             assert ref is not None
-            attached = attach_backend(ref)
+            attached = attach(ref)
             assert await Workspace(attached).read_bytes(path) == b'reattached'
             if isinstance(attached, SupportsCommands):
                 result = await _script(attached, 'cat "$1"', '[Console]::Out.Write([IO.File]::ReadAllText($a0))', path)
@@ -636,12 +732,11 @@ class WorkspaceBackendSuite:
     async def test_a_backend_attached_by_ref_reaches_a_detached_process(
         self,
         backend: WorkspaceBackend,
-        attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None,
+        attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | Unsupported | None,
         has_real_posix_shell: bool,
     ) -> None:
         """A process a command detached into its own session is still running for a backend attached by ref."""
-        if attach_backend is None:
-            pytest.skip('provide the `attach_backend` fixture to enable this rule')
+        attach = _provided('attach_backend', attach_backend)
         if not has_real_posix_shell:
             pytest.skip('backend does not run real POSIX processes')
         workspace = Workspace(backend)
@@ -674,7 +769,7 @@ class WorkspaceBackendSuite:
                 assert result.exit_code == 0, 'the detached process never started'
                 ref = backend.ref
                 assert ref is not None
-                attached = Workspace(attach_backend(ref))
+                attached = Workspace(attach(ref))
                 # Only a live process answers: a PID check would also pass for a zombie nothing reaps.
                 with anyio.fail_after(60):
                     await attached.write_bytes(release, b'go')
@@ -686,15 +781,15 @@ class WorkspaceBackendSuite:
 
     async def test_destroying_environment_during_command_raises_unavailable(
         self,
-        destructive_backend: Callable[[], WorkspaceBackend] | None,
-        destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | None,
+        destructive_backend: Callable[[], WorkspaceBackend] | Unsupported | None,
+        destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | Unsupported | None,
         has_real_posix_shell: bool,
     ) -> None:
-        if destructive_backend is None or destroy_environment is None:
-            pytest.skip('provide `destructive_backend` and `destroy_environment` to enable this rule')
+        destroy = _provided('destroy_environment', destroy_environment)
+        build = _provided('destructive_backend', destructive_backend)
         if not has_real_posix_shell:
             pytest.skip('backend has no running POSIX command to interrupt')
-        backend = destructive_backend()
+        backend = build()
         _commands(backend)
         workspace = Workspace(backend)
         root = await backend.working_dir()
@@ -719,20 +814,21 @@ class WorkspaceBackendSuite:
             with anyio.fail_after(30):
                 while not await workspace.exists(started):
                     await anyio.sleep(0.05)
-            await destroy_environment(backend)
+            await destroy(backend)
 
     async def test_attaching_to_a_destroyed_environment_raises_unavailable(
         self,
-        destructive_backend: Callable[[], WorkspaceBackend] | None,
-        attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None,
-        destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | None,
+        destructive_backend: Callable[[], WorkspaceBackend] | Unsupported | None,
+        attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | Unsupported | None,
+        destroy_environment: Callable[[WorkspaceBackend], Awaitable[None]] | Unsupported | None,
     ) -> None:
-        if destructive_backend is None or attach_backend is None or destroy_environment is None:
-            pytest.skip('provide `destructive_backend`, `attach_backend` and `destroy_environment` to enable this rule')
+        destroy = _provided('destroy_environment', destroy_environment)
+        build = _provided('destructive_backend', destructive_backend)
+        attach = _provided('attach_backend', attach_backend)
         # Never destroy the shared backend fixture: other rules may run after this one.
-        backend = destructive_backend()
+        backend = build()
         await backend.working_dir()
         assert backend.ref is not None
-        await destroy_environment(backend)
+        await destroy(backend)
         with pytest.raises(WorkspaceUnavailableError):
-            await attach_backend(backend.ref).working_dir()
+            await attach(backend.ref).working_dir()

@@ -11,7 +11,7 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 
 from .._fake_remote_tools import install_fake_remote_tools
@@ -43,6 +43,10 @@ class TestSSHWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WorkspaceBackend:
         return SSHWorkspaceBackend('box', working_dir=str(tmp_path))
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the working directory exists before first use')
 
     @pytest.fixture
     def destructive_backend(self, tmp_path_factory: pytest.TempPathFactory) -> Callable[[], WorkspaceBackend]:

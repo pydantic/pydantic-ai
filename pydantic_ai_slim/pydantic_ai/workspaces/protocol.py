@@ -182,7 +182,7 @@ class SupportsFilesystem(Protocol):
     """
 
     async def read_bytes(self, path: str) -> bytes:
-        """Read a file's contents as bytes."""
+        """Read a file's contents as bytes; raise `OSError` for anything but a regular file, such as a FIFO or a device."""
         ...
 
     async def write_bytes(self, path: str, data: bytes) -> None:

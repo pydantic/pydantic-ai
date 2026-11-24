@@ -30,7 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
 )
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai.workspaces.windows import powershell_script
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
@@ -41,6 +41,14 @@ class TestWindowsWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WindowsWorkspaceBackend:
         return WindowsWorkspaceBackend(tmp_path)
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the working directory exists before first use')
+
+    @pytest.fixture
+    def destroy_environment(self) -> Unsupported:
+        return Unsupported('Windows refuses to delete a directory a running command works in')
 
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:

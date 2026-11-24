@@ -16,7 +16,7 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceBackend, WorkspaceRef
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.conformance import Unsupported, WorkspaceBackendSuite
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
 from pydantic_ai_harness.ssh_workspace import SSHWorkspaceBackend
 
@@ -49,6 +49,10 @@ class TestRealBubblewrap(WorkspaceBackendSuite):  # pragma: lax no cover - CI ho
     @pytest.fixture
     def backend(self, tmp_path: Path) -> WorkspaceBackend:
         return BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+
+    @pytest.fixture
+    def fresh_backend(self) -> Unsupported:
+        return Unsupported('the working directory exists before first use')
 
     @pytest.fixture
     def destructive_backend(self) -> Iterator[Callable[[], WorkspaceBackend]]:
