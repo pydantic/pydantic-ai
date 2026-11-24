@@ -243,7 +243,7 @@ def _chat_response(turn: Turn, index: int) -> dict[str, Any]:
         'id': f'chatcmpl_{index}',
         'object': 'chat.completion',
         'created': 0,
-        'model': 'gpt-5.6-sol',
+        'model': 'gpt-5.2',
         'choices': [{'index': 0, 'message': message, 'finish_reason': 'tool_calls' if turn.calls else 'stop'}],
         'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15},
     }
@@ -389,7 +389,8 @@ with try_import() as ui_imports_successful:
 _DEFAULT_MODEL_NAMES: dict[Provider, str] = {
     'anthropic': 'claude-opus-5-5',
     'openai-responses': 'gpt-5.6-sol',
-    'openai-chat': 'gpt-5.6-sol',
+    # Chat Completions rejects function tools with reasoning on GPT-5.6; gpt-5.2 accepts them live.
+    'openai-chat': 'gpt-5.2',
 }
 
 

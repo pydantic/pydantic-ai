@@ -443,22 +443,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
     included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
-    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-5.4, GPT-5.6, and GPT-6
-    families (verified live on gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.6-sol, gpt-5.6-luna, gpt-5.6-terra,
-    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra).
+    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-5.4, GPT-5.6 and GPT-6
+    families (verified live on gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.6, gpt-5.6-sol, gpt-5.6-luna,
+    gpt-5.6-terra, gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra).
+    GPT-5.4 reasons only when asked, so its tool requests are rejected only with reasoning turned on.
     `openai_model_profile` leaves it off, because the restriction is unverified on the OpenAI-compatible endpoints
     that share that profile.
     `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
     these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
     On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
     accepted effort rather than `'none'`, so it is not a way out there."""
-
-    openai_chat_function_tools_reject_explicit_reasoning: bool
-    """Whether the Chat Completions API rejects function tools only when an explicit non-`'none'` effort is sent.
-    Default: `False`.
-
-    `OpenAIProvider` enables this for `gpt-5.5`, whose default request without `reasoning_effort` accepts tools,
-    while an explicit effort (`openai_reasoning_effort` or `thinking`) triggers the same 400 unless set to `'none'`."""
 
     openai_chat_thinking_false_body: dict[str, Any]
     """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of

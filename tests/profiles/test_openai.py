@@ -60,8 +60,6 @@ class ReasoningCase:
     """The `reasoning.effort` values the model accepts, where they're pinned."""
     chat_function_tools_require_reasoning_off: bool = False
     """Chat Completions rejects function tools while reasoning is on (verified live, 2026-11)."""
-    chat_function_tools_reject_explicit_reasoning: bool = False
-    """Chat Completions rejects function tools only when an explicit non-`'none'` effort is sent (verified live, 2026-11)."""
 
 
 # The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
@@ -186,13 +184,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
     ),
     # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode`
-    ReasoningCase(
-        model='gpt-5.5',
-        enabled_by_default=True,
-        can_be_disabled=True,
-        supports_context=True,
-        chat_function_tools_reject_explicit_reasoning=True,
-    ),
+    ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True, supports_context=True),
     # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`, and
     # (with gpt-5.4/5.5) accepts `reasoning.context='all_turns'`
     # OpenAI documents `low` as the lowest active GPT-5.6 reasoning effort:
@@ -334,16 +326,11 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
     assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
 
-    # OpenAI-only, verified live on the GPT-5.4/5.5/5.6/6 families; gateways reuse the shared profile unverified.
+    # OpenAI-only, verified live on the GPT-5.4, GPT-5.6 and GPT-6 families; gateways reuse the shared profile unverified.
     assert profile.get('openai_chat_function_tools_require_reasoning_off', False) is False
     assert (
         provider_profile.get('openai_chat_function_tools_require_reasoning_off', False)
         is case.chat_function_tools_require_reasoning_off
-    )
-    assert profile.get('openai_chat_function_tools_reject_explicit_reasoning', False) is False
-    assert (
-        provider_profile.get('openai_chat_function_tools_reject_explicit_reasoning', False)
-        is case.chat_function_tools_reject_explicit_reasoning
     )
 
 

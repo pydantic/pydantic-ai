@@ -195,7 +195,6 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_reasoning': False,
     'openai_supports_reasoning_effort_none': False,
     'openai_chat_function_tools_require_reasoning_off': False,
-    'openai_chat_function_tools_reject_explicit_reasoning': False,
     'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
