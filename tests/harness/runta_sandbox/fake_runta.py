@@ -85,6 +85,7 @@ class FakeExecSocket:
         ]
         code = await process.wait()
         # A background child can keep the pipes open: report the exit after a short drain.
+        # real-wait: a child that outlives the command holds the pipes open, so only the clock ends the drain
         _, pending = await asyncio.wait(pumps, timeout=_DRAIN_GRACE)
         for pump in pending:
             pump.cancel()
@@ -119,7 +120,8 @@ class FakeExecSocket:
         if process is not None and process.returncode is None:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):  # pragma: no cover - the command exited as the socket closed
+            # The command exited as the socket closed.
+            except (ProcessLookupError, PermissionError):  # pragma: no cover
                 pass
         for task in self._tasks:
             await asyncio.wait([task])
@@ -150,6 +152,8 @@ class FakeRunta:
         self.refuse_next: list[int] = []
         # Set to answer the next runtime read with a body that is not a runtime.
         self.malformed_next = False
+        # Set to pause the runtime just before the next exec handshake, which is then refused.
+        self.pause_before_next_exec = False
         # Set to delete a runtime as soon as it is told to start or resume.
         self.delete_on_wake = False
         # Statuses queued for the next REST answers, oldest first.
@@ -226,6 +230,9 @@ class FakeRunta:
             raise InvalidStatus(Response(401, 'Unauthorized', Headers()))
         if runtime is None:
             raise InvalidStatus(Response(404, 'Not Found', Headers()))
+        if self.pause_before_next_exec:
+            self.pause_before_next_exec = False
+            runtime.status = 'paused'
         if runtime.status != 'running':
             raise InvalidStatus(Response(409, 'Conflict', Headers()))
         socket = FakeExecSocket(self, runtime)

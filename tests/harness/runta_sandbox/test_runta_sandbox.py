@@ -10,6 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
@@ -68,6 +69,31 @@ class TestRuntaSandbox:
         assert (await attached.run(['cat', 'result.bin'])).stdout == '\x00�\n'
         assert len(runta.runtimes) == 1
 
+    async def test_a_prepared_backend_and_the_message_history_keep_one_runtime(self, runta: FakeRunta, tmp_path: Path):
+        project = str(tmp_path / 'project')
+        agent = Agent(TestModel(), deps_type=type(None), capabilities=[RuntaSandbox[None](working_dir=project)])
+        seen: list[str] = []
+
+        @agent.tool
+        async def read(ctx: RunContext[None]) -> str:
+            assert ctx.workspace is not None
+            seen.append(await ctx.workspace.read_text('TASK.md'))
+            return 'read'
+
+        backend = RuntaSandboxBackend(working_dir=project)
+        await Workspace(backend).write_text('TASK.md', 'Add a flag.\n')
+        result = await agent.run('read', workspace=backend)
+        followup = await agent.run('read', message_history=result.all_messages())
+
+        assert seen == ['Add a flag.\n']
+        assert followup.workspace is not None and followup.workspace.ref == backend.ref
+        assert await followup.workspace.read_text('TASK.md') == 'Add a flag.\n'
+        assert len(runta.runtimes) == 1
+
+        assert backend.ref is not None
+        await RuntaSandbox[None]().destroy(backend.ref)
+        assert runta.runtimes == {}
+
     async def test_commands_get_the_sandbox_env_and_the_working_dir(self, runta: FakeRunta, tmp_path: Path):
         directory = str(tmp_path / 'work' / 'dir')
         backend = RuntaSandboxBackend(working_dir=directory, env={'BASE': 'sandbox', 'odd-name': 'kept'})
@@ -116,6 +142,22 @@ class TestRuntaSandbox:
 
         assert (await backend.run(['echo', 'awake'])).stdout == 'awake\n'
         assert runta.commands.count(runta.commands[-1]) == 1
+
+    async def test_a_runtime_paused_before_its_working_dir_is_made_is_woken(self, runta: FakeRunta, tmp_path: Path):
+        runta.pause_before_next_exec = True
+        backend = RuntaSandboxBackend(working_dir=str(tmp_path / 'work'))
+
+        assert (await backend.run(['true'])).exit_code == 0
+        assert (tmp_path / 'work').is_dir()
+
+    async def test_a_runtime_that_never_runs_fails_after_the_ready_timeout(
+        self, runta: FakeRunta, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr('pydantic_ai_harness.runta_sandbox._backend._READY_TIMEOUT', 0.05)
+        stuck = runta.create(status='pausing')
+
+        with pytest.raises(WorkspaceError, match='is still pausing after'):
+            await RuntaSandboxBackend(ref=ref_of(stuck.id)).run(['true'])
 
     async def test_a_refused_command_is_not_sent_again_to_a_running_runtime(self, runta: FakeRunta):
         backend = RuntaSandboxBackend()
@@ -180,9 +222,10 @@ class TestRuntaSandbox:
         runta.drop_exit, runta.end_without_exit = False, True
         with pytest.raises(WorkspaceUnavailableError, match='the command may have run'):
             await backend.run(['true'])
-        runta.frames_next = ['not json']
-        with pytest.raises(WorkspaceUnavailableError, match='the command may have run'):
-            await backend.run(['true'])
+        for malformed in ('not json', '{"type": "stdout", "data_base64": "not base64"}'):
+            runta.frames_next = [malformed]
+            with pytest.raises(WorkspaceUnavailableError, match='the command may have run'):
+                await backend.run(['true'])
         # The lookup that would tell whether the runtime is gone fails: the lost connection is what is reported.
         runta.fail_next = [500]
         with pytest.raises(WorkspaceUnavailableError, match='the command may have run'):

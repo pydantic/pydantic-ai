@@ -14,6 +14,9 @@ Measured against Runta (2026-11-23):
   but a resume. A lifecycle call returns before the change lands.
 - A process ended by a signal reports exit code -1.
 - A runtime deleted under a running command ends it with an `error` frame, not a closed socket.
+- Creating a runtime takes 13 to 15 seconds. The default image is Ubuntu 24.04 with git and Python 3,
+  and without Node.js.
+- Writing an 8 MiB file through commands and reading it back took 285 seconds.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import os
 import posixpath
 import uuid
 from collections.abc import Mapping
+from typing import Literal
 
 import anyio
 
@@ -60,7 +64,8 @@ try:
         RuntaExec,
         Runtime,
     )
-except ImportError as exc:  # pragma: no cover - the slim install has no `websockets`
+# The slim install has no `websockets`.
+except ImportError as exc:  # pragma: no cover
     raise ImportError('Install `pydantic-ai-harness[runta]` to use RuntaSandbox.') from exc
 
 logger = logging.getLogger(__name__)
@@ -81,7 +86,7 @@ _WRAPPER = (
     'if [ -n "$directory" ]; then cd -- "$directory" 2>/dev/null || { printf %s "$marker" >&2; exit 125; }; fi; '
     'exec "$@"'
 )
-_WAKING = {'paused': 'resume', 'suspended': 'resume', 'shutdown': 'start'}
+_WAKING: dict[str, Literal['start', 'resume']] = {'paused': 'resume', 'suspended': 'resume', 'shutdown': 'start'}
 _GONE = frozenset({'deleting', 'error', 'crashed'})
 
 
@@ -134,10 +139,7 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     def new_client(self) -> RuntaClient:
         """A client for one operation. A handful of requests per command does not need a shared pool."""
-        token = self._token or os.getenv('RUNTA_TOKEN')
-        if not token:
-            raise UserError(_MISSING_TOKEN)
-        return RuntaClient(token=token, endpoint=self._endpoint or os.getenv('RUNTA_ENDPOINT') or DEFAULT_ENDPOINT)
+        return _open_client(self._token, self._endpoint)
 
     async def _get_runtime(self, client: RuntaClient) -> Runtime:
         """The running runtime, created or attached at most once per backend."""
@@ -145,7 +147,9 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
             if self._runtime is None:
                 # A create runs to completion even if the caller is cancelled, so its runtime is recorded.
                 runtime = await (
-                    run_to_completion(lambda: self._create(client)) if self._ref is None else self._attach(client)
+                    run_to_completion(lambda: self._create(client))
+                    if self._ref is None
+                    else _read_runtime(client, self._ref.id)
                 )
                 self._runtime = await self._wait_running(client, runtime)
             if self._working_dir_pending:
@@ -162,28 +166,23 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
         logger.info('Created Runta runtime %s', runtime.id)
         return runtime
 
-    async def _attach(self, client: RuntaClient) -> Runtime:
-        assert self._ref is not None
-        try:
-            return await client.get_runtime(self._ref.id)
-        except RuntaAPIError as error:
-            raise _unavailable(self._ref.id, error) or error from error
-
     async def _wait_running(self, client: RuntaClient, runtime: Runtime) -> Runtime:
         """Start `runtime` if it is paused, suspended or shut down, and wait until it runs."""
         woken = False
-        with anyio.fail_after(_READY_TIMEOUT):
-            while runtime.status != 'running':
-                if runtime.status in _GONE:
-                    raise WorkspaceUnavailableError(f'Runta runtime {runtime.id} is {runtime.status}.')
-                if not woken and (action := _WAKING.get(runtime.status)) is not None:
-                    await client.set_running(runtime, 'start' if action == 'start' else 'resume')
-                    woken = True
-                await anyio.sleep(_POLL_INTERVAL)
-                try:
-                    runtime = await client.get_runtime(runtime.id)
-                except RuntaAPIError as error:
-                    raise _unavailable(runtime.id, error) or error from error
+        try:
+            with anyio.fail_after(_READY_TIMEOUT):
+                while runtime.status != 'running':
+                    if runtime.status in _GONE:
+                        raise WorkspaceUnavailableError(f'Runta runtime {runtime.id} is {runtime.status}.')
+                    if not woken and (action := _WAKING.get(runtime.status)) is not None:
+                        await client.set_running(runtime, action)
+                        woken = True
+                    await anyio.sleep(_POLL_INTERVAL)
+                    runtime = await _read_runtime(client, runtime.id)
+        except TimeoutError as error:
+            raise WorkspaceError(
+                f'Runta runtime {runtime.id} is still {runtime.status} after {_READY_TIMEOUT:g} seconds.'
+            ) from error
         return runtime
 
     async def _make_working_dir(self, runtime: Runtime) -> None:
@@ -249,13 +248,22 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
         ]
         require_asyncio(_ASYNCIO_ONLY)
         async with self.new_client() as client:
-            return await self._run_args(client, runtime or await self._get_runtime(client), args, timeout, marker)
+            if runtime is None:
+                return await self._run_args(client, await self._get_runtime(client), args, timeout, marker)
+            return await self._run_args(client, runtime, args, timeout, marker, locked=True)
 
     async def _run_args(
-        self, client: RuntaClient, runtime: Runtime, args: list[str], timeout: float | None, marker: str
+        self,
+        client: RuntaClient,
+        runtime: Runtime,
+        args: list[str],
+        timeout: float | None,
+        marker: str,
+        *,
+        locked: bool = False,
     ) -> CommandResult:
         # The handshake has its own bound, so the command's deadline starts once it is dispatched.
-        process = await self._start(client, runtime, args)
+        process = await self._start(client, runtime, args, locked=locked)
         try:
             async with command_deadline(timeout, stop=process.close, output=lambda: _output(process)):
                 code = await process.wait(limit=_MAX_OUTPUT_BYTES)
@@ -286,8 +294,11 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
             )
         return CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
 
-    async def _start(self, client: RuntaClient, runtime: Runtime, args: list[str]) -> RuntaExec:
-        """Dispatch a command, waking a runtime that refuses the handshake because it is not running."""
+    async def _start(self, client: RuntaClient, runtime: Runtime, args: list[str], *, locked: bool) -> RuntaExec:
+        """Dispatch a command, waking a runtime that refuses the handshake because it is not running.
+
+        `locked` says the caller already holds `_lock`, which is not reentrant.
+        """
         try:
             return await client.exec(runtime.id, args, {})
         except ExecRefused as error:
@@ -298,8 +309,11 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise _unavailable(runtime.id, lookup_error) or error from lookup_error
             if current.status == 'running':
                 raise
-            async with self._lock:
+            if locked:
                 self._runtime = await self._wait_running(client, current)
+            else:
+                async with self._lock:
+                    self._runtime = await self._wait_running(client, current)
             return await client.exec(runtime.id, args, {})
 
     async def _raise_if_gone(self, client: RuntaClient, runtime: Runtime, cause: Exception) -> None:
@@ -315,8 +329,25 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
 
 async def destroy_runtime(runtime_id: str, *, token: str | None, endpoint: str | None) -> None:
     """Delete a runtime by UUID without attaching to it or waking it."""
-    async with RuntaSandboxBackend(token=token, endpoint=endpoint).new_client() as client:
+    async with _open_client(token, endpoint) as client:
         await client.delete_runtime(runtime_id)
+
+
+def _open_client(token: str | None, endpoint: str | None) -> RuntaClient:
+    token = token or os.getenv('RUNTA_TOKEN')
+    if not token:
+        raise UserError(_MISSING_TOKEN)
+    return RuntaClient(token=token, endpoint=endpoint or os.getenv('RUNTA_ENDPOINT') or DEFAULT_ENDPOINT)
+
+
+async def _read_runtime(client: RuntaClient, runtime_id: str) -> Runtime:
+    """Read a runtime, reporting one the API no longer has as unavailable."""
+    try:
+        return await client.get_runtime(runtime_id)
+    except RuntaAPIError as error:
+        if (unavailable := _unavailable(runtime_id, error)) is not None:
+            raise unavailable from error
+        raise
 
 
 def _unavailable(runtime_id: str, error: RuntaAPIError) -> WorkspaceUnavailableError | None:

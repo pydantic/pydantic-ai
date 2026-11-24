@@ -10,20 +10,19 @@ import httpx
 import pytest
 
 _HAS_WEBSOCKETS = importlib.util.find_spec('websockets') is not None
-collect_ignore = (
-    [] if _HAS_WEBSOCKETS else ['fake_runta.py', 'test_conformance.py', 'test_runta_sandbox.py', 'test_runta_live.py']
-)
+collect_ignore = [] if _HAS_WEBSOCKETS else ['fake_runta.py', 'test_conformance.py', 'test_runta_sandbox.py']
 
-if TYPE_CHECKING or _HAS_WEBSOCKETS:  # pragma: no branch - installed and slim jobs take opposite branches
+# Installed and slim jobs take opposite branches.
+if TYPE_CHECKING or _HAS_WEBSOCKETS:  # pragma: no branch
     from .fake_runta import FakeRunta
 
 
 def live_token() -> str:
     """Return `RUNTA_TOKEN` for the live tier, or skip it.
 
-    The tier runs only with `PYDANTIC_AI_HARNESS_RUNTA_LIVE=1` and a non-empty token. CI also sets
-    `RUNTA_REQUIRE_LIVE`, which turns the skip into a failure, so a missing secret cannot pass as a
-    green run that tested nothing.
+    The tier runs only with `PYDANTIC_AI_HARNESS_RUNTA_LIVE=1` and a non-empty token. Setting
+    `RUNTA_REQUIRE_LIVE` turns the skip into a failure, so a job meant to run the tier cannot pass as a
+    green run that tested nothing when its secret is missing.
     """
     token = os.getenv('RUNTA_TOKEN')
     if os.getenv('PYDANTIC_AI_HARNESS_RUNTA_LIVE') == '1' and token:
@@ -40,7 +39,8 @@ def runta_token() -> str:
     return live_token()
 
 
-if _HAS_WEBSOCKETS:  # pragma: no branch - the fixture requires the fake
+# The fixture requires the fake.
+if _HAS_WEBSOCKETS:  # pragma: no branch
 
     @pytest.fixture
     async def runta(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIterator[FakeRunta]:

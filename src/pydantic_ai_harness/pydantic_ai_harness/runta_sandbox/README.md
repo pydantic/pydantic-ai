@@ -158,7 +158,7 @@ If your program stops before it stores the ref, for example after a crash or Ctr
 - Commands run as `root`, so Unix permissions don't restrict them. Don't rely on file modes to keep tools out of a path.
 - A timeout or cancellation closes the command's connection, and Runta then ends the command. Children it started in the background may keep running. If unsure, inspect or delete the runtime.
 - `timeout=None` removes the command deadline. A runtime does not pause when idle unless you set an idle policy on it in Runta.
-- The Runta connection needs asyncio. Under Trio, every operation raises `UserError`.
+- Runta's command connection needs asyncio. Under Trio, commands and file operations raise `UserError`.
 
 ## Telemetry
 

@@ -2,7 +2,7 @@
 
 `TestFakeRuntaSandboxBackend` runs on POSIX hosts, over the fake Runta API, whose commands run in
 local subprocesses under a temporary host directory. `TestLiveRuntaSandboxBackend` runs the same
-rules against a real runtime and is gated like `test_runta_live.py`.
+rules against a real runtime, behind `PYDANTIC_AI_HARNESS_RUNTA_LIVE=1` and the `runta_live` marker.
 
 The backend implements `SupportsCommands`, so the suite's command, reattach, and destroy rules run
 here, and its filesystem rules run through the file operations Pydantic AI derives from commands.
@@ -49,7 +49,8 @@ class TestFakeRuntaSandboxBackend(WorkspaceBackendSuite):
 
 @pytest.mark.runta_live
 @pytest.mark.usefixtures('runta_token')
-class TestLiveRuntaSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover - live tier runs without coverage
+# The live tier runs without coverage.
+class TestLiveRuntaSandboxBackend(WorkspaceBackendSuite):  # pragma: no cover
     @pytest.fixture(scope='class')
     @classmethod
     def anyio_backend(cls) -> str:
