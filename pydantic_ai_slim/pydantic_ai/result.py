@@ -410,34 +410,46 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # we don't currently make use of the part_index, but in principle this may be useful
             # so we retain it here for now to make possible future refactors simpler
             msg = self.response
+            has_seen_text = False
+            needs_separator = False
             for i, part in enumerate(msg.parts):
                 if isinstance(part, _messages.TextPart) and part.content:
+                    if needs_separator:
+                        yield '\n\n', i
+                        needs_separator = False
+                    has_seen_text = True
                     yield part.content, i
+                elif isinstance(part, _messages.NativeToolCallPart) and has_seen_text:
+                    needs_separator = True
 
-            last_text_index: int | None = None
             async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    last_text_index = event.index
+                    if needs_separator:
+                        yield '\n\n', event.index
+                        needs_separator = False
+                    has_seen_text = True
                     yield event.part.content, event.index
                 elif (
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
-                    last_text_index = event.index
+                    if needs_separator:
+                        yield '\n\n', event.index
+                        needs_separator = False
+                    has_seen_text = True
                     yield event.delta.content_delta, event.index
                 elif (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.NativeToolCallPart)
-                    and last_text_index is not None
+                    and has_seen_text
                 ):
                     # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
-                    last_text_index = None
+                    needs_separator = True
 
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:
             async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:

@@ -1704,6 +1704,56 @@ async def test_structured_response_iter():
                 pass
 
 
+async def test_stream_text_builtin_tool_separator():
+    """stream_text() must match response.text around built-in tool calls (#13533)."""
+    from contextlib import asynccontextmanager
+    from datetime import datetime, timezone
+
+    from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+    from pydantic_ai.models import StreamedResponse
+    from pydantic_ai.models.function import FunctionModel
+
+    class _BuiltinToolResponse(StreamedResponse):
+        model_name = 'demo'
+        provider_name = 'demo'
+        provider_url = None
+        timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        before: tuple[str, ...] = ()
+        after: tuple[str, ...] = ()
+
+        async def _get_event_iterator(self):
+            for chunk in self.before:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id='before', content=chunk):
+                    yield event
+            yield self._parts_manager.handle_part(
+                vendor_part_id='call', part=NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='c1')
+            )
+            yield self._parts_manager.handle_part(
+                vendor_part_id='return',
+                part=NativeToolReturnPart(tool_name='web_search', content='found', tool_call_id='c1'),
+            )
+            for chunk in self.after:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id='after', content=chunk):
+                    yield event
+
+    class _DemoModel(FunctionModel):
+        def __init__(self, before: tuple[str, ...], after: tuple[str, ...]):
+            super().__init__(lambda messages, info: None)
+            self.before, self.after = before, after
+
+        @asynccontextmanager
+        async def request_stream(self, messages, model_settings, model_request_parameters, run_context=None):
+            _, params = self.prepare_request(model_settings, model_request_parameters)
+            response = _BuiltinToolResponse(model_request_parameters=params)
+            response.before, response.after = self.before, self.after
+            yield response
+
+    for before, after in [(('Searching.',), ('Found it.',)), (('Searching', ' now.'), ())]:
+        async with Agent(_DemoModel(before, after)).run_stream('go') as result:
+            streamed = ''.join([t async for t in result.stream_text(delta=True, debounce_by=None)])
+            assert streamed == result.response.text
+
+
 async def test_streamed_text_stream():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
