@@ -151,6 +151,8 @@ class TestCDPBrowser:
                 evaluate('document.title'),
                 {'method': 'Page.navigate', 'params': {'url': 'http://169.254.169.254/latest/meta-data/'}},
                 {'method': 'Page.navigate', 'params': {'url': 'https://elsewhere.org/'}},
+                evaluate('document.title'),
+                {'method': 'Page.navigate', 'params': {'url': 'https://[example.com/'}},
             ),
             capabilities=[CDPBrowser(allowed_domains=['example.com'])],
         )
@@ -163,6 +165,8 @@ class TestCDPBrowser:
                 {'result': {'type': 'string', 'value': 'Example Domain'}},
                 "'http://169.254.169.254/latest/meta-data/' is refused by the egress policy: blocked private or link-local address",
                 "'https://elsewhere.org/' is refused by the egress policy: domain not in allowed_domains",
+                {'result': {'type': 'string', 'value': 'Example Domain'}},
+                "'https://[example.com/' is not a valid URL",
             ]
         )
         assert 'Page.navigate' not in commands(chrome, PAGE_SESSION)

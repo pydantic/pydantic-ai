@@ -346,7 +346,11 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
 
     async def _check_navigation(self, url: str) -> None:
         """Refuse a navigation before it is sent, so the model learns why rather than reading a network error."""
-        if urlparse(url).scheme not in ('http', 'https'):
+        try:
+            scheme = urlparse(url).scheme
+        except ValueError:
+            raise ModelRetry(f'{url!r} is not a valid URL') from None
+        if scheme not in ('http', 'https'):
             raise ModelRetry(f'Only http and https URLs can be opened, got {url!r}')
         if (reason := await refusal_reason(self.policy, EgressRequest(url=url, kind='navigation'))) is not None:
             raise ModelRetry(f'{url!r} is refused by the egress policy: {reason}')
