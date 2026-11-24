@@ -17,6 +17,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+boxd = "2026-11-23T10:00:00Z"
 cassetter = false
 genai-prices = false
 k8s-agent-sandbox = "2026-11-12T19:37:00Z"
@@ -969,7 +970,7 @@ wheels = [
 
 [[package]]
 name = "boxd"
-version = "0.2.20"
+version = "0.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -978,9 +979,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/19/69db3c22bd64cf84f88855b5747496fa1b98e88424612c3581a38bf43150/boxd-0.2.20.tar.gz", hash = "sha256:697d23250a3c4fc7e30c4effa8d16c9ae6382b032b044590875eb1ab78060be4", size = 228125, upload-time = "2026-10-27T23:55:11.41Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/29/4cf553469083feebaffbebd14a92c7a1807f29bc3f847fed22f4b5af5b2d/boxd-0.3.4.tar.gz", hash = "sha256:ab4827f7139659de6d83319ace668e3a40631868f33ef1ab562c799f2a05991f", size = 312337, upload-time = "2026-11-23T09:58:25.413Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/d7/618f1fbc42b05de518a5379f3ce4b9e36726a123d3df9792a11fa2c17552/boxd-0.2.20-py3-none-any.whl", hash = "sha256:9ab22af1b759bea1d37dc82043dff54b642be13ddad77d775c10d64b035cb93c", size = 152475, upload-time = "2026-10-27T23:55:10.258Z" },
+    { url = "https://files.pythonhosted.org/packages/54/bf/43d4dbfce0c6c8a0b7b2105b903ba22d4c90bf59471e27de2714ae3fe543/boxd-0.3.4-py3-none-any.whl", hash = "sha256:d3d505022ae2587b34fe4c84aead938404892c6528b4606158badc3a4ceeb6da", size = 201797, upload-time = "2026-11-23T09:58:24.322Z" },
 ]
 
 [[package]]
@@ -7395,6 +7396,10 @@ boxd = [
 boxlite = [
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
 ]
+cdp-browser = [
+    { name = "idna" },
+    { name = "websockets" },
+]
 cli = [
     { name = "pydantic-ai-slim", extra = ["cli"] },
 ]
@@ -7408,6 +7413,7 @@ codemode = [
 ]
 coder = [
     { name = "json-repair" },
+    { name = "pillow" },
     { name = "ripgrep", marker = "sys_platform != 'android'" },
 ]
 day-ai = [
@@ -7532,7 +7538,7 @@ requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<4" },
     { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
-    { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.2.20,<0.3" },
+    { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.3.3,<0.4" },
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.226.1,<1" },
@@ -7543,6 +7549,7 @@ requires-dist = [
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<5" },
     { name = "genai-prices", specifier = ">=0.0.71" },
     { name = "httpx2", specifier = ">=2.7" },
+    { name = "idna", marker = "extra == 'cdp-browser'", specifier = ">=3.4" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "python_full_version >= '3.15' and extra == 'ipython'", specifier = ">=6.30.0" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
@@ -7554,6 +7561,7 @@ requires-dist = [
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
+    { name = "pillow", marker = "extra == 'coder'", specifier = ">=12.3.0" },
     { name = "pixeltable", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'pixeltable'", specifier = ">=0.7.21" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
@@ -7590,9 +7598,10 @@ requires-dist = [
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
+    { name = "websockets", marker = "extra == 'cdp-browser'", specifier = ">=14.0" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-pax"
@@ -7698,6 +7707,7 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-graph" },
+    { name = "truststore" },
     { name = "typing-inspection" },
 ]
 
@@ -7909,6 +7919,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'", specifier = ">=0.10.5" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0,<1" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
@@ -10291,11 +10302,11 @@ wheels = [
 
 [[package]]
 name = "truststore"
-version = "0.10.4"
+version = "0.10.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz", hash = "sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301", size = 26169, upload-time = "2025-08-12T18:49:02.73Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", size = 28091, upload-time = "2026-10-12T22:27:31.808Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
+    { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", size = 19017, upload-time = "2026-10-12T22:27:30.377Z" },
 ]
 
 [[package]]

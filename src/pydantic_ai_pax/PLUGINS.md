@@ -1,6 +1,6 @@
-# CLAI plugins
+# Pax plugins
 
-A plugin is a Python file that teaches CLAI new tricks: react when something
+A plugin is a Python file that teaches Pax new tricks: react when something
 happens, add a `/command`, give the agent a tool, or change how a tool's output
 is shown on screen.
 
@@ -8,7 +8,7 @@ Everything a plugin can do goes through one object, the `PluginHost`. There is n
 global registry to import and no magic file to name. You get a `host`, you tell it
 what you want, you're done.
 
-CLAI groups its shell implementation into `cli/`, `config/`, `runtime/`,
+Pax groups its shell implementation into `cli/`, `config/`, `runtime/`,
 `models/`, `plugins/`, and `ui/`. Built-in plugin implementations live in
 `builtin_plugins/`. These are source directories, not extra plugin APIs:
 continue importing `PluginHost` from `pydantic_ai_pax.plugins` and `Command`
@@ -86,7 +86,7 @@ separately.
   `Not signed in to NAME. Run /mcp auth NAME to sign in.`, and the prompt goes on
   without it. The access and refresh tokens and the registered client go to your
   OS keyring (the `mcp-NAME` entry under `pydantic-clai2`, or a private
-  `credentials-mcp-NAME.json` when no keyring exists), so restarting CLAI reuses
+  `credentials-mcp-NAME.json` when no keyring exists), so restarting Pax reuses
   or refreshes them instead of signing in again. Tokens belong to the URL they
   were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
@@ -126,10 +126,10 @@ are rejected; configure the final endpoint URL.
 
 ### Where servers are stored
 
-`/mcp install` and `/mcp edit` write `mcp.json` in the CLAI config folder
+`/mcp install` and `/mcp edit` write `mcp.json` in the Pax config folder
 (`~/.config/pydantic-clai2/`, or under `$XDG_CONFIG_HOME`). The file is created
 readable only by you. Do not put secrets in it: write `$VAR` or `${VAR}` in an
-`env` or `headers` value and CLAI fills it from its own environment when it
+`env` or `headers` value and Pax fills it from its own environment when it
 connects, so the file holds only the reference; a server whose variable is
 unset shows as `error` until you set it. Stdio server stderr goes to `mcp_logs/NAME.log` next to
 `mcp.json`, which `/mcp logs` reads. The file shape is:
@@ -173,10 +173,10 @@ whether to load the server from it. `/mcp tools NAME` lists the tools either way
 
 Set `"defer_loading": false` (or switch off **On demand** in the form) to keep a
 server eager when most prompts use it: loading it costs the agent an extra step.
-A CLAI build from before on-demand became the default loads a server without the
+A Pax build from before on-demand became the default loads a server without the
 key eagerly.
 
-A CLAI build older than these keys rejects a `mcp.json` or project file that uses
+A Pax build older than these keys rejects a `mcp.json` or project file that uses
 them. When servers given as plugin settings use them, `/plugins add`, `enable`, or
 `disable` in a session saves the `mcp` settings with the `mcp-defer-loading` feature
 tag, so an older build ignores every server saved in those settings, with a notice,
@@ -205,7 +205,7 @@ As in Claude Code, `type` can be left out for a stdio server (an entry with a
 the keys described above. Differences from Claude Code: `$VAR` and `${VAR}` are
 expanded only in `env` and `headers` values (not in `command`, `args`, or `url`),
 `${VAR:-default}` is not supported, server names cannot contain underscores, and
-keys CLAI does not know fail loudly with the file's path. Claude Code's user and
+keys Pax does not know fail loudly with the file's path. Claude Code's user and
 local scopes (`~/.claude.json`) are not read.
 
 Because a stdio server runs a program, project servers do not load until you run
@@ -227,7 +227,7 @@ up in `/mcp` with source `plugin`; change or remove them through `/plugins`.
 The older `"transport"` key is still read as `"type"`.
 `/plugins disable mcp` removes both the tools and the command.
 
-Compared with Code Puppy, CLAI has one agent, so there are no per-agent server
+Compared with Code Puppy, Pax has one agent, so there are no per-agent server
 bindings and no `silence-warning` command: every enabled server is offered to
 the agent. There is no built-in server catalog, so there is no `/mcp search`.
 The plugin adds no telemetry beyond core's tool spans, and does not enable MCP
@@ -235,15 +235,15 @@ sampling or native provider-side MCP.
 
 ## On-demand authoring help
 
-The default CLAI agent lists `clai_customization` as one deferred capability.
-Its catalog entry tells the model to load it when asked about CLAI itself. Only
-then does the model get `search_clai_docs(query)` and `read_clai_docs(path)`, with
+The default Pax agent lists `pax_customization` as one deferred capability.
+Its catalog entry tells the model to load it when asked about Pax itself. Only
+then does the model get `search_pax_docs(query)` and `read_pax_docs(path)`, with
 a short instruction to read the
-[customization guide](pydantic_ai_pax/customization.md) before advising on CLAI
+[customization guide](pydantic_ai_pax/customization.md) before advising on Pax
 customization. An ordinary coding turn gets neither the docs nor their tools.
 The docs are read on tool invocation, a section at a time for long ones. No
 checkout or network connection is needed.
-[Ask CLAI about itself](docs/reference.md#ask-clai-about-itself) lists
+[Ask Pax about itself](docs/reference.md#ask-pax-about-itself) lists
 the docs and how paths and long docs work.
 
 The customization guide includes examples for commands, hooks, settings,
@@ -252,9 +252,10 @@ current limits: PluginHost does not replace the prompt editor or change the
 built-in model catalog's entries. Those need a custom agent launcher or a source
 change, as explained in the guide.
 
-Custom agents can opt in with `ClaiDocs()` from `pydantic_ai_pax.clai_docs`;
-`customization_guide()` from `pydantic_ai_pax.customization` returns the same. The
-tools only return documentation; they do not write files, activate plugins, or
+Custom agents can opt in with `PaxDocs()` from `pydantic_ai_pax.pax_docs`;
+`customization_guide()` from `pydantic_ai_pax.customization` returns `ClaiDocs` for agents and saved sessions that already use
+`clai_customization`, `search_clai_docs`, and `read_clai_docs`. New agents should use `PaxDocs()`. The default agent restores the older tools only if the session history loaded them.
+Both sets of tools only return documentation; they do not write files, activate plugins, or
 grant permission to execute generated code. Keep the customization guide aligned
 with this contract when changing plugin APIs.
 
@@ -269,18 +270,18 @@ rendering for that event.
 
 ## Tool retries
 
-CLAI defaults to three retries per tool call. `/set run.tool_retries N` changes
+Pax defaults to three retries per tool call. `/set run.tool_retries N` changes
 that default for subsequent turns; `N` must be a non-negative integer, with `0`
 disabling retries. Explicit retry limits on a tool or toolset take precedence.
 Output-validation and HTTP transport retry budgets are unchanged.
 
 ## Credentials
 
-CLAI's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
+Pax's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
 in the configured keyring backend, not plugin settings. Plugins that need an API key, such as
-[`posthog`](#posthog-posthog-analytics-signed-in-for-clai), keep it in `/keys` and save only its name. Large token bundles use
+[`posthog`](#posthog-posthog-analytics-signed-in-for-pax), keep it in `/keys` and save only its name. Large token bundles use
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
-backend exists, credentials go to a per-account `0600` file under the user's CLAI config
+backend exists, credentials go to a per-account `0600` file under the user's Pax config
 directory instead. None of this changes plugin APIs. See
 [Codex authentication](docs/reference.md#codex-authentication) for storage and security
 details.
@@ -296,19 +297,19 @@ to `/model` and, when you have not chosen a model, selects a recent strong one, 
 as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
 open `/model add` and choose `github-copilot`. The provider menu also starts login
 when no credentials exist. If listing the models fails, the login stays saved and
-CLAI reports why.
+Pax reports why.
 
-No application registration or client ID configuration is required. CLAI supplies the same
+No application registration or client ID configuration is required. Pax supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
-Copilot OAuth application, not a separately registered CLAI application.
+Copilot OAuth application, not a separately registered Pax application.
 `GITHUB_COPILOT_CLIENT_ID` is an optional override for your own device-enabled OAuth
 application; unset or blank uses the bundled default. The workspace pins the merged
 Pydantic AI device-flow implementation until its release.
 
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
-CLAI does not launch a browser, so a text browser cannot block login or take over
+Pax does not launch a browser, so a text browser cannot block login or take over
 an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
 GitHub authorization does not establish Copilot access: login and the menu query
 your account's catalog and keep only picker-enabled `/chat/completions` models.
@@ -317,7 +318,7 @@ organization policy still control inference access. A known ID also works with
 `/model github-copilot:claude-haiku-4.5`.
 
 The `github-copilot` keyring account is separate from Codex and named API keys.
-Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
+Without a keyring, Pax reports the plaintext `credentials-github-copilot.json`
 fallback, created with mode `0600`. Tokens and issuance time stay out of settings,
 history, and login output. Expiring tokens require another `/login github-copilot`;
 there is no automatic refresh. Failed or cancelled authorization preserves the
@@ -328,7 +329,7 @@ Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 no login is saved. Copilot login does not read `GH_TOKEN`, `GITHUB_TOKEN`, the
 `GITHUB_TOKEN` key in `/keys`, or another application's token files; that key
 belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-server). This is shell-owned authentication, not a plugin API.
-Core owns inference and its telemetry; CLAI adds no login-specific spans.
+Core owns inference and its telemetry; Pax adds no login-specific spans.
 Bare `/login` asks which sign-in to run.
 
 ## Herdr integration
@@ -348,9 +349,9 @@ waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
 `idle` too. Nested runs are counted; concurrent question waits are tracked by
 request ID. Tool names supply activity text, never tool arguments or results.
 User-opened menus do not report `blocked`. `AskUser` is the only built-in
-question that waits for the user during a run, since CLAI2 asks for no tool
+question that waits for the user during a run, since Pax asks for no tool
 approvals; a third-party plugin's own approval UI is not tracked. Herdr owns
-attention notifications; this plugin sends none. CLAI2's separate `notifications`
+attention notifications; this plugin sends none. Pax's separate `notifications`
 plugin remains enabled by default and is not automatically disabled inside herdr.
 To avoid duplicate desktop alerts, use `/plugins disable notifications` if you
 prefer herdr's alerts.
@@ -369,7 +370,7 @@ the default `config.db`. The command runs `pax` from your `PATH` and does not
 repeat `--model` or `--agent`. A host without a settings database path, or a
 path containing an apostrophe or a control character (which herdr refuses),
 sends no command. Turn restoration off in herdr with
-`[session] resume_agents_on_restore = false`. Hosts without CLAI2 session
+`[session] resume_agents_on_restore = false`. Hosts without Pax session
 persistence still report state and token metadata.
 
 Metadata has a 24-hour TTL and reports `$model`, `$tokens` (retained-history
@@ -397,9 +398,9 @@ reports; they do not fail the agent turn.
 ## Agent of Empires integration
 
 The built-in `aoe` plugin (`pydantic_ai_pax.builtin_plugins.aoe`) starts disabled. Run
-`/plugins enable aoe` in a CLAI session to let
+`/plugins enable aoe` in a Pax session to let
 [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires) (AoE)
-track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
+track Pax like its built-in agents. Register Pax as an AoE custom agent:
 
 ```toml
 # ~/.config/agent-of-empires/config.toml
@@ -410,12 +411,12 @@ pax = "pax"
 and start sessions with `aoe add --tool pax -l`, or pick `pax` in AoE's new-session
 dialog. If AoE alerts you on status changes (its sounds, or `[status_hooks]` such as
 `on_waiting = "notify-send ..."`), `/plugins disable notifications` avoids a second
-desktop alert from CLAI2 for the same turn.
+desktop alert from Pax for the same turn.
 
-The plugin does nothing unless CLAI2 runs interactively (not `-p`) on Linux or macOS,
+The plugin does nothing unless Pax runs interactively (not `-p`) on Linux or macOS,
 in a tmux pane of an AoE agent session: AoE names that session `aoe_<title>_<id>` and
 sets the instance ID on it, which the plugin reads from `AOE_INSTANCE_ID` or the tmux
-session's hidden environment. A CLAI2 started from inside another CLAI2 in the same
+session's hidden environment. A Pax started from inside another Pax in the same
 pane, such as from a `!` shell command, stays quiet so the outer one keeps reporting.
 
 **Status.** AoE reads a custom agent's state from `/tmp/aoe-hooks-<uid>/<id>/status`;
@@ -427,17 +428,17 @@ failed turn until the next prompt's agent run starts, and `idle` otherwise. Back
 `/fork` runs do not count as `running`, but a failed fork is a failed turn and shows
 `error`; a fork starting or completing does not clear it.
 Other approval prompts are not tracked. The file is removed when
-CLAI2 exits; AoE removes the directory when it stops the session.
+Pax exits; AoE removes the directory when it stops the session.
 
 **Conversation.** The current conversation ID goes to `session_id` beside the status
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
-CLAI2 starts empty, so the plugin resumes the conversation recorded there and shows its
+Pax starts empty, so the plugin resumes the conversation recorded there and shows its
 history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
 (`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
 directory, such as after AoE renamed or moved a worktree, and continues in the pane's
-directory. When it cannot be resumed, CLAI2 says why and starts a new conversation. AoE's
+directory. When it cannot be resumed, Pax says why and starts a new conversation. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** Off by default, so the AoE session keeps the title you gave it. To title it after
@@ -451,7 +452,7 @@ Then, when the conversation's title changes (its first prompt, background naming
 in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked Git worktree
 too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the rename while a turn
 runs, but between turns it moves an AoE-managed worktree to follow the title, out from under the
-CLAI2 still working in it: its file and shell tools then fail until you restart it in the new
+Pax still working in it: its file and shell tools then fail until you restart it in the new
 directory. Turn `tie_workdir_to_name` off in AoE before turning `titles` on. The plugin stops
 trying for the session once AoE refuses a rename; a rename that times out is tried again with
 the next title. AoE renames the tmux session to match.
@@ -464,7 +465,7 @@ level, never raised into a turn. `/plugins disable aoe` stops reporting.
 The default-enabled `notifications` plugin (`pydantic_ai_pax.builtin_plugins.notifications`)
 observes `turn_end` for completed and failed turns and `AskUserRequestedEvent`
 before the answer picker waits. Cancelled turns do not notify. It registers no
-tools or instructions and has no plugin settings. Its title is `CLAI2`; its
+tools or instructions and has no plugin settings. Its title is `Pax`; its
 messages contain only generic status text, never conversation content or errors.
 
 macOS uses `/usr/bin/osascript`; enable Script Editor notifications in System
@@ -534,7 +535,7 @@ Each entry takes:
 Commands run one after another in the session's folder. A project's list
 command whose program is a relative path containing a `/`, such as
 `./scripts/guard-paths.sh`, is found from the project folder (the one holding `.clai`), whichever
-subdirectory you start CLAI in. Each command gets a JSON object on stdin:
+subdirectory you start Pax in. Each command gets a JSON object on stdin:
 
 | Field | Events | Value |
 |---|---|---|
@@ -568,7 +569,7 @@ and runs only after `/plugins enable project_hooks`. The approval covers the
 table exactly as it is, and the contents of each program inside the project that
 a list command runs, such as `["./scripts/guard-paths.sh"]`: once the file's
 `hooks` or one of those programs change, they stay off until you enable
-`project_hooks` again, and removing them stops them too. CLAI checks such a
+`project_hooks` again, and removing them stops them too. Pax checks such a
 program every time it starts it. One that changed does not start: it is reported
 as a failed command, or for `before_tool` as a blocked one, which stops the call
 instead of letting it through. The check runs just before the start, so a change
@@ -578,7 +579,7 @@ outside the project, such as `sh` or `/usr/bin/python3`, a file such a program
 reads, or a script passed to another program, as in `["python",
 "scripts/check.py"]`; make the script a list command's program to have the
 approval cover it. A table cannot be approved while one of its programs is
-missing or unreadable. CLAI remembers one approved project table at a time, and
+missing or unreadable. Pax remembers one approved project table at a time, and
 it runs only in sessions whose project file declares that very table. Headless
 runs use the same approval, so they only run a project table you already
 approved. A project cannot list the hooks plugin's module in its `plugins`,
@@ -602,7 +603,7 @@ are recorded with their exception and traceback through this same instance. This
 observability plugin loaded are included. Disabling observability stops this reporting;
 the existing terminal messages remain.
 
-Other errors CLAI shows and then carries on from are recorded the same way, as `error` logs
+Other errors Pax shows and then carries on from are recorded the same way, as `error` logs
 with their exception and traceback, also without `ui_events`:
 
 - A failed turn, from `TurnEnd.error`, under the session root. An error that left the agent
@@ -612,7 +613,7 @@ with their exception and traceback, also without `ui_events`:
   when `ui_events` is on and the session root otherwise. A usage error (`ValueError` or
   `UserError`, including settings a plugin rejects on `/plugins add`) is expected, so it is
   not recorded; with `ui_events` on, the command's span notes its type.
-- A plugin handler that fails without stopping CLAI (`on_turn_end`, `on_session_end`,
+- A plugin handler that fails without stopping Pax (`on_turn_end`, `on_session_end`,
   `on_plugin_load_failed`), with the plugin's name.
 
 The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
@@ -636,7 +637,7 @@ warnings and errors by the `logfire` and `opentelemetry` loggers. Logfire retrie
 failed span exports from disk; OpenTelemetry drops a metrics batch it could not
 send. In the interactive shell these records go to `telemetry.log` next to
 `config.db` (owner-only, rotated at 1 MB, one previous file kept) instead of over the editor,
-and CLAI names that file on exit when the session wrote to it. A logger your own
+and Pax names that file on exit when the session wrote to it. A logger your own
 application already handles, when embedding `chat()`, is left alone. Headless
 `pax -p` still writes them to stderr, separate from the answer on stdout.
 
@@ -663,7 +664,9 @@ Options are `service_name` (default `pydantic-clai2`), `include_content` and
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+over `LOGFIRE_SEND_TO_LOGFIRE`. Traces carry Pax's own version as
+`service.version`, which `LOGFIRE_SERVICE_VERSION` and `OTEL_SERVICE_VERSION` do
+not change. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
 whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
@@ -705,12 +708,12 @@ the panel says how to set a project up. Logfire's `frame-ancestors` admits no `h
 port today, so the panel opens the live view in a window beside the web UI. The panel lives in
 `pydantic_ai_pax.builtin_plugins.logfire_live`.
 
-Agent runs and UI records nest under a `CLAI session` root whose
+Agent runs and UI records nest under a `Pax session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
 it. Unloading the plugin ends its roots; reloading starts new traces with the
 same saved conversation IDs. A root is exported only when it ends, at exit, so a
-`CLAI session opened` log under it carries its `agent_session_id` and email
+`Pax session opened` log under it carries its `agent_session_id` and email
 from the start. With `--resume`, the root opens before the conversation is
 chosen, so it is logged again with the saved ID once startup selects it.
 Logfire rejects spans that started more than a day before they arrive, so a
@@ -719,7 +722,7 @@ root is also ended once it has been open for `ROOT_LIFETIME` (12 hours) in
 root with the same `agent_session_id`; a run under way stays in the old trace.
 
 `user_tag` (default `logfire-account`) tags each session root, and only the
-root and its `CLAI session opened` log, with your email, as a Logfire tag and
+root and its `Pax session opened` log, with your email, as a Logfire tag and
 the `user.email` attribute.
 `logfire-account` uses the email in `account`, the account that signed in during
 the **Logfire project** setup, while `token` still names the key that setup
@@ -729,7 +732,7 @@ again. `git-email` uses `git config user.email` (Git is queried only then), and
 `false` turns the tag off. Set **User tag** in
 `/plugins configure observability`.
 
-`ui_events` (default `true`; set `false` to opt out) also records CLAI's UI interactions on the same
+`ui_events` (default `true`; set `false` to opt out) also records Pax's UI interactions on the same
 instance, as spans and logs in the `pax` instrumentation scope, which session
 roots and plugin load failures share: menus opened and how they closed, slash
 commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
@@ -749,10 +752,10 @@ With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted. So is
 `prompt`, which agent spans already record unscrubbed.
 
-Unload flushes and shuts down only this plugin's providers. CLAI waits at most
+Unload flushes and shuts down only this plugin's providers. Pax waits at most
 three seconds for this, then warns that some telemetry may not have been sent
 and lets cleanup finish in the background. If an export is stuck, OpenTelemetry
-can still delay CLAI's exit. Reload creates a new instance. The supplied agent
+can still delay Pax's exit. Reload creates a new instance. The supplied agent
 and global OpenTelemetry providers are unchanged, and the existing global
 propagator is preserved. The SDK may install shared executor propagation
 helpers; those hooks are not removed on unload. Core's normal
@@ -808,7 +811,7 @@ base URL or workspace field.
 The API key lives in [`/keys`](#saved-api-keys), not in plugin settings, which
 are stored in plaintext. On the API key row, pick any saved key (one entry can
 serve several plugins), or choose **Enter a different API key**. A new key is
-saved in `/keys` as `LINEAR_API_KEY`; if that name already exists, CLAI asks
+saved in `/keys` as `LINEAR_API_KEY`; if that name already exists, Pax asks
 before replacing it, since other plugins may use it. The plugin stores only the
 key's name and looks the key up at the start of every run, so replacing the value
 in `/keys` takes effect on the next run. If the key is missing, loading the plugin
@@ -874,7 +877,7 @@ you manage with `/keys`:
 - A new token typed in the menu is saved in `/keys` as `NOTION_API_KEY`. If
   that name already exists, the menu asks before replacing it, because other
   plugins and connections may share it.
-- The plugin keeps only the key's name, in CLAI's credential store. Each run
+- The plugin keeps only the key's name, in Pax's credential store. Each run
   looks the key up again, so replacing it in `/keys` reaches every plugin that
   uses it. Several plugins can share one named key, the way the GitHub and
   Copilot integrations can both use `GITHUB_TOKEN`.
@@ -886,16 +889,16 @@ you manage with `/keys`:
 
 By default, Notion uses a browser sign-in, made with `/notion login` (or by
 choosing browser sign-in in the menu) behind a waiting screen that Esc
-cancels. Those OAuth tokens go to the OS keyring, or CLAI's private credential
+cancels. Those OAuth tokens go to the OS keyring, or Pax's private credential
 file when there is no keyring, so later launches reuse and refresh them. Loading
 and prompts never open the browser: until you sign in, runs have no Notion tools
 and the session start says how to sign in. `/notion` shows how Notion connects;
 `/notion logout` forgets the browser sign-in and the chosen key name, and the key
 itself stays in `/keys`.
 
-The browser sign-in needs a browser on the machine CLAI runs on. For headless
+The browser sign-in needs a browser on the machine Pax runs on. For headless
 runs or remote machines, choose a key and set Sign-in to key only: without a
-key, CLAI warns at startup and runs fail with a message. The plugin emits no
+key, Pax warns at startup and runs fail with a message. The plugin emits no
 telemetry of its own; tool calls appear in core's spans.
 ## Logfire: query your telemetry
 
@@ -904,7 +907,7 @@ the tools of Logfire's MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md), each named `logfire_` plus the
 server's name for it (`logfire_query_run`). It starts disabled. Its id
 stays `logfire_mcp`: `logfire` is the `observability` plugin's old id, which older
-CLAI builds sharing your settings still store it under, so `/plugins enable logfire`
+Pax builds sharing your settings still store it under, so `/plugins enable logfire`
 keeps meaning `observability`. Its command is `/logfire`; `/logfire_mcp` still works.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
@@ -942,7 +945,7 @@ Logfire, where you can type any of these for the same Logfire:
 | its MCP URL | `https://logfire.example.com/mcp` |
 
 Logfire serves its UI, its API, and its MCP server (at `/mcp`) from one host, so
-CLAI derives the rest: `observability` sends traces to the https origin, and this
+Pax derives the rest: `observability` sends traces to the https origin, and this
 plugin connects to the origin plus `/mcp`. The hosted regions serve harness's
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
@@ -970,7 +973,7 @@ name, never its value. Enter on **API key** (**Change…** in the web UI) offers
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
 - **Enter a different API key**: a masked field. The value is saved in `/keys`
-  as `LOGFIRE_API_KEY`, the conventional label; CLAI asks before replacing an
+  as `LOGFIRE_API_KEY`, the conventional label; Pax asks before replacing an
   existing `LOGFIRE_API_KEY`, since other plugins may use it. With nothing in
   `/keys` yet, the masked field opens straight away.
 
@@ -1000,7 +1003,7 @@ Approve only the code shown here. You can open the link on another device.
 ```
 
 On that Logfire page you sign in, or create an account if you have none, and
-approve the code. CLAI waits until the code expires (Logfire's last 600 seconds),
+approve the code. Pax waits until the code expires (Logfire's last 600 seconds),
 and Esc stops waiting. No local callback server is involved, so this also works
 over SSH: open the link on any device. A run never starts a sign-in: until you
 sign in, runs have no Logfire tools, and the session start says how to sign in.
@@ -1009,7 +1012,7 @@ sign in, runs have no Logfire tools, and the session start says how to sign in.
 - **Discovery:** the Logfire server is found from the MCP URL
   ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) resource metadata),
   so self-hosted Logfire works too, including an issuer with a path
-  ([RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414)). CLAI registers
+  ([RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414)). Pax registers
   itself as a client ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591))
   and uses PKCE. It registers again if the server has forgotten the earlier
   registration.
@@ -1021,18 +1024,18 @@ sign in, runs have no Logfire tools, and the session start says how to sign in.
   authorization server cannot receive one. Logfire rejects unknown resources
   with `invalid_target`.
 - **Scopes:** read-only tools ask only for `project:read`. With Tools set to read
-  and write, CLAI asks for every scope the MCP server lists (on Logfire's hosted
+  and write, Pax asks for every scope the MCP server lists (on Logfire's hosted
   servers that includes `organization:create_project`). Switching Tools to read
-  and write needs `/logfire login` again for those scopes. If Logfire grants fewer scopes, CLAI
+  and write needs `/logfire login` again for those scopes. If Logfire grants fewer scopes, Pax
   says so once and keeps the sign-in, since asking again would get the same
   grant; `/logfire login` asks again when you want to.
 - **Tokens:** kept per MCP URL in the OS keyring (or the private
-  credential file) under the `logfire-oauth` account, so restarting CLAI does
+  credential file) under the `logfire-oauth` account, so restarting Pax does
   not mean signing in again. An expired or rejected token is refreshed; if that
   fails, runs ask you to run `/logfire login`. `/logfire logout` forgets every
   Logfire sign-in, including one still waiting for approval, and keeps keys in
   `/keys`.
-  If the keyring or file refuses to save a sign-in, CLAI says so and keeps it in
+  If the keyring or file refuses to save a sign-in, Pax says so and keeps it in
   memory for the rest of the session (logout forgets it too); the next session
   asks you to sign in again.
 
@@ -1076,30 +1079,30 @@ Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
-   Its name is the file name without `.py`. CLAI creates the folder at startup, so it
+   Its name is the file name without `.py`. Pax creates the folder at startup, so it
    is there to copy into after the first run.
-2. Point CLAI at anything importable, from inside CLAI:
+2. Point Pax at anything importable, from inside Pax:
 
    ```text
    /plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
-3. From inside CLAI, clone a trusted Git repository:
+3. From inside Pax, clone a trusted Git repository:
 
    ```text
    /plugins add https://github.com/your-org/my-plugin.git
    /plugins add git@github.com:your-org/my-plugin.git
    ```
 
-   Git must be installed and available on `PATH`. On Windows, CLAI resolves
+   Git must be installed and available on `PATH`. On Windows, Pax resolves
    `git.exe` only from absolute `PATH` directories outside the working directory.
    The repository must have an `__init__.py` or `plugin.py`
    at its root that defines one public `Plugin` subclass. If both exist,
    `__init__.py` is used. Relative imports can load other files from the checkout.
-   Install the plugin's dependencies in CLAI's Python environment first; this
+   Install the plugin's dependencies in Pax's Python environment first; this
    command does not install packages or run build scripts.
 
-   CLAI clones the default branch into `plugins/_git/my_plugin/` under its
+   Pax clones the default branch into `plugins/_git/my_plugin/` under its
    configuration directory. The repository name becomes the plugin ID, with
    hyphens and dots replaced by underscores. Names must start with a letter and
    contain only letters, digits, dots, hyphens, or underscores. Existing plugins
@@ -1110,7 +1113,7 @@ Three ways to install one:
    Plaintext `http://` and `git://` transports are rejected because they cannot
    authenticate the plugin code being downloaded.
    Authentication uses your existing Git credentials without terminal prompts.
-   CLAI removes failed or cancelled clones. If the operating system prevents
+   Pax removes failed or cancelled clones. If the operating system prevents
    cleanup, clear the leftover checkout directory before retrying.
    If the plugin itself fails to load,
    its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
@@ -1120,7 +1123,7 @@ Three ways to install one:
    the checkout so local changes are not lost. To reinstall, delete the checkout
    directory named in the response, then run `/plugins add GIT_URL` again.
 
-No restart needed when you do it from inside CLAI. A plugin you add or enable is
+No restart needed when you do it from inside Pax. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
 prompt. From the shell, `pax plugins` only lists declarations: the agent can
 run `pax` too, and turning off a plugin such as `hooks` can let it do more, so only
@@ -1130,7 +1133,7 @@ file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
 modules are compiled from current source. Installed modules use `importlib.reload`,
 which can retain globals removed from source; initialize plugin state explicitly.
 
-`/reload` refreshes CLAI code, not Harness or core. After changing those packages,
+`/reload` refreshes Pax code, not Harness or core. After changing those packages,
 restart with the same launch options and `--resume` to continue the saved session.
 Keep the worktree if asked to remove it. Exit removes a clean `--worktree` checkout with no
 unpushed commits without asking; run `git worktree lock .` in it first to keep it.
@@ -1148,9 +1151,9 @@ that directory before reading project settings or activating plugins. Relative p
 and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
 path. Only committed project files reach the new checkout. After interactive
-shutdown and plugin cleanup, CLAI removes the `--worktree` checkout if it is clean and has
+shutdown and plugin cleanup, Pax removes the `--worktree` checkout if it is clean and has
 no unpushed commits, and otherwise offers to remove a changed linked worktree, defaulting
-to keep. The offer includes existing linked worktrees you launch CLAI inside. The inline picker also offers
+to keep. The offer includes existing linked worktrees you launch Pax inside. The inline picker also offers
 **No, don't ask again for this worktree**, saved for this checkout only, which
 also stops the automatic removal. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
@@ -1168,7 +1171,7 @@ conversation inside the context window. These plugins are marked
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.
-`/plugins` and `/plugins list` stay alphabetical for scanning. CLAI's plugin
+`/plugins` and `/plugins list` stay alphabetical for scanning. Pax's plugin
 implementations live in `pydantic_ai_pax.builtin_plugins`. Saved plugin
 settings using the former import paths are redirected to the new modules.
 
@@ -1202,7 +1205,7 @@ run, so a missing key or sign-in is reported as before.
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them, such as the disabled built-ins
+Pax plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`grain`](#grain-meetings-with-a-saved-sign-in),
@@ -1210,7 +1213,7 @@ CLAI plugins written for them, such as the disabled built-ins
 [`logfire_mcp`](#logfire-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal),
-[`posthog`](#posthog-posthog-analytics-signed-in-for-clai),
+[`posthog`](#posthog-posthog-analytics-signed-in-for-pax),
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
 [`slack`](#slack-your-slack-workspace-as-you).
 
@@ -1222,7 +1225,7 @@ with JSON constructor settings if it takes them:
 ```
 
 For callbacks, stores, or other Python objects, write a plugin module that builds
-the capability in `get_capabilities`. CLAI does not install the capability's
+the capability in `get_capabilities`. Pax does not install the capability's
 optional dependencies. Avoid enabling overlapping tool providers together, such
 as `filesystem` or `shell` alongside `coder`.
 
@@ -1232,7 +1235,7 @@ shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is a
 saved copy of an entry that now has its own built-in under the same id, such as
 `google_workspace`, `ordinal`, or `slack`: it becomes that built-in, keeping whether it was enabled.
 
-`/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
+`/plugins disable coder` gives you a chat-only Pax (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
 `/plugins remove coder` cannot forget a built-in, so it resets it to its
 defaults. `/plugins disable repo_context` stops the instruction files from being
@@ -1248,7 +1251,7 @@ Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
 `RepoContext`, and with the `repo_context` plugin also on, the instruction file
 would reach the model twice. The stock `coder` enables `delegate_task`: a task
 can run in a fresh conversation with the same active plugin tools, instructions,
-and guardrails. CLAI rebuilds its stock agent before the next prompt when the
+and guardrails. Pax rebuilds its stock agent before the next prompt when the
 active capability snapshot changes, binding those capabilities to the new agent.
 Conversation history stays in the session; an existing run keeps its own snapshot.
 The exported `DEFAULT_PLUGINS` keeps delegation off for custom-agent launchers;
@@ -1273,7 +1276,7 @@ delegation and loads no files: it only controls the tasks that delegation you
 already turned on starts. Set `"task_control": false` in `/plugins configure
 coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
 `plugin_settings={'coder': {'task_control': True}}` to opt in. The setting is
-tagged `coder-task-control`, so a CLAI build without it ignores a saved value
+tagged `coder-task-control`, so a Pax build without it ignores a saved value
 instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
@@ -1296,7 +1299,7 @@ selection and saved model chains.
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
 project definitions win. A path loads exactly that folder: a relative one in
-each project CLAI runs in, an absolute or `~/` one everywhere. Missing folders
+each project Pax runs in, an absolute or `~/` one everywhere. Missing folders
 are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 `coder` declarations that omit `agent_folders` keep disk agents off, so an
 upgrade never loads new definitions without your say. Old
@@ -1328,10 +1331,10 @@ the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
-other clients sharing the folders, so `coder` does not report them, and CLAI
+other clients sharing the folders, so `coder` does not report them, and Pax
 hides harness's run-start warning about them. A folder that cannot be
 read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
-setting is tagged `coder-skill-folders`, so a CLAI build without it
+setting is tagged `coder-skill-folders`, so a Pax build without it
 ignores a saved value instead of failing to load `coder`.
 
 `disabled_skills` is a JSON list of skill names that are off, `[]` by default.
@@ -1401,7 +1404,7 @@ for symlink loading and backend requirements.
 
 A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
-repository must not run code as you just because you opened it: CLAI names the
+repository must not run code as you just because you opened it: Pax names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](docs/reference.md#project-settings).
 
@@ -1516,11 +1519,11 @@ show a "waiting for you" state) returns a `Hooks` capability with
 
 The built-in `web` plugin (`pydantic_ai_pax.builtin_plugins.web`) starts disabled. Enable it with
 `/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
-UI for your sessions. `pax --web` starts CLAI with only the browser to drive it, loading
+UI for your sessions. `pax --web` starts Pax with only the browser to drive it, loading
 `web` for that launch without saving anything. `/web stop` ends the server and `/web status`
 shows its address and how many browsers are connected. `web` is
 [process-scoped](#one-instance-for-the-whole-process-scope--process): one server for the whole
-CLAI, however many sessions are live.
+Pax, however many sessions are live.
 
 Everything the browser does in a session goes through that session's prompt, as typing there
 would (its `send_input`, reached through `host.live`): prompts and `/commands` run in that
@@ -1571,7 +1574,7 @@ stay loaded. Nothing moves while a turn, a background
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
 
-A session whose directory is gone opens read-only, as does one another CLAI is running, until
+A session whose directory is gone opens read-only, as does one another Pax is running, until
 **Fork to continue here** continues it in a fork, reusing one made before. With `/web` from a
 terminal, the browser opens sessions beside the terminal's in the same way, except that a session
 saved in another directory opens read-only, since the terminal's `/resume ID` refuses it. The
@@ -1585,7 +1588,7 @@ the others a dialog, except where a section lists the command, as Keys & account
 `/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go through the menu's own
 source, as in the terminal, which prints what each one saved. Any other bare command that opens a
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
-`/model NAME` instead. When CLAI has no terminal, as for `pax --web` started from a script or
+`/model NAME` instead. When Pax has no terminal, as for `pax --web` started from a script or
 service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
 notice instead of closing as cancelled; `/login openai-codex` and a plugin's `read_line` ask in the
 page instead.
@@ -1658,7 +1661,7 @@ per server, each an action whose dialogs run `/mcp`'s subcommands; see
 multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and the full system
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
 menu, the one bare `/update` opens in the terminal: the running version with a note saying whether
-a newer CLAI is out, whose **Update…** asks before it enters `/update now`, and the
+a newer Pax is out, whose **Update…** asks before it enters `/update now`, and the
 `updates.channel` setting. A refused **Update…** fails with an error and saves nothing. `/usage` and `/cost`
 results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
 the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
@@ -1721,45 +1724,45 @@ browser through a page only you can read, so the token never appears on a comman
 output is rendered as sanitized Markdown. Anyone with the link can drive the session, so keep it
 private. `/web stop` is refused under `pax --web`, where the browser is the only way in.
 
-The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
+The UI is a React app in `web-ui/` in the Pax source tree. Its built files ship inside the
 package, so running it needs no Node. Follow the [web UI development guide](web-ui/README.md)
 to install dependencies, rebuild the bundle, and run browser tests. Do not commit the rebuilt
-`pydantic_ai_pax/builtin_plugins/web/static/`: after a web UI change merges, the `CLAI 2 web bundle`
+`pydantic_ai_pax/builtin_plugins/web/static/`: after a web UI change merges, the `Pax web bundle`
 workflow commits it.
 
 `/update now`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page, over Settings too while it is open:
 uv's latest line while it installs (`on_install_progress`), then all it printed and the command's
 result. A failed install, or nothing to install, says so and changes nothing. After a successful one,
-CLAI restarts as the new build serving the web UI again on the same port with the same token, and
+Pax restarts as the new build serving the web UI again on the same port with the same token, and
 resumes the session; the page says it is restarting, reconnects by itself, and names the new
 version, and About names the versions it updated from and to. That holds for
 `pax --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
 restarts as a terminal session with the web UI running, though the browser does not open again.
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
-you can read and CLAI removes before anything else runs, never on its command line, which `ps`
+you can read and Pax removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
 In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
 the restart would end; bare `/update` can still open its menu in the shown session, whose
 **Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
 page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
-instead, which the page shows as an error. That menu enters `/update now` in the session CLAI
+instead, which the page shows as an error. That menu enters `/update now` in the session Pax
 restarts from, whichever live session's page asks, and gives that session's refusal; the page that
 asked shows uv's output and the result too.
-Installing from another folder shown in the terminal is refused, as CLAI
+Installing from another folder shown in the terminal is refused, as Pax
 restarts in the folder it started in.
 
 `pax --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
 by you alone (mode 0600), and hold one URL-safe token of at least 32 characters. That is for a
-program that starts CLAI and talks to it: CLAI then listens on
+program that starts Pax and talks to it: Pax then listens on
 127.0.0.1 whatever address is saved, prints `Web UI running at http://127.0.0.1:PORT/` without the
 token, which tells that program the port, and opens no browser.
 
-#### Driving another CLAI from Python: `web.client`
+#### Driving another Pax from Python: `web.client`
 
 `pydantic_ai_pax.builtin_plugins.web.client` makes the page's calls from Python, for a plugin or
-program that drives another CLAI's web UI:
+program that drives another Pax's web UI:
 
 ```python
 from pydantic_ai_pax.builtin_plugins.web.client import SessionView, WebClient
@@ -1798,13 +1801,13 @@ through the view is still queued, `'asking'` while a question or dialog waits, `
 The built-in `workspaces` plugin (`pydantic_ai_pax.builtin_plugins.workspaces`) starts disabled.
 Enable it with `/plugins enable workspaces`. A workspace is a checkout of a repository on its own
 branch, for sessions of their own: the web UI lists it under its repository, on its branch, as any
-other worktree, and its sessions are live sessions of the same CLAI.
+other worktree, and its sessions are live sessions of the same Pax.
 
 | Command | Does |
 |---|---|
 | `/workspaces` or `/workspaces list` | every workspace: its ID, kind, branch, and folder |
 | `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
-| `/workspaces destroy ID` | remove the checkout (or keep it, as the kind says) and forget it; the branch is kept. Before removing the checkout it closes this CLAI's live sessions there, so run it from a session outside the checkout: in one of its own, it refuses. A kept checkout's sessions go on |
+| `/workspaces destroy ID` | remove the checkout (or keep it, as the kind says) and forget it; the branch is kept. Before removing the checkout it closes this Pax's live sessions there, so run it from a session outside the checkout: in one of its own, it refuses. A kept checkout's sessions go on |
 
 **Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
 the settings menu (`/plugins configure workspaces`, or the web UI's plugins panel), which also adds
@@ -1820,7 +1823,7 @@ machine. The default settings have one kind of that name:
 | `teardown` | `remove` | `destroy` removes the checkout, uncommitted changes included, or `keep`s it |
 
 A session in a workspace runs on the model any new session starts with. Settings saved by an older
-CLAI with a `model` option still load; the option is ignored.
+Pax with a `model` option still load; the option is ignored.
 
 A local path is checked out from that repository. A URL is cloned once into
 `$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
@@ -1830,7 +1833,7 @@ first push names its remote branch.
 **The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
 (`~/.local/state/...` by default), readable by you alone, holding `workspace.json`: kind,
 repository, ref, branch, folder, creation time, teardown, and `conversation`, the saved session the
-orchestrator runs there, if any. Every CLAI reads the same folders, so a workspace made in one
+orchestrator runs there, if any. Every Pax reads the same folders, so a workspace made in one
 session can be destroyed from another. `destroy` removes only a checkout named after the workspace
 directly inside the folder it was made in, through `git worktree remove`, which also refuses
 anything that is not a worktree.
@@ -1857,17 +1860,17 @@ The web UI (`/web`, or `pax --web`) has an **Orchestrator** button in the sideba
 orchestrator is an agent of its own, separate from the session's: its own conversation, its own
 instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
 destroying one, clean up saved sessions by archiving them), and only the tools below plus
-`ask_user_question`. It has no shell, file, code mode, or other CLAI tools, and the session's agent,
+`ask_user_question`. It has no shell, file, code mode, or other Pax tools, and the session's agent,
 in the terminal or the browser, gets none of these.
 
 It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
-off, the chat says so and **Enable workspaces** turns it on. It works for the whole CLAI, not one
+off, the chat says so and **Enable workspaces** turns it on. It works for the whole Pax, not one
 session, so it runs on the model a new session starts with (`host.default_model()`: the saved
 default, which `/set model NAME` changes, else the agent's own). One turn runs at a time, with a small
 dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
 chat** starts over; the workspaces stay.
 
-Each workspace gets one session, a live session of this CLAI started in its checkout, which the
+Each workspace gets one session, a live session of this Pax started in its checkout, which the
 sidebar lists under its repository with the others; you can open it and type there too. The
 orchestrator follows it in-process as a page would, through `web.local_client.LocalClient`, which
 has `WebClient`'s methods, so the same `SessionView` drives it. A session it is following that
@@ -1909,12 +1912,12 @@ rather than failing the run.
 
 **Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
-among the saved sessions or in `/resume`. Every CLAI with the web UI has the same chat: each turn
+among the saved sessions or in `/resume`. Every Pax with the web UI has the same chat: each turn
 starts from the file as it is then, which an open page catches up to, and saves it when it ends,
-unless another CLAI changed the file meanwhile: that turn then fails and is not kept, rather than
-writing over the other CLAI's.
-A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
-it rather than from the file. That save replaces the file unless another CLAI changed it meanwhile,
+unless another Pax changed the file meanwhile: that turn then fails and is not kept, rather than
+writing over the other Pax's.
+A turn the file cannot take fails with the reason; until a save works, this Pax's chat goes on from
+it rather than from the file. That save replaces the file unless another Pax changed it meanwhile,
 in which case the turns not saved are dropped in favour of the file.
 `/web stop` stops a running turn, since no page is left to watch it or answer it.
 
@@ -1957,7 +1960,7 @@ token's own permissions still limit what any of these settings can reach.
 #### Signing in through the browser
 
 GitHub's hosted MCP server does not support dynamic client registration, so an
-MCP client can only use OAuth with an OAuth App registered to that client. CLAI
+MCP client can only use OAuth with an OAuth App registered to that client. Pax
 doesn't register one. Instead it uses the GitHub CLI (`gh`), which has its own.
 Choosing **GitHub CLI (browser)** under Sign-in runs
 `gh auth login --hostname HOST --web --clipboard`. A waiting screen shows the
@@ -2030,7 +2033,7 @@ and the products checklist open as dialogs in the page.
 | Read-only tools | `read_only` | `true` | keep only the tools Google marks as read-only |
 | Server instructions | `include_instructions` | `true` | pass the Google servers' own instructions to the agent |
 
-CLAI runs tools without asking first, so `read_only` defaults to `true`. Set it to
+Pax runs tools without asking first, so `read_only` defaults to `true`. Set it to
 `false` to also get the tools that send, change, and delete.
 
 **The token.** It lives in the [saved API keys](#saved-api-keys) store, never in
@@ -2064,7 +2067,7 @@ Declarations still work for scripted setups:
 
 Earlier versions listed `google_workspace` as a raw harness entry,
 `pydantic_ai_harness.google_workspace:GoogleWorkspace`. If you turned that entry on
-or off in the menu, CLAI now loads this plugin in its place and keeps your on or off
+or off in the menu, Pax now loads this plugin in its place and keeps your on or off
 choice. A declaration you added with its own settings under that factory is kept
 as written.
 
@@ -2116,10 +2119,10 @@ and user the agent acts as.
 The token lives in [`/keys`](#saved-api-keys), not in plugin settings, which are
 plaintext SQLite. The Key row uses the shared saved-key picker, and Esc cancels
 it. Choose an existing key, or choose **Enter a different API key** to type a
-masked token; an empty one changes nothing. CLAI saves that token in `/keys` as
+masked token; an empty one changes nothing. Pax saves that token in `/keys` as
 `PYLON_ACCESS_TOKEN`, the name harness `Pylon` documents. If that name already
-exists, CLAI asks before replacing it, since other connections may use it. The
-name is only a label: CLAI does not read an exported `PYLON_ACCESS_TOKEN`.
+exists, Pax asks before replacing it, since other connections may use it. The
+name is only a label: Pax does not read an exported `PYLON_ACCESS_TOKEN`.
 
 Only the key's name is saved, in the credential store beside the vLLM and
 OpenRouter connections. Each run looks up the key's current value, so replacing
@@ -2133,7 +2136,7 @@ name. For example, a GitHub plugin and Copilot tooling can both reference
 `GITHUB_TOKEN`, so replacing it once updates both.
 
 Pylon only accepts OAuth access tokens, not its REST API keys. With the
-**Browser sign-in** option, CLAI signs in for you: choosing it opens the browser
+**Browser sign-in** option, Pax signs in for you: choosing it opens the browser
 right away, behind a waiting screen that Esc cancels, and `/pylon login` signs
 in again later. Loading and prompts never open the browser: until you sign in,
 runs have no Pylon tools and the session start says how to sign in. Those tokens
@@ -2178,7 +2181,7 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   a masked field. A new token is saved in `/keys` as `DAY_AI_ACCESS_TOKEN`, the
   name harness `DayAI` documents, after asking before it replaces a saved one.
   Settings keep only the name, as `{"auth": {"name": "DAY_AI_ACCESS_TOKEN"}}`.
-  The name is a `/keys` label only; CLAI does not read the environment
+  The name is a `/keys` label only; Pax does not read the environment
   variable. The token is looked up on every run, so replacing it in `/keys`
   reaches the next run, and deleting it makes runs fail with a message until
   you save it again. Rename, replace, or delete keys in `/keys`. Plugins that
@@ -2237,17 +2240,17 @@ The token never goes in plugin settings, which are plaintext SQLite; the setting
 hold only the two options above, and a declaration with any other field, such as
 a pasted token, fails to load. A token typed in the menu is saved in `/keys` as
 `ORDINAL_ACCESS_TOKEN`, after asking if that would replace an existing key, since
-other plugins and connections may share it. CLAI keeps only the chosen key's name
+other plugins and connections may share it. Pax keeps only the chosen key's name
 and looks it up on every run. Replacing the key in `/keys` applies to the next
 run, and deleting it makes runs fail instead of connecting without it. `/keys`
 will not rename a key while Ordinal uses it. Several plugins and providers can
 name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
 
 `/ordinal login` (or choosing browser sign-in in the menu) signs in through the
-browser, behind a waiting screen that Esc cancels (a dialog, from the web UI). CLAI keeps the OAuth tokens in
+browser, behind a waiting screen that Esc cancels (a dialog, from the web UI). Pax keeps the OAuth tokens in
 the OS keyring (the private credential file when no keyring exists), as `/mcp`
 does for OAuth servers, so later launches reuse them. It only works on the
-machine you run CLAI on. Loading and prompts never open the browser: until you
+machine you run Pax on. Loading and prompts never open the browser: until you
 sign in, runs have no Ordinal tools and the session start says how to sign in.
 With a key or environment variable chosen that is missing and no terminal (a
 headless run from CI, say), the plugin fails to load with a message naming
@@ -2263,9 +2266,9 @@ the plugin does not sign you out.
 
 `slack` (`pydantic_ai_pax.builtin_plugins.slack`) connects harness
 [`Slack`](../pydantic_ai_harness/pydantic_ai_harness/slack/README.md) to Slack's hosted MCP server.
-It ships disabled. The tools act as the user whose token CLAI connects with, so
+It ships disabled. The tools act as the user whose token Pax connects with, so
 anything the agent posts appears under your name. If you enabled or disabled the
-earlier raw `pydantic_ai_harness.slack:Slack` catalog row, CLAI loads this plugin
+earlier raw `pydantic_ai_harness.slack:Slack` catalog row, Pax loads this plugin
 in its place and keeps your choice. A declaration with your own
 settings is left as it is.
 
@@ -2283,7 +2286,7 @@ dialogs in the page. Every change is saved as you make it:
 |---|---|---|
 | Sign-in | user token from `/keys` (default) or browser sign-in through your Slack app | plugin settings, as `auth` (`key` or `browser`) |
 | User token (`key` only) | a key from `/keys`, or a new user token (`xoxp-`) | `/keys`; only the key's name is kept for Slack, in the credential store |
-| Slack app (`browser` only) | creates your CLAI Slack app, then takes its Client ID | plugin settings, as `client_id` (public, not a secret) |
+| Slack app (`browser` only) | creates your Pax Slack app, then takes its Client ID | plugin settings, as `client_id` (public, not a secret) |
 | Browser sign-in (`browser` only) | signs in again, or `R` signs out | the tokens, in the credential store (`slack-oauth`) |
 | Tools | read-only (default) or read and write | plugin settings, as `read_only` |
 | Server instructions | forwarded (default) or left out | plugin settings, as `include_instructions` |
@@ -2291,7 +2294,7 @@ dialogs in the page. Every change is saved as you make it:
 **User token.** Enter shows the names of your saved keys. Pick one, or, when
 `/keys` is empty, paste a token into the masked input. A new token is saved in `/keys` as
 `SLACK_USER_TOKEN` (the name harness `Slack` documents, used here only as a label). If that
-name already holds a token, CLAI asks before replacing it, because every plugin and
+name already holds a token, Pax asks before replacing it, because every plugin and
 connection that uses the key would change with it. Slack's MCP server acts as a
 user and rejects bot tokens, so the menu refuses an `xoxb-` token whether picked
 or pasted; there is no bot-token mode. The token also decides the workspace and
@@ -2302,24 +2305,24 @@ key is chosen or the chosen key is gone from `/keys`.
 
 **Browser sign-in.** Slack's MCP server has no dynamic client registration and
 serves only apps installed in your workspace, so browser sign-in goes through your
-own Slack app. CLAI creates it for you. Choose **Browser sign-in** in the Sign-in row,
-then press Enter on **Slack app**. CLAI opens Slack's create-app page filled in with
-CLAI's manifest; the Client ID prompt shows the same link, in case no browser
+own Slack app. Pax creates it for you. Choose **Browser sign-in** in the Sign-in row,
+then press Enter on **Slack app**. Pax opens Slack's create-app page filled in with
+Pax's manifest; the Client ID prompt shows the same link, in case no browser
 opened. Pick your workspace, click **Create**, and paste the app's **Client
-ID** (Basic Information, App Credentials); the prompt refuses anything else. CLAI then opens Slack's sign-in page and
+ID** (Basic Information, App Credentials); the prompt refuses anything else. Pax then opens Slack's sign-in page and
 waits up to five minutes behind a screen that shows the URL, in case no browser
 opens (over SSH, for example); Esc cancels. You never copy a token or a client
 secret: the manifest enables PKCE, so Slack treats the app as a public client and
 neither signing in nor renewing needs a secret. The manifest also turns on the
 app's MCP access (`is_mcp_enabled`), which Slack requires, and token rotation.
-Access tokens last 12 hours; CLAI renews them before a turn when they are close
-to expiring, keeping the rotated refresh token in the credential store. If CLAI
+Access tokens last 12 hours; Pax renews them before a turn when they are close
+to expiring, keeping the rotated refresh token in the credential store. If Pax
 goes unused for 30 days, the refresh token expires and you sign in again.
 
 A read-only sign-in asks Slack for read scopes only, so the token itself cannot
 post. After switching Tools to read and write, press Enter on **Browser sign-in**
 to sign in again with the write scopes. Until you do, turns have no Slack tools
-and CLAI says to sign in again, rather than offering write tools the token cannot
+and Pax says to sign in again, rather than offering write tools the token cannot
 use. The redirect is fixed at
 `http://localhost:53118/slack/callback`, because Slack matches the registered URL
 exactly. Workspaces that require admin approval for new apps need that approval
@@ -2327,22 +2330,22 @@ first. `R` on Browser sign-in signs out; `R` on Slack app also forgets the app.
 
 Harness `Slack` has no server URL option: it always connects to
 `https://mcp.slack.com/mcp`, so the menu has no base URL row. Plugin settings never
-hold the token, and a pasted `token` setting is rejected. CLAI does not read the
+hold the token, and a pasted `token` setting is rejected. Pax does not read the
 `SLACK_USER_TOKEN` environment variable either. If it is set and no key is
-chosen, CLAI says so and points at the menu.
+chosen, Pax says so and points at the menu.
 
-With a user token, before every turn CLAI reads the chosen key's current value from `/keys`, so
+With a user token, before every turn Pax reads the chosen key's current value from `/keys`, so
 replacing it there takes effect on the next turn with no reload. Until you choose
 a key (or, for browser sign-in, set up the Slack app), turns just have no Slack
 tools, without a warning; the menu rows say what is missing. When the chosen key
-was deleted or the saved choice is invalid, CLAI prints why and that turn has no
+was deleted or the saved choice is invalid, Pax prints why and that turn has no
 Slack tools. While Slack uses a key, `/keys` will not
 rename it.
 
 | Key | Default | Does |
 |---|---|---|
 | `auth` | `key` | `key` connects with the user token chosen from `/keys`; `browser` with the browser sign-in |
-| `client_id` | none | your CLAI Slack app's Client ID, for `browser` |
+| `client_id` | none | your Pax Slack app's Client ID, for `browser` |
 | `read_only` | `true` | keep only the tools Slack marks read-only, so the agent can search and read but not post or edit |
 | `include_instructions` | `true` | forward the Slack server's own instructions to the agent |
 
@@ -2350,7 +2353,7 @@ To let the agent send messages and edit canvases as you, choose **read and
 write** in the Tools row. The equivalent typed command is
 `/plugins add slack pydantic_ai_pax.builtin_plugins.slack '{"read_only": false}'`.
 
-### `posthog`: PostHog analytics, signed in for CLAI
+### `posthog`: PostHog analytics, signed in for Pax
 
 `posthog` (`pydantic_ai_pax.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
 server through harness [`PostHog`](../../docs/harness/posthog.md), with each tool named `posthog_` plus
@@ -2387,9 +2390,9 @@ Secrets are managed in `/keys`, never in plugin settings (plugin settings are
 plaintext SQLite, and a declaration that tries to hold a key is rejected: `/plugins add` keeps
 no settings that fail validation, and the error does not echo them). A new
 key typed in the menu is saved in `/keys` as `POSTHOG_PERSONAL_API_KEY`, the name
-harness `PostHog` documents. It is a label only: CLAI does not read or export the
+harness `PostHog` documents. It is a label only: Pax does not read or export the
 environment variable. If a key of that name exists, the menu asks before
-replacing it. CLAI remembers only the key's name, in the credential store beside
+replacing it. Pax remembers only the key's name, in the credential store beside
 the vllm and openrouter connections. Create the key with PostHog's "MCP Server"
 preset.
 
@@ -2460,7 +2463,7 @@ the first of these that applies:
    `/grain key`: choose "A /keys entry", then pick one of your `/keys` entries by
    name or type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
    the name harness's `Grain` documents, after asking before it replaces a saved
-   `GRAIN_ACCESS_TOKEN`. CLAI keeps only the key's name and looks
+   `GRAIN_ACCESS_TOKEN`. Pax keeps only the key's name and looks
    the key up on every run, so replacing it in `/keys` takes effect on the next
    prompt, deleting it makes Grain fail rather than connect without it, and
    `/keys` refuses to rename it while Grain uses it. Several plugins can share one
@@ -2468,7 +2471,7 @@ the first of these that applies:
    key" to go back to the browser sign-in, which starts then unless you are signed in.
 3. A browser sign-in, made with `/grain login` or "No API key", behind a waiting screen that
    shows the sign-in URL in case the browser does not open (over SSH, for
-   example) and that Esc cancels. The tokens go to the OS keyring (or CLAI's
+   example) and that Esc cancels. The tokens go to the OS keyring (or Pax's
    private credential file when there is no keyring), the way `/mcp` OAuth
    servers keep theirs, so later sessions refresh them instead of signing in
    again. Loading and prompts never open the browser: until you sign in, runs
@@ -2479,7 +2482,7 @@ forgets the browser sign-in, so Grain has no tools until `/grain login`. It cann
 then `/plugins reload grain`) or a `/keys` entry (pick "No API key").
 
 If you enabled `grain` from the old `/plugins` catalog, which saved
-`pydantic_ai_harness.grain:Grain` under that id, CLAI loads this plugin in its
+`pydantic_ai_harness.grain:Grain` under that id, Pax loads this plugin in its
 place and keeps it enabled or disabled. A declaration you gave
 settings with `/plugins add` stays as you wrote it.
 
@@ -2515,7 +2518,7 @@ colours follow your `/theme`. The right side shows details for the highlighted
 one: a description, its source, what it registered, whether it has a settings
 menu, and the last error if loading failed. The description is the first
 paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
-the module's. CLAI reads it from the source file without importing it, so a
+the module's. Pax reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
 Enter or Space turns the highlighted plugin on or off; `c` configures it, `r`
@@ -2539,7 +2542,7 @@ to print it.
 Adding a plugin needs a name and a module, so that stays a typed command.
 
 At startup, an enabled declaration whose own module cannot be imported (for
-example a built-in saved by a newer CLAI) is skipped quietly and listed as
+example a built-in saved by a newer Pax) is skipped quietly and listed as
 failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
@@ -2547,18 +2550,18 @@ failures.
 With arguments `/plugins` is a plain command. The standalone `pax plugins list`
 reads saved declarations without loading plugin code. Adding, enabling, disabling,
 removing, configuring, and reloading plugins are
-available only inside a CLAI session, since the agent can run `pax` from its shell:
+available only inside a Pax session, since the agent can run `pax` from its shell:
 
 | Command | Does |
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:Class] [JSON]` | save it and load it now |
-| `/plugins add GIT_URL` | clone a trusted repository and load its plugin (in a CLAI session only); see [where plugins live](#where-plugins-live) |
+| `/plugins add GIT_URL` | clone a trusted repository and load its plugin (in a Pax session only); see [where plugins live](#where-plugins-live) |
 | `/plugins remove NAME` | forget an installed declaration, keeping any Git checkout on disk; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
-| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure` (in a CLAI session only); `enable` and `add` open it too |
-| `/plugins reload NAME` | re-import the file and load it again (in a CLAI session only; does not fetch Git updates) |
-| `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure` (in a Pax session only); `enable` and `add` open it too |
+| `/plugins reload NAME` | re-import the file and load it again (in a Pax session only; does not fetch Git updates) |
+| `/reload` | reload Pax's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
 agent, selected model, and active settings, and reloads enabled plugins against
@@ -2622,7 +2625,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update now`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
+`/update now`. See [Updating](docs/reference.md#updating) for how Pax installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
@@ -2654,8 +2657,8 @@ class Search(Plugin):
 A plugin is a subclass of `Plugin`, declared the way a Pydantic AI
 [capability](https://pydantic.dev/docs/ai/core-concepts/capabilities/) is: each
 thing it contributes has a `get_*` method, and a plugin overrides only the ones it
-needs. CLAI builds one instance when the plugin loads, calls each `get_*` method
-once, and keeps what they returned until the plugin is unloaded or CLAI quits.
+needs. Pax builds one instance when the plugin loads, calls each `get_*` method
+once, and keeps what they returned until the plugin is unloaded or Pax quits.
 Any Pydantic AI capability goes in `get_capabilities`, so `YouSearch` from
 `pydantic_ai_harness.youdotcom`, core's `WebSearch`, or one you wrote yourself
 all work the same way.
@@ -2693,10 +2696,10 @@ contributes nothing:
 | `render(event)` | a drawing for a stream event, or `None` for the default |
 | `get_status_segments()` | text in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
-| `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
+| `get_model_providers()` | `PREFIX:NAME` models Pax can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_fork_end` / `on_install_progress` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_fork_end` / `on_install_progress` | handlers for Pax's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2706,14 +2709,14 @@ call `super().__init__(host, settings)` first. Each live session gets its own
 instance unless the class sets `scope = 'process'`; see
 [Several live sessions](#several-live-sessions).
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress`
+### React to Pax's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress`
 
 Ten `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session; for a session-scoped plugin, also when a live session opens (`host.live.open` or `new`, as the web UI does) or moves to another folder under `pax --web` ([Several live sessions](#several-live-sessions)) | `agent`, `settings`, `conversation_chosen` | no |
-| `on_session_end` | CLAI is quitting, or the plugin is unloading; for a session-scoped plugin, also when its session closes (idle for an hour, or `host.live.close`, with `reason='exit'`) or moves to another folder under `pax --web` ([Several live sessions](#several-live-sessions)) | `reason`: `exit`, `eof`, or `error` | no |
+| `on_session_start` | Pax has started, before the first prompt, or the plugin loaded mid-session; for a session-scoped plugin, also when a live session opens (`host.live.open` or `new`, as the web UI does) or moves to another folder under `pax --web` ([Several live sessions](#several-live-sessions)) | `agent`, `settings`, `conversation_chosen` | no |
+| `on_session_end` | Pax is quitting, or the plugin is unloading; for a session-scoped plugin, also when its session closes (idle for an hour, or `host.live.close`, with `reason='exit'`) or moves to another folder under `pax --web` ([Several live sessions](#several-live-sessions)) | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
@@ -2721,7 +2724,7 @@ Ten `async` methods fire outside the agent run, in the shell:
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
 | `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
-| `on_install_progress` | `/update now` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
+| `on_install_progress` | `/update now` started installing a newer Pax, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2767,22 +2770,22 @@ handler cheap, such as queueing the event for elsewhere. A failure is printed an
 `done`, `failed`, or `cancelled`, `elapsed` seconds, and the `session_id` `/resume` continues it
 in, once saved), `output` its answer once `done` (`str` of a structured output), and `error` why
 it `failed`. It fires when the fork ends, while the terminal holds the answer until no turn or
-command runs. A failure is printed and CLAI goes on.
+command runs. A failure is printed and Pax goes on.
 
-`on_install_progress` receives an `InstallProgress` event while `/update now` installs a newer CLAI with
+`on_install_progress` receives an `InstallProgress` event while `/update now` installs a newer Pax with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
 `stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
-line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
-or `restarting` when CLAI is about to exit and start the new build in its place, and
+line in `text`, then `failed` when uv failed, `installed` when Pax must be started again by hand,
+or `restarting` when Pax is about to exit and start the new build in its place, and
 `on_session_end` follows. `output` comes only while the web UI serves: reading uv's output turns
-its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
+its progress bars into plain lines, which Pax still prints, so it does that only for a page that
 has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
-install runs after CLAI exits.
+install runs after Pax exits.
 
 `on_task_progress` and `on_install_progress` were called `on_task_event` and `on_update_progress`,
 with events `TaskEvent` and `UpdateProgress`. A plugin that still defines an old handler name keeps
 receiving the event, with a `PydanticAIDeprecationWarning` when its class is defined, and the old
-event names still import with the same warning. CLAI hides warnings, so you see it in your tests,
+event names still import with the same warning. Pax hides warnings, so you see it in your tests,
 or when you run `pax` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
@@ -2926,7 +2929,7 @@ Names are letters, digits, underscores, and hyphens, and must be unique;
 clashing with a built-in is an error at startup, not a silent override. A command
 named after something the user names, such as a skill, sets `overridable=True`:
 it gives way to any other command with its name, registered before or after it,
-and CLAI prints one line saying which command is hidden.
+and Pax prints one line saying which command is hidden.
 
 A command whose bare form opens a menu can declare `menu=`, a zero-argument callable
 returning a `SettingsMenu` (see
@@ -2974,7 +2977,7 @@ in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
 ### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.default_model_name`, `host.plugins`, `host.tasks`
 
-A plugin that is another way to use CLAI, such as a remote UI, drives the same
+A plugin that is another way to use Pax, such as a remote UI, drives the same
 prompt the keyboard does:
 
 - `self.host.send_input(text)` enters `text` as Enter at the prompt does, at any time from the
@@ -2991,17 +2994,17 @@ prompt the keyboard does:
   the prompt are: the model gets them after the text, which may be blank. It raises `ValueError` for
   a `/command` or `!` line, which take no images, and when images waiting to be sent would pass 32 MiB.
   A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
-  prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
+  prompt to type at: one built without `send_input=`, or a Pax whose output is not a terminal,
   which reads its prompts line by line. A `PluginHost` you build yourself calls its `send_input=`
   callback with two arguments, the text and the images, `(text, images)`.
-- `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
+- `self.host.setting(KEY)` reads the effective value of a Pax setting, such as
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
-  CLAI's settings, such as one built in a test without `setting=`.
+  Pax's settings, such as one built in a test without `setting=`.
 - `await self.host.default_model()` is the model a new session starts with: the saved `model`
   setting, resolved as `/model NAME` does, else the agent's own. Use it for an agent of your own
   that works for the whole process rather than one session. It returns `None` on a host without
-  CLAI's settings, such as one built in a test without `default_model=`. To show that model,
+  Pax's settings, such as one built in a test without `default_model=`. To show that model,
   `await self.host.default_model_name()` names it as `/model` does (`chain:NAME`,
   `PROVIDER@PROFILE:NAME`) without building it, so it needs no sign-in and cannot fail.
 - `self.host.command_menu(NAME)` builds the `SettingsMenu` bare `/NAME` opens, as the command
@@ -3026,7 +3029,7 @@ prompt the keyboard does:
 - `self.host.sessions` is the saved conversations `/resume` lists, or `None` without session
   persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
   `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which refuses
-  the current conversation and one running in another CLAI. `archive(ID)` hides a session from
+  the current conversation and one running in another Pax. `archive(ID)` hides a session from
   `listing` and `/resume` without deleting anything, refusing the same two, and returns its
   `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do
   resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only
@@ -3058,7 +3061,7 @@ prompt the keyboard does:
 - `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
   conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
   such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
-  `-p` run; with an agent other than CLAI's stock one; and on a host built outside the shell. Read
+  `-p` run; with an agent other than Pax's stock one; and on a host built outside the shell. Read
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
   each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
@@ -3074,7 +3077,7 @@ prompt the keyboard does:
   `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
   resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
   whose delegate call fails or is denied, and
-  `RuntimeError` when this CLAI cannot prompt a task on its own; the task stays as it was.
+  `RuntimeError` when this Pax cannot prompt a task on its own; the task stays as it was.
   `steer(ID, TEXT)` sends a running task a message, which it reads at its next model request,
   and returns `False` once it has finished, when `prompt` or `resume` is the way to go on. An ID
   from another conversation raises `LookupError`.
@@ -3130,10 +3133,13 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 
 
 Built-in tool rendering shows one summary line per call by default, clipped to
-the terminal width and followed by a blank line. Tool names are pink; arguments
+the terminal width, then any result row, then a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
-diffs even with `display.tool_output` off. Shell output and completion details and grep results
-are hidden from the terminal, not from the model. Set `/set display.tool_output true`
+diffs even with `display.tool_output` off. A finished shell command always adds one result row
+(`⎿ exit 0 · 23 lines`, red when it fails), and a failed or refused call
+whose result a renderer does not claim gets a red row with the reason. Other shell output and grep
+results are hidden from the terminal, not from the model; in the interactive prompt, Ctrl+O shows
+a command's returned output under its row. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
 diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
@@ -3141,7 +3147,7 @@ calls no renderer claims are counted by tool on one line instead, except `edit_f
 `write_file`, which still print their summary and diff; `display.tool_output`
 has no effect, and anything a renderer draws ends that line.
 
-CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
+Pax shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,
 use the default".
 
@@ -3160,7 +3166,7 @@ class Writes(Plugin):
         return None
 ```
 
-CLAI flushes any streaming text before it prints what you return, so your output
+Pax flushes any streaming text before it prints what you return, so your output
 never lands in the middle of a paragraph.
 
 `/resume` shows the restored conversation through the same renderers. It sends
@@ -3171,9 +3177,9 @@ streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
-has to wait for streamed text to finish and the editor and status row to
-get out of the way. `host.full_screen()` flushes pending output, suspends the
-editor's input reader, and restores the editor and its draft when the block exits.
+needs streamed text written out and the editor and status row out of the way.
+`host.full_screen()` writes pending streamed text at once, suspends the editor's
+input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
@@ -3194,6 +3200,10 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+Down past the newest history entry restores a nonempty original draft, even after
+editing recalled text; undo recovers the edit. See [Input history](docs/reference.md#input-history)
+for the empty-draft behavior and queued-message editing.
+
 Completion rows remain visible while a replacement lookup runs, but stale results
 cannot be selected. Popup height changes reuse available space without adding
 blank transcript lines on each key. Completion providers should be read-only.
@@ -3213,8 +3223,9 @@ output without changing the draft. New output does not move a scrolled view.
 A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
-Assistant Markdown renders again at the new width and theme; tool and command
-output rewraps, and a theme change repaints its colours role by role. Output
+Assistant Markdown renders again at the new width and theme once its part
+ends; tool and command output rewraps, and a theme change repaints its colours
+role by role. Output
 coloured with `theme.color(...)` or the theme's diff and syntax colours follows
 `/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
@@ -3294,13 +3305,13 @@ plugin, call `self.host.save_settings(model)` (see
 `self.host.settings(Model)` returns them from then on. Read them per run (for
 example in a capability function returned from `get_capabilities`) so an edit
 also reaches the next turn from a plugin command, without a reload.
-`google_workspace` is a worked example. CLAI ignores unknown names in its own
+`google_workspace` is a worked example. Pax ignores unknown names in its own
 saved settings and preserves their values for other versions or branches. This
 does not relax validation of plugin declarations or `self.host.settings(Model)`.
 
 ### Settings that need a feature: `host.settings(Model, requires=...)`
 
-Every CLAI on a machine shares one settings database, whatever code it runs: other
+Every Pax on a machine shares one settings database, whatever code it runs: other
 worktrees, branches, and installs. When a setting's valid values or meaning depend
 on code that other builds may lack, tag it with the feature it needs:
 
@@ -3330,12 +3341,12 @@ The contract:
 - **Builds older than tags ignore them** and apply every setting as before.
   Tags cannot protect those builds.
 
-A capability class declared as `module:Class` has no `Plugin` subclass; CLAI lists its
+A capability class declared as `module:Class` has no `Plugin` subclass; Pax lists its
 tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
 
-If an untagged setting still makes a capability that CLAI built from a
+If an untagged setting still makes a capability that Pax built from a
 `module:Class` declaration (such as `coder`) raise `UserError` while a run is
-set up, that turn fails closed with the plugin named, and CLAI leaves that
+set up, that turn fails closed with the plugin named, and Pax leaves that
 capability out of later turns; `/plugins reload NAME` brings it back. Nothing is
 retried, so no other capability is set up twice. Errors from the model, from tools, or
 from a raising plugin handler still fail the turn as before, and capabilities an
@@ -3384,7 +3395,7 @@ menu's `Dialogs` and saves the new value for you.
 ### Offer a settings menu: `def settings_menu(self)`
 
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
-CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
+Pax opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
 the shared field editor `/set` uses. Searchable terminal lists that offer Space
 cycling use `/` to start searching. While searching, printable characters,
@@ -3409,7 +3420,7 @@ A `SettingsMenu` (from `pydantic_ai_pax.plugins.menus`) has:
 
 - `source`, your `FieldSource`: its `title`, its `rows()` (a `FieldRow` each), and
   `current`, `problem`, `apply`, and `reset` for a row. Each method is synchronous
-  and may block, such as on the keyring, so CLAI calls them off the event loop.
+  and may block, such as on the keyring, so Pax calls them off the event loop.
   The typed editor opens holding `current(row)` unless it equals the row's `default`,
   so return text the user could type back, or the default, and mark a row whose
   value must stay hidden `secret=True`.
@@ -3466,7 +3477,7 @@ class Notify(Plugin[NotifySettings]):
         return [f'Sound set to {sound}.']
 ```
 
-When the saved settings changed, CLAI loads the plugin again after the menu closes,
+When the saved settings changed, Pax loads the plugin again after the menu closes,
 so a fresh instance is built from them. The built-in `compaction` plugin is a
 complete example. In the terminal the whole menu, its actions' dialogs included,
 keeps the screen to itself until it closes.
@@ -3504,7 +3515,7 @@ the menu's worker thread.
 
 ### Sign in only when the user asks: `plugins.sign_in`
 
-CLAI waits for every plugin to load before the first prompt, and a prompt waits
+Pax waits for every plugin to load before the first prompt, and a prompt waits
 for its tools. A browser sign-in started there that the user cannot finish holds
 everything up. So a plugin signs in only when the user asks, from its settings
 menu or a command, and runs use only what is already stored.
@@ -3537,7 +3548,7 @@ The built-in `day_ai` plugin is a short, complete example.
 ### Sign in through the browser: `pkce.PKCESignIn`
 
 For a service whose OAuth needs a registered app but accepts PKCE instead of a
-client secret (a public client), describe the app once and let CLAI run the
+client secret (a public client), describe the app once and let Pax run the
 authorization-code flow, keep the tokens, and renew them:
 
 ```python
@@ -3559,7 +3570,7 @@ action receives, and returns `False` when the user presses Esc. Outside a menu, 
 Before each run, `await sign_in.token()` returns an access token, refreshing it
 first when it expires within five minutes and saving a rotated refresh token. It
 raises `UserError` naming `setup` when there is no usable sign-in, so a plugin can
-turn its tools off with that message. Refreshes are serialized across CLAI
+turn its tools off with that message. Refreshes are serialized across Pax
 processes, because a service that rotates refresh tokens invalidates the old one.
 Token responses may report errors the standard way or, like Slack, with HTTP 200
 and an `error` field; both are handled. The tokens are stored under `account` in
@@ -3572,8 +3583,8 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model CLAI or the user selected for the next prompt. A capability that selects a model, such as
-Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
+model Pax or the user selected for the next prompt. A capability that selects a model, such as
+Logfire's `AgentControl`, can replace Pax's default per request; `resolved_model()` and the
 status row still name the selected one, and `/compact` and session naming (without a
 `sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and
 `title` its saved title (`None` until the first prompt is saved); `on_conversation_changed` says
@@ -3586,7 +3597,7 @@ configured.
 `resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
 directory in this one instead, as confirming it in the `/resume` browser does: tools then run
 in this directory, and the saved conversation keeps its original one. A conversation
-still running in another process is not taken over: the newest unarchived copy CLAI made to
+still running in another process is not taken over: the newest unarchived copy Pax made to
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then
 receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
@@ -3610,7 +3621,7 @@ session; it does not follow `host.live.current()`.
 
 `host.workspace` is the directory the session works in: where its runs' file and
 shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
-project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not
+project files are read. Never read `Path.cwd()` or call `os.chdir`: Pax does not
 change the process's working directory after startup, and under `pax --web` each
 session has its own directory. Resolve a relative path against `host.workspace`,
 and start a subprocess with `cwd=host.workspace`. A host built outside the shell,
@@ -3627,7 +3638,7 @@ selected model has run in the conversation, a `None` `context_window` shows
 `model_window`, that model's known window, which the shell sets; an empty
 conversation reads `0`, and a resumed one its last response's context. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
-tests need no special case. The status row itself is CLAI's; a plugin adds to it
+tests need no special case. The status row itself is Pax's; a plugin adds to it
 with `get_status_segments`. `cost` is the retained-history cost; when retained
 responses omitted usage information, the shell sets `cost_is_lower_bound` and the
 row prefixes the value with `>=`. While the main run waits on a subagent, the row
@@ -3683,11 +3694,13 @@ class Where(Plugin):
         return (lambda: self.host.workspace.name,)
 ```
 
-The row is repainted about ten times a second while CLAI works and once a second
+The row is repainted about ten times a second while Pax works and once a second
 while the editor sits idle, so `fn` runs that often: keep it cheap, synchronous,
 and free of blocking IO. Return `''` to contribute nothing for a frame.
-Fragments are truncated from the right on a narrow terminal and are readable
-text only; the colours in the row belong to CLAI. A fragment that raises shows
+When the row is too narrow, the `plugins` group is hidden after the output count,
+cost, working directory, and other optional fields, and before the model; see the
+[status-line reference](docs/reference.md#status-line). Fragments are readable
+text only; the colours in the row belong to Pax. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
 
@@ -3726,7 +3739,7 @@ its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Opt
 web UI's address show it; a browser would draw an error box instead. The server follows no
 redirect, so a page that redirects or answers an error is not framed, nor one that does not
 answer within five seconds; those are read again next time. Otherwise the panel offers to open the page in a
-window beside CLAI's, and points that window at the view's new `url` as it changes.
+window beside Pax's, and points that window at the view's new `url` as it changes.
 
 ### Offer a spinner: `get_spinners()`
 
@@ -3754,7 +3767,7 @@ and a selected spinner that is gone shows the default `working`.
 
 ### Run models under your own prefix: `get_model_providers()`
 
-Makes `PREFIX:NAME` a model CLAI can run, for a Pydantic AI `Model` that no core
+Makes `PREFIX:NAME` a model Pax can run, for a Pydantic AI `Model` that no core
 provider builds, such as one authenticated with a subscription login:
 
 ```python
@@ -3776,13 +3789,13 @@ class MyService(Plugin):
 
 `models` are listed under the prefix in `/model add` and completed by `/set model`
 and `/model add`; any other `my-service:NAME` can still be typed. `resolve` gets
-`NAME` without the prefix. CLAI calls it in a worker thread before every run with
+`NAME` without the prefix. Pax calls it in a worker thread before every run with
 one of these models, so reading the keyring there is fine, and a sign-in made
 since the last run applies. Raise `UserError` naming the setup step when it cannot
 build the model; the run fails with that message.
 
 The prefix starts with a lowercase letter, followed by lowercase letters, digits,
-and hyphens. It cannot be one Pydantic AI or CLAI already runs, aliases included
+and hyphens. It cannot be one Pydantic AI or Pax already runs, aliases included
 (`anthropic`, `openai-chat`, `azure`, `openai-codex`, `vllm`, ...): that raises
 `ValueError` during activation. Only a name with a colon is looked up, so a bare
 `my-service` is never routed to the plugin. When two plugins register one prefix, the later one
@@ -3795,15 +3808,15 @@ a model does not unload its plugin or delete provider credentials.
 
 `/model settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider
-CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
+Pax knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
 (or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
 models get that provider's controls instead, such as Claude's thinking mode and
 effort, and the status row shows that provider's known context window for them
 before a turn measures one. Any other value raises `ValueError`.
 
-When CLAI resolves a `claude-code` model, directly, through a profile or in a chain,
-and it is an `AnthropicModel` using `AsyncAnthropic`, CLAI adds a response hook to
-its HTTP client. Existing hooks remain in place. CLAI keeps the same client and
+When Pax resolves a `claude-code` model, directly, through a profile or in a chain,
+and it is an `AnthropicModel` using `AsyncAnthropic`, Pax adds a response hook to
+its HTTP client. Existing hooks remain in place. Pax keeps the same client and
 authentication, and leaves the SDK's normal retry budget unchanged.
 
 The hook stays for that client's lifetime. It also applies to Messages API requests
@@ -3811,13 +3824,13 @@ the plugin makes on its own with that client, outside the resolved model. When a
 `POST` to `/v1/messages` or `/v1/messages/count_tokens` gets a 429 asking for a wait of
 over 60 seconds, the hook sets `x-should-retry: false`. The SDK then raises at once
 instead of sleeping. The typed error keeps the status, body and other headers,
-including `Retry-After` and quota/reset headers. Its `x-should-retry` value is CLAI's
+including `Retry-After` and quota/reset headers. Its `x-should-retry` value is Pax's
 local veto, not the provider's original retry decision. Other requests on the client,
 such as account usage, are unchanged.
 
-CLAI does not add this hook for other prefixes or preconstructed models that bypass
+Pax does not add this hook for other prefixes or preconstructed models that bypass
 resolution. Sharing an already-decorated HTTP client also shares its policy. A
-configured fallback chain can advance normally; without one, CLAI ends the turn
+configured fallback chain can advance normally; without one, Pax ends the turn
 visibly and keeps its history.
 
 The built-in `/effort [VALUE|reset]` shortcut uses the active model's
@@ -3829,7 +3842,7 @@ and asks you to remove them before saving a native effort value.
 ### Add a sign-in to `/login`: `get_logins()`
 
 `/login NAME` signs in to a subscription: `openai-codex` and `github-copilot`
-ship with CLAI, named after the model prefix each one unlocks (the earlier `codex`
+ship with Pax, named after the model prefix each one unlocks (the earlier `codex`
 and `copilot` still work), and bare `/login` asks which one to run. A plugin whose
 models need a sign-in adds its own name next to them, ideally its model prefix:
 
@@ -3857,7 +3870,7 @@ class MyService(Plugin):
 `/login my-service` awaits `sign_in` and shows the message it returns, and `/login`
 completes the name. Raise `UserError` when signing in fails, and keep tokens in the
 keyring, never in plugin settings. The name uses the same format as a model prefix
-and cannot be one of CLAI's sign-ins, which raises `ValueError`; when two plugins
+and cannot be one of Pax's sign-ins, which raises `ValueError`; when two plugins
 add one name, the later one wins. Unloading the plugin removes it.
 
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
@@ -3894,7 +3907,7 @@ such as an authorization code. Cancelling the task that awaits it, because the
 browser's callback won the race, closes the prompt. A slash command or
 `/login` handler can call it directly; a tool or hook asking mid-run takes the
 screen first, inside `async with host.full_screen()`. Without the live editor it
-is a plain terminal prompt. Where CLAI has no terminal and the web UI runs, it is
+is a plain terminal prompt. Where Pax has no terminal and the web UI runs, it is
 a dialog in the page, titled with the prompt; what you printed is not shown there.
 Esc cancels that dialog too, so keep any other terminal-only key hint out of the
 prompt.
@@ -3924,7 +3937,7 @@ thread like `resolve`. `profile_handler(PROFILE)` signs in to it; on success the
 tokens apart, for example one keyring entry per profile, and keep the default
 profile where it was so existing sign-ins still work. A profile name is 1 to 32
 lowercase letters, digits, hyphens, or underscores, and never `default`, so you can
-keep the default account under that name. CLAI checks it before calling you. Without these fields, a model or sign-in naming a profile fails with a
+keep the default account under that name. Pax checks it before calling you. Without these fields, a model or sign-in naming a profile fails with a
 message saying the plugin has one account.
 
 Each successful `/login NAME` or `/login NAME@PROFILE` puts the account in
@@ -3932,7 +3945,7 @@ Each successful `/login NAME` or `/login NAME@PROFILE` puts the account in
 users can add, order, and pick your accounts without typing a profile, and
 `PREFIX@*:MODEL` tries them in that order. So does `PREFIX:MODEL` once two or more
 are listed, unless the user turns `accounts.pool` off; `PREFIX@default:MODEL`
-reaches your `resolve`, never `resolve_profile`. CLAI cannot see your tokens, so it
+reaches your `resolve`, never `resolve_profile`. Pax cannot see your tokens, so it
 lists an account from the time it signed in until the user removes it there;
 removing one does not sign it out of your plugin, and the menu says so. Offer your
 own logout for that.
@@ -3945,7 +3958,7 @@ the terminal instead.
 ### Account usage: `usage`
 
 Set `usage` on your `PluginLogin` to show each account's current usage in
-`/accounts`, as CLAI does for ChatGPT/Codex and Copilot. CLAI calls
+`/accounts`, as Pax does for ChatGPT/Codex and Copilot. Pax calls
 `usage(PROFILE)` (`None` for the default account) in the background while the
 menu is open, every account at once, and stops waiting after a few seconds.
 Return an `AccountUsage`: its `windows` (each a `UsageWindow` with a short
@@ -3979,30 +3992,30 @@ panel shows a bar and reset time for each.
   runs just before them; a failure there fails the load. Other setup goes in
   `on_session_start`. Keep both asynchronous: they run on the event loop, so
   offload blocking work with `anyio.to_thread.run_sync` or a worker.
-- CLAI's `on_*` handlers return `None`. Core hooks keep their exact core return
+- Pax's `on_*` handlers return `None`. Core hooks keep their exact core return
   contracts: for example `before_model_request` must return its `ModelRequestContext`.
   For cancelable host events, edit the event or call `event.cancel()`.
 - Raising in `on_turn_start` prevents the turn. Raising in core `before_tool_execute`
   fails the agent run, not only that tool. Use core's documented tool-denial
   mechanisms when the model should recover instead of ending the run, such as
   `pydantic_ai.exceptions.SkipToolExecution` for skipping an individual tool.
-- Startup plugins load in alphabetical ID order. CLAI's `on_*` handlers run in
+- Startup plugins load in alphabetical ID order. Pax's `on_*` handlers run in
   load order, while `/plugins list` remains alphabetical. Core hook ordering
   follows core composition, including reverse order for `after_*` hooks. The first renderer that returns something wins. A
   plugin loaded later goes to the end of the line.
 - Anything you print, print through `self.host.console`, so it stays in step with
   streaming output.
-- Follow the rules in [Several live sessions](#several-live-sessions): CLAI may run
+- Follow the rules in [Several live sessions](#several-live-sessions): Pax may run
   your plugin in many sessions at once.
 
 ## Several live sessions
 
 The terminal runs one session at a time. The web UI (`pax --web`, or `/web` from a
-terminal) keeps several sessions live in one CLAI process, each with its own
+terminal) keeps several sessions live in one Pax process, each with its own
 conversation, folder, plugins, queued input, and running turn. A plugin that follows
 these rules works the same in both.
 
-1. **An instance belongs to one live session.** CLAI builds one instance of your
+1. **An instance belongs to one live session.** Pax builds one instance of your
    plugin for each live session, so under the web UI several exist at once. Each is
    loaded and unloaded on its own: `on_session_start` when its session opens or the
    plugin is turned on, `on_session_end` when its session closes or the plugin is
@@ -4013,8 +4026,8 @@ these rules works the same in both.
    session `pax --web` started with never closes this way. Opening a closed session
    again resumes it in a new session, with new instances.
 2. **Use `host.workspace`, never the process's directory.** Each session works in its
-   own folder. CLAI never changes the process's working directory after startup, so
-   `Path.cwd()` is the folder CLAI started in, not the session's. Never call
+   own folder. Pax never changes the process's working directory after startup, so
+   `Path.cwd()` is the folder Pax started in, not the session's. Never call
    `os.chdir`: it would move every session at once. Resolve a relative path against
    `self.host.workspace`, and start a subprocess with `cwd=self.host.workspace`.
 3. **No module-level mutable state.** An installed module is imported once per
@@ -4029,7 +4042,7 @@ these rules works the same in both.
    as a menu in `host.full_screen()`, and skip that work when it is `False`. The
    built-in `ask_user` and `herdr` plugins do this.
 5. **`on_session_end` may come from idle closing.** An idle session closes with
-   `reason='exit'`, as quitting does, while CLAI and the other sessions go on. Keep
+   `reason='exit'`, as quitting does, while Pax and the other sessions go on. Keep
    cleanup quick: stop what the instance started and wait for no one. Leave the saved
    conversation alone; the user may resume it later.
 6. **Keep background tasks bounded per instance.** A task, timer, or connection an
@@ -4081,7 +4094,7 @@ What changes for a process-scoped plugin:
   `on_session_start`. Every other live session, and each one opened later, joins that
   same instance without another `on_session_start`. `on_session_end` runs once: when
   the plugin is turned off (after every running turn that uses it ends), or when the
-  last session closes, as when CLAI quits. One session closing for being idle does not
+  last session closes, as when Pax quits. One session closing for being idle does not
   end it.
 - **Its contributions join every session.** Its capabilities, commands, status
   segments, and renderers are in every live session. Turning it off, reloading it, or
@@ -4106,9 +4119,9 @@ What changes for a process-scoped plugin:
 | `listing()` | every live session, oldest first, each a `LiveSession` |
 | `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
 | `current()` | the session being handled now, or `None` outside a moment, command, or run |
-| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
-| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
-| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `pax --web` or `pax -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
+| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where Pax opens no other sessions |
+| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder Pax started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where Pax opens no other sessions |
+| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `pax --web` or `pax -p` started with. A host built outside Pax's shell raises `RuntimeError` |
 | `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), waiting-for-user, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
@@ -4128,9 +4141,9 @@ A `LiveSession` is one live session:
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
 | `busy` | whether it handles input now (a turn, a command, or the terminal's rewind) or has input queued; check it before replacing its history between turns |
-| `waiting_for` | the most recent open user wait's reason, or `None` when none is open; CLAI tracks `ask_user` questions automatically |
+| `waiting_for` | the most recent open user wait's reason, or `None` when none is open; Pax tracks `ask_user` questions automatically |
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
-| `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
+| `setting(key)` | a Pax setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
 | `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
 | `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
@@ -4143,7 +4156,7 @@ A `LiveSession` is one live session:
 | `await complete(text)` | what Tab offers at its prompt for `text` |
 
 Process-scoped plugins can read `waiting_for` through `host.live.listing()`, `get(id)`, or
-`current()`. `host.live.subscribe()` notifies them when a wait starts or ends. CLAI reports
+`current()`. `host.live.subscribe()` notifies them when a wait starts or ends. Pax reports
 `ask_user` waits automatically; a plugin can mark another user interaction without depending
 on a concrete runtime class:
 
@@ -4166,7 +4179,7 @@ in `finally`, including when the interaction is cancelled. `waiting_for` becomes
 all waits have ended.
 
 With one session, as in a terminal where the web UI opened no other, `host.live`
-lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no
+lists just that one. `open` and `new` raise `RuntimeError` only where Pax opens no
 other sessions, such as a headless `pax -p` run.
 
 ## Testing a plugin
@@ -4206,15 +4219,15 @@ loaded = collect(plugin)
 
 ## vllm connection
 
-Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. Pax queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
 
 ## openrouter connection
 
-Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. Pax exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach Pax (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
-Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
+Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. Pax validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
 The connection is saved in the configured Python keyring backend after selection; backend security depends on your keyring configuration. Tokens are not stored in SQLite or command history. The selected model persists across restarts. Select the provider again to browse its live models or reconfigure the saved connection. Discovery is explicit and has a 20-second network timeout; redirects are not followed. Agent inference uses Pydantic AI core.
 
@@ -4242,7 +4255,7 @@ makes them fail with an error. Renaming a key that vLLM, OpenRouter, or a
 plugin uses is refused until they are pointed at another key. Several
 consumers can share one entry: name keys with the conventional variable name for
 the service, such as `LINEAR_API_KEY` or `GITHUB_TOKEN`, and every plugin for that
-service can pick the same entry. The names are labels only; CLAI does not export
+service can pick the same entry. The names are labels only; Pax does not export
 them as environment variables.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
@@ -4256,7 +4269,7 @@ choose **No API key** for vLLM. Esc closes the picker without connecting. Browse
 login flows are unchanged. Select keys only for endpoints you trust.
 
 Named keys use the existing credential backend, separate from provider logins and
-SQLite settings. If no OS keyring exists, CLAI warns that it saved them in the
+SQLite settings. If no OS keyring exists, Pax warns that it saved them in the
 per-user `0600` plaintext file `credentials-api-keys.json` in its config directory.
 Key values never appear in the picker or confirmation. Names are labels, not
 exported environment variables. Selecting a saved key stores a reference, not a copy. Discovery and each new
@@ -4267,7 +4280,7 @@ a key named in plugin settings, such as `logfire_mcp`'s, can, and that plugin's 
 with the missing name until you pick it again. One named key can serve several connections and
 plugins, so built-in plugins look for conventional labels, such as `LOGFIRE_API_KEY`, that other
 tools can share. A cross-process lock
-serializes key changes and connection saves so concurrent CLAI sessions do not
+serializes key changes and connection saves so concurrent Pax sessions do not
 overwrite each other's key edits. The lock file contains no credentials.
 
 Manage plugin secrets here too: a plugin that needs a token stores a reference to
@@ -4310,8 +4323,9 @@ controls are never replayed as conversation text.
 including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
 or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
-`default` preserves CLAI's existing appearance without changing terminal colours
-on startup or exit. `/theme default` restores it after a palette selection.
+`default` preserves Pax's existing appearance without changing terminal colours
+on startup or exit; on a light terminal background, which Pax asks the terminal for
+at startup, it uses darker shades that reach WCAG AA contrast on white, cream and light grey. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
 validation. A project override takes precedence again on the next startup.
 
@@ -4326,10 +4340,11 @@ Resolve the `ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`, and `THINKING` roles
 through `theme.color(role)` at render time. The constants retain their brand
 values; the resolver reads the active palette. `theme.sgr(role)` resolves raw
 ANSI surfaces itself. `theme.current()` returns the selected Termflow
-`TerminalPalette`, or `None` for the existing default appearance.
+`TerminalPalette`, or `None` for the existing default appearance, and
+`theme.light_background()` the terminal's background when `default` paints for a light one.
 
 Selecting a bundled palette changes terminal foreground, background, and ANSI
-slots via Termflow's OSC sequences. CLAI resets them to terminal defaults when
+slots via Termflow's OSC sequences. Pax resets them to terminal defaults when
 you return to `default` or exit a selected palette, including errors and
 cancellation. Redirected output receives no palette-changing sequences.
 Unsupported terminals may ignore changes; supported ones may recolour ANSI
@@ -4364,7 +4379,7 @@ GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
 both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
 not lower reasoning effort. Reset restores the model's default. Picking a tier in
 the **Service Tier** row replaces the speed, and a custom `service_tier` body
-parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+parameter takes precedence over both. Older Pax builds see a speed as its nearest
 service tier, `priority` for fast and ultrafast, and a different tier they save picks
 the speed here.
 
@@ -4383,7 +4398,7 @@ unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
 in the store. New edits still reject unknown keys and invalid values.
 An invalid value in a known field stops that turn with a repair message, not the
-shell; use `/model settings` to fix or reset it and try again. CLAI does not silently
+shell; use `/model settings` to fix or reset it and try again. Pax does not silently
 run with different settings or delete saved preferences.
 
 Older branches must receive this fix too. The minimum read-side backport is
@@ -4411,19 +4426,19 @@ it as an override. Other models keep their existing defaults. Family defaults
 follow the model each request uses and sit beneath the settings of
 capabilities, a plugin's or your agent's, so a capability can change them; an
 agent's own `model_settings` stay beneath the defaults. The values you saved for
-the session's model (the one you chose, or CLAI's default) are passed to each run
+the session's model (the one you chose, or Pax's default) are passed to each run
 and win over everything else on requests to that model; a request on a model a
 capability selected instead gets only that model's family defaults. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 
 Code Puppy runtime parity is not complete. In particular, its progress-aware
-main/sub-agent streaming retries require core recovery support before CLAI can
+main/sub-agent streaming retries require core recovery support before Pax can
 expose working retry controls. See [the parity audit](MODEL_SETTINGS_AUDIT.md).
 
 Pydantic AI owns adaptive-thinking translation and preserved-thinking replay,
 including Fable 5.1's recovery when a changed conversation prefix invalidates a
-thinking block. CLAI does not strip thinking or implement a second recovery loop.
+thinking block. Pax does not strip thinking or implement a second recovery loop.
 See [core's thinking block binding documentation](https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding).
 
 For native Anthropic models, **Preserved Thinking** controls
@@ -4438,7 +4453,7 @@ modes the model accepts: Fable, Mythos, and Opus 5.5 always think, so they offer
 `adaptive` alone, and Sonnet 5.5 offers `between_tools`, its off switch, in place
 of `disabled`. Resetting the mode clears its budget, display, and binding
 overrides. **Interleaved Thinking** adds the beta header on classic Claude 4
-models. CLAI adds the display beta when requesting updates; core adds the
+models. Pax adds the display beta when requesting updates; core adds the
 block-binding beta. These native controls do not add Anthropic protocol support
 to third-party Chat Completions endpoints.
 
@@ -4490,7 +4505,7 @@ Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSavedEvent)` to ob
 It carries `persistence_run_id`, `conversation_id`, `step_index`, and `state`.
 This is a notification, not the durable source of truth or permission to replay a
 tool. A durable replay may notify again. An observer failure cannot roll back the
-already committed snapshot. No new CLAI lifecycle hooks are introduced.
+already committed snapshot. No new Pax lifecycle hooks are introduced.
 
 Session naming is a shell-owned background service (`runtime/session_naming.py`).
 It never writes into the agent transcript or loads plugin code. `/resume` does

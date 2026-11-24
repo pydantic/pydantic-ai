@@ -30,7 +30,7 @@ model resolution, `/login`, the model menus, and the first turn or sign-in with 
 def start(modules: Sequence[str] = FIRST_USE_MODULES) -> Thread:
     """Import `modules` on a background thread. A failure is logged; first use imports it again and raises."""
     # Not a daemon: finalizing the interpreter mid-import of a native extension aborts the process.
-    thread = Thread(target=_import_all, args=(tuple(modules),), name='clai-warm-imports')
+    thread = Thread(target=_import_all, args=(tuple(modules),), name='pax-warm-imports')
     thread.start()
     return thread
 

@@ -139,6 +139,16 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(scope='module', autouse=True)
+def context_encoding() -> None:
+    """Load the tokenizer Live counts its caps in once per worker, outside any one test's budget.
+
+    The first load in a process can download the encoding, which can take longer than a test's
+    `PYTEST_TEST_BUDGET_SECONDS` on a loaded runner. tiktoken keeps it loaded for the process.
+    """
+    live_module.tiktoken.get_encoding(live_module._CONTEXT_ENCODING)  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.fixture
 def model() -> OpenAILiveModel:
     return OpenAILiveModel('gpt-live-1', provider='openai')

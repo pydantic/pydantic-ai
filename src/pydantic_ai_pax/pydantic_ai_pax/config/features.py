@@ -1,6 +1,6 @@
-"""The features this CLAI build supports, by name, so settings saved by another build can say what they need.
+"""The features this Pax build supports, by name, so settings saved by another build can say what they need.
 
-Every CLAI on a machine shares one settings database, whatever code it runs: other worktrees,
+Every Pax on a machine shares one settings database, whatever code it runs: other worktrees,
 branches, and installs. A plugin setting whose valid values or meaning depend on code another
 build may lack is tagged with a feature name when it is saved (see `PLUGINS.md`). A build that
 does not list that name here ignores the setting and uses the default instead.

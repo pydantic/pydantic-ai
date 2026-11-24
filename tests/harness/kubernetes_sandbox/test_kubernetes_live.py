@@ -41,6 +41,7 @@ from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, Sandboxd
 from pydantic import SecretStr
 from pytest_examples import CodeExample
 
+from pydantic_ai.computer_use import Click
 from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
@@ -48,6 +49,8 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 from tests.harness._docs_examples import documented_cleanup, python_blocks, run_block
 from tests.harness._tool_calls import call_tools
+from tests.harness.computer_use.display_contract_live import check_display_contract
+from tests.harness.computer_use.display_fakes import full_display
 
 CONTEXT = 'kind-pydantic-ai-live'
 NAMESPACE = 'default'
@@ -144,9 +147,14 @@ def _new_backend(
     warm_pool: str = POOL,
     connection: Connection = 'port-forward',
     sandbox_timeout: int | None = LIVE_SANDBOX_TIMEOUT,
+    desktop: bool | tuple[int, int] = False,
 ) -> KubernetesSandboxBackend:
     return KubernetesSandboxBackend(
-        warm_pool=warm_pool, namespace=NAMESPACE, connection=connection, sandbox_timeout=sandbox_timeout
+        warm_pool=warm_pool,
+        namespace=NAMESPACE,
+        connection=connection,
+        sandbox_timeout=sandbox_timeout,
+        desktop=desktop,
     )
 
 
@@ -367,6 +375,39 @@ async def test_an_in_cluster_connection_follows_a_recreated_pod(pool: str, conne
     assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
     await _recreate_pod(backend)
     await _destroy(backend)
+
+
+async def test_a_desktop_pool_serves_the_display() -> None:
+    """An image with the X programs gives a non-root pod a working desktop, which a shell command also sees."""
+    backend = _new_backend(warm_pool='desktop-pool', desktop=True)
+    try:
+        await check_display_contract(full_display(backend))
+        assert (await backend.run(['xdotool', 'getdisplaygeometry'])).stdout == '1280 800\n'
+        # The window manager answers on the display, and the panel's window shows, not only their processes running.
+        window_manager = await backend.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'])
+        assert 'window id' in window_manager.stdout
+        panel = await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'tint2'])
+        assert panel.exit_code == 0 and panel.stdout.strip()
+        # Under a pod's high open-file limit, the Terminal button once opened nothing. (60, 780) is its centre,
+        # measured live on the Docker desktop image.
+        await full_display(backend).act(Click(x=60, y=780))
+
+        async def xterm_shows() -> bool:
+            return (await backend.run(['xdotool', 'search', '--onlyvisible', '--class', 'xterm'])).exit_code == 0
+
+        await _eventually(xterm_shows, timeout=15)
+    finally:
+        await _destroy(backend)
+
+
+async def test_an_image_without_the_display_programs_is_refused_by_name() -> None:
+    """A non-root pod cannot install the programs, so the display refuses, naming what is missing."""
+    backend = _new_backend(desktop=True)
+    try:
+        with pytest.raises(WorkspaceUnavailableError, match=r'the display needs .*Xvfb.*no root or passwordless sudo'):
+            await full_display(backend).display_size()
+    finally:
+        await _destroy(backend)
 
 
 async def test_coder_tools_run_in_the_sandbox_kubernetes_sandbox_supplies() -> None:

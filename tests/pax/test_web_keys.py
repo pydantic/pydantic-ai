@@ -415,4 +415,4 @@ def test_login_typed_after_the_web_ui_unloads_refuses(make_web: MakeWeb, monkeyp
         for text in ('/plugins disable web', '/login paste', '/exit'):
             assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
         assert running.result(timeout=10) == 'exit'
-    assert '/login paste opens a terminal menu or prompt, and this CLAI has no terminal' in terminal(web_)
+    assert '/login paste opens a terminal menu or prompt, and this Pax has no terminal' in terminal(web_)

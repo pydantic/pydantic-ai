@@ -1,7 +1,7 @@
 """Pydantic AI's process-wide agent instrumentation, the setting `Agent.instrument_all` writes.
 
 Core offers a setter and no getter, so this reads the class default the setter assigns. The
-`observability` plugin claims it so agents CLAI does not run itself (summaries, sub-agents, session
+`observability` plugin claims it so agents Pax does not run itself (summaries, sub-agents, session
 naming) are traced too, and `/compact` reads its tracer for the compaction span.
 
 Claims live here rather than on the plugin class: `/plugins reload` re-imports the plugin's module,

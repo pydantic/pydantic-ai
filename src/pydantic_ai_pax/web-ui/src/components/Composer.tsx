@@ -60,7 +60,7 @@ interface Props {
 
 /**
  * The prompt box: Enter sends, or queues while a turn runs; Alt+Enter steers the running turn; Shift+Enter adds a line;
- * `/` completes commands from CLAI's own registry; `@` anywhere completes the session folder's files and folders;
+ * `/` completes commands from Pax's own registry; `@` anywhere completes the session folder's files and folders;
  * Up on the first line and Down on the last recall sent prompts;
  * pasted or dropped images go with the prompt.
  */
@@ -82,7 +82,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     commands = true,
     queue,
     history = [],
-    label = 'Message CLAI',
+    label = 'Message Pax',
     onError,
   },
   ref,

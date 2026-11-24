@@ -177,7 +177,7 @@ async def test_relative_paths_are_saved_for_projects_that_have_them(folders: Fol
     assert folders.problem('./team-agents/', named=False, index=None) == 'This folder is already in the list.'
     details = ' '.join(folders.details(0).split())
     assert 'does not exist or is not a directory. Skipped in this project.' in details
-    assert 'Resolved against each project CLAI runs in.' in details
+    assert 'Resolved against each project Pax runs in.' in details
     (folders.project / 'team-agents').mkdir()
     assert 'Directory is readable.' in ' '.join(folders.details(0).split())
     folders.source.host.save_settings(CoderSettings(agent_folders=[str(folders.project)]))

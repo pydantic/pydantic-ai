@@ -70,7 +70,7 @@ KEY_VARIABLES = {
 """Providers whose API key variables are not just `PROVIDER_API_KEY`."""
 
 KEYED_ELSEWHERE = ('openrouter', 'vllm', 'github-copilot', 'openai-codex')
-"""Providers CLAI builds with the key `/model add` or `/login` saved, or a Codex sign-in, never a model's `api_key`."""
+"""Providers Pax builds with the key `/model add` or `/login` saved, or a Codex sign-in, never a model's `api_key`."""
 
 
 class KeyedProvider(Protocol):

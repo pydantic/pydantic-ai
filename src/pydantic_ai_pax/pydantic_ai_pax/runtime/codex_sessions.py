@@ -85,10 +85,10 @@ CONTEXT_PREFIXES = (
 """How user messages Codex adds itself start, for versions that do not tag their content with its kind."""
 
 _TASK_NAMESPACE = UUID('6a3e1f0c-2b7d-4e59-8c14-9d0b5f7a3e21')
-"""Derives a CLAI task ID from a Codex session and sub-agent ID, so importing again finds the same task."""
+"""Derives a Pax task ID from a Codex session and sub-agent ID, so importing again finds the same task."""
 
 _SELF = 'self'
-"""The agent name CLAI runs Codex's default sub-agents under: itself."""
+"""The agent name Pax runs Codex's default sub-agents under: itself."""
 
 _ENCRYPTED = "[Encrypted by Codex for OpenAI's models, and left out.]"
 
@@ -105,7 +105,7 @@ _OPENING = (
     "Codex's, and its sub-agents' final answers appear as `<task_output>` blocks."
 )
 _CLOSING = (
-    'The conversation above was imported from Codex, and continues here in CLAI, a different harness. The '
+    'The conversation above was imported from Codex, and continues here in Pax, a different harness. The '
     "tools, context and instructions above came from Codex's harness and no longer apply: use the tools and "
     'instructions you have now, whose names and arguments may differ.'
 )
@@ -186,7 +186,7 @@ def messages(path: Path) -> list[ModelMessage]:
     """The history the session's model saw, as Pydantic AI messages, framed by notes on the change of harness.
 
     History compacted away is kept ahead of the compaction. A summary Codex wrote itself is an
-    `imported_summary`, which CLAI's compaction builds on. An encrypted one is for a model of the
+    `imported_summary`, which Pax's compaction builds on. An encrypted one is for a model of the
     `openai-codex` provider to continue from, as Codex's did, and for other models to read past.
     """
     # Task IDs derive from the session alone, and a report names no conversation, so none is needed here.
@@ -203,7 +203,7 @@ def messages(path: Path) -> list[ModelMessage]:
 
 
 def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
-    """The session's sub-agents, and theirs, as finished CLAI tasks of `conversation_id`, with their own histories.
+    """The session's sub-agents, and theirs, as finished Pax tasks of `conversation_id`, with their own histories.
 
     One that answered is delivered already, in its parent's history; one that never finished is `cancelled`.
     """
@@ -314,7 +314,7 @@ def _sub_agent(
         role = text(meta.get('agent_role')) or text(spawn.get('agent_role'))
         name = _SELF if role in ('', 'default') else role
     else:
-        # A review, or another kind of sub-agent CLAI has no counterpart for, keeps its kind as its name.
+        # A review, or another kind of sub-agent Pax has no counterpart for, keeps its kind as its name.
         name = text(subagent) or next(iter(obj(subagent)), 'subagent')
     nickname = text(meta.get('agent_nickname')) or text(spawn.get('agent_nickname'))
     address = text(meta.get('agent_path')) or text(spawn.get('agent_path'))
@@ -454,7 +454,7 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
     retained: list[JsonObject] = []
     for item in replacement:
         if summary := _local_summary(item):
-            # Ahead of the messages it kept, where CLAI's compaction puts its own summary.
+            # Ahead of the messages it kept, where Pax's compaction puts its own summary.
             history.request(imported_summary(summary, source=SOURCE, at=at), at=at)
         elif item not in sealed:
             retained.append(item)

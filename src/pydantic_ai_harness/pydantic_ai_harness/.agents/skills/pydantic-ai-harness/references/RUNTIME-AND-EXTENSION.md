@@ -225,7 +225,7 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
   `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
-- `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
+- `PlaywrightBrowser` and `CDPBrowser` raise `UserError` at `Agent(...)` with any durability capability (a live
   browser cannot survive replay); a `TrajectoryJudge` without an `id` raises at run start inside a durable
   workflow.
 - `CodeMode` runs but skips its `speculate=` early tool launches. `BackgroundTools`, guardrails,

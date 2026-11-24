@@ -1,4 +1,4 @@
-"""Serve the web UI from CLAI's own event loop, so handlers and the shell share one loop and never a thread."""
+"""Serve the web UI from Pax's own event loop, so handlers and the shell share one loop and never a thread."""
 
 import asyncio
 import logging
@@ -17,7 +17,7 @@ LOOPBACK = frozenset({'127.0.0.1', 'localhost', '::1'})
 
 
 class _Server(uvicorn.Server):
-    """A uvicorn server that leaves CLAI's Ctrl-C handling alone."""
+    """A uvicorn server that leaves Pax's Ctrl-C handling alone."""
 
     @contextmanager
     def capture_signals(self) -> Generator[None]:
@@ -56,7 +56,7 @@ class WebServer:
         for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access'):
             logging.getLogger(name).disabled = True
         server = _Server(config)
-        task = asyncio.create_task(server.serve(sockets=[sock]), name='clai2-web')
+        task = asyncio.create_task(server.serve(sockets=[sock]), name='pax-web')
         return cls(sock=sock, server=server, task=task)
 
     async def stop(self) -> None:

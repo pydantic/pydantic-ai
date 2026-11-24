@@ -276,8 +276,8 @@ def test_control_keys_act_on_the_selected_task() -> None:
 
 
 def test_a_failed_resume_keeps_the_view_open() -> None:
-    driver = Driver(task(outcome='ok'), error='This CLAI has no prompt to ask the agent to resume a task at.')
-    assert 'This CLAI has no prompt' in driver.press('ctrl-r')
+    driver = Driver(task(outcome='ok'), error='This Pax has no prompt to ask the agent to resume a task at.')
+    assert 'This Pax has no prompt' in driver.press('ctrl-r')
     assert driver.view.app.running
 
 
