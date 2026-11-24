@@ -277,7 +277,7 @@ and hands the original only that copy. Like the original, it reports an error as
 promise.
 """
 
-_ENFORCED_POLICY_LAUNCH_ARGS = ('--disable-blink-features=FedCm',)
+_ENFORCED_POLICY_LAUNCH_ARGS = ('--disable-blink-features=FedCm,WebSocketStream',)
 """Chromium switches a browser the session launches gets under an enforced policy.
 
 Not `--disable-features`: Playwright passes its own list under that switch, and Chromium

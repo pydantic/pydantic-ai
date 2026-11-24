@@ -4284,7 +4284,7 @@ class TestEnforcedPolicyPageApis:
             capabilities=[PlaywrightBrowser(block_private_addresses=block_private_addresses)],
         )
         await agent.run('screenshot the page')
-        switches: list[str] = ['--disable-blink-features=FedCm'] if block_private_addresses else []
+        switches: list[str] = ['--disable-blink-features=FedCm,WebSocketStream'] if block_private_addresses else []
         assert cm.driver.chromium.launch_args == [switches]
 
     async def test_a_browser_installed_on_demand_gets_the_launch_switches(
@@ -4300,7 +4300,7 @@ class TestEnforcedPolicyPageApis:
             TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(auto_install_chromium=True)]
         )
         await agent.run('screenshot the page')
-        assert cm.driver.chromium.launch_args == [['--disable-blink-features=FedCm']]
+        assert cm.driver.chromium.launch_args == [['--disable-blink-features=FedCm,WebSocketStream']]
 
 
 class TestMessageRedaction:
