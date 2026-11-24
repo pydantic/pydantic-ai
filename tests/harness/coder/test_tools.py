@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import CacheSetting, ModelSettings
@@ -522,15 +523,24 @@ class TestCoder:
             ],
         ]
 
-    async def test_fallback_model_gets_no_delegation_rule(self, tmp_path: Path) -> None:
-        """`FallbackModel` has no profile of its own, so even a GPT-first chain gets no rule, and the run still works."""
+    @pytest.mark.parametrize('instrumented', [False, True])
+    async def test_fallback_model_gets_no_delegation_rule_and_a_warning(
+        self, tmp_path: Path, instrumented: bool
+    ) -> None:
+        """`FallbackModel` has no profile of its own, so even a GPT-first chain gets no rule, and the run still works.
+
+        `Coder` warns that `ModelFallback` would give each attempt its model's instructions, also when the
+        `FallbackModel` is instrumented (the run's `ctx.model` is then still the `FallbackModel`).
+        """
         sent: list[_Sent] = []
-        model = FallbackModel(
+        fallback = FallbackModel(
             _scripted('gpt', sent, delegates=True, fails=True), _scripted('claude', sent, delegates=False)
         )
-        result = await Agent(model, capabilities=[Coder(repo_context=False)]).run(
-            'go', workspace=LocalWorkspaceBackend(tmp_path)
-        )
+        model = InstrumentedModel(fallback) if instrumented else fallback
+        with pytest.warns(UserWarning, match="`Coder` can't read model-specific instructions from `FallbackModel`"):
+            result = await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+                'go', workspace=LocalWorkspaceBackend(tmp_path)
+            )
         assert result.output == 'claude'
         assert [s.model for s in sent] == ['gpt', 'claude']
         assert all(s.instructions is not None and _DELEGATION_RULE not in s.instructions for s in sent)

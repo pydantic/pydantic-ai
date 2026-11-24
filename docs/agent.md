@@ -2030,7 +2030,7 @@ print(instructions_sent(TestModel()))
 ```
 
 1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own rule against unrequested delegation.
-2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and the line is left out. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead.
+2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and the line is left out. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead. Pydantic AI Harness `Coder` warns once when it runs on a `FallbackModel`.
 
 #### Keep untrusted text out of instructions {#untrusted-instruction-text}
 

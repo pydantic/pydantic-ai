@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any, get_args
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -164,9 +166,18 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
         ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        if self.delegation is not None and isinstance(ctx.model, FallbackModel):
+            # Python's default warning filter shows this once per process: it's raised from one line.
+            warnings.warn(_FALLBACK_MODEL_WARNING, UserWarning, stacklevel=1)
         if delegation_depth() <= 1:
             return self
         return replace(self, delegate=True)
+
+
+_FALLBACK_MODEL_WARNING = (
+    "`Coder` can't read model-specific instructions from `FallbackModel`, so no model gets its rule against "
+    "unrequested delegation; use the `ModelFallback` capability so each attempt gets its model's instructions."
+)
 
 
 @dataclass

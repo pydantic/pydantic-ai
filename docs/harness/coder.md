@@ -209,7 +209,7 @@ unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_
 work nobody asked for, and Claude, measured the same way, doesn't. The rule goes to models whose profile sets
 `delegates_unprompted`, and follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without it, the
-model is told the rule was withdrawn. A `FallbackModel` gets no rule. See
+model is told the rule was withdrawn. A `FallbackModel` gets no rule, and `Coder` warns once when it runs on one. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 A delegate explores the project again from a fresh context, so delegation the user did not ask for multiplies tool
 calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
