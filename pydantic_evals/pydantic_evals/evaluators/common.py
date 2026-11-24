@@ -398,9 +398,9 @@ class StructuredJudge(Evaluator[object, object, object]):
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
 
     A type cannot be written in a YAML or JSON dataset file, so only a question answered yes or no and the
-    mapping of rubrics round-trip through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file]. Any other
-    `output_type` is written by name, and a dataset with a model of questions can't be saved, so build a dataset
-    that uses either in Python.
+    mapping of rubrics round-trip through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file]. A dataset
+    with any other `output_type` or with a model of questions can't be saved, so build a dataset that uses either in
+    Python.
     """
 
     # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file.
@@ -473,11 +473,18 @@ class StructuredJudge(Evaluator[object, object, object]):
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
     def _serialization_spec(self) -> EvaluatorSpec:
-        # Written by name, a model of questions would load back as a single question that is the model's name.
+        # Written by name, a type would load back as a string: a model of questions as a single question that is the
+        # model's name, and an `output_type` as a name no judge can answer with.
         if isinstance(self.questions, type):
             raise TypeError(
                 f'`StructuredJudge({self.questions.__name__})` cannot be serialized, as its questions are a Python '
                 'type. To save a dataset to a file, use a mapping of rubrics, or build the dataset in Python.'
+            )
+        if self.output_type is not bool:
+            raise TypeError(
+                '`StructuredJudge` with an `output_type` other than `bool` cannot be serialized, as its `output_type` '
+                'is a Python type. To save a dataset to a file, ask a question answered yes or no, or build the dataset '
+                'in Python.'
             )
         return super()._serialization_spec()
 

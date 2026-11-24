@@ -1086,8 +1086,23 @@ def test_structured_judge_evaluation_name():
     assert StructuredJudge('Is the reply polite?', evaluation_name='polite').get_default_evaluation_name() == 'polite'
 
 
+async def test_structured_judge_evaluation_name_names_the_failure_of_several_questions():
+    """A rubric's measure is named after its key, and `evaluation_name` names the evaluator when it fails."""
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(
+        {'is_polite': 'The reply is polite.'},
+        evaluation_name='support',
+        model=structured_judge_model({'is_polite': 'yes'}, calls),
+    )
+    dataset = Dataset[str, str, Any](name='support', cases=[Case(inputs='x')], evaluators=[evaluator])
+
+    report = await dataset.evaluate(lambda inputs: 'Certainly.', progress=False)
+
+    assert [failure.name for failure in report.cases[0].evaluator_failures] == ['support']
+
+
 def test_structured_judge_serialization():
-    """A yes/no question round-trips through a dataset file; any other `output_type` is written by name."""
+    """A yes/no question round-trips through a dataset file; any other `output_type` is written by name for a result's `source`."""
     assert StructuredJudge('Is the reply polite?').as_spec().model_dump() == snapshot(
         {'name': 'StructuredJudge', 'arguments': ('Is the reply polite?',)}
     )
@@ -1130,14 +1145,27 @@ def test_structured_judge_serializes_a_model_of_questions_by_name():
         assert spec.model_dump_json() == f'{{"name":"StructuredJudge","arguments":["{questions.__name__}"]}}'
 
 
-def test_structured_judge_with_a_model_of_questions_is_not_saved_to_a_file(tmp_path: Path):
-    """Written by name, a model of questions would load back as a single question, so saving fails instead."""
+@pytest.mark.parametrize(
+    'arguments,expected',
+    [
+        pytest.param(
+            {'questions': ReplyReview}, '`StructuredJudge(ReplyReview)` cannot be serialized', id='model-of-questions'
+        ),
+        pytest.param(
+            {'questions': 'How does it treat the customer?', 'output_type': Literal['polite', 'curt']},
+            '`StructuredJudge` with an `output_type` other than `bool` cannot be serialized',
+            id='output-type',
+        ),
+    ],
+)
+def test_structured_judge_with_a_python_type_is_not_saved_to_a_file(
+    arguments: dict[str, Any], expected: str, tmp_path: Path
+):
+    """Written by name, a type would load back as a string the judge can't use, so saving fails instead."""
     dataset = Dataset[str, str, Any](
-        name='unsaveable', cases=[Case(inputs='x')], evaluators=[StructuredJudge(ReplyReview)]
+        name='unsaveable', cases=[Case(inputs='x')], evaluators=[StructuredJudge(**arguments)]
     )
 
-    with pytest.raises(
-        PydanticSerializationError, match=re.escape('`StructuredJudge(ReplyReview)` cannot be serialized')
-    ):
+    with pytest.raises(PydanticSerializationError, match=re.escape(expected)):
         dataset.to_file(tmp_path / 'dataset.yaml')
     assert list(tmp_path.iterdir()) == []

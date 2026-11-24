@@ -413,8 +413,8 @@ StructuredJudge(ReplyReview, include_input=True)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
 - `include_expected_output` (bool): Include the expected output in the prompt (default: `False`)
 - `model_settings` (ModelSettings | None): Custom model settings
-- `evaluation_name` (str | None): Custom name for a single question's measure (default:
-  `'StructuredJudge'`); a rubric or a field is named after its key
+- `evaluation_name` (str | None): Custom name for the evaluator, which names a single question's measure
+  and the evaluator's failure (default: `'StructuredJudge'`); a rubric or a field is named after its key
 
 **Returns:** the answer to a single question, or a mapping of question name to answer — `bool` as an
 assertion, `int`/`float` as a score, `str` as a label, and an `Enum` as whatever its value is. An answer of
@@ -426,8 +426,8 @@ One request answering every question also fails as one, and asking the questions
 answers. See [Several Measures in One Request](llm-judge.md#several-measures-in-one-request).
 
 A question answered yes or no and the mapping of rubrics can be written in a YAML or JSON dataset file. Any
-other `output_type` is a Python type, written by name, and a dataset with a model of questions can't be
-saved, so a dataset that uses either is built in Python.
+other `output_type` and a model of questions are Python types, so a dataset that uses either can't be saved
+and is built in Python.
 
 ---
 
