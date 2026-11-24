@@ -311,7 +311,7 @@ def test_baggage_attached_to_event_attributes(capfire: CaptureLogfire):
 
 
 def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
-    """Standard `gen_ai.*`/`error.type` attrs win over conflicting baggage keys."""
+    """Baggage cannot change the `gen_ai.evaluation.*` attributes an event writes itself."""
     ctx = _baggage.set_baggage('gen_ai.evaluation.target', 'baggage_target')
     ctx = _baggage.set_baggage('gen_ai.evaluation.score.label', 'baggage_label', ctx)
     token = _otel_context.attach(ctx)
@@ -329,6 +329,30 @@ def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
 
 
+def test_baggage_does_not_set_reserved_attrs(capfire: CaptureLogfire):
+    """Baggage keys in the `gen_ai.evaluation.*` namespace and `error.type` are dropped; other keys still land."""
+    ctx = _baggage.set_baggage('gen_ai.evaluation.score.value', 1.0)
+    ctx = _baggage.set_baggage('error.type', 'baggage_error', ctx)
+    ctx = _baggage.set_baggage('tenant', 'acme', ctx)
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', 'good')],
+            failures=[],
+            target=_target('f'),
+        )
+    finally:
+        _otel_context.detach(token)
+
+    record = capfire.log_exporter.get_finished_logs()[0].log_record
+    attrs = dict(record.attributes or {})
+    assert 'gen_ai.evaluation.score.value' not in attrs
+    assert 'error.type' not in attrs
+    assert attrs['tenant'] == 'acme'
+    # Log processors that copy a record's context baggage onto it (logfire>=6 does by default) find none.
+    assert _baggage.get_all(record.context) == {}
+
+
 def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
     """`include_baggage=False` omits baggage entirely."""
     ctx = _baggage.set_baggage('tenant', 'acme')
@@ -343,5 +367,6 @@ def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
     finally:
         _otel_context.detach(token)
 
-    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert 'tenant' not in attrs
+    record = capfire.log_exporter.get_finished_logs()[0].log_record
+    assert 'tenant' not in dict(record.attributes or {})
+    assert _baggage.get_all(record.context) == {}

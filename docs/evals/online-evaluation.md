@@ -207,7 +207,7 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
 
-[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
+[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. Baggage keys in the `gen_ai.evaluation.*` namespace and `error.type` are dropped, so baggage never sets the attributes above.
 
 For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(OutputNotEmpty(), target='customer_support')` and returning `True` for a given call, emits one event with:
 
