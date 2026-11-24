@@ -40,7 +40,9 @@ clicks and types until it has the answer, and prints it. The container keeps run
 
 ## Models
 
-The model must accept images. Every model gets `computer` as a regular function tool.
+The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use), it gets its provider's own computer use
+tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
+tool.
 
 ## Sandboxes
 
