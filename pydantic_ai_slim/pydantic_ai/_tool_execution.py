@@ -152,8 +152,8 @@ class NestedCallContent(list[_messages.UserContent]):
     that tool, and then to the calling tool's.
 
     The capabilities travel on this object only. Content rebuilt from it, such as `list(content)` or a hook's
-    `replace(result, content=[...])`, is held to the calling tool's capability alone, and equality compares the items,
-    not their capabilities.
+    `replace(result, content=[...])`, or edited in place, is held to the calling tool's capability alone, and equality
+    compares the items, not their capabilities.
     """
 
     segments: tuple[tuple[str | None, str | Sequence[_messages.UserContent]], ...]
@@ -166,8 +166,18 @@ class NestedCallContent(list[_messages.UserContent]):
         self.segments = tuple(segments)
         super().__init__(chain.from_iterable(_user_content_items(content) for _, content in self.segments))
 
+    def matches_segments(self) -> bool:
+        """Whether the items are still the segments' content, rather than edited in place, such as by a hook."""
+        return self == NestedCallContent(self.segments)
+
     def owned_segments(self) -> Iterator[tuple[tuple[str | None, ...], str | Sequence[_messages.UserContent]]]:
-        """Each called tool's content, after the run ids of the capabilities it passed through, innermost first."""
+        """Each called tool's content, after the run ids of the capabilities it passed through, innermost first.
+
+        Content edited in place is one segment that no called tool's capability owns.
+        """
+        if not self.matches_segments():
+            yield (), list(self)
+            return
         for capability_id, content in self.segments:
             if isinstance(content, NestedCallContent):
                 for capability_ids, nested_content in content.owned_segments():

@@ -243,7 +243,7 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
 
 def content_list(content: str | Sequence[UserContent]) -> list[UserContent]:
     """`ToolReturn.content` as a list, keeping the capability each tool behind a `ToolBridge` call came from."""
-    if isinstance(content, NestedCallContent):
+    if isinstance(content, NestedCallContent) and content.matches_segments():
         return NestedCallContent([(capability_id, content_list(each)) for capability_id, each in content.segments])
     return [content] if isinstance(content, str) else list(content)
 

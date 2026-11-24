@@ -51,6 +51,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -3407,6 +3408,46 @@ class TestCodeMode:
             ]
         )
         assert nested[1:3] == direct
+
+    async def test_a_hooks_in_place_edit_of_the_content_reaches_the_model(self) -> None:
+        """An `after_tool_execute` hook that edits `run_code`'s `ToolReturn.content` in place sends the edited content.
+
+        The edited content is held to `run_code`'s capability alone, as content a hook replaces is.
+        """
+
+        def fetch() -> ToolReturnMsg:
+            """Fetch a page."""
+            return ToolReturnMsg(return_value='ok', content='page text')
+
+        class Edit(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_name == 'run_code':
+                    # Narrowed under its own name, so the returned `result` stays an `object`.
+                    tool_return = result
+                    assert isinstance(tool_return, ToolReturnMsg) and isinstance(tool_return.content, list)
+                    tool_return.content[:] = ['edited']
+                return result
+
+        seen: list[list[object]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await fetch()'})])
+
+        plugin = Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+        await Agent(FunctionModel(model_fn), capabilities=[plugin, CodeMode(), Edit()]).run('Fetch the page')
+
+        assert seen == [[['edited']]]
 
     # ---------------------------------------------------------------------------
     # OTel / Logfire instrumentation

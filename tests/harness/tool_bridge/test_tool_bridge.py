@@ -605,6 +605,54 @@ class TestToolBridge:
         assert seen == [['run_code']]
 
     @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    @pytest.mark.parametrize('from_code', [False, True], ids=['tool-call', 'run-code'])
+    async def test_a_hooks_in_place_edit_of_bridged_content_reaches_the_model(self, from_code: bool):
+        """An `after_tool_execute` hook that edits `tool_call`'s `ToolReturn.content` in place sends the edited content.
+
+        The edited content is held to `tool_call`'s capability alone, as content a hook replaces is, also when
+        `run_code` makes the call.
+        """
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        class Edit(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_name == 'tool_call':
+                    # Narrowed under its own name, so the returned `result` stays an `object`.
+                    tool_return = result
+                    assert isinstance(tool_return, ToolReturn) and isinstance(tool_return.content, list)
+                    tool_return.content[:] = ['edited']
+                return result
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if from_code:
+                return ModelResponse(parts=[_call('run_code', code="await tool_call(name='fetch', args_json='{}')")])
+            return ModelResponse(parts=[_call('tool_call', name='fetch', args_json='{}')])
+
+        plugin = Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+        code_mode: list[AbstractCapability[object]] = [CodeMode()] if from_code else []
+        await Agent(FunctionModel(respond), capabilities=[plugin, ToolBridge(), *code_mode, Edit()]).run(
+            'Fetch the page'
+        )
+
+        assert seen == [[['edited']]]
+
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
     async def test_code_mode_keeps_a_bridged_tools_capability(self):
         """Content from a bridged tool that `run_code` calls reaches the model framed as it would be on a direct call.
 
