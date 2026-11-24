@@ -12573,7 +12573,7 @@ async def test_response_replaced_mid_message_ends_the_message_before_the_rejecti
                 'messageId': rejected_id,
                 'delta': 'Leaked ',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': rejected_id},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': rejected_id},
             {
                 'type': 'CUSTOM',
                 'timestamp': IsInt(),

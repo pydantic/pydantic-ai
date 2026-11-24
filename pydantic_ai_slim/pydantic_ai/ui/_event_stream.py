@@ -383,11 +383,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 tool_call_id = event.part.tool_call_id
                 self._pending_tool_calls.pop(tool_call_id, None)
             case ModelResponseRejectedEvent():
-                # A response cut short mid-part leaves it open: close it, as the rejected response is over.
-                async for e in self._close_open_part():
+                async for e in self._end_rejected_response():
                     yield e
-                # Its final result is no longer the run's.
-                self._final_result_event = None
             case _:
                 pass
 
@@ -414,8 +411,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
         # first: it's a response-side event, whereas the tool-call cleanup below turns to the
         # request side, and everything after the error chunk is dropped.
-        async for e in self._close_open_part():
-            yield e
+        if (end := self._end_open_part()) is not None:
+            async for e in self.handle_part_end(end):
+                yield e
 
         # Close any pending tool calls before emitting the error,
         # so the UI doesn't show them as still running.
@@ -503,15 +501,24 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
             raise
 
-    async def _close_open_part(self) -> AsyncIterator[EventT]:
-        """End the part the stream left open, if any, with the deltas it received so far."""
+    async def _end_rejected_response(self) -> AsyncIterator[EventT]:
+        """End the part a rejected response left open, as one cut short mid-part does, and forget its final result.
+
+        The end goes through `handle_event`, as the ends the model streams do, so what a protocol adds to those applies.
+        """
+        if (end := self._end_open_part()) is not None:
+            async for e in self.handle_event(end):
+                yield e
+        self._final_result_event = None
+
+    def _end_open_part(self) -> PartEndEvent | None:
+        """The end of the part the stream left open, if any, with the deltas it received so far; it's no longer open."""
         if (part := self._open_part) is None:
-            return
+            return None
         part = self._apply_open_part_deltas(part)
         self._open_part = None
         self._open_part_deltas.clear()
-        async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
-            yield e
+        return PartEndEvent(index=self._open_part_index, part=part)
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
