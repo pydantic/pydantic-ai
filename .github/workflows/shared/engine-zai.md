@@ -17,7 +17,8 @@
 # staged outside the checkout and selected through the public PAI_AGENT seam.
 #
 # Required repo variable:
-#   GH_AW_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
+#   GH_AW_ZAI_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
+# `.github/workflows/AGENTS.md` says why GH_AW_MODEL stays set.
 # Required secret:
 #   ZAI_API_KEY — primary Coding Plan API key injected by the AWF api-proxy.
 # Optional secret:

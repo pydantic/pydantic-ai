@@ -232,7 +232,8 @@ def _zai_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+    configured = model_settings.get('extra_body')
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     thinking_payload: dict[str, Any] = {}
     thinking_level = model_request_parameters.thinking

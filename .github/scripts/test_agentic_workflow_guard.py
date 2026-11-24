@@ -783,7 +783,7 @@ jobs:
           PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
           PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
           PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
-          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
+          PAI_MODEL: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
           ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYTHONPATH: /tmp/gh-aw/workflow-python
@@ -797,6 +797,14 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     """The public engine retains policy, model and proxy credential exclusion."""
     lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK)
     assert check_compiled_runner_contract(lock) == []
+
+
+def test_compiled_runner_contract_rejects_the_variable_of_older_locks(tmp_path: Path):
+    """`GH_AW_MODEL` stays on the model older locks are priced for, so a new lock must read `GH_AW_ZAI_MODEL`."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('vars.GH_AW_ZAI_MODEL', 'vars.GH_AW_MODEL'))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic' in violations[0].message
 
 
 @pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
