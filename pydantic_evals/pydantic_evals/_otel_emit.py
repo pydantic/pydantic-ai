@@ -54,9 +54,6 @@ _LOGFIRE_SCORER_PREFIX = 'logfire.scorer.'
 _ATTR_SCORE_TYPE = 'logfire.scorer.score_type'
 _ATTR_RUN_ID = 'logfire.scorer.run_id'
 
-# Every attribute an event writes is `error.type` or falls under one of these prefixes, and baggage sets none of them.
-_RESERVED_BAGGAGE_PREFIXES = ('gen_ai.evaluation.', _LOGFIRE_SCORER_PREFIX)
-
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
 
@@ -122,10 +119,12 @@ def emit_otel_events(
 
 def _baggage_attrs() -> dict[str, Any]:
     """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved keys."""
+    # Every attribute an event writes is `error.type` or falls under one of these prefixes.
+    reserved_prefixes = ('gen_ai.evaluation.', _LOGFIRE_SCORER_PREFIX)
     return {
         str(k): v
         for k, v in baggage.get_all().items()
-        if not str(k).startswith(_RESERVED_BAGGAGE_PREFIXES) and str(k) != _ATTR_ERROR_TYPE
+        if not str(k).startswith(reserved_prefixes) and str(k) != _ATTR_ERROR_TYPE
     }
 
 
