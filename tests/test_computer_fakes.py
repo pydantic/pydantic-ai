@@ -1,4 +1,4 @@
-"""`FakeComputer`, the `computer` tool the model adapter tests use, runs calls the way Pydantic AI Harness's tool does."""
+"""`FakeComputer`, the `computer` tool the model adapter tests use, returns results in the shape Pydantic AI Harness's tool does."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def computer_result(messages: list[ModelMessage]) -> object:
     return part.metadata
 
 
-async def test_the_fake_computer_runs_actions_and_refuses_them_on_a_read_only_workspace() -> None:
+async def test_the_fake_computer_runs_actions_and_can_fail_them() -> None:
     computer = FakeComputer()
     result = await Agent(FunctionModel(look_then_click), capabilities=[computer, InMemoryProvider().capability()]).run(
         'Click it.'
@@ -30,8 +30,9 @@ async def test_the_fake_computer_runs_actions_and_refuses_them_on_a_read_only_wo
     assert computer.actions == [Click(x=1, y=2)]
     assert computer_result(result.all_messages()) == {'performed': 2}
 
-    computer = FakeComputer(native=False)
-    read_only = InMemoryProvider().capability(read_only=True)
-    result = await Agent(FunctionModel(look_then_click), capabilities=[computer, read_only]).run('Click it.')
+    computer = FakeComputer(native=False, fail_acting=True)
+    result = await Agent(FunctionModel(look_then_click), capabilities=[computer, InMemoryProvider().capability()]).run(
+        'Click it.'
+    )
     assert computer.actions == []
-    assert computer_result(result.all_messages()) == {'performed': 1, 'error': 'This workspace is read-only.'}
+    assert computer_result(result.all_messages()) == {'performed': 1, 'error': 'The action failed.'}
