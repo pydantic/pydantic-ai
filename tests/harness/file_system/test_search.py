@@ -587,6 +587,19 @@ async def test_a_glob_does_not_make_rg_walk_hidden_directories(tmp_path: Path, m
     assert len((await tools.grep('needle', path='.cache', glob='*', workspace=backend)).splitlines()) == 6
 
 
+async def test_a_hidden_path_an_ignore_file_whitelists_stays_hidden_with_rg(tmp_path: Path) -> None:
+    """`rg` prints a hidden path that an ignore file whitelists; it is still left out unless named."""
+    (tmp_path / '.ignore').write_text('!.env\n')
+    (tmp_path / '.env').write_text('needle\n')
+    (tmp_path / 'a.txt').write_text('needle\n')
+    tools = FileSystem[None](root_dir=tmp_path, tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.grep('needle', workspace=workspace) == 'a.txt:1:needle'
+    assert await tools.search_files('needle', workspace=workspace) == 'a.txt:1:needle'
+    assert await tools.list_files(workspace=workspace) == 'a.txt'
+
+
 async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
     """A hidden directory the glob names is searched, as the walker and the POSIX fallback already do."""
     (tmp_path / '.github' / 'workflows').mkdir(parents=True)
