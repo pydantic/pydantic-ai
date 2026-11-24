@@ -38,7 +38,7 @@ from __future__ import annotations
 import inspect
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from functools import cache
@@ -117,15 +117,12 @@ def _tokenize(text: str) -> set[str]:
     return set(_SEARCH_TOKEN_RE.findall(text.lower()))
 
 
-def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
-    """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc].
+def keywords_search(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    """Rank tools by how many of the query words appear in their name or description.
 
-    Score each tool by how many query keywords appear in its name or description, then
-    return matching names ordered by descending score. Used both as the default
-    algorithm when `ToolSearch` was constructed without an explicit strategy AND as
-    the explicit `strategy='keywords'` choice — the difference is that the explicit
-    choice routes through the same dispatch path as a user-supplied callable, which
-    enables client-executed-native wire on supporting providers (cache benefit).
+    Matching is case-insensitive and word by word. Returns the names of the tools that match at least one
+    word, best match first. This is the [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc] behind
+    `ToolSearch(strategy='keywords')`, so a custom search function can wrap it or fall back to it.
     """
     terms = _tokenize(' '.join(queries))
     if not terms:
@@ -246,28 +243,38 @@ def _discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[s
     discovered: dict[str, None] = {}
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolAvailabilityDeltaPart):
-                    discovered.update(dict.fromkeys(part.tools_added))
-                elif isinstance(part, ToolSearchReturnPart):
-                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
-                elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                    # Legacy histories carry discoveries on `metadata['discovered_tools']`
-                    # rather than typed content. Narrowing tool_name + metadata shape avoids
-                    # surfacing a user-defined `search_tools` whose metadata has no legacy
-                    # shape.
-                    try:
-                        validated = _LEGACY_METADATA_TA.validate_python(part.metadata)
-                    except ValidationError:
-                        continue
-                    discovered.update(dict.fromkeys(validated['discovered_tools']))
+            discovered.update(dict.fromkeys(_request_discoveries(msg)))
         elif isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, NativeToolSearchReturnPart):
-                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
+            discovered.update(dict.fromkeys(_response_discoveries(msg)))
         else:
             assert_never(msg)
     return tuple(discovered)
+
+
+def _request_discoveries(request: ModelRequest) -> Iterator[str]:
+    """The tool names a request's parts record as discovered, in order."""
+    for part in request.parts:
+        if isinstance(part, ToolAvailabilityDeltaPart):
+            yield from part.tools_added
+        elif isinstance(part, ToolSearchReturnPart):
+            yield from (match['name'] for match in part.discovered_tools)
+        elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
+            # Legacy histories carry discoveries on `metadata['discovered_tools']`
+            # rather than typed content. Narrowing tool_name + metadata shape avoids
+            # surfacing a user-defined `search_tools` whose metadata has no legacy
+            # shape.
+            try:
+                validated = _LEGACY_METADATA_TA.validate_python(part.metadata)
+            except ValidationError:
+                continue
+            yield from validated['discovered_tools']
+
+
+def _response_discoveries(response: ModelResponse) -> Iterator[str]:
+    """The tool names a response's native tool search returned, in order."""
+    for part in response.parts:
+        if isinstance(part, NativeToolSearchReturnPart):
+            yield from (match['name'] for match in part.discovered_tools)
 
 
 @dataclass(kw_only=True)

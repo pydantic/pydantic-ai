@@ -206,6 +206,20 @@ def _validate_operation_name(name: object) -> str:
     return name
 
 
+def durable_operation_dispatch(
+    ctx: RunContext[Any], capability_id: str | None, name: str
+) -> Callable[[RunContext[Any], tuple[Any, ...], dict[str, Any]], Awaitable[Any]] | None:
+    """The dispatcher the run installed for a capability's `@durable_operation(name)`, or `None` when it runs inline.
+
+    The one place that reads the run's dispatchers, so a caller that needs to know in advance whether
+    an operation leaves the workflow asks the same question `durable_operation` does.
+    """
+    operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+    if operations is None or capability_id is None:
+        return None
+    return operations.get((capability_id, name))
+
+
 def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
@@ -282,10 +296,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
             # The run installs one dispatcher per bound operation on every context it builds. A
             # context without them was never prepared by a run (or was rebuilt worker-side, past
             # the boundary already), so the call belongs inline.
-            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            dispatcher = (
-                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
-            )
+            dispatcher = durable_operation_dispatch(ctx, self.id, marker.name)
             if dispatcher is None:
                 result = await target.__get__(self, type(self))(*args, **kwargs)
             else:
@@ -416,8 +427,12 @@ def _capability_operation_schema(
     *,
     annotation_replacements: dict[str, Any],
 ) -> FunctionSchema:
+    # Only the validator is used, so field descriptions would go unread. Reading attribute docstrings is also slow on
+    # Python < 3.13, where Pydantic re-parses a dataclass's whole module for each one
+    # (https://github.com/pydantic/pydantic/issues/14309), and the `ModelRequestContextProjection` schema reaches every
+    # message type.
     if ctx_parameter is None and not annotation_replacements:
-        return function_schema(function, GenerateToolJsonSchema)
+        return function_schema(function, GenerateToolJsonSchema, attribute_docstrings=False)
 
     schema_target = _schema_target(function)
     schema_target.__annotations__ = {
@@ -447,7 +462,7 @@ def _capability_operation_schema(
     )
     if cache_key is not None and (cached := _FRAMEWORK_TYPED_SCHEMAS.get(cache_key)) is not None:
         return replace(cached, function=schema_target)
-    schema = function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
+    schema = function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False, attribute_docstrings=False)
     if cache_key is not None:
         _FRAMEWORK_TYPED_SCHEMAS[cache_key] = schema
     return schema

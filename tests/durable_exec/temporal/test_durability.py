@@ -157,6 +157,8 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ..override_rebind_cases import REBIND_CASES, RebindCase
+from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
@@ -411,6 +413,54 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: What is the capital of Mexico?'
+
+
+class _OverrideExtra(AbstractCapability[object]):
+    def get_instructions(self) -> str:
+        return 'extra'
+
+
+@workflow.defn
+class StackedOverrideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, added: Literal['extra', 'instrumentation']) -> str:
+        extra = _OverrideExtra() if added == 'extra' else Instrumentation(InstrumentationSettings())
+        with simple_durable_agent.override(capabilities=[*simple_durable_agent.root_capability.capabilities, extra]):
+            return (await simple_durable_agent.run(prompt)).output
+
+
+async def test_durability_override_capabilities_in_workflow(client: Client):
+    """Inside a workflow, stacking onto `root_capability.capabilities` keeps the bound `TemporalDurability`.
+
+    Re-binding it there would raise, as it cannot register activities once the workflow runs. What the override
+    adds follows the per-run rules: `Instrumentation` is allowed, and a capability with no registered activities
+    fails the workflow.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StackedOverrideDurableAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            StackedOverrideDurableAgentWorkflow.run,
+            args=['What is the capital of Mexico?', 'instrumentation'],
+            id=f'{StackedOverrideDurableAgentWorkflow.__name__}_instrumentation',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: What is the capital of Mexico?'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                StackedOverrideDurableAgentWorkflow.run,
+                args=['What is the capital of Mexico?', 'extra'],
+                id=f'{StackedOverrideDurableAgentWorkflow.__name__}_extra',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _OverrideExtra.' in str(
+        exc_info.value.cause
+    )
 
 
 # --- Durability with the `ModelFallback` capability ---
@@ -2468,6 +2518,85 @@ def test_durability_rejects_a_second_engine():
             name='duplicate_durability',
             capabilities=[TemporalDurability(), TemporalDurability()],
         )
+
+
+def test_durability_override_capabilities_must_keep_the_bound_durability():
+    """`override(capabilities=...)` refuses a list without the bound `TemporalDurability`, even outside a workflow.
+
+    The constructed `TemporalDurability` is not the bound copy the agent registered its activities with, so passing
+    it is refused too.
+    """
+    durability = TemporalDurability()
+    agent = Agent(_durability_fn_model, name='durability_override_keep', capabilities=[durability])
+    message = snapshot(
+        "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, the "
+        'item of `agent.root_capability.capabilities` that holds the bound `TemporalDurability` the agent '
+        'registered its durable activities with. A `TemporalDurability` you construct, or the bound one inside '
+        'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, for '
+        'example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+    )
+
+    with pytest.raises(UserError) as dropped:
+        with agent.override(capabilities=[_OverrideExtra()]):
+            pass
+    assert str(dropped.value) == message
+
+    with pytest.raises(UserError) as unbound:
+        with agent.override(capabilities=[durability, _OverrideExtra()]):
+            pass
+    assert str(unbound.value) == message
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
+        result = agent.run_sync('Hello')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'extra'
+
+
+def test_durability_override_capabilities_keeps_a_wrapped_durability():
+    """A durability capability behind a wrapper is kept when the wrapper is passed through."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_override_wrapped',
+        capabilities=[WrapperCapability(wrapped=TemporalDurability())],
+    )
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
+        pass
+
+    with pytest.raises(UserError, match='holds the bound `TemporalDurability`'):
+        with agent.override(capabilities=[_OverrideExtra()]):
+            pass
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(case: RebindCase):
+    """The bound `TemporalDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register its activities a second time. Temporal keeps no registry to observe that in, so
+    the test counts `_bind_for_agent` calls.
+    """
+    durability = TemporalDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    capabilities = case.capabilities(agent, bound)
+
+    with patch.object(
+        TemporalDurability,
+        '_bind_for_agent',
+        autospec=True,
+        side_effect=TemporalDurability._bind_for_agent,  # pyright: ignore[reportPrivateUsage]
+    ) as bind_for_agent:
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
+    assert bind_for_agent.call_count == 0
 
 
 def test_durability_from_agent_rejects_duplicates():
@@ -4680,6 +4809,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     assert root_span == snapshot(

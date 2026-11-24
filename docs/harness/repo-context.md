@@ -233,7 +233,7 @@ print(await pinned.authority_of('AGENTS.md'))
 
 A changed file never rises above the level the workspace already gives it, and files not in `accepted` keep the workspace's level. Files are compared when `pin_accepted_files` is called, not when they are read later in the run.
 
-The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Files you didn't write](../workspace.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
+The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Marking who wrote the files](../workspace-custom.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
 
 ## Cache cost
 

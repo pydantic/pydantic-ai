@@ -199,7 +199,7 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         'time-to-first-chunk telemetry, stamped when each attempt issues its request; nothing in the run reads it',
     ),
     (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_tool_calls', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
-    (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_final_result', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
+    (f'{CORE}/_agent_graph.py', 'final_tool_results_request', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
     (f'{CORE}/agent/__init__.py', '_synthetic_capability_id', 'uuid.uuid4'): (
         1,
         'a run-local key for an unnamed capability; every path that persists a capability key requires an explicit `id`',

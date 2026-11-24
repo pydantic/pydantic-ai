@@ -914,16 +914,32 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
 
     The newest message is always kept, since in a run it is the request being answered, so a
     *keep* of 0 keeps one. Returns 0 if trimming is unnecessary (no more messages than *keep*).
+    The tail also reaches back to the latest response when it names a workspace, as the next run
+    finds its workspace there.
     """
     keep = max(keep, 1)
     if len(messages) <= keep:
         return 0
 
-    target = len(messages) - keep
+    target = _keeping_workspace(messages, len(messages) - keep)
     for index in range(target, -1, -1):
         if _is_safe_cutoff(messages, index):
             return index
     return 0  # pragma: no cover
+
+
+def _keeping_workspace(messages: list[ModelMessage], cutoff: int) -> int:
+    """*cutoff*, moved back so the kept tail holds the latest response when it names a workspace.
+
+    The next run finds its workspace from that response's `workspace_ref`, so a tail of requests alone, such as
+    a large user turn after it, would move the conversation out of its workspace. The response is kept whatever
+    its size, and for a local workspace too: running in the wrong workspace is worse than a larger history.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, ModelResponse):
+            return index if index < cutoff and message.workspace_ref is not None else cutoff
+    return cutoff
 
 
 def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int:
@@ -964,7 +980,8 @@ def find_token_cutoff(
     A history with provider-reported usage is measured with `estimate_message_tokens`, so the
     suffix holds *target_tokens* as the provider counts them; one without falls back to the text
     estimate. Attached instructions do not count toward this message-content floor. A zero
-    target retains the legacy behavior below.
+    target retains the legacy behavior below. Either way the suffix also reaches back to the latest
+    response when it names a workspace, as the next run finds its workspace there.
     """
     if _has_reported_usage(messages):
         counts = estimate_message_tokens(messages, tokenizer)
@@ -988,7 +1005,7 @@ def find_token_cutoff(
                 lo = mid + 1
             else:
                 hi = mid
-        return _include_tool_dependencies(messages, max(0, lo - 1))
+        return _include_tool_dependencies(messages, _keeping_workspace(messages, max(0, lo - 1)))
     return _legacy_token_cutoff(messages, target_tokens, tail_tokens)
 
 
@@ -1012,7 +1029,7 @@ def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_
         candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
-    for index in range(candidate, -1, -1):
+    for index in range(_keeping_workspace(messages, candidate), -1, -1):
         if _is_safe_cutoff(messages, index):
             return index
     return 0  # pragma: no cover

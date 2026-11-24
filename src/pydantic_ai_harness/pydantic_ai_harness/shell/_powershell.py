@@ -1,9 +1,11 @@
 """The PowerShell side of `Job`, for a `'windows'` workspace, which has no `sh`, `setsid` or `kill`.
 
-The launcher writes the command to `command.ps1` in the job directory and starts the wrapper as a
-hidden PowerShell of its own. The wrapper publishes `status.json` as the `sh` one does, runs the
-command, copies its output into the log files byte for byte, and publishes the exit code when it
-ends. Stopping a job runs `stop.ps1`, which ends the wrapper's process tree with `taskkill`.
+The launcher writes the command to `command.ps1` and the wrapper to `supervisor.ps1` in the job directory,
+and starts the wrapper as a hidden PowerShell of its own. Each script reaches its PowerShell as a file, not
+on the command line, where antivirus software flags an `-EncodedCommand` launch. The wrapper publishes
+`status.json` as the `sh` one does, runs the command, copies its output into the log files byte for byte,
+and publishes the exit code when it ends. Stopping a job runs `stop.ps1`, which ends the wrapper's process
+tree with `taskkill`.
 """
 
 from __future__ import annotations
@@ -131,10 +133,11 @@ try {
 } catch { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Ignore; exit 125 }
 foreach ($log in $logs) { [IO.File]::WriteAllBytes((Join-Path $dir $log), [byte[]]@()) }
 [IO.File]::WriteAllText((Join-Path $dir 'command.ps1'), $script, [Text.UTF8Encoding]::new($true))
+[IO.File]::WriteAllText((Join-Path $dir 'supervisor.ps1'), $supervisor, [Text.UTF8Encoding]::new($true))
 [IO.File]::WriteAllText((Join-Path $dir 'launcher'), "$PID")
-$wrapper = Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidden -PassThru `
-  -ArgumentList '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', `
-  ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($supervisor)))
+$wrapper = Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidden -PassThru -ArgumentList (
+  '-NoLogo -NoProfile -NonInteractive -Command "& ([ScriptBlock]::Create([IO.File]::ReadAllText(''{0}'')))"' -f `
+  (Join-Path $dir 'supervisor.ps1').Replace("'", "''"))
 while (-not (Test-Path -LiteralPath (Join-Path $dir 'status.json'))) { Start-Sleep -Milliseconds 100 }
 [IO.File]::WriteAllText((Join-Path $dir 'launch.ready'), '')
 # Its start time tells the wrapper from a later process that reuses its PID, which Windows does soon.
@@ -143,7 +146,7 @@ while (-not (Test-Path -LiteralPath (Join-Path $dir 'status.json'))) { Start-Sle
 [IO.File]::WriteAllText((Join-Path $dir 'handle'), "$($wrapper.Id) -")
 [Console]::Out.Write("$($wrapper.Id) -")
 """
-"""Create the job directory, write the command to `command.ps1`, start the wrapper, and print `<pid> -`.
+"""Create the job directory, write the command and the wrapper to it, start the wrapper, and print `<pid> -`.
 
 Like the `sh` launcher, an exclusive launch exits 126 when the directory exists already and 125 when it cannot
 be created, and it returns once the wrapper has published its status. The `-` says there is no process group
