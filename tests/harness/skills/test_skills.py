@@ -546,6 +546,22 @@ class TestUntrustedWorkspaces:
             _loaded(tmp_path.resolve() / 'second', 'review', 'Second directions.'),
         ]
 
+    async def test_a_skill_read_again_keeps_its_librarys_inclusions(self, tmp_path: Path) -> None:
+        # `first` includes only `lint`, so the run starts with `second`'s `review`; reading `review` again mustn't
+        # bring in the `review` that `first` left out.
+        _write_skill(tmp_path / 'first', 'lint', description='Lint help.')
+        _write_skill(tmp_path / 'first', 'review', description='First review.', body='First directions.')
+        _write_skill(tmp_path / 'second', 'review', description='Second review.', body='Second directions.')
+        skills = _combined(Skills('first', include=['lint']), Skills('second', duplicate_names='keep_first'))
+        model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'review'}))
+
+        await Agent(model, capabilities=[skills]).run('go', workspace=_untrusted(tmp_path))
+
+        assert _tool_results(requests) == [
+            {'skills': {'lint': 'Lint help.', 'review': 'Second review.'}},
+            _loaded(tmp_path.resolve() / 'second', 'review', 'Second directions.'),
+        ]
+
     async def test_list_skills_shows_when_to_use_as_the_catalog_does(self, tmp_path: Path) -> None:
         _write_skill(
             tmp_path / 'skills',
