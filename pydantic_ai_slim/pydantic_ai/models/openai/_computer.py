@@ -61,7 +61,7 @@ def block_computer_calls(
     ]
 
 
-class _OpenAIActionModel(BaseModel, strict=True):
+class _ActionInput(BaseModel, strict=True):
     """Checks OpenAI's data strictly, without converting types. The SDK builds a response without validating it."""
 
 
@@ -94,78 +94,68 @@ def _key_from_openai(name: str) -> str:
     return _OPENAI_KEY_MAP.get(name.lower(), name.lower())
 
 
-_OpenAIKey = Annotated[str, AfterValidator(_key_from_openai)]
+_KeyName = Annotated[str, AfterValidator(_key_from_openai)]
 
 
-class _OpenAIPoint(_OpenAIActionModel):
+class _Point(_ActionInput):
     x: int
     y: int
 
 
-class _OpenAIPointerAction(_OpenAIActionModel):
+class _PointerAction(_ActionInput):
     x: int
     y: int
-    keys: list[_OpenAIKey] = []
+    keys: list[_KeyName] = []
     """Keys held during the action."""
 
 
-class _OpenAIClick(_OpenAIPointerAction):
+class _Click(_PointerAction):
     type: Literal['click']
     button: str
 
 
-class _OpenAIDoubleClick(_OpenAIPointerAction):
+class _DoubleClick(_PointerAction):
     type: Literal['double_click']
 
 
-class _OpenAIMove(_OpenAIPointerAction):
+class _Move(_PointerAction):
     type: Literal['move']
 
 
-class _OpenAIScroll(_OpenAIPointerAction):
+class _Scroll(_PointerAction):
     type: Literal['scroll']
     scroll_x: int
     scroll_y: int
 
 
-class _OpenAIDrag(_OpenAIActionModel):
+class _Drag(_ActionInput):
     type: Literal['drag']
-    path: list[_OpenAIPoint]
-    keys: list[_OpenAIKey] = []
+    path: list[_Point]
+    keys: list[_KeyName] = []
 
 
-class _OpenAIKeypress(_OpenAIActionModel):
+class _Keypress(_ActionInput):
     type: Literal['keypress']
-    keys: list[_OpenAIKey]
+    keys: list[_KeyName]
 
 
-class _OpenAIType(_OpenAIActionModel):
+class _Type(_ActionInput):
     type: Literal['type']
     text: str
 
 
-class _OpenAIWait(_OpenAIActionModel):
+class _Wait(_ActionInput):
     type: Literal['wait']
 
 
-class _OpenAIScreenshot(_OpenAIActionModel):
+class _Screenshot(_ActionInput):
     type: Literal['screenshot']
 
 
-_OpenAIAction = (
-    _OpenAIClick
-    | _OpenAIDoubleClick
-    | _OpenAIMove
-    | _OpenAIScroll
-    | _OpenAIDrag
-    | _OpenAIKeypress
-    | _OpenAIType
-    | _OpenAIWait
-    | _OpenAIScreenshot
-)
+_Action = _Click | _DoubleClick | _Move | _Scroll | _Drag | _Keypress | _Type | _Wait | _Screenshot
 """The OpenAI computer actions the `computer` tool can run. Each model has only the fields that are mapped."""
 
-_OPENAI_ACTION_ADAPTER: TypeAdapter[_OpenAIAction] = TypeAdapter(Annotated[_OpenAIAction, Field(discriminator='type')])
+_ACTION_ADAPTER: TypeAdapter[_Action] = TypeAdapter(Annotated[_Action, Field(discriminator='type')])
 
 
 def _map_computer_action(raw: Any) -> list[Any]:
@@ -175,38 +165,38 @@ def _map_computer_action(raw: Any) -> list[Any]:
     none of it runs. Sent as it is, a click without coordinates would be a valid click wherever the pointer is.
     """
     try:
-        action = _OPENAI_ACTION_ADAPTER.validate_python(raw)
+        action = _ACTION_ADAPTER.validate_python(raw)
     except ValidationError:
         return [{'unsupported_openai_action': raw}]
     match action:
-        case _OpenAIClick():
+        case _Click():
             button = 'middle' if action.button == 'wheel' else action.button
             return [{'type': 'click', 'x': action.x, 'y': action.y, 'button': button, 'modifiers': action.keys}]
-        case _OpenAIDoubleClick():
+        case _DoubleClick():
             return [{'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}]
-        case _OpenAIMove():
+        case _Move():
             # The tool can't hold keys during a move. Held keys go along, so the tool refuses the move instead of
             # running it without them.
             held = {'modifiers': action.keys} if action.keys else {}
             return [{'type': 'mouse_move', 'x': action.x, 'y': action.y, **held}]
-        case _OpenAIDrag():
+        case _Drag():
             path = [{'x': point.x, 'y': point.y} for point in action.path]
             return [{'type': 'drag', 'path': path, 'modifiers': action.keys}]
-        case _OpenAIScroll():
+        case _Scroll():
             return _map_scroll(action)
-        case _OpenAIKeypress():
+        case _Keypress():
             return [{'type': 'press_keys', 'keys': action.keys}]
-        case _OpenAIType():
+        case _Type():
             return [{'type': 'type_text', 'text': action.text}]
-        case _OpenAIWait():
+        case _Wait():
             return [{'type': 'wait'}]
-        case _OpenAIScreenshot():
+        case _Screenshot():
             return [{'type': 'screenshot'}]
         case _:
             assert_never(action)
 
 
-def _map_scroll(action: _OpenAIScroll) -> list[Any]:
+def _map_scroll(action: _Scroll) -> list[Any]:
     """Turn an OpenAI scroll into tool scrolls.
 
     OpenAI scrolls by pixels on both axes at once. The tool scrolls in one direction at a time, by wheel clicks.
@@ -223,7 +213,7 @@ def _map_scroll(action: _OpenAIScroll) -> list[Any]:
     return scrolls or [{'type': 'mouse_move', 'x': action.x, 'y': action.y}]
 
 
-def _scroll_on_axis(action: _OpenAIScroll, pixels: int, direction: str) -> dict[str, Any]:
+def _scroll_on_axis(action: _Scroll, pixels: int, direction: str) -> dict[str, Any]:
     """Build a scroll along one axis, in the wheel clicks nearest to the pixels asked for."""
     # Integer math, since a JSON integer can be larger than a float holds exactly.
     clicks = max(1, (abs(pixels) + _SCROLL_PIXELS_PER_CLICK // 2) // _SCROLL_PIXELS_PER_CLICK)
