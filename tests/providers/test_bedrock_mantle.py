@@ -350,6 +350,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_minimal_reasoning_effort': False,
             'tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
+            'supports_inline_system_prompts': True,
         }
     )
     # Compare against a direct genai-prices query so the test doesn't pin a data value.
@@ -368,6 +369,11 @@ def test_bedrock_mantle_profiles() -> None:
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'
+    # `gpt-oss-120b` on `/v1/responses` answers as if a mid-conversation `system` message weren't there, so it
+    # gets the `<system>` rendering; GPT-5.x keeps the native message.
+    assert (
+        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supports_inline_system_prompts', False) is False
+    )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'
     # Non-OpenAI and unknown models fall back to the default profile (best-effort).
     assert infer_model_profile('bedrock-mantle:anthropic.claude-sonnet-5') == DEFAULT_PROFILE

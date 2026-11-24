@@ -154,6 +154,11 @@ class AzureProvider(_OpenAISDKProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
+            if not model_name.startswith('gpt-oss'):
+                # A `system` message after a tool result is accepted, kept in place (the prompt-cache hit reaches
+                # past it) and followed on Azure OpenAI's Chat Completions and Responses APIs (checked live with
+                # `gpt-6-luna` and `gpt-6.1-sol` through the v1 API, 2026-11-24). gpt-oss on Azure is not checked.
+                base = merge_profile(base, ModelProfile(supports_inline_system_prompts=True))
 
         # Azure Chat Completions API doesn't support document input, and Responses WebSockets aren't verified on Azure.
         base = merge_profile(

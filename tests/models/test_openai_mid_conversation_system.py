@@ -10,6 +10,7 @@ send it as a `<system>` block in a user turn unless the model's profile sets `su
 from __future__ import annotations as _annotations
 
 import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -35,7 +36,11 @@ from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models import infer_model
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -114,6 +119,57 @@ async def test_openai_sends_a_native_system_message(
         for item in items
         if isinstance(item, dict)
     ] == LIVE_WIRE[api]
+
+
+def azure_gateway_provider(client: httpx2.AsyncClient) -> AzureProvider:
+    """Azure OpenAI's v1 API, reached through the Pydantic AI Gateway's `azure` route."""
+    gateway_url = os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.info/proxy')
+    return AzureProvider(
+        azure_endpoint=f'{gateway_url}/azure/openai/v1',
+        api_key=os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key'),
+        http_client=client,
+    )
+
+
+ROUTES_WITH_A_NATIVE_SYSTEM_MESSAGE: dict[str, Callable[[httpx2.AsyncClient], Model]] = {
+    # Chat Completions takes function tools on `gpt-6-luna` only with reasoning off.
+    'azure-chat': lambda client: OpenAIChatModel(
+        'gpt-6-luna', provider=azure_gateway_provider(client), settings={'thinking': False}
+    ),
+    'azure-responses': lambda client: OpenAIResponsesModel('gpt-6.1-sol', provider=azure_gateway_provider(client)),
+    'bedrock-mantle': lambda client: infer_model(
+        'bedrock-mantle:openai.gpt-5.6-luna',
+        lambda _: BedrockMantleProvider(
+            region_name='us-east-1',
+            api_key=os.getenv('AWS_BEARER_TOKEN_BEDROCK', 'mock-api-key'),
+            http_client=client,
+        ),
+    ),
+    'crusoe-gpt-oss': lambda client: OpenAIChatModel(
+        'openai/gpt-oss-120b',
+        provider=CrusoeProvider(api_key=os.getenv('CRUSOE_API_KEY', 'mock-api-key'), http_client=client),
+    ),
+}
+
+
+@pytest.mark.parametrize('route', list(ROUTES_WITH_A_NATIVE_SYSTEM_MESSAGE))
+async def test_routes_that_keep_the_native_system_message(
+    allow_model_requests: None, request_capture: RequestCapture, route: str
+):
+    """Providers that set `supports_inline_system_prompts` for these models send a `system` message after a tool result.
+
+    Each route accepts it and the model follows it: the recordings answer `BANANA`, which only that message asks for.
+    """
+    model = ROUTES_WITH_A_NATIVE_SYSTEM_MESSAGE[route](request_capture.client)
+
+    result = await Agent(model, instructions=INSTRUCTIONS, tools=[ping]).run(message_history=message_history())
+
+    assert result.output == 'BANANA'
+    [path] = request_capture.paths
+    items = request_capture.body(path)['messages' if path.endswith('/chat/completions') else 'input']
+    assert isinstance(items, list)
+    assert items[-1] == {'role': 'system', 'content': REMINDER}
+    assert '<system>' not in json.dumps(items)
 
 
 async def test_gpt_oss_on_a_compatible_endpoint_gets_the_announcement_first(

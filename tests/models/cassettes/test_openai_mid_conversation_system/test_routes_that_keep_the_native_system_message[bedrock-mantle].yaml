@@ -1,0 +1,149 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "722"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        model: openai.gpt-5.6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Call ping, then tell me what it returned.
+        - name: ping
+          arguments: "{}"
+          call_id: call_1
+          type: function_call
+        - type: function_call_output
+          call_id: call_1
+          output: pong
+        - role: system
+          content: Reply with exactly the word BANANA.
+        instructions: You are a test agent.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: ping
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: >-
+            Declared so each request carries the tool its history calls; the history
+            already holds the result.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "5370"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795553814
+        created_at: 1795553814
+        error: null
+        frequency_penalty: 0.0
+        id: resp_ozvavtpdpiutauikwijkqzoji4maalcy5plotmxbs76a644bl7jq
+        incomplete_details: null
+        instructions: You are a test agent.
+        max_output_tokens: null
+        max_tool_calls: null
+        metadata: {}
+        model: openai.gpt-5.6-luna
+        object: response
+        output:
+        - content: []
+          encrypted_content: >-
+            rsn_eyJhbGciOiJFUzI1NiIsInR5cCI6ImFyY2grandzIiwicHJvZmlsZSI6ImFyY2gtMSIsImlzcyI6ImF3cyIsImtpZCI6ImdaNTBKalN1OG4zQmdYNFNIcFdjSWgwc1loZXdXN3EtU2hkcGUyOWEzMEUiLCJjZXJ0aWZpY2F0ZSI6ImV5SmhiR2NpT2lKRlV6STFOaUlzSW5SNWNDSTZJbUZ5WTJndGMybG5ibVZ5SzJwM2N5SXNJbkJ5YjJacGJHVWlPaUpoY21Ob0xURWlMQ0pwYzNNaU9pSmhkM01pTENKcmFXUWlPaUl5VG5OSGVuWm9hMnRXZFdkMFgwVnJOVmhoVmpOTVF6SXlWekU1TVdjNWFVWXpURXB3Vm1abmRtSm5JbjAuZXlKcWQyc2lPbnNpYTNSNUlqb2lSVU1pTENKamNuWWlPaUpRTFRJMU5pSXNJbmdpT2lKelJEaFRSVTE2YUdzMWVqWlRibXBpYmsxaGVFeFpTSG96WkhScFlrdHBkR3RVT1VkamVYUnFTMUkwSWl3aWVTSTZJblEyYzJzdFEweG5VWEJaYVU0dGIwaG9NbmhaZEdOYVVYTnBlbWRoWnpZNGVqRkRXVUpWWnpGMFZra2lMQ0oxYzJVaU9pSnphV2NpTENKaGJHY2lPaUpGVXpJMU5pSXNJbXRwWkNJNkltZGFOVEJLYWxOMU9HNHpRbWRZTkZOSWNGZGpTV2d3YzFsb1pYZFhOM0V0VTJoa2NHVXlPV0V6TUVVaWZTd2ljSEp2ZG1sa1pYSnpJanBiSW05aGFTSmRMQ0ozY21sMFpWOW1jbTl0SWpveE56azFOVEEzT0RBNExDSjNjbWwwWlY5MWJuUnBiQ0k2TVRjNU5UVTVOREl3T0N3aWNtVmhaRjkxYm5ScGJDSTZNVGc1TURrMU1EUXdNSDAudGpsdmhtSUNpSlFYeU1fUmZHS3R0RDNNdFlTUm03VXUxMW9WdUFtblhHdDhFVlc1eDZGblJqTDVKSTFFdnNPT1h6SGJ2Qk02ZVlyd2gxSmZUaXdUdWciLCJpc3NfbWV0YSI6eyJyb3V0aW5nIjoiSUFEOCJ9fQ.eyJwcm90ZWN0ZWQiOiJleUppY21GdVkyaGZhV1FpT2lKTWN6Uk5VMTlzTUU1MWIxRnZTWE5QT0ZGRmJIZFJJaXdpYzJGc2RDSTZJbXhuVkZsQlExZFhNbkpqWlhSSVExTk1XRmN3WW5sak5XMVRXR3hpTURWSGNIbFRabVl6UlZWR1pHc2lMQ0pqYjI1MFpXNTBYMjV2Ym1ObElqb2lVM1ZyV1djd1MweGpOVzVtZEhwb1JDSXNJbkpsWTJsd2FXVnVkSE1pT2x0N0luQnNZWFJtYjNKdElqb2lZWGR6SWl3aWEybGtJam9pV1VOaWRuUjROVU5uT0hCS1VTMU9MWGxNUkVSbGIzcGxOamRSVjB4bE5Fa3RURE5ZU0VwVFJXOXlSU0lzSW1WdVkzSjVjSFJsWkY5aWNtRnVZMmdpT2lKSFpsbGtia3c1Ym1KVGRYUnJURnBvWXpacmMxOXRiRkZOWm5GeVlVdzBPV015Y1VacFJUazJjWEJoVFMxMlIzbGtaRVoyWTBObGNYWTNZVEpRUjJNMmEyMU9VVWhsUlZGMllUTmhkVEp6Y1hrNVVHTkRiMUZCYW1OclJrZDBhR3RGZEhscWRXSXRkbVZmVDE4ME1IRnNNVTFMTlVwcFQyZDFjRFI2WDBkdmJtOHlaVmhLYmtsa2FqTlFNMk41T1hGeGFGcDZZMUJpZDNCRGVXcEpUbnBSZVVNMFFuWnNhWFpKZW0xMmQyMDFaM2RTTldSZllXSmxWaTE1YmtabGNVbGZVamxxWHpOSkxXdHBWVWRTTFdaRVZIcEVTR1phZEZkTGNuVTJVVlp4ZUdsTFFsSlRZVkJHY0VKdE9ISTNXbXBXVUZFeloydHFUM2RHUkdrdGJIUlFSMXBUZWs5VFgwZHFla2MxZVVsSlNUWlJOM3B3UWxsMGFFdE9VRE5WTm5kcmQxQnFORXRYU2sxWk1USjBiRTB0ZVUxR1lVVndWRGN4ZWpGMmJHMHlRakZMVVZOSU1tTkhZMWh5VWxsdloxSndka0pxZDNCUGVsTnZNRVo1UTNWRWNVeENPVlpCWDBKbFJHRkZMVUZSZG5ZNFRsRk9lRFY0Ulc1UmNuQmlkMGRHWmtSTWQzbHpVVVJLVGs0MmIyWkxaV2cwUmxscFRFUk9hMjU1ZDFGNVlWQnpRVUpZWm5KRFNHbDFNRFpvTFRSMFFsUnFTalpvZUVOQmJXcEZZV0ZrUVhObVFXcEhUVFI2ZWtWa1J6RmZPR3M0UW1kUVNWOTFTVXAyWmxkMFgwbHZhbW80YmpseGFUaE1kVVYzVFZCbVQwdFhZV3huUkVkV09EaEhUM3BhVUNKOVhYMCIsImNpcGhlcnRleHQiOiJMXzREaWJvRlUxZ2ZCRHVEVklrRExtRGJyTHZ6S19remMxSXlMVVFkSnFlS19mZE9XY0hHeWs5bnk5eUs2ZnF6ZzdfX1VFd1dBZjd4bHpQOHNTdnpuLVAyZWhzempRdjRodXZtbjVpcW9XUTJMdFhWWDd2dWVHZlhOTkh3cDY0TF9sd0hGSTFzVGhsQkN4ODZfdE1YcjhhQ2dib2lfakMwVkRfOUs1WkJoUjBEcmwxaExiM0pwamdUaXBmZVhHdEFsNldwNzdRWTFkNzRzeURLT0JTaTRjMU1rbWgtS3NoaHJSZFA5NWZmNGlmWjNIb1o0WkZ6cW1oLTBCREUtUVJLR3dzNF9FNWd2c3RnaWlQVG9taW85Rjh3Z1g2VU50V3JFLS1BNnAwYWhSdy1nVW1adVBnMGZiQ3BDVWRQWDVpMkxjUGFHQUE3X3ZfZXlfbHZCOUlrbXRxQ2FWZXZ5TzRRaXVmNWRFS0c3Qlo3U1EzcTI2TkdnVjBTMWR1V2pXbmlDSEJSSnpjRV9mVkJ5Z19UemJnNWo5ZjdOamNvbHNJd3ZEekNMNUNBMFZPM292MGlMVkdLRUx1UU9aNEFZM1ZsdnRoZ0hSRlhJVHFqU25BZU5ZVDJHN1VnOG5OUWd3WTVrdmJ5bnVXX2J0cVdzdW51RTJsd09zejgzNGxMSWJ6TkFid2JmRHZyQmpFR2liTUpnc29CbVdVaGI2RVBuYTE5YTF3MnZ1RWZvUktVamNJeklCYVlwS3lIeC13QkVoT2tMdy05WTZYemxsSmtXc3ZTOC12UTBWVmh4Nnk0RFhBTldMcVNnZVMteE9KaUk4X3llUlZMRUFfdFZFekZzYlo2bXpNMl9YN0tGVmZuNWxhSi01NUFpeWgyUy1aZ3pKckdmSDFHbzFKMUs5VXJyZXJSY1owdTJkNW00a01yMGFQOERLSlhDMWR3LWFiWGZEWDlUTndoWXNZd3Y0TGdiSVpCbHlPOGNWOEZwRWRJZVgtSzBSNjc4eVRUNTc5Vnl3RmV0VDByYVZzU3hpaGVNcWcifQ.C_nMIxiFmuXLy7d78j-0XattVb1I-hvD_OQtSnQqtHUiDIns54vAA3QbsnXY17rqh0UnQPOXmLtQp3Za39TgEg
+          id: rs_4e42706f862c575290204a05c7bda6d2
+          summary: []
+          type: reasoning
+        - content:
+          - annotations: []
+            logprobs: []
+            text: BANANA
+            type: output_text
+          id: msg_0a35558f45715c29a1354a4741d21293
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          summary: null
+          effort: medium
+          context: all_turns
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tools:
+        - description: >-
+            Declared so each request carries the tool its history calls; the history
+            already holds the result.
+          name: ping
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 106
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 20
+          output_tokens_details:
+            reasoning_tokens: 12
+          total_tokens: 126
+        user: null
+        moderation: null
+  recorded_at: 2026-11-24T20:56:54.809974+00:00

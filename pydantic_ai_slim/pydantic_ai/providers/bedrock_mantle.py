@@ -72,6 +72,11 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # provider error.
         supported_native_tools=frozenset(),
     )
+    if interface == 'openai-responses':
+        # GPT-5.x on `/openai/v1` accepts a `system` message after a tool result, keeps it in place (the prompt-cache
+        # hit reaches past it) and follows it, on Responses and Chat Completions (checked live with `gpt-5.6-luna`,
+        # 2026-11-24). GPT-OSS on `/v1/responses` stays off: `gpt-oss-120b` answers as if the message weren't there.
+        mantle_profile['supports_inline_system_prompts'] = True
     if interface == 'responses':
         # Mantle's `/v1/responses` endpoint rejects `tool_choice='required'` for GPT-OSS ("Supported options:
         # ["auto"]", verified live on gpt-oss-120b), while the Chat Completions endpoint accepts it for GPT-OSS

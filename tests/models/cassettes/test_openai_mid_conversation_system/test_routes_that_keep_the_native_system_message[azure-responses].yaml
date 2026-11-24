@@ -1,0 +1,221 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://gateway.pydantic.info/proxy/azure/openai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "714"
+      content-type:
+      - application/json
+      host:
+      - gateway.pydantic.info
+    body:
+      type: json
+      content:
+        model: gpt-6.1-sol
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Call ping, then tell me what it returned.
+        - name: ping
+          arguments: "{}"
+          call_id: call_1
+          type: function_call
+        - type: function_call_output
+          call_id: call_1
+          output: pong
+        - role: system
+          content: Reply with exactly the word BANANA.
+        instructions: You are a test agent.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: ping
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: >-
+            Declared so each request carries the tool its history calls; the history
+            already holds the result.
+          strict: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000
+      apim-request-id:
+      - e72be4fa-8556-43ee-b88e-efba3b9c1a26
+      azureai-fe-is-streaming:
+      - "False"
+      azureai-fe-offer-type:
+      - paygo
+      content-length:
+      - "2998"
+      content-type:
+      - application/json
+      logfire-ai-gateway-cost:
+      - 0.000272USD
+      pydantic-ai-gateway-active-provider:
+      - azure
+      pydantic-ai-gateway-price-estimate:
+      - 0.0003USD
+      skip-error-remapping:
+      - "true"
+      strict-transport-security:
+      - max-age=63072000
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: resp_054206fc473c8f9b006b05fa14c2ec819090ee9b56df398d0c
+        object: response
+        created_at: 1795553812
+        status: completed
+        access_programs: null
+        background: false
+        completed_at: 1795553814
+        content_filters:
+        - blocked: false
+          source_type: prompt
+          content_filter_raw: []
+          content_filter_results:
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+            jailbreak:
+              detected: false
+              filtered: false
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 111
+            check_offset: 0
+        - blocked: false
+          source_type: completion
+          content_filter_raw: []
+          content_filter_results:
+            protected_material_text:
+              detected: false
+              filtered: false
+            protected_material_code:
+              detected: false
+              filtered: false
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 6
+            check_offset: 0
+        error: null
+        frequency_penalty: 0
+        incomplete_details: null
+        instructions: You are a test agent.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-sol
+        moderation: null
+        output:
+        - id: msg_054206fc473c8f9b006b05fa15c05c8190a4c7c999d10855f2
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: BANANA
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: scrubbed
+        service_tier: default
+        store: true
+        temperature: 1
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Declared so each request carries the tool its history calls; the history
+            already holds the result.
+          name: ping
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 106
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 6
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 112
+          logfire_ai_gateway:
+            cost: "0.000272"
+          pydantic_ai_gateway:
+            cost_estimate: "0.000272"
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-24T20:56:54.136446+00:00
