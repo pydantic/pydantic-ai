@@ -24,7 +24,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     WrapRunHandler,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelOverloadedError
+from pydantic_ai.exceptions import ModelHTTPError, ModelOverloadedError
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -139,12 +139,12 @@ def _configured_model_overloaded(error: Exception) -> bool:
     `cli.RATE_LIMIT_RETRY_SECS`, as any transient 429.
     Authentication errors, rate and plan limits, and an overloaded fallback keep failing the run with their own error.
     """
-    if _model is None or not isinstance(error, ModelAPIError) or error.model_name != _model.model_name:
+    if _model is None or not isinstance(error, ModelHTTPError) or error.model_name != _model.model_name:
         return False
-    code = cli.zai_error_code(error.body) if isinstance(error, ModelHTTPError) else None
+    code = cli.zai_error_code(error.body)
     if not isinstance(error, ModelOverloadedError) and code != '1305':
         return False
-    reason = f'HTTP {error.status_code}' if isinstance(error, ModelHTTPError) else 'stream error event'
+    reason = f'HTTP {error.status_code}'
     if code:
         reason += f', Z.ai code {code}'
     print(
