@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
-from opentelemetry.trace import NoOpTracer, get_current_span
+from opentelemetry.trace import NoOpTracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
@@ -89,10 +89,10 @@ def deserialize_run_context(
     # A context that didn't carry the run's content flag leaves the activity untraced, as `ctx`-based spans are.
     if 'trace_include_content' not in ctx.__dataclass_fields__:
         return ctx
-    if settings is not None and get_current_span().is_recording():
+    if settings is not None:
         # Workspace calls in the activity have no `ctx` to trace with, so publish the run's telemetry for them,
-        # on the tool's own tracer (a subclass may have restored its own).
-        # They capture content only if both the run and this worker do.
+        # on the tool's own tracer (a subclass may have restored its own), whether or not the activity itself
+        # is traced, as the tool's own spans are. They capture content only if both the run and this worker do.
         publish_run_telemetry(ctx.tracer, include_content=ctx.trace_include_content and settings.include_content)
     return ctx
 
