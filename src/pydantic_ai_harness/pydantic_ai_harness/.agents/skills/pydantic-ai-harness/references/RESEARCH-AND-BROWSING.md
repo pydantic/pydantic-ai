@@ -413,13 +413,12 @@ One `computer` tool. The model calls it with a list of mouse and keyboard action
 a model that accepts images. Without a display, the run ends with `UserError`; a model that can't read images gets a
 note in place of each screenshot.
 
-```python {test="skip" lint="skip"}
+```python {test="skip"}
 from pydantic_ai import Agent
 
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerContainer
 
-# `my_desktop_sandbox`: a capability whose workspace has a display (`SupportsDisplay`).
-agent = Agent('test', capabilities=[my_desktop_sandbox, ComputerUse()])
+agent = Agent('test', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 ```
 
 Fields:
