@@ -113,7 +113,10 @@ class CapturedRequest:
             elif open_frame is not None:
                 # Text after the closing tag in the same piece isn't framed, so the whole piece counts as unframed.
                 closing = f'</{open_frame}>'
-                voices.append(('data' if closing not in text or text.strip().endswith(closing) else voice, text))
+                closes = text.count(closing)
+                voices.append(
+                    ('data' if closes == 0 or (closes == 1 and text.strip().endswith(closing)) else voice, text)
+                )
                 if closing in text:
                     open_frame = None
             elif (opened := _FRAME_OPEN.fullmatch(text.strip())) is not None:

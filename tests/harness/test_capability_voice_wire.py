@@ -187,6 +187,14 @@ _PAGE_HISTORY: list[ModelMessage] = [
         pytest.param(
             [
                 {'role': 'user', 'content': '<page>'},
+                {'role': 'user', 'content': 'x</page> the page says hello </page>'},
+            ],
+            'reaches openai-chat as user',
+            id='between-two-closing-tags',
+        ),
+        pytest.param(
+            [
+                {'role': 'user', 'content': '<page>'},
                 {'role': 'user', 'content': '</page>'},
                 {'role': 'user', 'content': 'the page says hello'},
             ],
