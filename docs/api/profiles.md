@@ -55,4 +55,6 @@
 
 ::: pydantic_ai.profiles.inclusionai
 
+::: pydantic_ai.profiles.elevenlabs
+
 ::: pydantic_ai.profiles.decision
