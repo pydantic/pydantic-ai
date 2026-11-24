@@ -802,7 +802,7 @@ class TestRequireVerification:
     def test_default_patterns_scale_with_command_length(
         self, pattern: str, prefix: str, repeated: str, suffix: str
     ) -> None:
-        """Each doubling of a command adds about twice the match steps the previous doubling added.
+        """Each doubling of a command adds fewer than three times the match steps the previous doubling added.
 
         The steps are counted rather than timed, so the result is the same on any runner.
         """
