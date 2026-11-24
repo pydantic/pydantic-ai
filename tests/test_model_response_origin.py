@@ -1,15 +1,15 @@
-"""The `origin` an agent run stamps on its model-stream events, and its wire form.
+"""The `origin` an agent run stamps on its model-stream events.
 
-Durable execution engines' execution attempts are tested in their own suites, like `tests/durable_exec/temporal/`.
+Not VCR tests: `origin` is framework-side metadata that no provider response carries, so a recording can't verify
+the stamping, and no provider can be made to fail before its first event on cue for a fallback to move on from.
+Durable execution engines' execution attempts are tested in their own suites, like `tests/durable_exec/temporal/`,
+and the wire form of `origin` in `tests/test_messages.py`.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import replace
 
-import pydantic
-import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import (
@@ -21,7 +21,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     TextPart,
-    TextPartDelta,
 )
 from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.exceptions import ModelAPIError
@@ -100,44 +99,3 @@ def test_supersedes():
     assert not first.supersedes(first)
     assert not ModelResponseOrigin(run_id='run', run_step=2).supersedes(first)
     assert not ModelResponseOrigin(run_id='other', run_step=1, attempt=2).supersedes(first)
-
-
-_EVENTS = pydantic.TypeAdapter(AgentStreamEvent)
-
-
-@pytest.mark.parametrize(
-    'event',
-    [
-        PartStartEvent(index=0, part=TextPart(content='Hi')),
-        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' there')),
-        PartEndEvent(index=0, part=TextPart(content='Hi there')),
-        FinalResultEvent(tool_name=None, tool_call_id=None),
-    ],
-    ids=lambda event: event.event_kind,
-)
-def test_origin_round_trips(event: PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent):
-    """An event with an `origin` round-trips through `AgentStreamEvent`, and one without serializes without the key."""
-    assert 'origin' not in _EVENTS.dump_python(event, mode='json')
-
-    event = replace(event, origin=ModelResponseOrigin(run_id='run', run_step=3, attempt=2, execution_attempt=4))
-    serialized = _EVENTS.dump_python(event, mode='json')
-    assert serialized['origin'] == {'run_id': 'run', 'run_step': 3, 'attempt': 2, 'execution_attempt': 4}
-    assert _origin(_EVENTS.validate_python(serialized)) == event.origin
-
-
-def test_origin_is_left_out_of_equality_and_repr():
-    """Events compare and print as they did before `origin` existed, so identical streams of two runs compare equal."""
-    event = PartStartEvent(index=0, part=TextPart(content='Hi'))
-    stamped = replace(event, origin=ModelResponseOrigin(run_id='run', run_step=1))
-    assert stamped == event
-    assert repr(stamped) == repr(event) == "PartStartEvent(index=0, part=TextPart(content='Hi'))"
-
-
-def test_events_without_origin_serialize_as_before():
-    """An event without an `origin` serializes byte for byte as it did before the field existed."""
-    assert _EVENTS.dump_json(PartStartEvent(index=0, part=TextPart(content='Hi'))) == snapshot(
-        b'{"index":0,"part":{"content":"Hi","id":null,"provider_name":null,"provider_details":null,"citations":null,"part_kind":"text"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
-    )
-    assert _EVENTS.dump_json(FinalResultEvent(tool_name=None, tool_call_id=None)) == snapshot(
-        b'{"tool_name":null,"tool_call_id":null,"event_kind":"final_result"}'
-    )
