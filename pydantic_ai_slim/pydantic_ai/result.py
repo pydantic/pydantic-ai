@@ -548,9 +548,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return True
 
     def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
-        """The event, stamped with the origin of the response it came from unless it already has one."""
-        if event.origin is not None or (run_id := self._run_ctx.run_id) is None:
-            return event
+        """The event, stamped with the origin of the response it came from."""
+        run_id = self._run_ctx.run_id
+        assert run_id is not None, 'An agent run always has a `run_id`.'
         return replace(
             event,
             origin=_messages.ModelResponseOrigin(run_id=run_id, run_step=self._run_ctx.run_step, attempt=self._attempt),
