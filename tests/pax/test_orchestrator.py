@@ -1,6 +1,6 @@
-"""The web UI's orchestrator and its tools, running a session in each workspace: a live session of the same CLAI.
+"""The web UI's orchestrator and its tools, running a session in each workspace: a live session of the same Pax.
 
-The parent CLAI serves its live sessions as `pax --web` does, so a workspace's session is built in its
+The parent Pax serves its live sessions as `pax --web` does, so a workspace's session is built in its
 checkout, runs the workspace model below, and is followed in-process as a page watching it would.
 """
 
@@ -91,7 +91,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / 'project'
     repo.mkdir()
     git(repo, 'init', '-b', 'main')
-    git(repo, 'config', 'user.name', 'CLAI Test')
+    git(repo, 'config', 'user.name', 'Pax Test')
     git(repo, 'config', 'user.email', 'clai@example.com')
     (repo / 'app.py').write_text('print("hi")\n')
     git(repo, 'add', '.')
@@ -125,7 +125,7 @@ def child_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 
 async def streamed(response: ModelResponse) -> AsyncIterator[str | DeltaToolCalls]:
-    """`response`, streamed, as CLAI and the orchestrator request it."""
+    """`response`, streamed, as Pax and the orchestrator request it."""
     for part in response.parts:
         if isinstance(part, TextPart):
             yield part.content
@@ -146,7 +146,7 @@ class Parent:
     blocked: anyio.Event
     """Set once the workspace model's `block` tool runs."""
     built: list[Path]
-    """The folders the sessions CLAI opened beside the launch session were built in."""
+    """The folders the sessions Pax opened beside the launch session were built in."""
 
     @property
     def service(self) -> WebService:

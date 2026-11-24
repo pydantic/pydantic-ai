@@ -147,6 +147,7 @@ def test_profile() -> None:
             'supports_webrtc': False,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,
+            'supports_appending_voice_instructions': False,
             'async_tool_call_mode': 'never',
             'supports_tool_return_schema': False,
             'supported_native_tools': frozenset(),

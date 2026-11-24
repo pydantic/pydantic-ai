@@ -48,7 +48,7 @@ class RenderProvider:
 
     def missing(self) -> str | None:
         if find_spec('render') is None:
-            return "Render support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[render]'."
+            return "Render support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[render]'."
         if saved_key(KEY_NAME) is None or saved_key(WORKSPACE_KEY_NAME) is None:
             return (
                 f'Add your Render API key in /keys as {KEY_NAME}, and the tea-... ID of a workspace with sandboxes '

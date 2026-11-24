@@ -2,20 +2,39 @@
 
 import asyncio
 import io
+import re
 from typing import IO, Literal
 
+import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
-from termflow.stream import SmoothWriter
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
+from pydantic_ai import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPart,
+)
 from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.file_system import FileEditedEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import color_system, render_markdown, thinking_heading
+from pydantic_ai_pax.ui.rendering.rendering import (
+    LinkOutput,
+    PartWriter,
+    color_system,
+    render_markdown,
+    thinking_heading,
+)
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -25,7 +44,7 @@ async def test_intermediate_text_flushes_before_tool_arguments() -> None:
     await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
     assert 'Working on it.' in output.getvalue()
     assert output.getvalue().endswith('\n\n')
-    assert 'CLAI' not in output.getvalue()
+    assert 'Pax' not in output.getvalue()
     before = output.getvalue()
     await renderer.finish()
     assert output.getvalue() == before
@@ -44,10 +63,90 @@ async def test_tools_have_one_line_with_blank_separators(show_tool_output: bool)
     assert output.getvalue() == '● shell\n\n● write_file\n\n● shell\n\n'
 
 
+MIXED_TURN = """\
+I will look first.
+
+● shell ls
+  ⎿ exit 0
+
+● edit_file a.py
+
+-x = 1
++x = 2
+
+deploy: staging ok
+
+● lint path="a.py"
+
+● read_file a.py
+
+The new code:
+
+python ─────────────────────────────────────────
+x = 2
+────────────────────────────────────────────────
+
+Done.
+
+"""
+
+
+@pytest.mark.parametrize('terminal', [False, True])
+async def test_one_blank_row_between_every_block_of_a_mixed_turn(terminal: bool) -> None:
+    """Diffs, plugin output and code fences each get one blank row before and after."""
+    output = io.StringIO()
+    console = Console(file=output, width=48, force_terminal=terminal, color_system=None)
+
+    def deploy(event: AgentStreamEvent) -> Text | None:
+        deploying = isinstance(event, FunctionToolCallEvent) and event.part.tool_name == 'deploy'
+        return Text('deploy: staging ok') if deploying else None
+
+    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[deploy], smooth=False)
+
+    async def text(index: int, content: str) -> None:
+        await renderer.on_stream_event(PartStartEvent(index=index, part=TextPart(content)))
+        await renderer.on_stream_event(PartEndEvent(index=index, part=TextPart(content)))
+
+    def call(name: str, call_id: str, **args: str) -> FunctionToolCallEvent:
+        return FunctionToolCallEvent(part=ToolCallPart(name, args, tool_call_id=call_id))
+
+    await text(0, 'I will look first.\n')
+    await renderer.on_stream_event(call('shell', 'a', command='ls'))
+    await renderer.on_stream_event(CommandStartedEvent(tool_call_id='a', command='ls', pid=1))
+    await renderer.on_stream_event(
+        CommandFinishedEvent(tool_call_id='a', pid=1, output_path='/o', status_path='/s', exit_code=0, truncated=False)
+    )
+    await renderer.on_stream_event(call('edit_file', 'b', path='a.py'))
+    await renderer.on_stream_event(
+        FileEditedEvent(
+            tool_call_id='b',
+            root_dir='/r',
+            path='a.py',
+            diff='--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n',
+            truncated=False,
+            content_hash='h',
+        )
+    )
+    await renderer.on_stream_event(call('deploy', 'c'))
+    await renderer.on_stream_event(call('lint', 'd', path='a.py'))
+    await renderer.on_stream_event(call('read_file', 'e', path='a.py'))
+    await text(1, 'The new code:\n```python\nx = 2\n```\nDone.\n')
+    await renderer.finish()
+    if terminal:
+        # The terminal diff is Termflow's own rendering, which drops the file and hunk headers.
+        rows = re.sub(r'\x1b\[[0-9;]*m', '', output.getvalue())
+        assert rows == MIXED_TURN.replace('-x = 1\n+x = 2', '- x = 1\n+ x = 2')
+    else:
+        assert output.getvalue() == MIXED_TURN.replace(
+            '-x = 1\n+x = 2', '--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2'
+        )
+
+
 async def test_long_tool_name_does_not_wrap() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=20), stop_loading=lambda: None)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(tool_name='a' * 100, args='{}')))
+    await renderer.finish()
     assert len(output.getvalue().splitlines()) == 2
     assert output.getvalue().endswith('\n\n')
 
@@ -120,6 +219,35 @@ async def test_burst_is_queued_then_drained() -> None:
     assert output.getvalue() == before
 
 
+@pytest.mark.parametrize('part', [TextPart(content='x' * 60 + '\n'), ThinkingPart(content='x' * 60 + '\n')])
+async def test_part_end_writes_queued_text_at_once(
+    part: TextPart | ThinkingPart, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tool line must not wait for the smoother to type out the rest of the part."""
+    writes: list[str] = []
+
+    # A tick an hour apart: only the first can run before the part ends, so the count does not depend on the clock.
+    def make_writer(self: StreamRenderer, output: IO[str]) -> PartWriter:
+        return PartWriter(LinkOutput(output=output), tick_interval=3600, catch_up_seconds=0.5, min_chars_per_tick=1)
+
+    monkeypatch.setattr(StreamRenderer, '_make_writer', make_writer)
+
+    class ObservedOutput(io.StringIO):
+        def write(self, text: str) -> int:
+            writes.append(text)
+            return super().write(text)
+
+    output = ObservedOutput()
+    renderer = StreamRenderer(Console(file=output, width=200, force_terminal=True), stop_loading=lambda: None)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await renderer.on_stream_event(PartStartEvent(index=0, part=part))
+        await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
+    counts = [text.count('x') for text in writes if 'x' in text]
+    # At most the writer's first tick, then the rest in one write.
+    assert sum(counts) == 60
+    assert len(counts) <= 2
+
+
 async def test_abort_discards_pending_output() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
@@ -129,7 +257,8 @@ async def test_abort_discards_pending_output() -> None:
     assert 'Discard this' not in output.getvalue()
 
 
-async def test_cancel_during_drain_stops_writer() -> None:
+async def test_abort_while_typing_stops_writer() -> None:
+    """Esc while a part is still being typed drops the rest; a part that ends writes it at once instead."""
     writing = asyncio.Event()
 
     class ObservedOutput(io.StringIO):
@@ -141,13 +270,11 @@ async def test_cancel_during_drain_stops_writer() -> None:
     output = ObservedOutput()
     renderer = StreamRenderer(Console(file=output, width=20000, force_terminal=True), stop_loading=lambda: None)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='x' * 10000 + '\n')))
-    task = asyncio.create_task(renderer.finish())
     await writing.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
     await renderer.abort()
-    assert output.getvalue().count('x') < 10000
+    shown = output.getvalue().count('x')
+    await renderer.finish()
+    assert 0 < shown == output.getvalue().count('x') < 10000
 
 
 async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -156,16 +283,16 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
 
     def writer(
         target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
-    ) -> SmoothWriter:
+    ) -> PartWriter:
         observed.append((tick_interval, catch_up_seconds, min_chars_per_tick))
-        return SmoothWriter(
+        return PartWriter(
             target,
             tick_interval=tick_interval,
             catch_up_seconds=catch_up_seconds,
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_ai_pax.ui.rendering.rendering.PartWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds
@@ -186,9 +313,10 @@ def _rows(surface: PromptSurface, *, width: int) -> list[str]:
 async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_theme() -> None:
     surface = PromptSurface(output=io.StringIO(), size=lambda: (120, 24))
     console = Console(file=surface, force_terminal=True, width=120, color_system='truecolor')
-    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth=False)
     words = ' '.join(f'word{index}' for index in range(30))
-    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=words)))
+    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content=f'{words}\n')))
+    streaming = _rows(surface, width=40)
     await renderer.finish()
     wide = _rows(surface, width=120)
     assert wide[0].startswith('Thinking word0')
@@ -196,6 +324,11 @@ async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_th
     assert len(narrow) > len(wide)
     assert all(len(row) <= 40 for row in narrow)
     assert ''.join(''.join(narrow).split()) == 'Thinking' + ''.join(words.split())
+    replay = TranscriptBuffer()
+    replay.write(render_markdown(source=words, width=40, thinking=True, colors='truecolor'))
+    rendered = [Text.from_ansi(row).plain for row in replay.frame(width=40, height=50).rows]
+    assert narrow[: len(rendered) - 1] == rendered[:-1], 'the ended part renders again'
+    assert [len(row) for row in streaming[:3]] == [40] * 3, 'a live part cuts its streamed rows at 40 instead'
 
     def heading() -> str:
         """The heading's SGR as this console emits it, whatever Rich cached for the style."""
@@ -242,3 +375,18 @@ def test_whole_markdown_repaint_processes_complete_source_lines() -> None:
         'one',
         'two',
     ]
+
+
+def test_smoothing_types_a_preview_but_writes_its_replacement_at_once() -> None:
+    """Retyping a finished code block from its first character would blank the preview the user was reading."""
+    writes: list[str] = []
+
+    class ObservedOutput(io.StringIO):
+        def write(self, text: str) -> int:
+            writes.append(text)
+            return super().write(text)
+
+    writer = PartWriter(ObservedOutput(), tick_interval=1, catch_up_seconds=1, min_chars_per_tick=1)
+    writer.write('preview')
+    writer.commit('the rendered block\n')
+    assert writes == ['preview', 'the rendered block\n'], 'what was still being typed goes first, then the block'

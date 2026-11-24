@@ -1109,6 +1109,9 @@ navigation:
             slug: "examples/realtime/realtime-webrtc"
             aliases:
               - "examples/realtime-webrtc"
+          - page: "Twilio Phone Calls"
+            path: "examples/realtime-twilio.md"
+            slug: "examples/realtime/realtime-twilio"
       - section: "Complex Workflows"
         slug: ""
         contents:

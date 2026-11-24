@@ -1,4 +1,4 @@
-"""CLAI's local default coexists with static and per-run workspace providers."""
+"""Pax's local default coexists with static and per-run workspace providers."""
 
 from collections.abc import AsyncIterator
 from pathlib import Path
