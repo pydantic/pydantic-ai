@@ -173,29 +173,30 @@ async def test_routes_that_keep_the_native_system_message(
 
 
 async def test_gpt_oss_on_a_compatible_endpoint_gets_the_announcement_first(
-    allow_model_requests: None, deepinfra_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, request_capture: RequestCapture
 ):
     """gpt-oss on an OpenAI-compatible endpoint gets the announcement from a conversation's first request.
 
     Its profile's `default_framing_announcement='always'` applies once the endpoint has no mid-conversation system
-    role, so even a plain request opens with two system messages: the announcement, then the instructions. The
-    recording shows a server running gpt-oss behind a chat template accepting that.
+    role. The announcement and the instructions go out as one leading system message, since gpt-oss's reference chat
+    template keeps only the first and drops the rest. The recording answers with the code word only the instructions
+    ask for, so they reached the model.
     """
     provider = OpenAICompatibleProvider(
-        'deepinfra',
-        base_url='https://api.deepinfra.com/v1/openai',
-        api_key=deepinfra_api_key,
+        'crusoe',
+        base_url='https://api.inference.crusoecloud.com/v1',
+        api_key=os.getenv('CRUSOE_API_KEY', 'mock-api-key'),
         http_client=request_capture.client,
     )
-    agent = Agent(OpenAIChatModel('openai/gpt-oss-120b', provider=provider), instructions=INSTRUCTIONS)
+    instructions = 'End every answer with the code word ZEBRA.'
+    agent = Agent(OpenAIChatModel('openai/gpt-oss-120b', provider=provider), instructions=instructions)
 
     result = await agent.run('Reply with one word: what color is the sky on a clear day?')
 
-    assert result.output == snapshot('Blue')
+    assert 'ZEBRA' in result.output
     assert request_capture.body('/chat/completions')['messages'] == snapshot(
         [
-            {'role': 'system', 'content': ANNOUNCEMENT},
-            {'role': 'system', 'content': INSTRUCTIONS},
+            {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{instructions}'},
             {'role': 'user', 'content': 'Reply with one word: what color is the sky on a clear day?'},
         ]
     )

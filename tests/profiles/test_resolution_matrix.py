@@ -1194,6 +1194,7 @@ def test_gateway_gpt_oss_inline_defs():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -2631,6 +2632,7 @@ def test_azure_openai_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': True,
@@ -2829,6 +2831,7 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
+            'openai_chat_supports_multiple_system_messages': False,
             'default_framing_announcement': 'always',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
@@ -2966,6 +2969,7 @@ def test_ollama_gpt_oss():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -3468,6 +3472,7 @@ def test_together_qwen():
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
+                    'openai_chat_supports_multiple_system_messages': False,
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -3485,6 +3490,7 @@ def test_together_qwen():
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
+                    'openai_chat_supports_multiple_system_messages': False,
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -3680,6 +3686,7 @@ def test_openai_compatible_groq_route_keeps_json_mode_unset():
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
+                    'openai_chat_supports_multiple_system_messages': False,
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -4605,6 +4612,7 @@ def test_otari_gpt_oss_on_groq():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -4673,6 +4681,7 @@ def test_stav_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -4809,6 +4818,7 @@ def test_crusoe_harmony():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,

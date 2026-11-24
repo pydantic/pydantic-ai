@@ -758,6 +758,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # request (see the field's docstring). Here rather than in
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
+        # The announcement is a system message of its own ahead of the instructions, and OpenAI's reference gpt-oss
+        # chat template keeps only the first system message as the developer message and drops any other, so the
+        # instructions would be lost: merge the leading system messages into one, as `VLLMProvider` does.
+        # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja
+        profile['openai_chat_supports_multiple_system_messages'] = False
     return profile
 
 
