@@ -175,7 +175,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # Gemini's OpenAI-compatible endpoint repeats the running usage across streamed chunks (verified live
                 # on 17 public chat models from `gemini-2.5-flash` to `gemini-4-neon`, 2026-11). Set here rather than
                 # in `openai_model_profile`, which OpenAI-compatible hosts share without this being verified on them.
-                openai_chat_streaming_cumulative_usage=model_name.startswith('gemini'),
+                openai_chat_streaming_repeats_usage_totals=model_name.startswith('gemini'),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.

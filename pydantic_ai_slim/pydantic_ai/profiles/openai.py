@@ -354,7 +354,7 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
-    openai_chat_streaming_cumulative_usage: bool
+    openai_chat_streaming_repeats_usage_totals: bool
     """Whether every streamed Chat Completions chunk repeats the running usage totals unprompted. Default: `False`.
 
     When enabled, each chunk's usage replaces the usage recorded so far instead of adding to it, as

@@ -533,7 +533,7 @@ When an OpenAI-compatible API returns a `finish_reason` outside the five that Op
 
 ## Streamed usage
 
-Chat Completions streams normally report usage once, on the last chunk, and [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] adds up whatever the chunks report. Gemini's OpenAI-compatible endpoint instead repeats its running totals on every chunk, so [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_streaming_cumulative_usage`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_cumulative_usage] for `gemini*` model names, and each chunk's usage replaces the last. This also applies through a custom `base_url`. A server that serves these names and reports per-chunk deltas turns it off with `openai_chat_streaming_cumulative_usage=False` in the model's [profile](overview.md#models-and-providers).
+Chat Completions streams normally report usage once, on the last chunk, and [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] adds up whatever the chunks report. Gemini's OpenAI-compatible endpoint instead repeats its running totals on every chunk, so [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_streaming_repeats_usage_totals`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_repeats_usage_totals] for `gemini*` model names, and each chunk's usage replaces the last. This also applies through a custom `base_url`. A server that serves these names and reports per-chunk deltas turns it off with `openai_chat_streaming_repeats_usage_totals=False` in the model's [profile](overview.md#models-and-providers).
 
 ## Response data Pydantic AI doesn't map
 

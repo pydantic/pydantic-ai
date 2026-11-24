@@ -331,10 +331,10 @@ def test_cumulative_stream_usage_only_on_openai_provider_gemini_names(model_name
     """The shared profile stays off, as the hosts that reuse it aren't verified to repeat running totals."""
     provider_profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(provider_profile, dict)
-    assert provider_profile.get('openai_chat_streaming_cumulative_usage', False) is expected
+    assert provider_profile.get('openai_chat_streaming_repeats_usage_totals', False) is expected
     shared_profile = openai_model_profile(model_name)
     assert isinstance(shared_profile, dict)
-    assert shared_profile.get('openai_chat_streaming_cumulative_usage', False) is False
+    assert shared_profile.get('openai_chat_streaming_repeats_usage_totals', False) is False
 
 
 class TestEncryptedReasoningContent:

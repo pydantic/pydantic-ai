@@ -8217,7 +8217,7 @@ async def test_stream_cumulative_usage_profile_opt_out_sums_chunks(allow_model_r
     model = OpenAIChatModel(
         'gemini-3.1-flash-lite',
         provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
-        profile=OpenAIModelProfile(openai_chat_streaming_cumulative_usage=False),
+        profile=OpenAIModelProfile(openai_chat_streaming_repeats_usage_totals=False),
     )
 
     async with Agent(model).run_stream('') as result:
