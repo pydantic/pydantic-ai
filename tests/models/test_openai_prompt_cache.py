@@ -16,6 +16,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -28,9 +29,13 @@ from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
 from pydantic_ai._framing import lookalike_note_announcement
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
+    BinaryImage,
     CompactionPart,
+    InstructionId,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -50,6 +55,7 @@ from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import request_json
+from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT
 from ..conftest import IsStr, RequestCapture, try_import
 from .mock_openai import (
     MockOpenAI,
@@ -78,6 +84,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.native_tools import ComputerTool
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.azure import AzureProvider
@@ -2096,6 +2103,84 @@ async def test_openai_responses_auto_chain_compaction_resends_the_window(allow_m
     assert compact_kwargs['previous_response_id'] is omit
     assert compact_kwargs['instructions'] == 'Support policies.'
     assert [item.get('role') for item in compact_kwargs['input']] == ['user', 'assistant', 'user']
+
+
+async def test_openai_responses_auto_chain_computer_call_fallback_resends_the_instructions(allow_model_requests: None):
+    """A result for a held computer call, sent without the native computer tool, makes the request resend the whole
+    history. That request starts the chain again with the static and append instructions in the input, so its digest
+    records them, and the next request continues from it."""
+    computer_call = response_message(
+        [
+            resp.ResponseComputerToolCall.model_validate(
+                {
+                    'id': 'cu_1',
+                    'call_id': 'call_1',
+                    'type': 'computer_call',
+                    'status': 'completed',
+                    'actions': [{'type': 'screenshot'}],
+                    'pending_safety_checks': [],
+                }
+            )
+        ]
+    )
+    computer_call.id = 'resp_1'
+    resent = responses_completion('resent')
+    resent.id = 'resp_2'
+    mock_client = MockOpenAIResponses.create_mock([computer_call, resent, responses_completion('continued')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    instruction_parts = [
+        InstructionPart(content='Support policies.'),
+        InstructionPart(
+            content='Queue: open.', on_change='append', id=InstructionId(source=AgentInstructionSource(), name='queue')
+        ),
+    ]
+    with_native = ModelRequestParameters(
+        function_tools=[computer],
+        native_tools=[ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)],
+        allow_text_output=True,
+        instruction_parts=instruction_parts,
+    )
+    without_native = replace(with_native, native_tools=[])
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Look.')]
+    messages.append(await model.request(messages, settings, with_native))
+    messages.append(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer',
+                    ['Ran 1 action.', BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')],
+                    tool_call_id='call_1',
+                    metadata={'performed': 1},
+                    tool_kind=COMPUTER_KIND.id,
+                )
+            ]
+        )
+    )
+    messages.append(await model.request(messages, settings, without_native))
+    messages.append(ModelRequest.user_text_prompt('Again.'))
+    await model.request(messages, settings, without_native)
+
+    _, resend, continuation = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in resend
+    assert [(item.get('role'), item.get('content')) for item in resend['input'][:2]] == snapshot(
+        [
+            ('system', 'Support policies.'),
+            (
+                'system',
+                """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            ),
+        ]
+    )
+    assert continuation['previous_response_id'] == 'resp_2'
+    assert continuation['input'] == [{'role': 'user', 'content': 'Again.'}]
 
 
 @pytest.mark.parametrize(
