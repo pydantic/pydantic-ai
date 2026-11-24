@@ -60,7 +60,7 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 **Requirements**
 
 - Every request a tool makes goes through a `@durable_operation` or a workspace call (`ctx.workspace`). DBOS runs a function tool in workflow code, so a request made any other way is made again on every recovery.
-- Every toolset a capability builds has an `id`. Temporal and Prefect run each function tool in a unit named after it, and refuse an agent with an id-less toolset.
+- Every toolset a capability builds has an `id`, and is built once, when the agent is: Temporal and Prefect run each function tool in a unit named after it, and refuse an agent with an id-less toolset or a run that adds one. A capability with `@durable_operation`s and no default `id` needs one given (`ToolGuardrail(id=...)`), and its case gives one.
 - Code that runs in the workflow is deterministic: hooks, instructions, `prepare_tools`, a toolset factory, and a tool marked `ToolDefinition.durable=False`, which runs outside its unit. It reads clocks, randomness and I/O only through a `@durable_operation`, and a workflow-side tool must not block.
 - A capability added per run only adds hooks, instructions or settings: one that contributes an executing toolset, declares a `@durable_operation`, or chooses or wraps the model must be on the agent when it's built ([#13124](https://github.com/pydantic/pydantic-ai/pull/13124)).
 - The names of the units a capability's calls record (its id, its operation names, its toolset ids) don't change between releases, as an in-flight workflow replays by them. A change that renames one says how in-flight runs recover.

@@ -873,12 +873,21 @@ DBOS runs a function tool in workflow code, so a request the tool makes outside 
 workspace call is made again on every recovery.
 """
 
+ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
+"""The cases whose toolset has no id, which Temporal and Prefect refuse."""
+
 DURABLE_TEMPORAL = Contract(
     'durable_temporal',
     applies=lambda _, case: case.calls is not None,
     exempt={
-        'PydanticAIDocs': Exempt(_TOOLSET_WITHOUT_ID),
-        'BrowserUse': Exempt(_TOOLSET_WITHOUT_ID),
+        **dict.fromkeys(ID_LESS_TOOLSETS, Exempt(_TOOLSET_WITHOUT_ID)),
+        'CompactOnRequest': Exempt(
+            'its `for_run` copy builds a new toolset, which Temporal refuses as one added at run time: found by D1 '
+            '(https://github.com/pydantic/pydantic-ai/pull/14372)'
+        ),
+        'Planning': Exempt(
+            f'its tools emit plan events, which Temporal cannot deliver from an activity yet: {_ISSUES}7971'
+        ),
     },
 )
 """D1: in a Temporal workflow, a case's calls schedule the activities its `durable_steps.temporal` lists, and a

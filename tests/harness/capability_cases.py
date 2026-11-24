@@ -442,7 +442,7 @@ CASES: dict[str, CapabilityCase] = {
                     'capability__memory.search_memory',
                     'capability__memory.delete_memory',
                 ),
-                temporal=('toolset__memory__call_tool',) * 4,
+                temporal=('capability__memory__load_snapshot', *('toolset__memory__call_tool',) * 4),
             ),
         ),
     ),
@@ -511,11 +511,21 @@ CASES: dict[str, CapabilityCase] = {
                     'capability__step_persistence.save_snapshot',
                 ),
                 temporal=(
+                    'capability__step_persistence__registration_id',
                     'capability__step_persistence__register_run',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__append_event',
                     'capability__step_persistence__record_tool_effect',
+                    'capability__step_persistence__append_event',
                     'toolset__echo__call_tool',
                     'capability__step_persistence__finish_tool_effect',
+                    'capability__step_persistence__append_event',
                     'capability__step_persistence__save_snapshot',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__save_snapshot',
+                    'capability__step_persistence__append_event',
                 ),
             ),
         ),
@@ -772,7 +782,10 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'})),
             _deduplicate_file_reads,
-            durable_steps=DurableSteps(dbos=_workspace_steps(3), temporal=('toolset__file_system__call_tool',) * 2),
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(3),
+                temporal=('capability__workspace__call', *('toolset__file_system__call_tool',) * 2),
+            ),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
         ),
     ),
@@ -795,7 +808,12 @@ CASES: dict[str, CapabilityCase] = {
     'PromptInjectionDefender': CapabilityCase(
         Anonymous('one per `tool_filter`; several scopes compose'),
         requires='stackone_defender',
-        calls=Calls(ECHO, with_echo(lambda: pydantic_ai_harness.PromptInjectionDefender()), durable_steps=ECHO_STEPS),
+        # It declares durable operations and no default id, so a durable agent needs one given.
+        calls=Calls(
+            ECHO,
+            with_echo(lambda: pydantic_ai_harness.PromptInjectionDefender(id='prompt_injection_defender')),
+            durable_steps=ECHO_STEPS,
+        ),
     ),
     'StreamGuardrail': CapabilityCase(
         Anonymous('several guards is the design'),
@@ -803,7 +821,8 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'ToolGuardrail': CapabilityCase(
         Anonymous('several guards is the design'),
-        calls=Calls(ECHO, with_echo(ToolGuardrail), durable_steps=ECHO_STEPS),
+        # It declares durable operations and no default id, so a durable agent needs one given.
+        calls=Calls(ECHO, with_echo(lambda: ToolGuardrail(id='tool_guardrail')), durable_steps=ECHO_STEPS),
     ),
     'ToolCallJudge': CapabilityCase(
         Anonymous('one per risk question; stacked judges must all allow a call'),
@@ -926,7 +945,11 @@ CASES: dict[str, CapabilityCase] = {
                 ('read_file', {'path': 'notes.md'}),
             ),
             _workspace(FileSystem),
-            durable_steps=DurableSteps(dbos=_workspace_steps(5), temporal=('toolset__file_system__call_tool',) * 3),
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(5),
+                # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
+                temporal=(*('capability__workspace__call',) * 14, 'toolset__file_system__call_tool'),
+            ),
         ),
     ),
     'Goal': CapabilityCase(
@@ -962,7 +985,9 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('run_command', {'command': 'echo hi'}),),
             _workspace(Shell),
-            durable_steps=DurableSteps(dbos=_workspace_steps(2), temporal=('toolset__shell__call_tool',)),
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(2), temporal=('capability__workspace__call', 'toolset__shell__call_tool')
+            ),
         ),
     ),
     'CapabilityCreation': CapabilityCase(
@@ -985,7 +1010,25 @@ CASES: dict[str, CapabilityCase] = {
                     'capability__capability_creation.list_all',
                     'capability__capability_creation.disable',
                 ),
-                temporal=('toolset__capability_creation__call_tool',) * 3,
+                # Its tools resolve the store directory and check it through the workspace in workflow code first.
+                temporal=(
+                    'capability__workspace__call',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'toolset__capability_creation__call_tool',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'toolset__capability_creation__call_tool',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'toolset__capability_creation__call_tool',
+                ),
             ),
         ),
     ),
@@ -1024,7 +1067,9 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('run_macroscope_review', {}),),
             _macroscope,
-            durable_steps=DurableSteps(dbos=_workspace_steps(2), temporal=('toolset__macroscope__call_tool',)),
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(2), temporal=('capability__workspace__call', 'toolset__macroscope__call_tool')
+            ),
         ),
     ),
     'LocalStack': CapabilityCase(
@@ -1119,7 +1164,7 @@ CASES: dict[str, CapabilityCase] = {
             _smart_search,
             durable_steps=DurableSteps(
                 dbos=(*_workspace_steps(2), 'capability__smart_search.judge'),
-                temporal=('toolset__smart_search__call_tool',),
+                temporal=('capability__workspace__call', 'toolset__smart_search__call_tool'),
             ),
         ),
     ),
@@ -1146,7 +1191,7 @@ CASES: dict[str, CapabilityCase] = {
             ),
             durable_steps=DurableSteps(
                 dbos=('capability__conversation_search.search',),
-                temporal=('toolset__conversation_search__call_tool',),
+                temporal=('toolset__conversation-search__call_tool',),
             ),
         ),
     ),
@@ -1162,7 +1207,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda _: pydantic_ai_harness.ExaAgent(runs=ExaAgentRuns()),
             durable_steps=DurableSteps(
                 dbos=('capability__exa_agent.create_run', 'capability__exa_agent.resolve_run'),
-                temporal=('toolset__exa_agent__call_tool',),
+                temporal=('toolset__exa_agent__call_tool', 'capability__exa_agent__resolve_run'),
             ),
         ),
     ),

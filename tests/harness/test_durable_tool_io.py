@@ -49,7 +49,7 @@ from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..append_only import skip_unless_installed
-from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL
+from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
 from ._contracts import CASES, assert_holds, contract_cases
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 from ._durable_cases import build_case, installed, journal_breaks, one_call_per_response
@@ -397,11 +397,12 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     [
         name
         for name, case in sorted(CASES.items())
-        if DURABLE_TEMPORAL.applies(name, case) and name not in DURABLE_TEMPORAL.exempt
+        if DURABLE_TEMPORAL.applies(name, case) and name not in ID_LESS_TOOLSETS
     ],
 )
 def test_prefect_wraps_every_toolset_temporal_does(name: str, tmp_path: Path) -> None:
-    """Prefect, like Temporal, runs each function tool in its own unit, named after the toolset's `id`."""
+    """Prefect, like Temporal, runs each function tool in its own unit, named after the toolset's `id`, so it refuses
+    the same id-less toolsets."""
     skip_unless_installed(name, CASES[name].requires)
     Agent(
         _call_tools(),
