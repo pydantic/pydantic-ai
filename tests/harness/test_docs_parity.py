@@ -571,19 +571,19 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
     assert readme == docs
 
 
-_PACKAGES_HEADING = '## Pydantic AI, the harness SDK, `Coder`, and pax'
+_PACKAGES_HEADING = '## Pydantic AI, the harness SDK, `Coder`, and Pax'
 _PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
 def test_package_comparison_matches_across_surfaces(surface: str) -> None:
-    """The Harness docs index and the Harness and pax READMEs draw the same four-way distinction."""
+    """The Harness docs index and the Harness and Pax READMEs draw the same four-way distinction."""
     canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
         '| [`Coder`]',
-        '| [pax] (`pydantic-ai-pax`)',
+        '| [Pax] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
 

@@ -32,22 +32,22 @@ commands, and menus without forking anything.
 Pax runs commands and edits files as you, with no sandbox and no approval step. Run it
 in a project you trust.
 
-**Contents:** [Pydantic AI, the harness SDK, `Coder`, and pax](#pydantic-ai-the-harness-sdk-coder-and-pax) · [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
+**Contents:** [Pydantic AI, the harness SDK, `Coder`, and Pax](#pydantic-ai-the-harness-sdk-coder-and-pax) · [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
 [Models and accounts](#models-and-accounts) · [A tour](#a-tour) · [Make it yours](#make-it-yours) ·
 [Plugins](#plugins) · [Pax in your own code](#pax-in-your-own-code) · [Reference](#reference)
 
-## Pydantic AI, the harness SDK, `Coder`, and pax
+## Pydantic AI, the harness SDK, `Coder`, and Pax
 
-An agent on its own is a loop calling a model and tools. A **harness** is everything around that loop that makes it hold up on real work: the workspace it acts in, the tools, context management, recovery, guardrails, and the interface you steer it through. Four things carry that idea, and each is built on the one before it:
+An agent on its own is a loop calling a model and tools. A **harness** is everything around that loop that makes it hold up on real work: the workspace it acts in, the tools, context management, recovery, guardrails, and the interface you steer it through. Four layers carry that idea; start with the one that matches what you are doing:
 
 | Layer | What it is | Start here when |
 |---|---|---|
 | [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
 | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | The SDK you build a harness of your own from: workspaces, file and shell tools, memory, sub-agents, context management, and pre-built harnesses | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
 | [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) | The harness: one capability that is already a complete coding agent, with file and shell tools, task delegation and Agent Skills | You want a coding agent in your own code, to run, extend or swap parts of |
-| [pax](#install) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
+| [Pax](#install) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` is the harness and pax is the TUI around it, so either works without the other: build on `Coder` and never open pax, or point pax at an agent that is entirely your own. Neither is the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` is the harness and Pax is the TUI around it, so either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
 
 ## Install
 
