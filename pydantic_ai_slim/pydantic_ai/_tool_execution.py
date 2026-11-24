@@ -151,9 +151,9 @@ class NestedCallContent(list[_messages.UserContent]):
     tool's content then reaches the model held to its own capability's authority, as it would if the model had called
     that tool, and then to the calling tool's.
 
-    The capabilities travel on this object only. Content rebuilt from it, such as `list(content)` or a hook's
-    `replace(result, content=[...])`, or edited in place, is held to the calling tool's capability alone, and equality
-    compares the items, not their capabilities.
+    The capabilities travel on this object only. Content that replaces it, such as `list(content)` or a hook's
+    `replace(result, content=[...])`, is held to the calling tool's capability alone. Content edited in place is held to
+    every capability that contributed to it. Equality compares the items, not their capabilities.
     """
 
     segments: tuple[tuple[str | None, str | Sequence[_messages.UserContent]], ...]
@@ -173,10 +173,18 @@ class NestedCallContent(list[_messages.UserContent]):
     def owned_segments(self) -> Iterator[tuple[tuple[str | None, ...], str | Sequence[_messages.UserContent]]]:
         """Each called tool's content, after the run ids of the capabilities it passed through, innermost first.
 
-        Content edited in place is one segment that no called tool's capability owns.
+        Content edited in place is one segment, after the run id of every capability that contributed to it, in the
+        order the content came, so the edit is held to each of them.
         """
         if not self.matches_segments():
-            yield (), list(self)
+            unedited = NestedCallContent(self.segments).owned_segments()
+            contributors = dict.fromkeys(
+                capability_id
+                for capability_ids, _ in unedited
+                for capability_id in capability_ids
+                if capability_id is not None
+            )
+            yield tuple(contributors), list(self)
             return
         for capability_id, content in self.segments:
             if isinstance(content, NestedCallContent):

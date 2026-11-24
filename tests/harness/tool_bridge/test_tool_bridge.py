@@ -609,8 +609,8 @@ class TestToolBridge:
     async def test_a_hooks_in_place_edit_of_bridged_content_reaches_the_model(self, from_code: bool):
         """An `after_tool_execute` hook that edits `tool_call`'s `ToolReturn.content` in place sends the edited content.
 
-        The edited content is held to `tool_call`'s capability alone, as content a hook replaces is, also when
-        `run_code` makes the call.
+        The edit is held to the capability that contributed the content, as the content was, also when `run_code` makes
+        the call.
         """
 
         def fetch() -> ToolReturn:
@@ -650,7 +650,18 @@ class TestToolBridge:
             'Fetch the page'
         )
 
-        assert seen == [[['edited']]]
+        assert seen == snapshot(
+            [
+                [
+                    '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                    [
+                        TextContent(content='<capability_content>'),
+                        TextContent(content='edited'),
+                        TextContent(content='</capability_content>'),
+                    ],
+                ]
+            ]
+        )
 
     @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
     async def test_content_is_held_to_each_lowered_capability_in_a_chain(self):

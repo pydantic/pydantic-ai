@@ -3425,15 +3425,61 @@ class TestCodeMode:
         )
         assert nested[1:3] == direct
 
-    async def test_a_hooks_in_place_edit_of_the_content_reaches_the_model(self) -> None:
+    @pytest.mark.parametrize(
+        ('owners', 'expected'),
+        [
+            pytest.param((), snapshot([[['edited']]]), id='no-capability'),
+            pytest.param(
+                ('plugin',),
+                snapshot(
+                    [
+                        [
+                            '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                            [
+                                TextContent(content='<capability_content>'),
+                                TextContent(content='edited'),
+                                TextContent(content='</capability_content>'),
+                            ],
+                        ]
+                    ]
+                ),
+                id='one-capability',
+            ),
+            pytest.param(
+                ('plugin', 'other'),
+                snapshot(
+                    [
+                        [
+                            '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                            [
+                                TextContent(content='<capability_content>'),
+                                TextContent(content='edited'),
+                                TextContent(content='</capability_content>'),
+                            ],
+                        ]
+                    ]
+                ),
+                id='two-capabilities',
+            ),
+        ],
+    )
+    async def test_a_hooks_in_place_edit_of_the_content_reaches_the_model(
+        self, owners: tuple[str, ...], expected: list[list[object]]
+    ) -> None:
         """An `after_tool_execute` hook that edits `run_code`'s `ToolReturn.content` in place sends the edited content.
 
-        The edited content is held to `run_code`'s capability alone, as content a hook replaces is.
+        The edit is held to every capability that contributed to the content: it stays user text when `fetch` and
+        `lookup` come from no capability, and with each from its own capability at `'none'`, the note names the
+        capability whose content came first.
         """
 
         def fetch() -> ToolReturnMsg:
             """Fetch a page."""
             return ToolReturnMsg(return_value='ok', content='page text')
+
+        def lookup() -> ToolReturnMsg:
+            """Look up a term."""
+            return ToolReturnMsg(return_value='ok', content='term text')
 
         class Edit(AbstractCapability[object]):
             async def after_tool_execute(
@@ -3458,12 +3504,18 @@ class TestCodeMode:
             if len(messages) > 1:
                 seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
                 return ModelResponse(parts=[TextPart('done')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await fetch()'})])
+            code = 'await fetch()\nawait lookup()'
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
 
-        plugin = Capability[object](id='plugin', tools=[fetch]).with_authority('none')
-        await Agent(FunctionModel(model_fn), capabilities=[plugin, CodeMode(), Edit()]).run('Fetch the page')
+        tools = [fetch, lookup]
+        owned: list[AbstractCapability[object]] = [
+            Capability[object](id=owner, tools=[tool]).with_authority('none') for owner, tool in zip(owners, tools)
+        ]
+        await Agent(FunctionModel(model_fn), tools=tools[len(owners) :], capabilities=[*owned, CodeMode(), Edit()]).run(
+            'Fetch the page'
+        )
 
-        assert seen == [[['edited']]]
+        assert seen == expected
 
     # ---------------------------------------------------------------------------
     # OTel / Logfire instrumentation
