@@ -276,6 +276,20 @@ async def test_choosing_the_computer_and_a_function_tool_keeps_both_callable(all
     assert isinstance(tools, list) and GOOGLE_COMPUTER_USE in tools
 
 
+async def test_forcing_a_function_tool_sends_no_computer(allow_model_requests: None) -> None:
+    """Gemini could still call its computer functions beside `allowedFunctionNames`, so Google's tool is left out."""
+    gemini = _Gemini([{'text': 'ok'}])
+    lookup = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    async with gemini.model() as model:
+        settings = ModelSettings(tool_choice=['lookup'])
+        await model.request([ModelRequest.user_text_prompt('Go.')], settings, _params(lookup))
+
+    (body,) = gemini.bodies
+    tools = body['tools']
+    assert isinstance(tools, list) and GOOGLE_COMPUTER_USE not in tools
+    assert body['toolConfig'] == {'functionCallingConfig': {'mode': 'ANY', 'allowedFunctionNames': ['lookup']}}
+
+
 async def test_tool_choice_none_sends_no_computer(allow_model_requests: None) -> None:
     gemini = _Gemini([{'text': 'ok'}])
     async with gemini.model() as model:

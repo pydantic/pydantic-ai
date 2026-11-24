@@ -1151,7 +1151,7 @@ class GoogleModel(Model[Client]):
         tool_defs, tool_choice_mode, allowed_function_names = _apply_tool_choice(
             model_request_parameters.declared_tool_defs, resolve_tool_choice(model_settings, model_request_parameters)
         )
-        computer = _sent_native_computer(model_request_parameters, tool_defs, tool_choice_mode)
+        computer = _sent_native_computer(model_request_parameters, tool_defs, tool_choice_mode, allowed_function_names)
         if computer is not None:
             tool_defs, allowed_function_names = _without_the_computer(computer.name, tool_defs, allowed_function_names)
 
@@ -2492,10 +2492,14 @@ def _sent_native_computer(
     model_request_parameters: ModelRequestParameters,
     tool_defs: Mapping[str, ToolDefinition],
     tool_choice_mode: ToolChoiceScalar,
+    allowed_function_names: list[str],
 ) -> _google_computer.NativeComputer | None:
     """Google's computer use tool, if this request sends it: not when `tool_choice` leaves out the `computer` tool."""
     computer = _requested_native_computer(model_request_parameters)
     if computer is None or computer.name not in tool_defs or tool_choice_mode == 'none':
+        return None
+    if allowed_function_names and computer.name not in allowed_function_names:
+        # Gemini keeps its computer functions callable beside the names `allowedFunctionNames` lists.
         return None
     return computer
 
