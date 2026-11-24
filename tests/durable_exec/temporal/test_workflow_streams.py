@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any, cast
@@ -14,14 +14,17 @@ import pytest
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RunContext,
     RunUsage,
+    UserPromptPart,
 )
 from pydantic_ai.capabilities import Hooks, ProcessEventStream
 from pydantic_ai.exceptions import UserError
@@ -33,7 +36,7 @@ try:
     from temporalio import workflow
     from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
     from temporalio.contrib.pydantic import pydantic_data_converter
-    from temporalio.contrib.workflow_streams import WorkflowStreamItem
+    from temporalio.contrib.workflow_streams import WorkflowStreamItem, WorkflowStreamState
     from temporalio.exceptions import ApplicationError
     from temporalio.service import RPCError, RPCStatusCode
     from temporalio.testing import ActivityEnvironment
@@ -756,6 +759,104 @@ async def test_replay_does_not_duplicate_events(client: Client) -> None:
     # The workflow-side handler ran again, and publishing from it was a no-op rather than a failure
     # or a second copy of the run on the topic.
     assert _replay_handler_runs > 0
+
+
+# --- Continue-as-new ------------------------------------------------------------------------------
+
+
+async def _continue_as_new_with_stream(ctx: RunContext[object]) -> None:
+    events = cast(ContinueAsNewEnqueueWorkflow, workflow.instance()).events
+    await events.stream.continue_as_new(lambda state: [ctx.messages, state])
+
+
+_continue_as_new_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    event_stream_topic=TOPIC,
+    continue_as_new=_continue_as_new_with_stream,
+)
+_continue_as_new_agent = Agent(
+    _model, name='continue_as_new_stream_agent', tools=[get_answer], capabilities=[_continue_as_new_durability]
+)
+
+
+@workflow.defn
+class ContinueAsNewEnqueueWorkflow:
+    """Enqueues content while the tool runs, so it's delivered at the request where the run continues as new."""
+
+    @workflow.init
+    def __init__(self, history: list[ModelMessage] | None = None, state: WorkflowStreamState | None = None) -> None:
+        self.events = AgentEventStream(prior_state=state)
+
+    @workflow.run
+    async def run(
+        self, history: list[ModelMessage] | None = None, state: WorkflowStreamState | None = None
+    ) -> list[ModelMessage]:
+        async with self.events:
+            async with _continue_as_new_agent.iter(None if history else 'Hello', message_history=history) as run:
+                async for node in run:
+                    if history is None and Agent.is_call_tools_node(node):
+                        run.enqueue('Follow-up')
+        assert run.result is not None
+        return run.result.all_messages()
+
+
+async def _run_continue_as_new_enqueue_workflow(client: Client) -> tuple[list[Any], list[ModelMessage], str]:
+    """Run the workflow through its continuation: the topic's events, the final messages, and the first run's ID."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ContinueAsNewEnqueueWorkflow],
+        plugins=[AgentPlugin(_continue_as_new_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            ContinueAsNewEnqueueWorkflow.run,
+            args=[None, None],
+            id=f'{ContinueAsNewEnqueueWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _continue_as_new_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        messages = await handle.result()
+    assert handle.first_execution_run_id is not None
+    return received, messages, handle.first_execution_run_id
+
+
+def _user_prompts(messages: Sequence[ModelMessage]) -> list[Any]:
+    return [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
+async def test_continue_as_new_publishes_the_enqueued_messages_event(client: Client) -> None:
+    """Content delivered at the request where the run continues as new still has its event on the topic.
+
+    The first run delivers the content and carries it into the successor's history, which never delivers it
+    again, so the first run is the one that has to publish its `EnqueuedMessagesEvent`.
+    """
+    received, messages, _ = await _run_continue_as_new_enqueue_workflow(client)
+
+    assert _user_prompts(messages) == ['Hello', 'Follow-up']
+    assert _kinds(received) == [
+        'PartStartEvent',
+        'PartEndEvent',
+        'FunctionToolCallEvent',
+        'FunctionToolResultEvent',
+        'EnqueuedMessagesEvent',
+        'PartStartEvent',
+        'FinalResultEvent',
+        'PartDeltaEvent',
+        'PartDeltaEvent',
+        'PartEndEvent',
+        'AgentRunResultEvent',
+    ]
+    enqueued = [event for event in received if isinstance(event, EnqueuedMessagesEvent)]
+    assert [_user_prompts(event.messages) for event in enqueued] == [['Follow-up']]
 
 
 # --- Guards and validation ------------------------------------------------------------------------
