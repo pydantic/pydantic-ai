@@ -19,8 +19,8 @@ with try_import() as imports_successful:
     from pydantic_ai_harness.computer_use import ComputerUse
     from pydantic_ai_harness.render_sandbox import RenderSandbox, RenderSandboxBackend
 
-    from .._fake_x_display import FakeDisplay
-    from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
+    from ..computer_use._fake_x_display import FakeDisplay
+    from ..computer_use.display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
     from .workspace_helpers import WorkspaceHarness
 
 pytestmark = [
