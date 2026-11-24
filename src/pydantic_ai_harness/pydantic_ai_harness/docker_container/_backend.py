@@ -48,10 +48,10 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, start_display_script, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, start_display_script, x11_display
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerContainerBackend', 'remove_container')
 
