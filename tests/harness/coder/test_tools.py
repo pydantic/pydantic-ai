@@ -45,6 +45,9 @@ _DELEGATION_RULE = (
     "Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks, "
     'whatever other instructions say about delegating.'
 )
+_DELEGATION_WELCOME = (
+    'Delegating self-contained work to sub-agents with `delegate_task` is encouraged when it saves time or context.'
+)
 _FINISH = 'You are running a delegated task. Choose sensible defaults and finish.'
 _MISREAD_TEXT = (
     'If inputs seem inconsistent or goals impossible, assume you misread. '
@@ -506,8 +509,8 @@ class TestCoder:
         extra_instructions: str | None,
         delegates_unprompted: bool,
     ) -> None:
-        """The delegation rule comes with `delegate_task`, for models that delegate unprompted, and extra guidance is
-        appended, with or without `RepoContext`."""
+        """The delegation line comes with `delegate_task`: the rule for models that delegate unprompted, the
+        encouragement for the rest. Extra guidance is appended, with or without `RepoContext`."""
         model = TestModel(call_tools=[], profile={'delegates_unprompted': delegates_unprompted})
         coder = Coder(instructions=extra_instructions, repo_context=repo_context, sub_agents=sub_agents)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
@@ -517,41 +520,85 @@ class TestCoder:
         guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
         assert (_DELEGATION_RULE in text) is (sub_agents and delegates_unprompted)
+        assert (_DELEGATION_WELCOME in text) is (sub_agents and not delegates_unprompted)
         assert ('delegate_task' in tools) is sub_agents
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
-    async def test_delegation_rule_is_withdrawn_after_a_fallback_to_a_model_that_does_not_delegate_unprompted(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ('opened_on_gpt', 'opening_line', 'appended_line'),
+        [
+            pytest.param(True, _DELEGATION_RULE, _DELEGATION_WELCOME, id='gpt-to-claude'),
+            pytest.param(False, _DELEGATION_WELCOME, _DELEGATION_RULE, id='claude-to-gpt'),
+        ],
+    )
+    async def test_a_fallback_appends_the_new_models_side_of_the_delegation_line(
+        self, tmp_path: Path, opened_on_gpt: bool, opening_line: str, appended_line: str
     ) -> None:
-        """A conversation that opened on GPT and falls back to Claude keeps the instructions it opened with, and
-        Claude is told after the new prompt that the delegation rule was withdrawn."""
+        """A conversation that falls back to a model on the other side of `delegates_unprompted` keeps the
+        instructions it opened with, and the new model is sent its own side of the line after the new prompt,
+        not a withdrawal."""
+        first_name, second_name = ('gpt', 'claude') if opened_on_gpt else ('claude', 'gpt')
         sent: list[_Sent] = []
         workspace = LocalWorkspaceBackend(tmp_path)
-        first = await Agent(_scripted('gpt', sent, delegates=True), capabilities=[Coder(repo_context=False)]).run(
-            'go', workspace=workspace
-        )
+        first = await Agent(
+            _scripted(first_name, sent, delegates=opened_on_gpt), capabilities=[Coder(repo_context=False)]
+        ).run('go', workspace=workspace)
         agent = Agent(
-            _scripted('gpt', sent, delegates=True, fails=True),
-            capabilities=[Coder(repo_context=False), ModelFallback(_scripted('claude', sent, delegates=False))],
+            _scripted(first_name, sent, delegates=opened_on_gpt, fails=True),
+            capabilities=[
+                Coder(repo_context=False),
+                ModelFallback(_scripted(second_name, sent, delegates=not opened_on_gpt)),
+            ],
         )
         result = await agent.run('continue', message_history=first.all_messages(), workspace=workspace)
-        assert result.output == 'claude'
+        assert result.output == second_name
         opened_with = sent[0].instructions
-        assert opened_with is not None and _DELEGATION_RULE in opened_with
+        assert opened_with is not None and opening_line in opened_with and appended_line not in opened_with
         assert [(s.model, s.instructions == opened_with) for s in sent] == [
-            ('gpt', True),
-            ('gpt', True),
-            ('claude', True),
+            (first_name, True),
+            (first_name, True),
+            (second_name, True),
         ]
         assert [s.system for s in sent] == [
             [],
             [],
-            [
-                '<pyai:context id="capability:coder_instructions:delegation">\n'
-                'This context has been withdrawn.\n</pyai:context>'
-            ],
+            [f'<pyai:context id="capability:coder_instructions:delegation">\n{appended_line}\n</pyai:context>'],
         ]
+
+    @pytest.mark.parametrize('delegates', [False, True])
+    async def test_a_run_that_stays_on_one_model_sends_one_side_of_the_delegation_line(
+        self, tmp_path: Path, delegates: bool
+    ) -> None:
+        """Without a switch, every request carries the same side of the line in its instructions and nothing is
+        appended."""
+        sent: list[_Sent] = []
+        workspace = LocalWorkspaceBackend(tmp_path)
+        model = _scripted('model', sent, delegates=delegates)
+        first = await Agent(model, capabilities=[Coder(repo_context=False)]).run('go', workspace=workspace)
+        await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+            'continue', message_history=first.all_messages(), workspace=workspace
+        )
+        line, other = (_DELEGATION_RULE, _DELEGATION_WELCOME) if delegates else (_DELEGATION_WELCOME, _DELEGATION_RULE)
+        assert len(sent) == 2
+        for s in sent:
+            assert s.instructions is not None
+            assert s.instructions.count(line) == 1
+            assert other not in s.instructions
+            assert s.system == []
+
+    async def test_no_delegation_line_without_sub_agents(self, tmp_path: Path) -> None:
+        """The line names `delegate_task`, so a model without the flag gets neither side when `SubAgents` is off."""
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder(repo_context=False, sub_agents=False)]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        text = '\n'.join(part.content for part in parts)
+        assert _DELEGATION_WELCOME not in text
+        assert _DELEGATION_RULE not in text
+        assert 'delegation' not in {part.name for part in parts}
 
     @pytest.mark.parametrize('autonomy', ['high', 'max'])
     @pytest.mark.parametrize('flag', [None, *_MAX_GUIDANCE_FLAGS])
@@ -587,8 +634,9 @@ class TestCoder:
         assert (_MISREAD_TEXT in guidance) is not is_max
 
     async def test_max_instructions_are_unchanged_for_a_model_without_the_flags(self, tmp_path: Path) -> None:
-        """A model without the flags gets exactly the `'max'` instructions it got before they existed: the blocks are
-        empty, so not sent, and the default misread check stays inline in the shared guidance."""
+        """A model without the flags gets the `'max'` instructions it got before they existed: the `'max'` blocks are
+        empty, so not sent, and the default misread check stays inline in the shared guidance. With `SubAgents` it
+        gets the encouraging side of the delegation line."""
         model = TestModel(call_tools=[])
         coder = Coder(autonomy='max', repo_context=False)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
@@ -612,6 +660,12 @@ You can delegate self-contained tasks to these sub-agents using the `delegate_ta
 
 Available sub-agents:
 - self: A fresh run of this same agent, with all of your tools, instructions, and capabilities. Use it to hand off a self-contained part of the work.\
+""",
+                """\
+<pyai:context id="capability:coder_instructions:delegation">
+Delegating self-contained work to sub-agents with `delegate_task` is encouraged when it saves time or context.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             ]
         )
@@ -656,7 +710,8 @@ Available sub-agents:
         self, tmp_path: Path
     ) -> None:
         """A `'max'` conversation that opened on GPT and falls back to Claude keeps the instructions it opened with;
-        Claude is told the GPT-only sentences were withdrawn."""
+        Claude is sent the encouraging side of the delegation line, and told the GPT-only `'max'` sentences were
+        withdrawn."""
         sent: list[_Sent] = []
         workspace = LocalWorkspaceBackend(tmp_path)
         first = await Agent(
@@ -689,7 +744,7 @@ Available sub-agents:
                 [
                     """\
 <pyai:context id="capability:coder_instructions:delegation">
-This context has been withdrawn.
+Delegating self-contained work to sub-agents with `delegate_task` is encouraged when it saves time or context.
 </pyai:context>\
 """,
                     """\
@@ -735,6 +790,7 @@ This context has been withdrawn.
         for s in sent:
             assert s.instructions is not None
             assert _DELEGATION_RULE not in s.instructions
+            assert _DELEGATION_WELCOME not in s.instructions
             assert _MISREAD_CLASSIFY_TEXT not in s.instructions
             assert _HANDOFF_TEXT not in s.instructions
             assert (_MISREAD_MAX_TEXT in s.instructions) is (autonomy == 'max')

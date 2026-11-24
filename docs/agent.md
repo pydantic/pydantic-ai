@@ -1983,13 +1983,15 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
 
 Some instructions are only needed by some models, to counter something those models tend to do. An instruction function can read the model handling the request from `ctx.model`, and its [profile](models/overview.md#inspecting-a-models-profile) from `ctx.model.profile`. Instructions are resolved before every request, and again for each model the [`ModelFallback`](capabilities/model-fallback.md#instructions-for-each-model) capability moves a request on to, so the text always matches the model that receives it.
 
-A conversation can move between models: a request falls back, or a later run continues the history on another model. To keep the instructions the conversation started with and tell the model what changed, write a line only some models need as follows:
+A conversation can move between models: a request falls back, or a later run continues the history on another model. To keep the instructions the conversation started with and tell the new model what applies to it, write a model-specific line as follows:
 
-- Give it its own named block.
-- Contribute the block from the first request, empty for a model that doesn't need it.
+- Give it its own named block, contributed from the first request.
 - Have it append its changes with `on_change='append'`.
+- Write a text for each side of the condition. The side for models that don't need the counterweight states the behavior you want, positively, in a sentence or two: not a "you may", and not empty.
 
-A model that doesn't need the line is then sent the instructions the conversation started with, followed by a note that the block was withdrawn, and a model that needs it and didn't have it is sent the line as a change.
+On a switch, the new model is then sent its own side as a change, after the conversation so far, where it outweighs earlier turns that followed the other side. An empty side would instead be sent as a note that the block was withdrawn: models tend to repeat that note to the user, as a rule they were never shown, and it doesn't restore what they would have done had the line never been sent. Keep withdrawals for instructions that really go away, like those of a capability that was removed, not for model switches.
+
+Gate only on behavioral traits that have a natural other side, like [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted]. Facts about what a model supports (tools, modalities, limits) belong to the framework and the profile, not to model-visible text that would later need un-saying.
 
 ```python {title="model_specific_instructions.py"}
 from pydantic_ai import Agent, ModelRequest, RunContext
@@ -1998,19 +2000,21 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 
 
-def no_unrequested_delegation(ctx: RunContext) -> InstructionPart:
+def delegation(ctx: RunContext) -> InstructionPart:
     try:
         delegates = isinstance(ctx.model, Model) and ctx.model.profile.get('delegates_unprompted', False)  # (1)!
     except NotImplementedError:  # (2)!
-        delegates = False
-    return InstructionPart(
-        "Don't spawn sub-agents unless the user asks." if delegates else '',
-        name='delegation',
-        on_change='append',
-    )
+        text = ''
+    else:
+        text = (
+            "Don't spawn sub-agents unless the user asks."
+            if delegates
+            else 'Delegating self-contained work to sub-agents is encouraged when it saves time or context.'
+        )
+    return InstructionPart(text, name='delegation', on_change='append')
 
 
-agent = Agent(instructions=['Be brief.', no_unrequested_delegation])
+agent = Agent(instructions=['Be brief.', delegation])
 
 
 def instructions_sent(model: TestModel) -> str | None:
@@ -2026,11 +2030,15 @@ Be brief.
 Don't spawn sub-agents unless the user asks.
 """
 print(instructions_sent(TestModel()))
-#> Be brief.
+"""
+Be brief.
+
+Delegating self-contained work to sub-agents is encouraged when it saves time or context.
+"""
 ```
 
-1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own rule against unrequested delegation, and at `'max'` autonomy for the sentences it sends to models with [`reinterprets_malformed_inputs`][pydantic_ai.profiles.ModelProfile.reinterprets_malformed_inputs], [`omits_handoff_evidence`][pydantic_ai.profiles.ModelProfile.omits_handoff_evidence], or [`ignores_stated_runtime_constraints`][pydantic_ai.profiles.ModelProfile.ignores_stated_runtime_constraints]. For a line whose text differs between models rather than being needed by only some, return the text each model needs from the same block: a switch then appends the new text.
-2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and the line is left out. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead. Pydantic AI Harness `Coder` warns once when it runs on a `FallbackModel`.
+1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own delegation line. At `'max'` autonomy, it also has blocks of its own for the sentences it sends only to models with [`reinterprets_malformed_inputs`][pydantic_ai.profiles.ModelProfile.reinterprets_malformed_inputs], [`omits_handoff_evidence`][pydantic_ai.profiles.ModelProfile.omits_handoff_evidence], or [`ignores_stated_runtime_constraints`][pydantic_ai.profiles.ModelProfile.ignores_stated_runtime_constraints].
+2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and neither side is sent. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead. Pydantic AI Harness `Coder` warns once when it runs on a `FallbackModel`.
 
 #### Keep untrusted text out of instructions {#untrusted-instruction-text}
 
