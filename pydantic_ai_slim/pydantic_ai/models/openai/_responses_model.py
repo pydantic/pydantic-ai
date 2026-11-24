@@ -1705,19 +1705,28 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         On a model whose profile sends the instructions that keep the prefix stable as leading input messages, a request
         that starts the chain or resends the history sends them there, and a request that continues it leaves them out.
         Each response's history digest records them, so a request only continues while it would send the same ones.
-        Empty where they stay in the top-level field, as `_should_relocate_instructions` explains.
+        Empty where they stay in the top-level field: see `_instructions_stay_top_level`, and a compacted history,
+        whose compaction item keeps the window's leading system items.
         """
         profile = self.profile
         if (
             model_settings.get('openai_previous_response_id') != 'auto'
             or not profile.get('openai_responses_stable_instructions_as_input', False)
-            or (profile.get('openai_system_prompt_role', None) or 'system') == 'user'
-            or has_dynamic_system_prompt(messages)
+            or self._instructions_stay_top_level(profile.get('openai_system_prompt_role', None) or 'system', messages)
             or any(isinstance(part, CompactionPart) for message in messages for part in message.parts)
         ):
             return []
         stable, _ = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
         return [part.content for part in stable]
+
+    @staticmethod
+    def _instructions_stay_top_level(
+        system_prompt_role: OpenAISystemPromptRole, messages: Sequence[ModelMessage]
+    ) -> bool:
+        """Whether the instructions stay in the top-level field whatever the settings and server-side state."""
+        # A `'user'` system prompt role can't be told apart from a real user turn, and a dynamic system prompt changes
+        # between requests, so it can't sit in the cached prefix.
+        return system_prompt_role == 'user' or has_dynamic_system_prompt(messages)
 
     def _should_relocate_instructions(
         self,
@@ -1735,13 +1744,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 self._adds_instruction_breakpoint(model_settings, profile)
                 or profile.get('openai_responses_stable_instructions_as_input', False)
             )
-            # A `'user'` system prompt role can't be told apart from a real user turn.
-            and system_prompt_role != 'user'
+            and not self._instructions_stay_top_level(system_prompt_role, messages)
             # Instructions relocated into a stored response's input would be replayed to any request
             # that continues it, next to that request's own instructions.
             and not uses_server_side_state
-            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
-            and not has_dynamic_system_prompt(messages)
             # A compaction item retains the window's leading system items, so they aren't resent.
             and not any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
         )

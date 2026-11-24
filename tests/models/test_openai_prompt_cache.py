@@ -1936,6 +1936,32 @@ async def test_openai_responses_auto_chain_sends_stable_instructions_once(
         )
 
 
+async def test_openai_responses_auto_chain_with_cache_instructions(allow_model_requests: None):
+    """With `openai_cache_instructions`, the request that starts an `'auto'` chain puts the breakpoint after the static
+    instructions it sends as leading input, and a continuing request sends neither."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Support policies.',
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_cache_instructions=True),
+    )
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert first_request['input'][0] == {
+        'role': 'system',
+        'content': [
+            {'type': 'input_text', 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+        ],
+    }
+    assert second_request['previous_response_id'] == first.response.provider_response_id
+    assert 'instructions' not in second_request
+    assert second_request['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+
+
 async def test_openai_responses_auto_chain_continues_across_appended_change(allow_model_requests: None):
     """An appended change and a dynamic instruction leave the chain's leading instructions as they were, so the
     request continues: the change goes out after the stored conversation, and the dynamic instruction in the field."""

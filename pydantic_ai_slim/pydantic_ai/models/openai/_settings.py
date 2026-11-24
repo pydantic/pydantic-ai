@@ -199,7 +199,7 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     its input, so relocated instructions would be replayed alongside every later request's own.
     On `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level field after the input, the dynamic
     instructions that rewrite the prefix stay there, and an `openai_previous_response_id='auto'` chain sends the
-    others as leading input when it starts or resends the history (see
+    others as leading input, with this breakpoint after the static ones, when it starts or resends the history (see
     [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
