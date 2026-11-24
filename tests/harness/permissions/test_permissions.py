@@ -841,8 +841,7 @@ class TestPermissionRules:
             custom_capability_types=[Permissions],
         )
 
-        capability = agent.root_capability.capabilities[-1]
-        assert isinstance(capability, Permissions)
+        capability = next(c for c in agent.root_capability.capabilities if isinstance(c, Permissions))
         assert (capability.mode, list(capability.rules)) == (
             'auto',
             [PermissionRule('deny', tools=['run_command'], command='git push')],
