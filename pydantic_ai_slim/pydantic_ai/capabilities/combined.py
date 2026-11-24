@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
-from pydantic_ai._enqueue import hold_feedback
+from pydantic_ai._enqueue import hold_added_messages, hold_feedback, snapshot_messages
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -751,16 +751,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 messages = request_context.messages
-                held = _held_to_ceiling(cap_ctx)
-                try:
-                    request_context = await capability.before_model_request(cap_ctx, request_context)
-                except SkipModelRequest as e:
-                    if held is not None:
-                        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
-                    raise
-                except ModelRetry as e:
-                    hold_feedback(e, held)
-                    raise
+                request_context = await _before_model_request_held(capability, cap_ctx, request_context)
                 keep_mirroring(messages, request_context)
         return request_context
 
@@ -1399,6 +1390,29 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
     return capability.id is not None and ctx._is_deferred_capability_dispatch_active(capability.id)  # pyright: ignore[reportPrivateUsage]
+
+
+async def _before_model_request_held(
+    capability: AbstractCapability[AgentDepsT], cap_ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    """`capability`'s `before_model_request`, held to its authority when that's below `'operator'`.
+
+    It can't write the model's turn with `SkipModelRequest`, its `ModelRetry` feedback is its own text, and what it
+    adds to the request's messages is held as if it had enqueued it.
+    """
+    held = _held_to_ceiling(cap_ctx)
+    if held is None:
+        return await capability.before_model_request(cap_ctx, request_context)
+    snapshot = snapshot_messages(request_context.messages)
+    try:
+        request_context = await capability.before_model_request(cap_ctx, request_context)
+    except SkipModelRequest as e:
+        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+    except ModelRetry as e:
+        hold_feedback(e, held)
+        raise
+    hold_added_messages(request_context.messages, snapshot, *held)
+    return request_context
 
 
 def _held_to_ceiling(cap_ctx: RunContext[Any]) -> tuple[str, Authority] | None:

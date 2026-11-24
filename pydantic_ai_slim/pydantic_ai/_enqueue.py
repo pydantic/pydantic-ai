@@ -679,3 +679,57 @@ def hold_feedback(error: ModelRetry, held: tuple[str, Authority] | None) -> None
 def feedback_held_to(error: ModelRetry) -> tuple[str, Authority] | None:
     """The capability and authority `hold_feedback` marked `error` with, if any."""
     return getattr(error, '_held_to', None)
+
+
+def snapshot_messages(messages: Sequence[ModelMessage]) -> tuple[list[ModelMessage], list[ModelRequestPart]]:
+    """The messages and request parts of `messages` before a hook runs, for `hold_added_messages`."""
+    return list(messages), [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+
+
+def hold_added_messages(
+    messages: Sequence[ModelMessage],
+    snapshot: tuple[list[ModelMessage], list[ModelRequestPart]],
+    capability_id: str,
+    ceiling: Authority,
+) -> None:
+    """Hold what a capability below operator authority added to `messages` in a hook to its ceiling, in place.
+
+    A part or message counts as added when it's neither one the hook received nor equal to one, so a hook that copies
+    the history or only removes from it adds nothing. Each added request part is held as `ctx.enqueue` holds it, and
+    an added `ModelResponse`, or a new `ModelRequest` with `instructions`, raises `UserError`. Held in place, so the
+    history the deprecated mirroring already appended them to is held too.
+    """
+    if ceiling == 'operator':
+        return
+    added = _Added(*snapshot)
+    for message in messages:
+        if added(message):
+            # Raises for what a capability below operator authority can't send at all.
+            _message_within_ceiling(message, capability_id, ceiling)
+        if isinstance(message, ModelRequest):
+            message.parts = [
+                _held_part(part, capability_id, ceiling) if added(part) else part for part in message.parts
+            ]
+
+
+def _message_within_ceiling(message: ModelMessage, capability_id: str, ceiling: Authority) -> ModelMessage:
+    if isinstance(message, ModelResponse):
+        return _response_within_ceiling(message, capability_id, ceiling)
+    return _request_within_ceiling(message, capability_id, ceiling)
+
+
+class _Added:
+    """Whether a message or part is one a hook added: neither one it received nor equal to one."""
+
+    def __init__(self, messages: list[ModelMessage], parts: list[ModelRequestPart]):
+        self._olds: dict[bool, list[ModelMessage | ModelRequestPart]] = {True: [*messages], False: [*parts]}
+        self._ids = {id(item) for item in (*messages, *parts)}
+
+    def __call__(self, item: ModelMessage | ModelRequestPart) -> bool:
+        olds = self._olds[isinstance(item, ModelRequest | ModelResponse)]
+        return id(item) not in self._ids and not any(item == old for old in olds)
+
+
+def _held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+    held = within_ceiling(part, capability_id, ceiling)
+    return _stamped(held, capability_id, ceiling) if isinstance(held, CapabilityPart) else held
