@@ -603,7 +603,8 @@ async def test_openrouter_context_window_exceeded_via_metadata_raw(
 ) -> None:
     """A generic 400 whose `metadata.raw` reports an overflow is a context window error, on any OpenRouter model.
 
-    A mock transport stands in for a cassette because OpenRouter can't be made to return this error on demand.
+    A mock transport stands in for a cassette: recording the overflow takes a prompt of about 60,000 characters per
+    case, and this covers both `metadata.raw` forms on every model class that talks to OpenRouter.
     """
     error = await _openrouter_status_error(
         400,
