@@ -138,7 +138,8 @@ in Temporal's workflow sandbox, which imports a workflow's module, and the agent
 
 Each Temporal workflow run is one line of kind `temporal`, with its workflow type as the target, its workflow ID, and
 each command its workflow activations issue, in order, as `MessageToDict` gives it, with each payload's metadata, and
-its data when it's JSON, decoded. A failure's stack trace is left out, since a refactor moves the lines it names. A
+its data when it's JSON, decoded. So is the payload of each item a workflow stream publishes, which the stream sends
+serialized and base64 encoded. A failure's stack trace is left out, since a refactor moves the lines it names. A
 serialized run context sends each set it holds, like `active_capability_ids`, as a list in the set's order, which
 differs from run to run where its members end in the random suffix of a capability's key, so those lists are sorted.
 The capture reads a run's type and ID from the activation that starts it, which the bridge worker's
@@ -158,7 +159,7 @@ and so is each key computed from it: the `RunId` policy's, which is the flow run
 recorded inputs hold a value normalized below, like a generated ID. A policy handed the inputs its caller was, like
 `TaskSource`, which hashes the task's code, keeps its key. Inputs or options that can't be written as JSON, like ones that
 hold a reference cycle, as a run context does, are recorded as the error writing them raised, which the code under
-test never sees.
+test never sees, and so is a Temporal command whose payload can't be decoded.
 
 Durable names and cache keys are made on other threads than the test's, like the one Prefect runs a task on, and
 workflows run concurrently, so a test's `durable_name`, `cache_key`, `temporal` and `dbos` lines come after its others,
@@ -178,8 +179,10 @@ random suffix of the key a capability without an `id` gets, `PromptInjectionDefe
 `Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
 in, which hashes the file the task function was compiled from, the digest of a run's inputs that keys the task
 `PrefectDurability` draws the run's default ID from, which hashes the timestamps of the history the run is handed,
-the process ID a Temporal worker's identity starts with, and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized,
-so two runs of the same code compare equal. A
+the process ID a Temporal worker's identity starts with, the trace and span IDs an online evaluation's dispatch
+references, durations a clock measured, like the evaluated call's in that dispatch, Temporal timers computed from a
+clock reading, and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are
+normalized, so two runs of the same code compare equal. A
 step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
 parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
 `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
@@ -304,6 +307,15 @@ GENERATED_VALUES = [
         re.compile(r'(?<![0-9a-f])([0-9a-f]{2})-[0-9a-f]{32}-[0-9a-f]{16}-([0-9a-f]{2})(?![0-9a-f])'),
         r'\1-TRACE_ID-SPAN_ID-\2',
     ),
+    # The span an online evaluation's dispatch references.
+    (re.compile(r'("trace_id":")[0-9a-f]{32}"'), r'\1TRACE_ID"'),
+    (re.compile(r'("span_id":")[0-9a-f]{16}"'), r'\1SPAN_ID"'),
+    # A duration a clock measured, like the evaluated call's in an online evaluation's dispatch. One a test sets has
+    # fewer decimal places.
+    (re.compile(r'("duration":)\d+\.\d{10,}(?:e-\d+)?(?=[,}])'), r'\1"DURATION"'),
+    # A Temporal timer given to the nanosecond, which a `timedelta` can't be, was computed from a clock reading, like
+    # the time left until a deadline set in an earlier activation: a workflow's time moves on between activations.
+    (re.compile(r'"start_to_fire_timeout":"\d+\.\d{9}s"'), '"start_to_fire_timeout":"DURATION"'),
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
     # anyio names a cancel scope by its address, in hex without `0x`.
     (re.compile(r'(Cancelled via cancel scope )[0-9a-f]+'), r'\1ADDRESS'),
@@ -311,7 +323,8 @@ GENERATED_VALUES = [
     (re.compile(r"(<\w*Mock\b[^<>]* id=')\d+'"), r"\1ID'"),
     (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
     (re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'), 'UUID'),
-    (re.compile(r'"history_digest":"[0-9a-f]{64}"'), '"history_digest":"DIGEST"'),
+    # Also in JSON a value holds as text, like a Temporal workflow's result.
+    (re.compile(r'(\\?)"history_digest\1":\1"[0-9a-f]{64}\1"'), r'\1"history_digest\1":\1"DIGEST\1"'),
     (re.compile(r'"duration":"P[0-9DTHMS.]+"'), '"duration":"DURATION"'),
     (re.compile(r'(127\.0\.0\.1|localhost):\d+'), r'\1:PORT'),
     (re.compile(r'(--|boundary=)[0-9a-f]{32}'), r'\1BOUNDARY'),
@@ -341,8 +354,17 @@ GENERATED_VALUES = [
             r'(?<=batch:batch_UUID:)(?:[0-9a-f]{32}|UUID)'
             r'|(?<="id":"batch_UUID","custom_id":")(?:[0-9a-f]{32}|UUID)'
             r'|(?<="custom_id":")(?:[0-9a-f]{32}|UUID)(?=(?:-\d+)?","batch":\{"id":"batch_UUID")'
+            r'|(?<="custom_id":")(?:[0-9a-f]{32}|UUID)(?=","id":"batch_UUID")'
         ),
         'CUSTOM_ID',
+    ),
+    # Temporal's JSON converter sorts a payload's keys, so there a batch request's `custom_id` comes before its batch's
+    # ID, which the alternative above it reads, and after the batch in the ticket a pending response keeps.
+    (
+        re.compile(
+            r'("batch":\{(?:[^{}]|\{[^{}]*\})*"id":"batch_UUID"(?:[^{}]|\{[^{}]*\})*\},"custom_id":")(?:[0-9a-f]{32}|UUID)"'
+        ),
+        r'\1CUSTOM_ID"',
     ),
 ]
 # Prefect's client marks each request it sends with its API version. These paths are its log batches, version checks
@@ -1803,7 +1825,7 @@ class RefactorCapture:
                     {'kind': 'temporal', 'node': self.node, 'target': None},
                     'commands',
                 )
-                steps.extend(map(normalized, map(decoded_payloads, commands)))
+                steps.extend(recorded_value(command, decoded_payloads) for command in commands)
             return await complete(worker, completion)
 
         self._monkeypatch.setattr(Worker, 'poll_workflow_activation', recording_poll)
@@ -2004,12 +2026,12 @@ def in_workflow_sandbox() -> bool:
     return workflow.unsafe.in_sandbox()
 
 
-def recorded_value(value: object) -> object:
-    """`value` normalized, or the error normalizing it raised, like on a reference cycle, which is never raised into
-    the code under test.
+def recorded_value(value: object, decode: Callable[[object], object] | None = None) -> object:
+    """`value`, decoded by `decode` if given, normalized, or the error decoding or normalizing it raised, like on a
+    reference cycle, which is never raised into the code under test.
     """
     try:
-        return normalized(value)
+        return normalized(value if decode is None else decode(value))
     except Exception as e:
         return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
 
@@ -2050,9 +2072,31 @@ def decoded_payloads(value: object) -> object:
         return {
             **fields,
             'metadata': decoded,
-            'data': sorted_sets(json.loads(data)) if decoded['encoding'] == 'json/plain' else fields.get('data'),
+            'data': sorted_sets(decoded_stream_items(json.loads(data)))
+            if decoded['encoding'] == 'json/plain'
+            else fields.get('data'),
         }
     return {key: decoded_payloads(item) for key, item in fields.items() if key != 'stack_trace'}
+
+
+def decoded_stream_items(value: object) -> object:
+    """`value`, a payload's JSON data, with each item a Temporal workflow stream publishes decoded like a payload.
+
+    The stream sends an item as its topic, its offset, and its payload serialized and base64 encoded.
+    """
+    if isinstance(value, list):
+        items: list[object] = [*value]
+        return [decoded_stream_items(item) for item in items]
+    if not isinstance(value, dict):
+        return value
+    fields: dict[str, object] = {**value}
+    if fields.keys() == {'topic', 'data', 'offset'}:
+        from google.protobuf.json_format import MessageToDict
+        from temporalio.api.common.v1 import Payload
+
+        item = Payload.FromString(base64.b64decode(str(fields['data'])))
+        return {**fields, 'data': decoded_payloads(MessageToDict(item, preserving_proto_field_name=True))}
+    return {key: decoded_stream_items(item) for key, item in fields.items()}
 
 
 def sorted_sets(value: object) -> object:

@@ -873,6 +873,7 @@ def test_warnings():
 
 DURABLE = """
 import asyncio
+import base64
 import json
 import threading
 from types import SimpleNamespace
@@ -934,6 +935,8 @@ def started(run_id, workflow_type, workflow_id):
 
 def test_temporal_commands():
     first, second = str(uuid4()), str(uuid4())
+    event = payload({{'tool_call_id': f'pyd_ai_{{uuid4().hex}}'}})
+    stream_item = {{'topic': 'agent_events', 'data': base64.b64encode(event.SerializeToString()).decode(), 'offset': 0}}
     activations = [
         started(second, 'Second', 'second'),
         started(first, 'First', f'first-{{uuid4()}}'),
@@ -946,7 +949,10 @@ def test_temporal_commands():
                 seq=1,
                 activity_id='1',
                 activity_type='agent__model_request',
-                arguments=[payload({{'serialized_run_context': {{'active_capability_ids': ['tool_search', 'agent']}}}})],
+                arguments=[
+                    payload({{'serialized_run_context': {{'active_capability_ids': ['tool_search', 'agent']}}}}),
+                    payload({{'items': [stream_item], 'topic': 'not a stream item'}}),
+                ],
             )
         ),
         WorkflowCommand(
@@ -955,6 +961,14 @@ def test_temporal_commands():
                 activity_id='2',
                 activity_type='raw',
                 arguments=[Payload(metadata={{'encoding': b'binary/plain'}}, data=b'raw')],
+            )
+        ),
+        WorkflowCommand(
+            schedule_activity=ScheduleActivity(
+                seq=3,
+                activity_id='3',
+                activity_type='not_json',
+                arguments=[Payload(metadata={{'encoding': b'json/plain'}}, data=b'not json')],
             )
         ),
         WorkflowCommand(complete_workflow_execution=CompleteWorkflowExecution(result=payload({text!r}))),
@@ -2445,7 +2459,23 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
                                     'data': {
                                         'serialized_run_context': {'active_capability_ids': ['agent', 'tool_search']}
                                     },
-                                }
+                                },
+                                {
+                                    'metadata': {'encoding': 'json/plain'},
+                                    'data': {
+                                        'items': [
+                                            {
+                                                'topic': 'agent_events',
+                                                'data': {
+                                                    'metadata': {'encoding': 'json/plain'},
+                                                    'data': {'tool_call_id': 'pyd_ai_ID'},
+                                                },
+                                                'offset': 0,
+                                            }
+                                        ],
+                                        'topic': 'not a stream item',
+                                    },
+                                },
                             ],
                         }
                     },
@@ -2457,6 +2487,7 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
                             'arguments': [{'metadata': {'encoding': 'binary/plain'}, 'data': 'cmF3'}],
                         }
                     },
+                    {'unrecorded': 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'},
                     {
                         'complete_workflow_execution': {
                             'result': {'metadata': {'encoding': 'json/plain'}, 'data': 'hello'}
@@ -3340,6 +3371,23 @@ def test_normalized_replaces_values_that_change_between_runs():
             'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
             'default_run_id_inputs': {'sequence_key': 'pydantic_ai:default_run_id:02be28f320dd3c5469019298e187e2cb'},
             'activity_failure_info': {'identity': '8844@worker.local'},
+            'evaluation_dispatch': {
+                'duration': 0.010735334130004048,
+                'span_reference': {'trace_id': '01a20f4cca618c0447a135792da95fe7', 'span_id': 'ff67063ae64898cb'},
+                'tiny': {'duration': 9.5367431640625e-07},
+            },
+            'set_duration': {'action': 'wait', 'duration': 2.5},
+            'timers': [{'start_to_fire_timeout': '0.099999624s'}, {'start_to_fire_timeout': '0.100s'}],
+            'workflow_result': '[{"history_digest":"35a4e6e45d1d07a2fc4e901f819028c8915756b6e7dfae805874a8fa012d69b7"}]',
+            'sorted_ticket': {
+                'batch': {'id': 'batch_12345678-1234-4123-8123-123456789abc', 'provider_details': {}, 'status': 'done'},
+                'custom_id': '027dd8a70deea5cb190b0995f0b6c37e',
+                'polls': 0,
+            },
+            'sorted_details': {
+                'custom_id': '7435ac26f85dbab292c80d8b26546f38',
+                'id': 'batch_12345678-1234-4123-8123-123456789abc',
+            },
             'in_memory_ticket': {
                 'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
                 'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
@@ -3412,6 +3460,20 @@ def test_normalized_replaces_values_that_change_between_runs():
             'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
             'default_run_id_inputs': {'sequence_key': 'pydantic_ai:default_run_id:DIGEST'},
             'activity_failure_info': {'identity': 'PID@worker.local'},
+            'evaluation_dispatch': {
+                'duration': 'DURATION',
+                'span_reference': {'trace_id': 'TRACE_ID', 'span_id': 'SPAN_ID'},
+                'tiny': {'duration': 'DURATION'},
+            },
+            'set_duration': {'action': 'wait', 'duration': 2.5},
+            'timers': [{'start_to_fire_timeout': 'DURATION'}, {'start_to_fire_timeout': '0.100s'}],
+            'workflow_result': '[{"history_digest":"DIGEST"}]',
+            'sorted_ticket': {
+                'batch': {'id': 'batch_UUID', 'provider_details': {}, 'status': 'done'},
+                'custom_id': 'CUSTOM_ID',
+                'polls': 0,
+            },
+            'sorted_details': {'custom_id': 'CUSTOM_ID', 'id': 'batch_UUID'},
             'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
             'in_memory_response': {
                 'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
