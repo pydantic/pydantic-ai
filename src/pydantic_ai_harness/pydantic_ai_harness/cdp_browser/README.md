@@ -189,5 +189,10 @@ runs it graded fully correct. Cost comes from each run's token counts priced wit
 - On Windows, which has no process groups, teardown kills Chrome's own process only.
 - The capability does not bound Chrome's memory or CPU use. Where that matters, run it under container or cgroup
   limits.
+- Chrome's DevTools endpoint listens on a 127.0.0.1 port for the whole run and takes no authentication. Any local
+  process can drive the browser through it, outside `allowed_methods`, the egress policy and the download denial.
+  Don't run it on a host shared with untrusted users, and don't give the same agent a tool that reaches the host's
+  loopback, such as `Shell` on `BubblewrapWorkspace(network=True)`. The pipe transport is tracked in
+  [#14329](https://github.com/pydantic/pydantic-ai/issues/14329).
 - It cannot attach to a browser that is already running; that is tracked in
   [#14246](https://github.com/pydantic/pydantic-ai/issues/14246).
