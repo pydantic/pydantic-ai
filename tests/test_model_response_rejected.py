@@ -44,9 +44,8 @@ from pydantic_ai.run import AgentRun
 from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .conftest import IsDatetime, IsInstance
-
-READINESS_WAIT_TIMEOUT = 10
 
 ANNOUNCEMENT = "I'll look that up."
 ANSWER = 'The store opens at 9 am.'
