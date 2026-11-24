@@ -13,8 +13,8 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
-from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
+from ..computer_use._fake_x_display import FakeDisplay
+from ..computer_use.display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_smol import FakeSmol
 
 

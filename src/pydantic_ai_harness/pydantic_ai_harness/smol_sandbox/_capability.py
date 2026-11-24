@@ -12,7 +12,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -21,6 +20,7 @@ from pydantic_ai_harness._workspace_provider import (
     reject_defer_loading,
     require_asyncio,
 )
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 from pydantic_ai_harness.smol_sandbox import _backend
 from pydantic_ai_harness.smol_sandbox._backend import SmolSandboxBackend
 
