@@ -660,7 +660,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if latest is not self._latest_compaction:
             self._latest_compaction = latest
             self._pending_dirs.clear()
-        notes = _notes_in_window(messages)
+        # The walk-up's parts share the type, but they aren't nested notes: they don't count against the budget.
+        ancestors = {part.directory for part in self._ancestor_parts}
+        notes = [note for note in _notes_in_window(messages) if note[0] not in ancestors]
         in_history = {directory for directory, _ in notes}
         self._window_chars = sum(chars for _, chars in notes)
         self._pending_dirs -= in_history
