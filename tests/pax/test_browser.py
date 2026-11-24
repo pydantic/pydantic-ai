@@ -1,7 +1,7 @@
-"""A command-line browser opener must not print over CLAI's display.
+"""A command-line browser opener must not print over Pax's display.
 
 The openers here are real shell scripts run through `$BROWSER`, as VS Code's remote terminal sets it up:
-what is under test is which of CLAI's file descriptors the opener process inherits.
+what is under test is which of Pax's file descriptors the opener process inherits.
 """
 
 import os
@@ -51,7 +51,7 @@ def test_opener_output_stays_off_the_terminal(
     assert capfd.readouterr() == ('', '')
 
 
-# Like `webbrowser`'s own background openers, CLAI leaves the opener running and lets its `Popen` go.
+# Like `webbrowser`'s own background openers, Pax leaves the opener running and lets its `Popen` go.
 @pytest.mark.filterwarnings('ignore:subprocess .* is still running:ResourceWarning')
 def test_background_opener_output_stays_off_the_terminal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, opened: Path, capfd: pytest.CaptureFixture[str]

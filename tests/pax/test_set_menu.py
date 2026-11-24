@@ -493,3 +493,10 @@ def test_repo_context_settings_edit_paths_and_json_lists(tmp_path: Path) -> None
     assert context.settings.repo_context_walk_up_roots == ['~']
     assert context.settings.repo_context_autoload_symlink_roots == []
     assert applied == [roots.key, targets.key, roots.key, targets.key]
+
+
+@pytest.mark.parametrize('key', ['display.splash', 'display.full_screen'])
+def test_start_only_settings_say_they_apply_at_next_startup(tmp_path: Path, key: str) -> None:
+    context, _ = make_context(tmp_path)
+    assert context.set_setting([key, 'true']) == f'Saved {key}. Applies at next startup.'
+    assert context.reset_setting(key) == f'Reset {key}. Applies at next startup.'

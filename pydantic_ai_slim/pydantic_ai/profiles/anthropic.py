@@ -18,8 +18,8 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per model in the profile below,
+and `ComputerTool`, which `AnthropicProvider` adds per model."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -73,6 +73,9 @@ model, because `models/bedrock.py` cannot import from `models/anthropic/` withou
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+AnthropicComputerToolVersion: TypeAlias = Literal['computer_toolset_20260801', 'computer_20251124', 'computer_20250124']
+"""Anthropic computer use tool version to send for `ComputerTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -157,6 +160,21 @@ class AnthropicModelProfile(ModelProfile, total=False):
     request payloads.
     """
 
+    anthropic_restricts_sampling_with_thinking: bool
+    """Whether the model takes `temperature` only at `1`, `top_p` only from `0.95`, and no `top_k` while it thinks.
+    Default: `False`.
+
+    Set for every Claude model, which rejects any other `temperature`, a lower `top_p`, or a `top_k` with a 400
+    while thinking. See
+    [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility).
+    """
+
+    anthropic_disallows_temperature_with_top_p: bool
+    """Whether the model rejects `temperature` and `top_p` set together. Default: `False`.
+
+    Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 accept one or the other, and return a 400 for both.
+    """
+
     anthropic_disallows_top_effort_when_thinking_disabled: bool
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
@@ -183,6 +201,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
+    """
+
+    anthropic_computer_tool_version: AnthropicComputerToolVersion
+    """Which Anthropic computer use tool or toolset is sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. Default: `'computer_20250124'`.
+
+    Whether `ComputerTool` is sent at all depends on `supported_native_tools`.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -471,6 +495,10 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-5-5',
         )
     )
+    # Verified live 2026-11-04. The models that set `disallows_sampling_settings` take neither.
+    disallows_temperature_with_top_p = model_name.startswith(
+        ('claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-opus-4-6')
+    )
     # Opus 5, Sonnet 5.5, and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept
     # every level. Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
     disallows_top_effort_when_thinking_disabled = (
@@ -684,6 +712,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_max_effort=not model_name.startswith('claude-opus-4-5'),
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_disallows_temperature_with_top_p=disallows_temperature_with_top_p,
+        anthropic_restricts_sampling_with_thinking=model_name.startswith('claude-'),
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,

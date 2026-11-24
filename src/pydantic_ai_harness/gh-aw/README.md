@@ -10,7 +10,7 @@ A workflow has to write the `imports:` line itself. gh-aw's engine catalog maps
 the `pydantic-ai` id to this path, but only to suggest it: naming the engine
 without the import fails to compile with a tip carrying the line to add.
 
-The engine runs [CLAI 2](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2)
+The engine runs [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2)
 with the harness's `Coder` composition by default, in a `LocalWorkspace` on the checkout,
 providing filesystem access and unrestricted shell commands inside the sandbox, plus the
 gh-aw gateway's MCP tools. Shell commands get the step's environment minus provider credential variables
@@ -67,14 +67,14 @@ engine points it at the proxy with `GITHUB_COPILOT_BASE_URL` and a placeholder
 
 The engine first reads the safe-outputs file gh-aw names in `GH_AW_SAFE_OUTPUTS`. If a
 `steps:` or `pre-agent-steps:` entry already wrote a `noop` there, the engine exits with
-status 0 without starting CLAI 2, as gh-aw's built-in engines do; gh-aw's
+status 0 without starting Pax, as gh-aw's built-in engines do; gh-aw's
 [cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
 documents the pattern. A missing or unreadable file, and lines that are not JSON, do not
 count as a `noop`.
 
 The engine creates a generated module with a private wrapper around either the harness's
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
-JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
+JSON/YAML spec once, retaining import tracebacks. Pax runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
 `pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
 `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
@@ -272,7 +272,7 @@ The protected-capture runtime rejects workflows with `evals`, whose secondary en
 reads `evals.log`. Omit `evals` when using this engine.
 
 The workflow summary is the canonical success/failure report. MCP startup and
-request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
+request-limit errors keep their Pax diagnostics and nonzero exit status.
 
 ## Pointing the engine at your own endpoint
 

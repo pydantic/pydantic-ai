@@ -33,7 +33,7 @@ function entry(completion: CompletionInfo): Entry {
   return { name: completion.text, description, hint, needsArguments: required(hint) }
 }
 
-/** Every command this CLAI offers, from its own registry, filterable: Enter runs one as typing it bare would. */
+/** Every command this Pax offers, from its own registry, filterable: Enter runs one as typing it bare would. */
 export function CommandPalette({
   onRun,
   onInsert,

@@ -66,7 +66,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._instrumentation import include_content_ctx
-from pydantic_ai._run_context import get_current_run_context
+from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
@@ -81,6 +81,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     SelectModel,
     Toolset,
+    WrapperCapability,
     durable_operation,
 )
 from pydantic_ai.durable_exec import DurabilityEngineSpec
@@ -178,7 +179,6 @@ try:
         PrefectAgentInputs,
         _cacheable_value,  # pyright: ignore[reportPrivateUsage]
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
-        _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
     from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationConfig
@@ -222,6 +222,7 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .override_rebind_cases import REBIND_CASES, RebindCase
 from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 from .span_utils import drop_fastmcp_client_spans
 
@@ -2048,6 +2049,23 @@ async def test_cache_policy_default():
     assert hasattr(DEFAULT_PYDANTIC_AI_CACHE_POLICY, 'policies')
 
 
+def projected_cache_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    """The projection of `inputs` that `PrefectAgentInputs.compute_key` hands Prefect's `INPUTS` policy to hash.
+
+    Asserting on the projection pins what a key is made of; two digests only show whether they match.
+    """
+    hashed: list[dict[str, Any]] = []
+
+    def record(task_ctx: TaskRunContext, inputs: dict[str, Any], flow_parameters: dict[str, Any], **kwargs: Any) -> str:
+        hashed.append(inputs)
+        return 'key'
+
+    with patch.object(INPUTS, 'compute_key', record):
+        PrefectAgentInputs().compute_key(task_ctx=MagicMock(), inputs=inputs, flow_parameters={})
+    [projected] = hashed
+    return projected
+
+
 async def test_cache_policy_custom():
     """
     Test that custom cache policy PrefectAgentInputs works.
@@ -2193,7 +2211,14 @@ async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
 
 
 def test_cache_policy_keeps_user_dataclass_fields():
-    """Cache projection preserves user dependency fields that share internal context names."""
+    """Cache projection preserves user dependency fields that share internal context names.
+
+    A dataclass class, unlike an instance, is kept as is rather than expanded into its fields.
+    """
+
+    @dataclass
+    class CacheOutput:
+        answer: str
 
     @dataclass
     class CacheDeps:
@@ -2201,6 +2226,7 @@ def test_cache_policy_keeps_user_dataclass_fields():
         run_id: str
         conversation_id: str
         tool_call_id: str
+        output_type: type[CacheOutput] = CacheOutput
 
     deps = CacheDeps(
         timestamp='user-time',
@@ -2211,13 +2237,14 @@ def test_cache_policy_keeps_user_dataclass_fields():
     )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
-    projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
+    projected = projected_cache_inputs({'ctx': ctx})
 
     assert projected['ctx']['deps'] == {
         'timestamp': 'user-time',
         'run_id': 'user-run',
         'conversation_id': 'user-conversation',
         'tool_call_id': 'pyd_ai_user_value',
+        'output_type': CacheOutput,
     }
 
 
@@ -2693,15 +2720,45 @@ def test_cache_policy_excludes_non_serializable_deps():
     assert key_for(['acme', threading.Lock()]) == key_for(['acme', threading.Lock()])
     assert key_for(('acme', threading.Lock())) != key_for(('globex', threading.Lock()))
 
+    all_deps = [
+        CacheDeps(tenant='acme'),
+        CacheModelDeps(tenant='acme'),
+        threading.Lock(),
+        ['acme', threading.Lock()],
+        ('acme', threading.Lock()),
+    ]
+    projected = [
+        projected_cache_inputs({'ctx': RunContext(deps=deps, model=TestModel(), usage=RunUsage())})['ctx']['deps']
+        for deps in all_deps
+    ]
+    assert projected == snapshot(
+        [
+            {'tenant': 'acme', 'lock': '<non-serializable>'},
+            {'tenant': 'acme', 'lock': '<non-serializable>'},
+            '<non-serializable>',
+            ['acme', '<non-serializable>'],
+            ('acme', '<non-serializable>'),
+        ]
+    )
 
-def test_cache_policy_projects_nested_run_context_and_tool():
+
+@pytest.mark.parametrize('container', ['tuple', 'list', 'dict'])
+def test_cache_policy_projects_nested_run_context_and_tool(container: Literal['tuple', 'list', 'dict']):
     """The projection reaches a `RunContext`/`ToolsetTool` nested in a container, not just a top-level one.
 
     `PrefectOperationBackend` passes an operation's logical inputs as a single `*args` tuple
     (so nothing caps how many inputs an operation may have), which means neither ever
     arrives as a top-level bound parameter. Without recursion the raw `RunContext` is hashed and
     `compute_key` raises `Unable to create hash` for any agent whose `deps` hold a live resource.
+    A list or dict nests them the same way, and a nested `RunContext` is projected as a top-level one is.
     """
+
+    def nest(items: tuple[object, ...]) -> object:
+        if container == 'tuple':
+            return items
+        if container == 'list':
+            return list(items)
+        return dict(zip(('tool_name', 'args', 'ctx', 'tool'), items))
 
     @dataclass
     class CacheDeps:
@@ -2721,7 +2778,7 @@ def test_cache_policy_projects_nested_run_context_and_tool():
         )
         return cache_policy.compute_key(
             task_ctx=mock_task_ctx,
-            inputs={'unit_name': 'unit', 'args': (tool_name, {}, ctx, tool)},
+            inputs={'unit_name': 'unit', 'args': nest((tool_name, {}, ctx, tool))},
             flow_parameters={},
         )
 
@@ -2731,6 +2788,11 @@ def test_cache_policy_projects_nested_run_context_and_tool():
     # And still discriminating through the container.
     assert key_for('acme', 'tool') != key_for('globex', 'tool')
     assert key_for('acme', 'tool') != key_for('acme', 'other')
+
+    ctx = RunContext(deps=CacheDeps(tenant='acme'), model=TestModel(), usage=RunUsage())
+    assert projected_cache_inputs({'args': nest(('tool', {}, ctx))}) == {
+        'args': nest(('tool', {}, projected_cache_inputs({'ctx': ctx})['ctx']))
+    }
 
 
 def test_cache_policy_projects_a_bare_tool_definition_in_the_inputs():
@@ -2879,9 +2941,85 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
     # A context that doesn't set them hashes as it did before they were projected.
-    assert projected.isdisjoint(projected_only_when_set)
-    deadline = datetime(2030, 1, 1, tzinfo=UTC)
-    assert _replace_run_context({'ctx': replace(ctx, deadline=deadline)})['ctx']['deadline'] == deadline
+    assert projected.isdisjoint(projected_only_when_set | projected_via_derived_key)
+
+    # Each field set to its own value, so a projection that reads, transforms or drops the wrong one shows here.
+    populated = RunContext(
+        deps={'tenant': 'acme'},
+        model=TestModel(),
+        usage=RunUsage(),
+        _model_id='test:model-id',
+        usage_limits=UsageLimits(request_limit=7),
+        deadline=datetime(2030, 1, 1, tzinfo=UTC),
+        agent=Agent(name='agent-name'),
+        prompt='the prompt',
+        messages=[ModelRequest(parts=[UserPromptPart('hi')])],
+        validation_context={'lang': 'en'},
+        retries={'tool': 2},
+        tool_call_id='call-id',
+        tool_name='tool',
+        retry=1,
+        max_retries=3,
+        run_step=4,
+        tool_call_approved=True,
+        tool_call_metadata={'approved_by': 'ops'},
+        metadata={'trace': 'abc'},
+        model_settings={'temperature': 0.5},
+        workspace=ref_workspace(WorkspaceRef(provider='fake', id='ws')),
+        loaded_capability_ids={'cap-b', 'cap-a'},
+        discovered_tool_names={'tool-b', 'tool-a'},
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'anchored-tool'}), loaded_capability_ids=frozenset({'anchored-cap'})
+        ),
+        _tool_name_path=('prefix_',),
+    )
+    assert projected_cache_inputs({'ctx': populated}) == snapshot(
+        {
+            'ctx': {
+                'deps': {'tenant': 'acme'},
+                'agent': 'agent-name',
+                'model': 'test:test',
+                '_model_id': 'test:model-id',
+                'retries': {'tool': 2},
+                'tool_call_id': 'call-id',
+                'tool_name': 'tool',
+                'prompt': 'the prompt',
+                'metadata': {'trace': 'abc'},
+                'validation_context': {'lang': 'en'},
+                'model_settings': {'temperature': 0.5},
+                'messages': [
+                    {
+                        'parts': [{'content': 'hi', 'part_kind': 'user-prompt'}],
+                        'instructions': None,
+                        'kind': 'request',
+                        'metadata': None,
+                        'state': 'complete',
+                    }
+                ],
+                'tool_call_approved': True,
+                'tool_call_metadata': {'approved_by': 'ops'},
+                'retry': 1,
+                'max_retries': 3,
+                'run_step': 4,
+                'loaded_capability_ids': ['cap-a', 'cap-b'],
+                'discovered_tool_names': ['tool-a', 'tool-b'],
+                '_anchored_evidence': (['anchored-tool'], ['anchored-cap']),
+                'usage_limits': {
+                    'cost_limit': None,
+                    'request_limit': 7,
+                    'tool_calls_limit': None,
+                    'input_tokens_limit': None,
+                    'output_tokens_limit': None,
+                    'total_tokens_limit': None,
+                    'per_request_input_tokens_limit': None,
+                    'count_tokens_before_request': False,
+                },
+                'workspace': {'provider': 'fake', 'id': 'ws'},
+                '_tool_name_path': ('prefix_',),
+                'deadline': datetime(2030, 1, 1, tzinfo=UTC),
+            }
+        }
+    )
 
 
 async def test_repeated_run_hits_cache():
@@ -4011,6 +4149,62 @@ async def test_prefect_durability_allows_overridden_toolsets_outside_flow() -> N
     with agent.override(toolsets=[FunctionToolset(id='override_outside')]):
         result = await agent.run('Hello outside')
     assert result.output == 'Echo: Hello outside'
+
+
+async def test_prefect_durability_override_capabilities_follow_the_per_run_rules() -> None:
+    """Stacking keeps the bound `PrefectDurability`, and a flow treats what the override adds like a per-run capability.
+
+    A hook-only capability runs inside the flow, and one that contributes an executing toolset is rejected there. A list
+    without the bound `PrefectDurability` is refused wherever the override is entered, as Prefect carries an override
+    entered outside a flow into it.
+    """
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            events.append('before_run')
+
+    agent = Agent(_durability_fn_model, name='durability_override_capabilities', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, RecordingCapability()]):
+        assert await run_agent() == snapshot('Echo: Hello')
+    assert events == ['before_run']
+
+    with agent.override(
+        capabilities=[*agent.root_capability.capabilities, Toolset(FunctionToolset(id='override_added'))]
+    ):
+        with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime'):
+            await run_agent()
+
+    with pytest.raises(UserError, match='holds the bound `PrefectDurability`'):
+        with agent.override(capabilities=[RecordingCapability()]):
+            pass
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+async def test_prefect_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
+    case: RebindCase,
+) -> None:
+    """The bound `PrefectDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and bind the agent's tasks a second time.
+    """
+    durability = PrefectDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    with pytest.raises(UserError, match='must keep, unchanged, the item'):
+        with agent.override(capabilities=case.capabilities(agent, bound)):
+            pass
 
 
 async def test_prefect_durability_rejects_runtime_toolset_reusing_registered_id() -> None:

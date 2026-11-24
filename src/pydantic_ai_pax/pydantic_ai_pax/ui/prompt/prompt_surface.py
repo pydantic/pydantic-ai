@@ -1,4 +1,4 @@
-"""The live panel: transcript and pinned editor painted as termflow.live frames on the alternate screen."""
+"""The live panel: transcript and pinned editor, inline until they fill the terminal, then on the alternate screen."""
 
 import asyncio
 import io
@@ -17,18 +17,26 @@ from pydantic_ai_pax.ui.browser import open_browser
 from pydantic_ai_pax.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP, Selection, mouse_report, url_at
 from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.text_clipboard import copy_text
-from pydantic_ai_pax.ui.prompt.transcript_view import TranscriptView
+from pydantic_ai_pax.ui.prompt.transcript_view import SCROLLED_HINT, TranscriptView
 from pydantic_ai_pax.ui.rendering import theme
 
 ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l'
 """Alternate screen, hidden cursor, and no autowrap, which `render_diff` assumes."""
 LEAVE = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l'
+KEYS_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u'
+"""Bracketed paste, xterm modified keys, and Kitty disambiguation with alternate keys.
+
+The inline panel leaves the mouse to the terminal, so its own selection and scrollback keep working.
+"""
 MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1002h\x1b[?1006h'
-"""Bracketed paste, xterm modified keys, Kitty disambiguation with alternate keys, and SGR mouse buttons and drags.
+"""`KEYS_ON` plus SGR mouse buttons and drags.
 
 Kitty keeps a flag stack per screen, so these are pushed after `ENTER` and popped before `LEAVE`.
 """
 MODES_OFF = '\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[<u\x1b[>4;0m\x1b[?2004l'
+INLINE_ON = '\x1b[?25l\x1b[?7l'
+"""Hidden cursor and no autowrap for the inline panel, so each row takes exactly one terminal row."""
+INLINE_OFF = '\x1b[0m\x1b[?7h\x1b[?25h'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
@@ -50,7 +58,10 @@ def open_in_browser(url: str) -> None:
 class PromptSurface(io.StringIO):
     """Own the terminal: every write lands in the transcript, and frames show it.
 
-    Frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
+    The panel starts inline, below the output already in the terminal's scrollback, and grows
+    with the transcript. Once it would fill the terminal, or the terminal narrows, widens or shrinks, it moves
+    to the alternate screen for good; setting `full_screen` first starts there.
+    There, frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
     and `render_diff` sends only changed cells. Nothing scrolls the terminal, so a resize, a theme
     change, or a closed menu repaints from the transcript. `restore` prints what the terminal's own
     scrollback has not seen yet.
@@ -79,6 +90,13 @@ class PromptSurface(io.StringIO):
         self._live = False
         """Painted since opening, so writes repaint."""
         self._screen = False
+        self.full_screen = False
+        """Paint on the alternate screen, from the next frame on; set it before the first to start there.
+
+        The inline panel sets it once it would fill the terminal or the width changes, and it stays set.
+        """
+        self._inline_rows: int = 0
+        """How many main-screen rows the inline panel occupies, ending at the cursor's row."""
         self._modes = False
         self._holds = 0
         self._dirty = False
@@ -91,6 +109,8 @@ class PromptSurface(io.StringIO):
         """The cells last painted, which a selection copies from."""
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
+        self._hint_on_transcript = False
+        """Whether `SCROLLED_HINT` covers the last transcript row, as when no editor rule is pinned."""
         self._select_pinned = False
         """Whether a drag can also highlight and copy pinned rows, not only the transcript."""
         self._paint_scheduled = False
@@ -113,8 +133,9 @@ class PromptSurface(io.StringIO):
         """Stop painting while another widget owns the terminal; writes still reach the transcript.
 
         Full-screen widgets enter the alternate screen themselves and leave it for the main one,
-        so the panel steps out first and enters again on its next frame. An inline widget that
-        paints through this surface keeps it on screen with `leave_screen=False`. Holds nest.
+        so the panel steps out first (erasing its inline rows) and paints again on its next frame.
+        An inline widget that paints through this surface keeps it on screen with `leave_screen=False`.
+        Holds nest.
         """
         with self._lock:
             self._holds += 1
@@ -180,10 +201,27 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def markdown(self, *, render: Render, width: int) -> MarkdownBlock:
-        """Start a Markdown part that renders again for a new width or theme."""
+    def markdown(
+        self, *, render: Render, width: int, streaming: bool = False, expanded: Render | None = None
+    ) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock` for `streaming` and `expanded`."""
         with self._lock:
-            return self.transcript.markdown(render=render, width=width, changed=self.changed)
+            return self.transcript.markdown(
+                render=render, width=width, changed=self.changed, streaming=streaming, expanded=expanded
+            )
+
+    def toggle_details(self) -> bool:
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O; returns whether they are expanded.
+
+        The terminal's scrollback cannot change, so results already printed there move the panel to
+        the alternate screen, which paints them from the transcript.
+        """
+        with self._lock:
+            expanded = self.transcript.toggle_details()
+            self.full_screen = self.full_screen or self.transcript.printed_details()
+            self.selection.clear()
+            self._dirty = True
+        return expanded
 
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""
@@ -238,9 +276,7 @@ class PromptSurface(io.StringIO):
 
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
-        # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
-        rows = self._transcript_rows - (self.view.anchor is not None)
-        return url_at(self._frame, cell, rows=rows, joins=self.view.joins())
+        return url_at(self._frame, cell, rows=self._transcript_rows - self._hint_on_transcript, joins=self.view.joins())
 
     def _paint_soon(self) -> None:
         """Paint once the event loop finishes the current callback, or now outside one.
@@ -306,7 +342,7 @@ class PromptSurface(io.StringIO):
                 pinned == self._rows
                 and self._modes
                 and not self._dirty
-                and self._previous is not None
+                and (self._previous is not None or self._inline_rows > 0)
                 and self._painted_as == (width, height, theme.name())
             )
             self._rows = pinned
@@ -316,9 +352,16 @@ class PromptSurface(io.StringIO):
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
+        if not self.full_screen and self._paint_compact(modes=modes, width=width, height=height):
+            return
+        self.full_screen = True
         parts: list[str] = []
         if not self._screen:
-            parts.append(ENTER)
+            if self._modes:
+                # The inline panel pushed its modes on the main screen; Kitty keeps a flag stack per screen.
+                parts.append(MODES_OFF)
+                self._modes, modes = False, True
+            parts.append(self._erase_inline() + ENTER)
             self._screen = True
             self._previous = None
         if modes and not self._modes:
@@ -330,6 +373,8 @@ class PromptSurface(io.StringIO):
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
+        # A URL the hint covers part of is not opened.
+        self._hint_on_transcript = self.view.anchor is not None and _show_scrolled_hint(frame, top=bottom)
         self.selection.highlight(frame, rows=height if self._select_pinned else bottom, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
@@ -341,6 +386,78 @@ class PromptSurface(io.StringIO):
             self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
             self.output.flush()
 
+    def _paint_compact(self, *, modes: bool, width: int, height: int) -> bool:
+        """Paint the inline panel, or print a released one, unless it has to move to the alternate screen."""
+        if self._inline_moved(width=width, height=height):
+            return False
+        if not self._rows:
+            self._print_released(width=width, height=height)
+            return True
+        pinned = self._rows[-(height - 2) :] if height > 2 else ()
+        if (shown := self._unprinted(width=width, limit=height - len(pinned))) is None:
+            return False
+        self._paint_inline([*shown, *pinned], modes=modes, width=width, height=height)
+        return True
+
+    def _inline_moved(self, *, width: int, height: int) -> bool:
+        """Whether a resize may have moved the inline rows, so erasing them by count would guess.
+
+        A narrower or wider terminal reflows them, and a shorter one can push some into scrollback.
+        """
+        painted = self._painted_as
+        return self._inline_rows > 0 and painted is not None and (painted[0] != width or painted[1] > height)
+
+    def _unprinted(self, *, width: int, limit: int) -> list[str] | None:
+        """The transcript rows not yet in the terminal's scrollback, or `None` once there are `limit` of them."""
+        shown: list[str] = []
+        for item in self.transcript.unprinted():
+            shown += self.transcript.rows(item, width=width)
+            if len(shown) >= limit:
+                return None
+        return shown
+
+    def _paint_inline(self, lines: list[str], *, modes: bool, width: int, height: int) -> None:
+        """Paint `lines` over the inline panel's rows on the main screen, scrolling earlier output up as it grows."""
+        self.view.follow()  # Every unprinted row shows, so there is nothing to scroll back to.
+        parts: list[str] = []
+        if modes and not self._modes:
+            parts.append(KEYS_ON)
+            self._modes = True
+        parts += [INLINE_ON, self._erase_inline() or '\r', '\r\n'.join(f'{line}\x1b[0m' for line in lines)]
+        self.output.write('\x1b[?2026h' + ''.join(parts) + '\x1b[?2026l')
+        self.output.flush()
+        self._inline_rows = len(lines)
+        self._dirty = False
+        self._painted_at = self.clock()
+        self._painted_as = (width, height, theme.name())
+
+    def _print_released(self, *, width: int, height: int) -> None:
+        """Print the completed transcript into scrollback while nothing is pinned, and paint only an unfinished line.
+
+        A command run meanwhile may write to the terminal itself, so no more rows stay than that line,
+        which a later erase would count; a progress line such as a `!` command's dots still shows.
+        """
+        parts = [self._erase_inline() + INLINE_OFF] if self._inline_rows else []
+        if printed := self.transcript.printed(width=width):
+            parts.append(printed.replace('\n', '\r\n') if self.output.isatty() else printed)
+        if self._partial:
+            tail = self.transcript.rows(self.transcript.end, width=width)
+            parts.append('\x1b[?2026h' + INLINE_ON + '\r\n'.join(f'{row}\x1b[0m' for row in tail) + '\x1b[?2026l')
+            self._inline_rows = len(tail)
+        if parts:
+            self.output.write(''.join(parts))
+            self.output.flush()
+        self._dirty = False
+        self._painted_at = self.clock()
+        self._painted_as = (width, height, theme.name())
+
+    def _erase_inline(self) -> str:
+        """Return to the inline panel's first row and clear it and everything below, or nothing without one."""
+        rows, self._inline_rows = self._inline_rows, 0
+        if not rows:
+            return ''
+        return '\x1b[0m\r' + (f'\x1b[{rows - 1}A' if rows > 1 else '') + '\x1b[J'
+
     def _leave(self) -> None:
         parts: list[str] = []
         if self._modes:
@@ -350,16 +467,23 @@ class PromptSurface(io.StringIO):
             parts.append(LEAVE)
             self._screen = False
             self._previous = None
+        elif self._inline_rows:
+            parts.append(self._erase_inline() + INLINE_OFF)
         if parts:
             self.output.write(''.join(parts))
             self.output.flush()
 
-    def release(self) -> None:
+    def release(self, *, turn_running: bool = False) -> None:
         """Drop the editor rows and input modes before a menu, command, or shell takes over.
 
-        The transcript stays on screen, and output the command prints still appears.
+        The transcript stays on screen, and output the command prints still appears. An inline panel
+        prints it into scrollback instead, keeping no rows: what takes over may write to the terminal
+        itself, below rows the panel would later erase by count. While `turn_running`, the turn may
+        still extend what it streamed, so an inline panel moves to the alternate screen instead.
         """
         with self._lock:
+            if turn_running and not self.full_screen:
+                self.full_screen = self._dirty = True
             if self._partial:
                 self.transcript.write('\n')
                 self._partial = False
@@ -375,15 +499,29 @@ class PromptSurface(io.StringIO):
             self.refresh()
 
     def restore(self) -> None:
-        """Leave the alternate screen and print the session into the terminal's own scrollback.
+        """Leave the alternate screen or erase the inline panel, then print the session into the terminal's scrollback.
 
         Not `close`: `io.IOBase` calls that when the object is collected.
         """
         with self._lock:
-            self.release()
-            self._leave()
             self._live = False
+            self._leave()
+            self.release()
             width, _ = self._geometry()
             if printed := self.transcript.printed(width=width):
                 self.output.write(printed.replace('\n', '\r\n') if self.output.isatty() else printed)
                 self.output.flush()
+
+
+def _show_scrolled_hint(frame: ScreenBuffer, *, top: int) -> bool:
+    """Paint `SCROLLED_HINT` at the right end of the editor's bottom rule; return whether it went on the transcript.
+
+    That rule is the last pinned row made only of `─`, so the hint covers no text and stays put
+    while the working title above the draft changes. Pinned rows without a rule, such as line input
+    on the alternate screen, get it on the last transcript row.
+    """
+    rules = [y for y in range(top, frame.height) if frame.row_text(y) == '─' * frame.width]
+    y = rules[-1] if rules else top - 1
+    hint = f'{theme.sgr(theme.MUTED)}\x1b[7m{SCROLLED_HINT[: frame.width]}\x1b[0m'
+    frame.region(Rect(0, y, frame.width, 1)).ansi(max(0, frame.width - len(SCROLLED_HINT)), 0, hint)
+    return y < top

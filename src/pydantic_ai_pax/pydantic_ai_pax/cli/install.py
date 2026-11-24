@@ -1,11 +1,11 @@
-"""Which package installed the running CLAI, and so which command starts it."""
+"""Which package installed the running Pax, and so which command starts it."""
 
 import sys
 from pathlib import Path
 
 DISTRIBUTION = 'pydantic-ai-pax'
 LEGACY_DISTRIBUTION = 'pydantic-clai2'
-"""CLAI's former name: a `uv tool` environment installed under it keeps updating under it, keeping `clai2`.
+"""Pax's former name: a `uv tool` environment installed under it keeps updating under it, keeping `clai2`.
 
 That needs a `pydantic-clai2` release for every version, so the shim cannot stop being released until `/update`
 moves these environments to `pydantic-ai-pax`.

@@ -123,6 +123,7 @@ class TestSpritesSandbox:
         ('kwargs', 'message'),
         [
             ({'working_dir': 'relative'}, "working_dir must be an absolute POSIX path or None, got 'relative'."),
+            ({'desktop': (0, 0)}, '`desktop` must be a `(width, height)` of at least 1 pixel each, got (0, 0).'),
             (
                 {'defer_loading': True},
                 '`SpritesSandbox` does not support `defer_loading=True`: '
@@ -1275,6 +1276,35 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
+    async def test_a_cancelled_command_removes_its_stderr_file_over_a_slow_exec(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        running = tmp_path / 'running'
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # Deadlines read the event loop's clock: the read-back's handshake moves it on instead of taking that long.
+        loop = asyncio.get_running_loop()
+        real_loop_time = loop.time
+        skipped = 0.0
+        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
+        connect = transport.connect
+
+        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            nonlocal skipped
+            if transport.execs:
+                # Only the exec that reads the capture back is slow: more than the default stop grace, less than the
+                # handshake timeout.
+                skipped += 5
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['sh', '-c', f'echo secret >&2; : > {running}; exec sleep 30'])
+            while not running.exists():  # real-wait: the command runs in a real subprocess, which sets no event
+                await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
     @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
     async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
         with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
@@ -1341,6 +1371,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'authority',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'path_authority',
@@ -1356,5 +1387,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
         'runtime': 'python',
+        'desktop': (1440, 900),
     }
     assert SpritesSandbox[None].from_spec(**spec_fields) == SpritesSandbox[None](**spec_fields)

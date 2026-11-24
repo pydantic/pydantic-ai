@@ -355,7 +355,7 @@ class CoderSource(Generic[DepsT]):
 class _ProjectSkills(WrapperCapability[DepsT]):
     """Harness `Skills` that read the project directory while the run's workspace is not chosen yet.
 
-    When a plugin adds a capability function, CLAI attaches the project directory only once the run's
+    When a plugin adds a capability function, Pax attaches the project directory only once the run's
     capability functions resolve, so a sandbox one supplies wins (see `local_workspace`). `Skills` reads
     its catalog in `for_run`, before then, and would find no workspace. It reads the project directory
     instead, where the run works unless a capability function supplies a workspace of its own.

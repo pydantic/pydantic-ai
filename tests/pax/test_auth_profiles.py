@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import SecretStr
 from rich.console import Console
 
@@ -454,6 +455,28 @@ async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: P
             await Agent(model).run('hello')
 
 
+async def test_first_run_without_codex_offers_other_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no credentials, the default Codex model names the other ways in instead of starting a Codex sign-in.
+
+    Not a VCR test: loading the missing credentials fails before any provider request, so there is nothing to record.
+    """
+
+    async def no_login(*args: object, **kwargs: object) -> str:
+        raise AssertionError('Codex sign-in started on its own')  # pragma: no cover
+
+    monkeypatch.setattr(CodexAuth, 'login', no_login)
+    models = resolver(tmp_path)
+    model = await models.resolve(Settings().model or '')
+    with override_allow_model_requests(True):
+        with pytest.raises(UserError) as failed:
+            await Agent(model).run('hello')
+    assert str(failed.value) == snapshot(
+        'Codex is not connected. Run /login openai-codex to sign in with ChatGPT, /login to see every other sign-in '
+        '(such as github-copilot), or /model add to use another provider with an API key '
+        '(saved with /keys or set in its environment variable).'
+    )
+
+
 async def test_resolver_reports_profile_problems(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     models = resolver(tmp_path, {'single': ModelProvider(prefix='single', resolve=echo)})
     with pytest.raises(UserError, match=r'No chain named missing\. Create one with /model chains\.'):
@@ -593,5 +616,5 @@ CREDENTIALS_JSON = json.dumps({'access_token': 'a', 'refresh_token': 'r', 'accou
 
 
 def test_plugins_cannot_take_the_chain_prefix() -> None:
-    with pytest.raises(ValueError, match='CLAI already runs'):
+    with pytest.raises(ValueError, match='Pax already runs'):
         ModelProvider(prefix='chain', resolve=echo)

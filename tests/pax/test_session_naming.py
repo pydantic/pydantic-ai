@@ -10,8 +10,11 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ThinkingPart, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_naming import NamingClient, NamingResult, SessionName, SessionNamer, generate_name
@@ -28,6 +31,35 @@ async def test_structured_name_and_auxiliary_usage() -> None:
     name = SessionName(title='Fix\nrenderer\x1b', tags=['#SQLite', 'sqlite', '  ', 'tools'])
     assert name.title == 'Fix renderer'
     assert name.tags == ['sqlite', 'tools']
+
+
+async def test_a_reasoning_model_is_asked_for_no_reasoning_and_has_room_to_answer() -> None:
+    """A reasoning model spends output tokens thinking before its title; a tight cap left it no answer (#14082).
+
+    Naming asks for no reasoning through the unified `thinking` setting, which each provider's adapter turns into
+    its own lowest level; core's model tests pin that translation, so this pins only what Pax sends.
+
+    Not a VCR test: a recording doesn't show the settings sent, and only a fake model can stand in for a
+    reasoning model that runs out of a tight cap.
+    """
+    sent: list[tuple[int | None, ThinkingLevel | None]] = []
+
+    async def reasoning_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        cap = (info.model_settings or {}).get('max_tokens')
+        sent.append((cap, info.model_request_parameters.thinking))
+        # It reasons for about 2000 tokens; a smaller cap leaves no answer, as GLM-5.3 had with 250.
+        answered = cap is not None and cap >= 2000
+        title = [ToolCallPart(info.output_tools[0].name, {'title': 'Greet the user'})] if answered else []
+        return ModelResponse(
+            parts=[ThinkingPart('Considering the conversation...'), *title],
+            finish_reason='stop' if answered else 'length',
+        )
+
+    model = FunctionModel(reasoning_model, profile=ModelProfile(supports_thinking=True))
+    result = await generate_name(model=model, prompt='Current conversation tail:\nuser: hi')
+    assert result.name.title == 'Greet the user'
+    # No reasoning asked for, and still bounded, so a model that never stops costs a known amount.
+    assert sent == [(4096, False)]
 
 
 async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
@@ -291,7 +323,7 @@ async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) 
         ),
         messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
     )
-    # A fork of an import has an ID of its own, so it is CLAI's, whatever tag it copied.
+    # A fork of an import has an ID of its own, so it is Pax's, whatever tag it copied.
     native = await store.save(
         summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
         messages=[ModelRequest(parts=[UserPromptPart('ask claude')])],
@@ -414,6 +446,35 @@ async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond
     assert 'Web UI Stress Test Round Three' not in prompts[1]
     assert '- Web UI stress test round three\n' in prompts[2]
     assert '- web ui stress test round three (2)\n' in prompts[3]
+
+
+async def test_naming_shows_only_sessions_the_naming_model_may_see(tmp_path: Path) -> None:
+    """A session, or a sibling's title, the client rules out never reaches the prompt; its title is still taken."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('fix renderer')])]
+    hidden = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Fix renderer', model='ollama:llama'), messages=messages
+    )
+    shown = await store.save(
+        summary=ConversationSummary(workspace='/a', title='Write docs', model='openai:gpt-5'), messages=messages
+    )
+    named = await store.save(summary=ConversationSummary(workspace='/a', model='openai:gpt-5'), messages=messages)
+    prompts: list[str] = []
+
+    async def generate(prompt: str) -> NamingResult:
+        prompts.append(prompt)
+        return NamingResult(name=SessionName(title='Fix renderer'))
+
+    namer = SessionNamer(store=store)
+    client = NamingClient(generate=generate, may_see=lambda summary: summary.model == 'openai:gpt-5')
+    assert not await namer.name(conversation_id=hidden.id, client=client)
+    assert prompts == []
+    assert await namer.name(conversation_id=named.id, client=client)
+    assert f'- {shown.title}\n' in prompts[0] and 'Fix renderer' not in prompts[0]
+    assert (await store.get(conversation_id=named.id)).summary.title == 'Fix renderer (2)'
+    # `backfill` leaves out what the client rules out, so it never fills the bounded queue.
+    namer.backfill([hidden], client=client)
+    assert namer.submit(hidden.id, client=client)
 
 
 async def test_titles_stay_distinct_behind_many_newer_sessions_elsewhere(tmp_path: Path) -> None:

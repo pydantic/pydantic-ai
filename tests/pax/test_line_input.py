@@ -44,7 +44,7 @@ async def test_output_printed_before_the_prompt_stays_on_screen(key_pipe: PipeIn
     with holding_output(surface.held):
         console.print(URL)
         assert await read_line(PROMPT, console=console) == 'the-code'
-    assert terminal.alternate
+    assert not terminal.alternate, 'a compact panel stays compact'
     assert LEAVE not in terminal.getvalue(), 'the panel stays on screen'
     screen = [line for line in terminal.lines() if line]
     assert screen[-3:] == [URL, PROMPT.rstrip(), 'the-code']
@@ -147,6 +147,6 @@ async def test_without_a_terminal_or_dialogs_it_refuses() -> None:
     """A plain prompt would read EOF there and return as if cancelled."""
     with (
         without_terminal('/login paste'),
-        pytest.raises(ValueError, match=r'/login paste .* this CLAI has no terminal'),
+        pytest.raises(ValueError, match=r'/login paste .* this Pax has no terminal'),
     ):
         await read_line('> ', console=Console(file=io.StringIO()))

@@ -283,6 +283,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> None:
         self.wrapped._validate_runtime_capabilities(ctx, capabilities)
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        self.wrapped._validate_override_capabilities(capabilities)
+
     # --- Get methods ---
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

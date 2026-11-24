@@ -40,6 +40,7 @@ def test_storage() -> None:
     assert 'replacement' not in repr(keys)
     assert not credentials_path(account='api-keys').exists()
     assert 'api_key' in set_completions([])
+    assert tuple(set_completions(['display.full_screen', ''])) == ('true', 'false')
 
 
 @pytest.mark.parametrize('name', ['', '1KEY', 'bad-name', '../key', 'A B'])

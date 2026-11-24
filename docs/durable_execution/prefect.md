@@ -158,6 +158,8 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
+[`agent.override(capabilities=...)`][pydantic_ai.agent.AbstractAgent.override] replaces the agent's capabilities, so build its list from `agent.root_capability.capabilities` to keep the bound [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]: a list without it raises a [`UserError`][pydantic_ai.exceptions.UserError]. Inside a flow, the capabilities the list adds are treated like those passed to `agent.run(capabilities=[...])`.
+
 ### Durable Capability Operations
 
 Capability tasks include the agent's name in their cache key, so two agents in one flow never

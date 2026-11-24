@@ -38,10 +38,11 @@ from pydantic_ai_pax.runtime.session_settings import SessionSettings
 from pydantic_ai_pax.ui.menus.field_menu import FieldMenu
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output, run_worker
 from pydantic_ai_pax.ui.menus.model_menu import ModelSettingsSource
-from pydantic_ai_pax.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.screen import Screen
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
+from tests.pax.surface_terminal import scrollback
 from tests.pax.test_tasks import task
 
 
@@ -310,7 +311,7 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             close.set()
             pipe.send_text('/exit\r')
             await done.wait()
-    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    text = Text.from_ansi(scrollback(output.getvalue())).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
 
 
@@ -343,9 +344,9 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
             busy = any(row.startswith('─ Working ') for row in plain)
             if started.is_set() and busy:
                 working.set()
-                if 'keep me' in plain:
+                if '❯ keep me' in plain:
                     drafted.set()
-            elif drafted.is_set() and 'keep me' in plain:
+            elif drafted.is_set() and '❯ keep me' in plain:
                 kept.set()
             super().paint(rows, select_pinned=select_pinned)
 
@@ -382,7 +383,7 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
             await kept.wait()
             pipe.send_text('\x15/exit\r')
             await done.wait()
-    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    text = Text.from_ansi(scrollback(output.getvalue())).plain
     assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
 
 
@@ -440,7 +441,7 @@ async def test_cancelling_a_command_discards_the_prompt_it_submitted(
             pipe.send_text('/exit\r')
             await done.wait()
     assert requests == []
-    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    text = Text.from_ansi(scrollback(output.getvalue())).plain
     assert text.index('Command cancelled.') < text.index('Goodbye.')
 
 
@@ -576,10 +577,12 @@ async def test_usage_reports_answer_mid_turn(tmp_path: Path, monkeypatch: pytest
     """`/cost` and `/usage` only read the retained history, so they report it at once instead of queueing."""
     working, finish, reported, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
     written: list[str] = []
+    surfaces: list[PromptSurface] = []
 
     class Surface(PromptSurface):
         def write(self, text: str) -> int:
             written.append(text)
+            surfaces.append(self)
             if 'Retained history cost' in ''.join(written):
                 reported.set()
             return super().write(text)
@@ -633,7 +636,8 @@ async def test_usage_reports_answer_mid_turn(tmp_path: Path, monkeypatch: pytest
             finish.set()
             pipe.send_text('/exit\r')
             await done.wait()
-    text = Text.from_ansi(output.getvalue()).plain
+    # The transcript keeps rows in the order they were shown; the printed copy moves the finished turn's rows.
+    text = _plain(surfaces[-1].transcript)
     assert text.index(f'> {command}') < text.index('Retained history cost') < text.index('> /exit')
     # Mid-turn, the report covers the turn that finished, not the running one.
     assert 'over 1 request.' in text

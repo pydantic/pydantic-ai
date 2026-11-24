@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from textwrap import dedent
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage
 
 __all__ = [
+    'ModelDeprecation',
     'ModelProfile',
     'ModelProfileSpec',
     'ToolAdditionMode',
@@ -54,6 +56,24 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
 
 DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
 """Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelDeprecation:
+    """A provider's announced deprecation of a model on its API.
+
+    Set as a model's [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation], it makes each request to the
+    model emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    """
+
+    source_url: str
+    """The provider's announcement of the deprecation."""
+
+    retirement_date: date | None = None
+    """The date the provider stops serving the model, or `None` if it hasn't announced one."""
+
+    replacement: str | None = None
+    """The model the provider recommends instead, or `None` if it names none."""
 
 
 class ModelProfile(TypedDict, total=False):
@@ -243,6 +263,19 @@ class ModelProfile(TypedDict, total=False):
     system prompt's task in 44 of 48 with it and 69 of 96 without. Other models measured did as well or better
     without it on those requests. See
     [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
+    """
+
+    needs_json_string_tool_returns: bool
+    """Whether a tool's text output is sent as an escaped JSON string field. Default: `False`.
+
+    When `True`, `Model.prepare_messages` sends the content of each successful `ToolReturnPart` whose content is a
+    string as `{"tool_output": "..."}`, with the text JSON-escaped, so its newlines and quotes don't read as plain
+    lines in the tool message. A string that holds JSON is wrapped the same way, so it's escaped a second time, which
+    measured no worse on Qwen3 Next than the JSON as is. Only the outgoing copy changes: the history keeps the tool's
+    output as returned. Lookalike notes are still decided on the output as returned.
+
+    Set for Qwen3 Next, which treated a tool's output as information more reliably in this form than as plain text,
+    on every route measured, at a few tokens per tool result and with the cached prefix unchanged.
     """
 
     supports_request_scoped_system_prompts: bool
@@ -476,6 +509,18 @@ class ModelProfile(TypedDict, total=False):
 
     Anthropic's does, with a signature that only compaction-capable Claude models accept. OpenAI's is encrypted, so
     only OpenAI models can use it.
+    """
+
+    deprecation: ModelDeprecation | None
+    """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
+
+    When set, each request to the model emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
+    where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
+    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    See [Deprecated models](../models/overview.md#deprecated-models).
     """
 
     tool_call_id_length: int | None

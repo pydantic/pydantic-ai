@@ -342,8 +342,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         retention is left out of `supported_cache_retentions`: Chat Completions rejects `prompt_cache_options.ttl='12h'`
         with a 400 (verified live on every GPT-5.6, GPT-6, GPT-6.1 and GPT-6.2 model), while the Responses API on the same
         models accepts it, and the providers declare their tiers per model rather than per API.
+
+        `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
         """
         profile = merge_profile(profile, ModelProfile(supports_compaction_on_demand=False))
+        if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
+            profile = merge_profile(profile, ModelProfile(deprecation=None))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:
             return profile
