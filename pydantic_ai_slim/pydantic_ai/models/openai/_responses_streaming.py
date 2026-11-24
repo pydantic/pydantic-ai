@@ -20,7 +20,16 @@ from pydantic_core import to_json
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
 from ...exceptions import ModelConnectionError
-from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
+from ...messages import (
+    BinaryImage,
+    FilePart,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+)
+from ...profiles import DEFAULT_THINKING_TAGS
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from .._history_digest import Hasher
@@ -76,6 +85,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_url: str
     _tool_call_ids_are_response_scoped: bool
     _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
+    _thinking_tags: tuple[str, str] = DEFAULT_THINKING_TAGS
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _usage_received: bool | None = field(default=False, init=False)
@@ -739,6 +749,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 id=chunk.item_id,
                 provider_name=self.provider_name,
                 provider_details=delta_provider_details,
+                thinking_tags=self._thinking_tags,
             )
 
     def _map_text_done(self, chunk: responses.ResponseTextDoneEvent) -> Iterator[ModelResponseStreamEvent]:
@@ -771,8 +782,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         )
         if citations:
             provider_details.update(responses_citations_provider_details(annotations))
-        # Empty text makes no part, as in `_process_response`.
-        if provider_details and chunk.text:
+        # Empty text makes no part, as in `_process_response`. Text details don't belong on a thinking part.
+        if provider_details and chunk.text and not isinstance(existing_part, ThinkingPart):
             yield from self._parts_manager.handle_text_delta(
                 vendor_part_id=content_key,
                 content='',

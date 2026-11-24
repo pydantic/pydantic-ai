@@ -59,7 +59,7 @@ from ..._http import to_httpx2_timeout
 from ..._instrumentation import current_model_request_span, get_instructions
 from ..._output import DEFAULT_OUTPUT_TOOL_NAME
 from ..._run_context import RunContext
-from ..._thinking_part import render_replayed_thinking
+from ..._thinking_part import render_replayed_thinking, split_content_into_text_and_thinking
 from ..._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
@@ -120,7 +120,7 @@ from ...native_tools import (
 )
 from ...native_tools._tool_search import ToolSearchTool
 from ...output import OutputObjectDefinition
-from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
+from ...profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ...providers import Provider, infer_provider
 from ...providers._oauth_provider import OAuthCredentialsProvider
@@ -1258,13 +1258,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _map_output_message(
         self, item: responses.ResponseOutputMessage, model_settings: OpenAIResponsesModelSettings
-    ) -> Iterator[TextPart]:
+    ) -> Iterator[TextPart | ThinkingPart]:
+        thinking_tags = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
         for content in item.content:
             # Like a stream, which only builds text from its deltas, empty text (such as the message that
             # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
             if not isinstance(content, responses.ResponseOutputText) or not content.text:
                 continue
-            citations = map_responses_citations(content.annotations, content.text)
+            content_parts = split_content_into_text_and_thinking(content.text, thinking_tags)
+            # Annotation positions count into the original text, so they can't be used once thinking tags are removed.
+            unsplit = len(content_parts) == 1 and content_parts[0].content == content.text
+            citations = map_responses_citations(content.annotations, content.text) if unsplit else None
             part_provider_details: dict[str, Any] = {}
             if citations:
                 part_provider_details.update(responses_citations_provider_details(content.annotations))
@@ -1276,13 +1280,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
             if item.phase is not None:
                 part_provider_details['phase'] = item.phase
-            yield TextPart(
-                content.text,
-                id=item.id,
-                provider_name=self.system,
-                provider_details=part_provider_details or None,
-                citations=citations,
-            )
+            for part in content_parts:
+                if isinstance(part, ThinkingPart):
+                    yield replace(part, provider_name=self.system)
+                else:
+                    yield TextPart(
+                        part.content,
+                        id=item.id,
+                        provider_name=self.system,
+                        provider_details=part_provider_details or None,
+                        citations=citations,
+                    )
 
     def _map_function_tool_call(
         self, item: responses.ResponseFunctionToolCall, response_id: str, timestamp: datetime
@@ -1402,6 +1410,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
+            _thinking_tags=self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:

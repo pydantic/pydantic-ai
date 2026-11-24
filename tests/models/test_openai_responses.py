@@ -5,7 +5,7 @@ import json
 import re
 import warnings
 from collections import Counter
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -69,7 +69,10 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
-from pydantic_ai.direct import model_request as direct_model_request
+from pydantic_ai.direct import (
+    model_request as direct_model_request,
+    model_request_stream as direct_model_request_stream,
+)
 from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
@@ -359,6 +362,100 @@ def test_openai_citations_kept_with_logprobs():
     assert isinstance(part, TextPart)
     assert part.provider_details is not None
     assert part.provider_details.keys() == {'citations', 'logprobs'}
+
+
+async def test_openai_responses_splits_thinking_tags_in_output_text(allow_model_requests: None):
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg-1',
+                content=[ResponseOutputText(text='<think>plan</think>Hello!', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
+    )
+
+    result = await direct_model_request(model, [ModelRequest.user_text_prompt('')])
+
+    assert result.parts == snapshot(
+        [
+            ThinkingPart(content='plan', provider_name='openai'),
+            TextPart(content='Hello!', id='msg-1', provider_name='openai'),
+        ]
+    )
+
+
+def _thinking_tag_stream(
+    deltas: list[str], logprobs: list[resp.response_text_done_event.Logprob]
+) -> list[resp.ResponseStreamEvent]:
+    base_response = response_message([])
+    message = ResponseOutputMessage(id='msg-1', content=[], role='assistant', status='in_progress', type='message')
+    return [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=message, output_index=0, type='response.output_item.added', sequence_number=1
+        ),
+        *(
+            resp.ResponseTextDeltaEvent(
+                content_index=0,
+                delta=delta,
+                item_id='msg-1',
+                output_index=0,
+                type='response.output_text.delta',
+                sequence_number=2 + index,
+                logprobs=[],
+            )
+            for index, delta in enumerate(deltas)
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg-1',
+            output_index=0,
+            text=''.join(deltas),
+            type='response.output_text.done',
+            sequence_number=2 + len(deltas),
+            logprobs=logprobs,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=3 + len(deltas),
+        ),
+    ]
+
+
+async def _streamed_parts(stream: list[resp.ResponseStreamEvent]) -> Sequence[ModelResponsePart]:
+    model = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock_stream(stream))
+    )
+    async with direct_model_request_stream(model, [ModelRequest.user_text_prompt('')]) as streamed:
+        async for _ in streamed:
+            pass
+    return streamed.get().parts
+
+
+async def test_openai_responses_stream_splits_thinking_tags(allow_model_requests: None):
+    parts = await _streamed_parts(_thinking_tag_stream(['<think>', 'plan', '</think>', 'Hello!'], logprobs=[]))
+
+    assert parts == snapshot(
+        [
+            ThinkingPart(content='plan', provider_name='openai'),
+            TextPart(content='Hello!', id='msg-1', provider_name='openai'),
+        ]
+    )
+
+
+async def test_openai_responses_stream_keeps_text_details_off_unclosed_thinking(allow_model_requests: None):
+    logprob = resp.response_text_done_event.Logprob(token='plan', logprob=-0.1)
+
+    parts = await _streamed_parts(_thinking_tag_stream(['<think>', 'plan'], logprobs=[logprob]))
+
+    assert parts == snapshot([ThinkingPart(content='plan', provider_name='openai')])
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
