@@ -1,9 +1,12 @@
-# description: Runs the harness live-service suites daily against the floating upstream image tags and files each failing suite as an issue.
-name: Live service images nightly
+# description: Runs the harness live-service suites daily before the usual release time against the floating upstream image tags and files each failing suite as an issue.
+name: Live service images daily
 
-# `ci.yml` pins each harness live-service image by version and digest, so an upstream release
+# `ci.yml` pins each harness live-service image by version and digest, so a new upstream image
 # cannot fail a merge group or a tag. This workflow runs the same suites against the floating tags
 # those pins track, so upstream drift shows up here, as an issue, before a pin bump meets it.
+#
+# It runs at 21:30 UTC, half an hour before releases usually go out (around 17:00 UTC-5), so a
+# failure is fresh when someone is about to tag one.
 #
 # Each job copies its `ci.yml` job except for the image and the first step, which records the digest
 # the tag resolved to. `.github/scripts/test_ci_content_classifier.py` checks that they stay in step.
@@ -17,14 +20,14 @@ name: Live service images nightly
 
 on:
   schedule:
-    - cron: "41 5 * * *"
+    - cron: "30 21 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: live-service-images-nightly-${{ github.ref }}
+  group: live-service-images-daily-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -202,7 +205,7 @@ jobs:
     # Filing lists the open issues and then creates the missing ones, so two reports at once could
     # file one suite twice.
     concurrency:
-      group: live-service-images-nightly-report
+      group: live-service-images-daily-report
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -217,7 +220,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          prefix='Live service images nightly:'
+          prefix='Live service images daily:'
           # `--search` matches words rather than the phrase, so it narrows the listing and the exact
           # title is compared below.
           open="$(gh issue list --state open --author app/github-actions --search "${prefix} in:title" \

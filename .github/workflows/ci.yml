@@ -1964,9 +1964,9 @@ jobs:
 
   # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
   # a real server. Each runs when its capability, the dependencies, or this workflow change, and
-  # always on tags. Each service image is pinned by version and digest, and
-  # `live-service-images-nightly.yml` runs the image-backed suites daily against the floating tags.
-  # `check` allows their failures on a tag: see `allowed-failures` there.
+  # always on tags. Each service image is pinned by version and digest, so a new upstream image cannot
+  # fail a tag; `live-service-images-daily.yml` runs the image-backed suites against the floating
+  # tags shortly before the usual release time.
   harness-integration-changes:
     name: classify harness integration changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
@@ -2433,15 +2433,6 @@ jobs:
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
               || 'docs-only,content-checks,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration,harness-bubblewrap-integration'
-            }}
-          # A live-service job tests against an upstream service, image or daemon, which can change
-          # between a merge and its tag. On a tag its failure still turns the run red but does not
-          # hold the release; pull requests, merge groups and `main` still require it.
-          allowed-failures: >-
-            ${{
-              github.ref_type == 'tag'
-              && 'harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,harness-kubernetes-integration'
-              || ''
             }}
           jobs: ${{ toJSON(needs) }}
 
