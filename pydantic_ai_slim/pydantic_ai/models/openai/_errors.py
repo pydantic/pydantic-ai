@@ -68,8 +68,9 @@ def map_transport_status_error(e: httpx2.HTTPStatusError, model_name: str, model
         body=body,
         code=code,
         error_type=error_type,
-        # `openai`'s own message holds the whole body.
-        message=text,
+        # Like `openai` does for its own errors, classify from the error's `message` when the body has one; the whole
+        # response text is the fallback when it doesn't.
+        message=error['message'] if isinstance(error.get('message'), str) else text,
         headers=dict(e.response.headers),
         error_object=error,
     )

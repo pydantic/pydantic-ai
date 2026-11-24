@@ -2242,6 +2242,108 @@ CASES = [
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'retry_after': 3.0},
     ),
+    Case(
+        id='openai-401-metadata-raw-context-window',
+        model=_openai,
+        handler=_gave_up(
+            401,
+            content=json.dumps(
+                {
+                    'error': {
+                        'message': 'Invalid API key provided.',
+                        'metadata': {
+                            'raw': "litellm.AuthenticationError: This model's maximum context length is 128000 tokens. "
+                            'However, you requested about 150008 tokens. Please reduce the length of either one.'
+                        },
+                    }
+                }
+            ).encode(),
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401},
+    ),
+    Case(
+        id='openai-403-metadata-raw-context-window',
+        model=_openai,
+        handler=_gave_up(
+            403,
+            content=json.dumps(
+                {
+                    'error': {
+                        'message': 'Your API key does not have access to this model.',
+                        'metadata': {
+                            'raw': "litellm.AuthenticationError: This model's maximum context length is 128000 tokens. "
+                            'However, you requested about 150008 tokens. Please reduce the length of either one.'
+                        },
+                    }
+                }
+            ).encode(),
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403},
+    ),
+    Case(
+        id='openai-404-model-not-found-metadata-raw',
+        model=_openai,
+        handler=_gave_up(
+            404,
+            content=json.dumps(
+                {
+                    'error': {
+                        'code': 'model_not_found',
+                        'message': 'No endpoints found matching your request.',
+                        'metadata': {
+                            'raw': "litellm.AuthenticationError: This model's maximum context length is 128000 tokens. "
+                            'However, you requested about 150008 tokens. Please reduce the length of either one.'
+                        },
+                    }
+                }
+            ).encode(),
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openai-400-model-not-found-metadata-raw',
+        model=_openai,
+        handler=_gave_up(
+            400,
+            content=json.dumps(
+                {
+                    'error': {
+                        'code': 'model_not_found',
+                        'message': 'We could not route your request.',
+                        'metadata': {
+                            'raw': "litellm.AuthenticationError: This model's maximum context length is 128000 tokens. "
+                            'However, you requested about 150008 tokens. Please reduce the length of either one.'
+                        },
+                    }
+                }
+            ).encode(),
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 400, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openrouter-503-metadata-raw-overloaded',
+        model=_openrouter,
+        handler=_gave_up(
+            503,
+            content=json.dumps(
+                {
+                    'error': {
+                        'code': 503,
+                        'message': 'Provider returned error',
+                        'metadata': {
+                            'raw': 'litellm.InternalServerError: The provider is overloaded, please try again later.'
+                        },
+                    }
+                }
+            ).encode(),
+        ),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+    ),
 ]
 
 
