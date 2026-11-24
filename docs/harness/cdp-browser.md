@@ -72,7 +72,7 @@ The tool allows three retries in a row, since CDP mistakes are common and the mo
 
 | Option | Default | Purpose |
 |---|---|---|
-| `headless` | `True` | Run Chrome without a window. |
+| `headless` | `True` | Run Chrome without a window. A headed run shares the desktop's clipboard, and the model can paste from it. |
 | `chrome_path` | `None` | The Chrome or Chromium binary. `None` reads `CHROME_PATH`, then searches the usual install locations. |
 | `chrome_sandbox` | `True` | Run Chrome with its renderer sandbox. Turn it off only where the sandbox cannot start (see [Limitations](#limitations)). |
 | `allowed_methods` | `DEFAULT_ALLOWED_CDP_METHODS` | The CDP commands the model may send. |
