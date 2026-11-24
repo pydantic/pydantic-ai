@@ -47,9 +47,9 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 
 The Pax page and the Pax README tell the same story on two surfaces. The page was generated from the README until the beta; it is a page in its own right now, and `tests/test_pax_docs_parity.py` holds the pair together:
 
-- The page uses relative links and names models by alias, like every other docs page.
-- The README uses absolute documentation links, keeps its badges, and names models themselves, since PyPI and GitHub resolve neither relative paths nor aliases.
-- Code blocks stay identical once aliases are resolved. A command a reader copies must be the same on both.
+- The page uses relative links; the README uses absolute documentation links and keeps its badges, since PyPI and GitHub resolve neither relative paths nor Markdown.
+- Both name models themselves rather than by alias. The page is in `EXEMPT_PAGES` of `tests/test_docs_model_aliases.py` because it documents Pax's own default model and the `account@model` syntax with real Codex IDs, which an alias would misstate. A code block is the one place on the page where an alias is allowed, since the parity test resolves aliases there and nowhere else.
+- Code blocks and prose both stay identical: a command a reader copies, and the wording around it, must be the same on both.
 - Edit both. Nothing regenerates either one.
 
 # Model names
