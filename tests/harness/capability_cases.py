@@ -493,7 +493,7 @@ CASES: dict[str, CapabilityCase] = {
                     'capability__planning.read_plan',
                     'capability__planning.read_plan',
                 ),
-                temporal=('toolset__planning__call_tool',) * 2,
+                # Its run fails under Temporal (`DURABLE_TEMPORAL` exempts it, #7971), so nothing is recorded there.
             ),
         ),
     ),
