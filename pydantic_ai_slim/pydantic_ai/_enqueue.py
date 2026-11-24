@@ -619,18 +619,20 @@ def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessag
     return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
 
 
-def _before_prompt_index(target: ModelRequest, queue: PendingMessageQueue) -> int | None:
+def _before_prompt_index(target: ModelRequest, original: ModelRequest, queue: PendingMessageQueue) -> int | None:
     """The index in `target` that content placed before the prompt goes at, or `None` when `target` holds no prompt.
 
-    That's right after what an earlier delivery in this step put before the prompt, so deliveries keep their order,
-    as long as something still follows it, or else right before the first
-    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
+    The prompt is the first [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] the request held before this
+    step's deliveries into it (`original`), so user text a tool enqueued next to its result never counts as one.
+    Content goes right after what an earlier delivery in this step put before the prompt, so deliveries keep their
+    order, as long as something still follows it, or else right before the prompt.
     """
     delivered = queue._last_delivered_before_prompt  # pyright: ignore[reportPrivateUsage]
     for index, part in enumerate(target.parts):
         if part is delivered and index + 1 < len(target.parts):
             return index + 1
-    return next((index for index, part in enumerate(target.parts) if isinstance(part, UserPromptPart)), None)
+    prompt = next((part for part in original.parts if isinstance(part, UserPromptPart)), None)
+    return next((index for index, part in enumerate(target.parts) if part is prompt), None)
 
 
 def resumes_suspended_response(request_context: ModelRequestContext) -> bool:
@@ -665,19 +667,12 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     if not drained:
         return request_context
 
-    # Only the request about to be sent, so content arriving later (say, from a task the tool started)
-    # never rewrites history the model has already seen. It's replaced rather than mutated, since
-    # instrumentation caches each message's serialized form, so it must be in both lists to be found again.
-    target = ctx.messages[-1] if ctx.messages else None
+    target = _delivery_target(ctx, request_context, queue)
     answered_calls: set[str] = set()
     prompt_index: int | None = None
-    if isinstance(target, ModelRequest) and any(message is target for message in request_context.messages):
-        previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
-        if previous is None or previous[1] is not target:
-            queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
-            queue._last_delivered_before_prompt = None  # pyright: ignore[reportPrivateUsage]
-        answered_calls = {part.tool_call_id for part in target.parts if isinstance(part, ToolReturnPart)}
-        prompt_index = _before_prompt_index(target, queue)
+    if target is not None:
+        answered_calls = {part.tool_call_id for part in target[0].parts if isinstance(part, ToolReturnPart)}
+        prompt_index = _before_prompt_index(*target, queue)
 
     before_prompt: list[tuple[str, ModelRequest]] = []
     spliced: dict[str, list[tuple[str, ModelRequest]]] = {}
@@ -693,7 +688,7 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
             request is not None
             and tool_call is not None
             and tool_call[0] in answered_calls
-            # The calls `target` answers ran in the step before this one, so an older call reused the id.
+            # The calls the target answers ran in the step before this one, so an older call reused the id.
             and tool_call[1] >= ctx.run_step - 1
             # Content that came after something added as its own message stays after it.
             and not appended
@@ -704,8 +699,8 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
 
     events: list[EnqueuedMessagesEvent] = []
     if before_prompt or spliced:
-        assert isinstance(target, ModelRequest)
-        events = _deliver_into_request(ctx, request_context, target, prompt_index, before_prompt, spliced)
+        assert target is not None
+        events = _deliver_into_request(ctx, request_context, *target, prompt_index, before_prompt, spliced)
     for enqueue_id, messages in appended:
         request_context.messages = [*request_context.messages, *messages]
         ctx.messages.extend(messages)
@@ -715,21 +710,43 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     return request_context
 
 
+def _delivery_target(
+    ctx: RunContext[Any], request_context: ModelRequestContext, queue: PendingMessageQueue
+) -> tuple[ModelRequest, ModelRequest] | None:
+    """The request content can go into, and that request as it was before this step's first delivery into it.
+
+    Only the request about to be sent, so content arriving later (say, from a task the tool started) never rewrites
+    history the model has already seen. It's replaced rather than mutated, since instrumentation caches each
+    message's serialized form, so it must be in both lists to be found again. `None` when the history doesn't end
+    in that request.
+    """
+    target = ctx.messages[-1] if ctx.messages else None
+    if not isinstance(target, ModelRequest) or not any(message is target for message in request_context.messages):
+        return None
+    previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
+    if previous is not None and previous[1] is target:
+        return target, previous[0]
+    # A new request: what earlier deliveries put into the previous one no longer anchors anything.
+    queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
+    queue._last_delivered_before_prompt = None  # pyright: ignore[reportPrivateUsage]
+    return target, target
+
+
 def _deliver_into_request(
     ctx: RunContext[Any],
     request_context: ModelRequestContext,
     target: ModelRequest,
+    original: ModelRequest,
     prompt_index: int | None,
     before_prompt: list[tuple[str, ModelRequest]],
     spliced: dict[str, list[tuple[str, ModelRequest]]],
 ) -> list[EnqueuedMessagesEvent]:
     """Put content into `target`, the request being sent, replacing it with a copy in both message lists.
 
-    Returns an event per delivery, in the order the content sits in the copy.
+    `original` is the request as it was before this step's first delivery into it. Returns an event per delivery,
+    in the order the content sits in the copy.
     """
     queue = run_queue(ctx)
-    previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
-    original = previous[0] if previous is not None and previous[1] is target else target
     # Each call's content goes after its return, or after what an earlier delivery in this step put there.
     anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
     events: list[EnqueuedMessagesEvent] = []

@@ -12,7 +12,7 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 ```mermaid
 flowchart TB
     accTitle: Memory: a notebook the agent keeps across runs
-    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileMemoryStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
+    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileMemoryStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) before the user's prompt.
     model(["model"])
     code["your code"]
     memory["Memory()<br/>four tools, such as<br/>write_memory"]:::capability
@@ -22,7 +22,7 @@ flowchart TB
     model <-->|"tool call, result"| memory
     memory <-->|"reads,<br/>compare-and-swap<br/>writes"| store
     memory -->|"first request of each run"| snapshot
-    snapshot -->|"with the user's prompt"| model
+    snapshot -->|"before the user's prompt"| model
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef external stroke:#0E9C86,stroke-width:2px
 ```
@@ -31,7 +31,7 @@ flowchart TB
 
 Memory gives each agent a notebook made of Markdown files:
 
-- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are recorded with the user's prompt as delimited user-role context, once per run in which they changed.
+- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are recorded before the user's prompt as delimited user-role context, once per run in which they changed.
 - Other files hold longer or focused notes. The model reads them on demand or finds them with bounded text search.
 
 The model gets four tools:
@@ -72,7 +72,7 @@ The directory includes the namespace. With file tools over the run's workspace, 
 
 ## Injection modes and limits
 
-Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part recorded with the user's prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
+Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part recorded before the user's prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 

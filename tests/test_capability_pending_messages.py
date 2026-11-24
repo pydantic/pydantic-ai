@@ -3425,7 +3425,10 @@ async def test_before_prompt_content_goes_into_the_prompt_request_in_enqueue_ord
 
 async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_it():
     """In the tool loop the request carries tool results, not a prompt: a hook's content is its own request, and a
-    tool's goes right after its return."""
+    tool's goes right after its return.
+
+    User text the tool enqueued next to its return isn't the prompt either, so the hook's content goes after it.
+    """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -3437,6 +3440,7 @@ async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_
     @agent.tool
     def lookup(ctx: RunContext[Any]) -> str:
         ctx.enqueue(_context('found by the tool'), placement='before_prompt')
+        ctx.enqueue('A note from the tool.')
         return 'ok'
 
     result = await agent.run('What now?')
@@ -3444,7 +3448,7 @@ async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_
         [
             ['_ContextPart:memory 1', 'UserPromptPart:What now?'],
             ['response'],
-            ['ToolReturnPart', '_ContextPart:found by the tool'],
+            ['ToolReturnPart', '_ContextPart:found by the tool', 'UserPromptPart:A note from the tool.'],
             ['_ContextPart:memory 2'],
             ['response'],
         ]
