@@ -117,7 +117,9 @@ branch, with that branch's tip as `<base sha>`, so it uses the manifest the labe
 the head you reviewed as `<head sha>`: it refuses when that is not the pull request's current head.
 The label then stays off until the pull request's own added or removed lines in the core files whose
 gating entries it touches change, or a newer marker comment by a user with write access carries
-another fingerprint. Merging the base branch in does not bring it back. The fingerprint covers the
+another fingerprint. Merging the base branch in does not bring it back, unless a manifest change
+there gives a core file the pull request changes its first touched gating entry or takes away its
+last, which changes the set of files fingerprinted. The fingerprint covers the
 text and order of those lines, not where they are, so moving a changed line to another definition in
 the same file keeps it. A core file GitHub shows no patch for cannot be signed off. A push that lands
 while the label job checks the previous one can bring the label back: remove it again, and the next

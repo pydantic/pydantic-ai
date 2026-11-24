@@ -1124,6 +1124,8 @@ def fingerprint(files: Iterable[ChangedFile], touched: Mapping[str, object]) -> 
     previous path, is a key of `touched`: its paths, its status, and the lines its patch adds and removes, in order.
     It leaves out hunk headers and context lines. GitHub diffs a pull request against its merge base, so merging the
     base branch in moves only those, and the fingerprint stays the same until the pull request's own lines change.
+    Which files it covers follows `touched`, and so the manifest: a base branch change that gives a changed core file
+    its first touched gating entry, or takes away its last, changes the fingerprint too.
 
     Raises `ValueError` for such a file whose patch GitHub left out, since its changed lines are unknown.
     """
