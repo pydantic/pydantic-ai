@@ -101,7 +101,11 @@ with try_import() as openai_live_installed:
     from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
 
 with try_import() as elevenlabs_agents_installed:
-    from pydantic_ai.realtime.elevenlabs_agents import ElevenLabsAgentsRealtimeModelSettings
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+    from pydantic_ai.realtime.elevenlabs_agents import (
+        ElevenLabsAgentsRealtimeModel,
+        ElevenLabsAgentsRealtimeModelSettings,
+    )
 
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
@@ -886,7 +890,7 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
         conn,
         _ok_runner,
         instrumentation=settings,
-        model_name='gpt-realtime',
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
         model_settings=ElevenLabsAgentsRealtimeModelSettings(
             max_tokens=4096,
             elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
@@ -907,6 +911,9 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
         {'max_tokens': 4096, 'elevenlabs_agents_dynamic_variables': {'name': 'Ana'}}
     )
 
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_omits_filtered_out_elevenlabs_agents_settings() -> None:
     # Settings holding only the custom-LLM request body and `secret__` dynamic variables record no
     # `model_settings` at all.
     settings, exporter = _settings()
@@ -915,7 +922,7 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
         conn,
         _ok_runner,
         instrumentation=settings,
-        model_name='gpt-realtime',
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
         model_settings=ElevenLabsAgentsRealtimeModelSettings(
             elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
             elevenlabs_agents_dynamic_variables={'secret__x': 'sentinel'},
@@ -934,13 +941,16 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
     assert session_attributes is not None
     assert 'model_settings' not in json.loads(str(session_attributes['logfire.json_schema']))['properties']
 
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_keeps_empty_elevenlabs_agents_dynamic_variables() -> None:
     # An empty `elevenlabs_agents_dynamic_variables` is recorded as given.
     settings, exporter = _settings()
     session = RealtimeSession(
         _Connection([ResponseDone()]),
         _ok_runner,
         instrumentation=settings,
-        model_name='gpt-realtime',
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
         model_settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_dynamic_variables={}),
     )
     async with session:

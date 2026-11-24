@@ -34,7 +34,6 @@ from .._instrumentation import (
     safe_to_json,
     serialize_any,
 )
-from .._utils import is_str_mapping
 from ..messages import ModelMessage, ModelResponse
 from ..models.instrumented import InstrumentationSettings
 
@@ -424,7 +423,7 @@ class SessionInstrumentation:
                     )
                 )
             if self._exports_model_settings(settings):
-                attributes['model_settings'] = safe_to_json(serialize_any(self.recorded_model_settings())).decode()
+                attributes['model_settings'] = safe_to_json(serialize_any(self.model_settings)).decode()
         if self.model_settings and (max_tokens := self.model_settings.get('max_tokens')) is not None:
             attributes['gen_ai.request.max_tokens'] = max_tokens
         return attributes
@@ -451,24 +450,7 @@ class SessionInstrumentation:
         a settings dict has no schema telling those keys apart, so the blob is left off entirely with
         `include_content=False`. `gen_ai.request.max_tokens` is emitted regardless.
         """
-        return bool(self.recorded_model_settings()) and settings.include_content
-
-    def recorded_model_settings(self) -> dict[str, object]:
-        """The `model_settings` recorded on the span, filtered like the embedding and image spans' settings.
-
-        Those leave out `extra_body`; this leaves out ElevenLabs Agents' custom-LLM request body, and its
-        `secret__` dynamic variables.
-        """
-        recorded: dict[str, object] = {}
-        for key, value in (self.model_settings or {}).items():
-            if key == 'elevenlabs_agents_custom_llm_extra_body':
-                continue
-            if key == 'elevenlabs_agents_dynamic_variables' and is_str_mapping(value) and value:
-                value = {name: variable for name, variable in value.items() if not name.startswith('secret__')}
-                if not value:
-                    continue
-            recorded[key] = value
-        return recorded
+        return bool(self.model_settings) and settings.include_content
 
     def record_user_speech(self, started_at: int | None) -> None:
         """Record the segment the user just spoke, as a `user speech` span with a real duration.
