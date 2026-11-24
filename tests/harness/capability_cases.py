@@ -643,6 +643,7 @@ CASES: dict[str, CapabilityCase] = {
     'SpritesSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='sprites'),
     'DaytonaSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='daytona'),
     'BoxdSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='boxd'),
+    'PlatinumSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='platinum'),
     'SmolSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='smol'),
     'BoxLiteSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='boxlite'),
     'BubblewrappedWorkspace': CapabilityCase(

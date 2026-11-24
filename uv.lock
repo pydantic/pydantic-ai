@@ -25,6 +25,7 @@ listentome = false
 logfire = false
 logfire-api = false
 logfire-sdk = false
+platinum-sdk = "2026-11-20T22:00:00Z"
 pydantic = false
 pydantic-ai-harness = false
 pydantic-core = false
@@ -6497,6 +6498,18 @@ wheels = [
 ]
 
 [[package]]
+name = "platinum-sdk"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d7/d0/ae72db49ddf3194d1da19a0729b0ae86b2961eb0d48f4962a2e75a3b0866/platinum_sdk-0.8.0.tar.gz", hash = "sha256:b72e02a1ce2b4b1703b55a719fba498f6c2fa21dab2621c7a113bfee58f109e6", size = 239016, upload-time = "2026-11-20T21:22:31.989Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/42/806b1d882ebb849862286d87f04c99593fcfd76b7faaaed56d30c9975865/platinum_sdk-0.8.0-py3-none-any.whl", hash = "sha256:a4861120c5f3f8e797aa2d99b23ef54b9f82abb1b86ea335cd38b96f02de9660", size = 160039, upload-time = "2026-11-20T21:22:30.401Z" },
+]
+
+[[package]]
 name = "playwright"
 version = "1.65.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7482,6 +7495,9 @@ pgtask = [
 pixeltable = [
     { name = "pixeltable", marker = "python_full_version < '3.15'" },
 ]
+platinum = [
+    { name = "platinum-sdk" },
+]
 playwright = [
     { name = "idna" },
     { name = "playwright" },
@@ -7563,6 +7579,7 @@ requires-dist = [
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
     { name = "pillow", marker = "extra == 'coder'", specifier = ">=12.3.0" },
     { name = "pixeltable", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'pixeltable'", specifier = ">=0.7.21" },
+    { name = "platinum-sdk", marker = "extra == 'platinum'", specifier = ">=0.8.0,<0.9" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "pydantic_ai_slim" },
@@ -7601,7 +7618,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'cdp-browser'", specifier = ">=14.0" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "platinum", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-pax"

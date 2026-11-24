@@ -51,6 +51,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 | [Render Sandbox](https://pydantic.dev/docs/ai/harness/render-sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [boxd Sandbox](https://pydantic.dev/docs/ai/harness/boxd-sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
+| [Platinum Sandbox](https://pydantic.dev/docs/ai/harness/platinum-sandbox/) | Harness | Commands and files in an isolated [Platinum](https://www.platinum.dev) microVM |
 | [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
 | [Bubblewrapped Workspace](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 

@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, `KubernetesSandbox` for a pod on your own cluster, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
+`RenderSandbox` / `SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` / `PlatinumSandbox` for an isolated cloud machine, `KubernetesSandbox` for a pod on your own cluster, or `SmolSandbox` / `BoxLiteSandbox` for a microVM on this machine, or `DockerContainer` for a container on this machine (it shares your kernel, so it is not a security boundary), or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -14,7 +14,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Files and commands start in a specific directory | `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox |
-| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same. For a repo the operator didn't write, add `authority='none'` (every sandbox and `SSHWorkspace` takes `authority` and `path_authority`, like `LocalWorkspace`) |
+| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()` / `PlatinumSandbox()`; tool capabilities stay the same. For a repo the operator didn't write, add `authority='none'` (every sandbox and `SSHWorkspace` takes `authority` and `path_authority`, like `LocalWorkspace`) |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
@@ -57,6 +57,9 @@ except UserError as e:
     `secrets.set(name, value, scope='private-unattached', domains=[...], replace_in=['headers'])`; without
     `domains` the real value is set. Without `replace_in`, boxd also substitutes the URL and body, so a command
     can store the value on a named host (a GitHub issue or gist) and read it back.
+  - Platinum: `PlatinumSandbox(secrets=['search-api'])`, naming an organization secret created with
+    `secrets.create(name, value, allow=[...], headers=[...])`; the egress proxy writes the value into those headers
+    on HTTPS requests to the allowed hosts, and the sandbox never holds it. Attaching needs `secrets:use`.
   - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
     `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
   - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`
@@ -324,17 +327,18 @@ model reads with file tools; short values are masked everywhere).
 
 ## Sandbox workspaces
 
-| | `ModalSandbox` | `E2BSandbox` | `RenderSandbox` | `SpritesSandbox` | `DaytonaSandbox` | `BoxdSandbox` |
-| --- | --- | --- | --- | --- | --- | --- |
-| Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` | `[daytona]` | `[boxd]` |
-| Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` | `DAYTONA_API_KEY` | `BOXD_API_KEY` |
-| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400), optional `idle_timeout`; then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
-| Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
-| `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `secrets`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` |
+| | `ModalSandbox` | `E2BSandbox` | `RenderSandbox` | `SpritesSandbox` | `DaytonaSandbox` | `BoxdSandbox` | `PlatinumSandbox` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` | `[daytona]` | `[boxd]` | `[platinum]` |
+| Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` | `DAYTONA_API_KEY` | `BOXD_API_KEY` | `PT_TOKEN` (and `PT_API_URL` for another API) |
+| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400), optional `idle_timeout`; then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one | Unlimited: runs until deleted, or stopped after `auto_stop_minutes` idle minutes (default never), keeping its disk and usually its memory; started again on attach or by the next operation; archived after 7 days stopped, never deleted |
+| Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` | `/workspace` (created), `root` |
+| `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes | No |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `secrets`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` | `template`, `cpu`, `ram_mb`, `disk_gb`, `auto_stop_minutes`, `allow_internet_access`, `secrets`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
-(nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
+(nothing from your machine is passed through). `PlatinumSandbox` defaults `working_dir` to `/workspace` and creates
+it on an attached sandbox too. All are asyncio-only and reject `defer_loading=True`.
 
 One sandbox per conversation in a web service: store the ref and the history, reattach each turn,
 destroy at the end.
@@ -401,7 +405,7 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 ```
 
 - **Pydantic AI never terminates the sandbox**: it bills until `await <Sandbox>().destroy(ref)` or its
-  lifetime ends. `destroy` acts by ID (any instance works; Modal, E2B, Render, Sprites, Daytona and boxd use the instance's `client=`), does
+  lifetime ends. `destroy` acts by ID (any instance works; Modal, E2B, Render, Sprites, Daytona, boxd and Platinum use the instance's `client=`), does
   not wake the sandbox, returns quietly if it is gone, and raises `ValueError` for another provider's
   ref. `after_run` skips failed runs; one-shot jobs destroy `ctx.workspace.ref` in `run_error`.
 - `await BoxdSandbox().fork(ref)` copies a boxd machine, files and running processes included, into a new
@@ -416,9 +420,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
 - Default images lack project dependencies (even `pytest`). To prepare one up front, build
-  `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
+  `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd/Platinum), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
-  Daytona or boxd backend you build needs `await backend.aclose()`.
+  Daytona, boxd or Platinum backend you build needs `await backend.aclose()`.
 - `E2BSandbox(desktop=True)` gives a new sandbox a 1280x800 screen for `ComputerUse()`, from E2B's `desktop`
   template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. The Print key opens XFCE's
   screenshot dialog instead of reaching the app. The agent can type only ASCII. A custom `template` needs `xdotool`,
@@ -440,10 +444,12 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
   `git clone <url> .` fails on later turns (or use `git init` + `git fetch`).
 - For an existing native sandbox pass `workspace=ModalSandboxBackend(sandbox=...)` (same for E2B,
-  Sprites and Daytona); the capability's settings don't apply to it.
+  Sprites, Daytona and Platinum); the capability's settings don't apply to it.
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
-  what the child prints later.
+  what the child prints later. On Platinum, a command with a timeout of up to 80 seconds is one exec request, which
+  ends its `&` jobs with it; a longer or unbounded one runs as a managed process, which a child holding its output
+  can hold up. Detach with `setsid` and redirect the output (`start_command` already does).
 - `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
   sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, or type
   characters beyond U+FFFF (most emoji). Its VNC server has no password: anyone with a preview token for its port
@@ -763,6 +769,7 @@ and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
 - https://pydantic.dev/docs/ai/harness/daytona-sandbox/
 - https://pydantic.dev/docs/ai/harness/boxd-sandbox/
+- https://pydantic.dev/docs/ai/harness/platinum-sandbox/
 - https://pydantic.dev/docs/ai/harness/smol-sandbox/
 - https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution

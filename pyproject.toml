@@ -215,6 +215,10 @@ k8s-agent-sandbox = "2026-11-12T19:37:00Z"
 # TODO(adtyavrdhn): Remove after 2026-11-30 10:00 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 boxd = "2026-11-23T10:00:00Z"
+# platinum-sdk 0.8.0 is the `platinum` extra's floor: the oldest release the backend is verified against.
+# TODO: Remove after 2026-11-27 22:00 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+platinum-sdk = "2026-11-20T22:00:00Z"
 
 [dependency-groups]
 dev = [
@@ -596,6 +600,7 @@ markers = [
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
     "boxd_live: runs against a real boxd control plane; needs credentials",
+    "platinum_live: runs against a real Platinum control plane; needs credentials",
     "opensandbox_live: runs against a real OpenSandbox server; needs one running",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",

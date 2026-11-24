@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     from .pgtask import PGTaskDurability
     from .pixeltable import Pixeltable
     from .planning import Planning
+    from .platinum_sandbox import PlatinumSandbox, PlatinumSandboxBackend
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
@@ -195,6 +196,8 @@ __all__ = [
     'Permissions',
     'Pixeltable',
     'Planning',
+    'PlatinumSandbox',
+    'PlatinumSandboxBackend',
     'PostHog',
     'PromptInjectionDefender',
     'PruneToolResults',
@@ -326,6 +329,8 @@ _LAZY_EXPORTS = {
     'Permissions': 'permissions',
     'Pixeltable': 'pixeltable',
     'Planning': 'planning',
+    'PlatinumSandbox': 'platinum_sandbox',
+    'PlatinumSandboxBackend': 'platinum_sandbox',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PruneToolResults': 'compaction',
