@@ -87,9 +87,9 @@ async def run_agent(
     raise AssertionError('The run ended without a result event.')  # pragma: no cover
 
 
-def delete_file_results(messages: list[ModelMessage]) -> list[str]:
+def delete_file_results(messages: list[ModelMessage]) -> list[tuple[str, str]]:
     return [
-        str(part.content)
+        (str(part.content), part.outcome)
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
@@ -107,7 +107,7 @@ async def test_call_deferred_while_running_gets_a_result_when_the_run_ends_on_ou
     output, messages, events = await run_agent(deferring_agent(end_strategy, deferral), route)
 
     assert output == Summary(text='done')
-    assert delete_file_results(messages) == [DEFERRED_RESULT]
+    assert delete_file_results(messages) == [(DEFERRED_RESULT, 'success')]
     if route == 'run_stream_events':
         call_events = [
             e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_call_id == 'call_delete'
@@ -116,7 +116,7 @@ async def test_call_deferred_while_running_gets_a_result_when_the_run_ends_on_ou
             e for e in events if isinstance(e, FunctionToolResultEvent) and e.tool_call_id == 'call_delete'
         ]
         assert len(call_events) == 1
-        assert [e.part.content for e in result_events] == [DEFERRED_RESULT]
+        assert [(e.part.content, e.part.outcome) for e in result_events] == [(DEFERRED_RESULT, 'success')]
 
 
 # `run_stream()` raises `UserError` for a call deferred by its tool's kind next to an output it committed, which is
@@ -130,7 +130,7 @@ async def test_call_deferred_by_its_tool_kind_is_not_executed_when_the_run_ends_
     output, messages, _ = await run_agent(deferring_agent(end_strategy, 'requires_approval'), route)
 
     assert output == Summary(text='done')
-    assert delete_file_results(messages) == [SKIPPED_RESULT]
+    assert delete_file_results(messages) == [(SKIPPED_RESULT, 'success')]
 
 
 async def test_calls_deferred_while_running_get_results_in_the_response_order():
@@ -160,8 +160,12 @@ async def test_calls_deferred_while_running_get_results_in_the_response_order():
 
     last_request = result.all_messages()[-1]
     assert isinstance(last_request, ModelRequest)
-    assert [(part.tool_call_id, part.content) for part in last_request.parts if isinstance(part, ToolReturnPart)] == [
-        ('call_output', 'Final result processed.'),
-        ('call_export', DEFERRED_RESULT),
-        ('call_delete', DEFERRED_RESULT),
+    assert [
+        (part.tool_call_id, part.content, part.outcome)
+        for part in last_request.parts
+        if isinstance(part, ToolReturnPart)
+    ] == [
+        ('call_output', 'Final result processed.', 'success'),
+        ('call_export', DEFERRED_RESULT, 'success'),
+        ('call_delete', DEFERRED_RESULT, 'success'),
     ]
