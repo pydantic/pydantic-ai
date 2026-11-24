@@ -1383,3 +1383,23 @@ def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bo
     """Pydantic does not emit these boolean schemas, so exercise the walker directly."""
     schema: JsonSchema = {'type': type_, keyword: value}
     assert InlineDefsJsonSchemaTransformer(schema).walk() == schema
+
+
+def test_inline_defs_recursive_defs_order_is_deterministic():
+    """Recursive $defs must preserve first-seen order regardless of PYTHONHASHSEED (#13723)."""
+    from pydantic import BaseModel
+
+    class A(BaseModel):
+        children: list['A'] = []
+
+    class B(BaseModel):
+        children: list['B'] = []
+
+    class Root(BaseModel):
+        a: A
+        b: B
+
+    transformer = InlineDefsJsonSchemaTransformer(Root.model_json_schema())
+    result = transformer.walk()
+    assert list(result['$defs']) == ['A', 'B', 'Root']
+    assert transformer.recursive_refs == {'A', 'B'}

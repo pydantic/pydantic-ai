@@ -251,6 +251,7 @@ class JsonSchemaTransformer(ABC):
         self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
+        self._recursive_refs_order: list[str] = []
         self._walked_defs: dict[str, tuple[JsonSchema, int]] = {}
         self._inlined = InlinedValues('JSON schema')
 
@@ -263,6 +264,7 @@ class JsonSchemaTransformer(ABC):
         schema = deepcopy(self.schema)
 
         self.recursive_refs.clear()
+        self._recursive_refs_order.clear()
         self._walked_defs.clear()
         self._inlined.count = 0
 
@@ -278,7 +280,7 @@ class JsonSchemaTransformer(ABC):
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
-            defs = {key: self._copy_walked_def(key) for key in self.recursive_refs}
+            defs = {key: self._copy_walked_def(key) for key in self._recursive_refs_order}
             root_ref = self.schema.get('$ref')
             root_key = (
                 None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
@@ -342,7 +344,9 @@ class JsonSchemaTransformer(ABC):
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
                 raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
             # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
-            self.recursive_refs.add(key)
+            if key not in self.recursive_refs:
+                self.recursive_refs.add(key)
+                self._recursive_refs_order.append(key)
         elif key not in self.recursive_refs:
             # Keywords sitting alongside the `$ref` (e.g. a field-level `description`
             # or `default`) are part of the field's own schema and must survive
