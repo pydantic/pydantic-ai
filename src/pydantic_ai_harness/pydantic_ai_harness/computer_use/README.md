@@ -40,7 +40,7 @@ clicks and types until it has the answer, and prints it. The container keeps run
 
 ## Models
 
-The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use) and [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use), it gets its provider's own computer use
+The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use), [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use) and [Google](https://pydantic.dev/docs/ai/models/google/#computer-use), it gets its provider's own computer use
 tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
 tool.
 
@@ -105,6 +105,10 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
             raise ApprovalRequired
     return args
 ```
+
+Gemini can flag an action for a person to approve. `ComputerUse` then asks for approval itself, after your hooks run,
+so no hook can skip it. If your own hook already asked and the call was approved, that approval counts. See
+[Google](https://pydantic.dev/docs/ai/models/google/#actions-that-need-approval).
 
 ## Durable execution
 
