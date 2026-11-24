@@ -122,10 +122,8 @@ together when it changed. Pinned in the `[playwright]` extra as
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import re
-import socket
 import sys
 import warnings
 from collections import deque
@@ -134,17 +132,27 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from functools import partial
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar
 from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlparse
 
 import anyio
-import idna
 from opentelemetry import trace
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._browser_egress import (
+    BLANK_PAGE as _BLANK_PAGE,
+    DEFAULT_ALLOWLIST_REACH as DEFAULT_ALLOWLIST_REACH,
+    DEFAULT_RESOLVED_KINDS as DEFAULT_RESOLVED_KINDS,
+    EgressPolicy as EgressPolicy,
+    EgressRequest as EgressRequest,
+    RequestKind as RequestKind,
+    is_blocked_address as is_blocked_address,
+    refusal_reason,
+    request_kind,
+)
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
@@ -216,13 +224,6 @@ whole check rather than each frame. It outlasts one frame's worst case (the URL
 wait plus a host lookup), and documents that passed are remembered, so each
 retry checks at least one more document than the last.
 """
-
-_PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
-_UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
-"""Why the private-address block refused a URL, shared by the pre-check and the route guard."""
-
-_BLANK_PAGE = 'about:blank'
-"""The blank page a context starts on, and where a disallowed navigation is sent."""
 
 _ERROR_PAGE_SCHEME = 'chrome-error://'
 """Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
@@ -420,137 +421,6 @@ class _Deadlines:
         return max(1, budget_ms - int((monotonic() - self.started) * 1000))
 
 
-def _to_idna(host: str) -> str:
-    """Return `host` in its ASCII/IDNA form so Unicode and `xn--` spellings compare equal.
-
-    Encoding goes through the `idna` package under UTS46 non-transitional rules,
-    which is what Chromium applies. The stdlib `'idna'` codec implements the older
-    IDNA-2003 mapping and disagrees on the deviation characters (`ß`, `ς`, ZWJ,
-    ZWNJ): it renders `faß.de` as `fass.de` where the browser connects to
-    `xn--fa-hia.de`, so an allowlist entry and the request it is meant to permit
-    would never match.
-
-    A host that cannot be encoded (over-long or empty labels, IP literals) falls
-    back to the input unchanged, so IPv4/IPv6 literals are left alone. The trailing
-    dot of a fully-qualified spelling is dropped first: it names the DNS root rather
-    than a label, and encoding rejects the empty label it produces, which would
-    otherwise deny `example.com.` against an `example.com` allowlist entry.
-    """
-    host = host.rstrip('.')
-    try:
-        return idna.encode(host, uts46=True, transitional=False).decode('ascii')
-    except (idna.IDNAError, UnicodeError):
-        return host
-
-
-def _url_host(url: str) -> str | None:
-    """Extract the host that policy checks run against, or `None` when there is none.
-
-    A URL containing a backslash is treated as hostless: WHATWG parsing (what
-    Chromium applies) turns a backslash into `/`, so `urlparse` would report a
-    host the browser never connects to. A malformed URL that `urlparse` rejects
-    is also treated as hostless, so it fails closed instead of crashing the caller.
-    """
-    if '\\' in url:
-        return None
-    try:
-        return urlparse(url).hostname
-    except ValueError:
-        return None
-
-
-def is_blocked_address(host: str) -> bool:
-    """Return whether `host` names an address that is not globally routable.
-
-    Covers private (RFC 1918), loopback, link-local (including the cloud
-    metadata endpoint), carrier-grade NAT, reserved, and multicast ranges. This
-    classifies a host string, so it sees IP literals and the loopback hostnames
-    `localhost` / `*.localhost`; a name pointing at a private address is caught by
-    `PlaywrightBrowserSession.decide` resolving it first and passing the answers
-    to `refuse`.
-    Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
-    A trailing dot is stripped so the fully-qualified spelling gets the same
-    verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
-    address. The named category flags are checked alongside `is_global` because
-    older stdlib versions classify some of these ranges as global.
-    """
-    host = host.lower().rstrip('.')
-    if host == 'localhost' or host.endswith('.localhost'):
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return not ip.is_global or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
-
-
-def _is_ip_literal(host: str) -> bool:
-    """Whether `host` is already an address, so no name resolution is needed."""
-    try:
-        ipaddress.ip_address(host.rstrip('.'))
-    except ValueError:
-        return False
-    return True
-
-
-_RESOLUTION_TTL_SECONDS = 30.0
-_RESOLUTION_CACHE_MAX = 256
-_RESOLUTION_TIMEOUT_SECONDS = 2.0
-_resolution_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
-
-
-async def _resolve_host(host: str) -> tuple[str, ...] | None:
-    """Return the addresses `host` resolves to, or `None` when the lookup did not answer.
-
-    The two are distinguished because they lead to opposite verdicts. A host that
-    resolved is classified on its addresses; one that did not cannot be cleared, and
-    whoever controls the name controls whether the lookup answers -- stalling this
-    one and then handing Chromium a private address would otherwise be a way past
-    the block. So an unanswered lookup is a refusal, which also costs little when
-    the failure is honest: a name this process cannot resolve is one the browser is
-    about to fail on too. A host the resolver cannot even encode counts as
-    unanswered for the same reason: `getaddrinfo` raises a `UnicodeError` for an
-    empty or over-long label (`a..com`), and that is a verdict, not a crash the
-    caller should carry.
-
-    The cache is a duplicate of one Chromium keeps anyway, so it is kept short and
-    small. It cannot make the block airtight: Chromium resolves the name a second
-    time, and a record that changes between the two lookups is the DNS-rebinding
-    case that only a proxy or pinned resolver closes.
-
-    The lookup is bounded because of where it runs: ahead of the operation whose
-    deadline it would otherwise escape, and inside the route guard, which holds the
-    request until it returns. A stalled resolver therefore costs a bounded wait
-    rather than the run.
-    """
-    now = monotonic()
-    cached = _resolution_cache.get(host)
-    if cached is not None and cached[0] > now:
-        return cached[1]
-    try:
-        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)  # noqa: TID251  (not converted to anyio yet)
-    except (TimeoutError, OSError, UnicodeError):
-        return None
-    if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
-        _resolution_cache.clear()
-    _resolution_cache[host] = (now + _RESOLUTION_TTL_SECONDS, addresses)
-    return addresses
-
-
-async def _getaddrinfo(host: str) -> tuple[str, ...]:  # pragma: no cover
-    """Ask the system resolver what `host` points at, off the event loop thread.
-
-    The one place the capability performs a real lookup, and therefore the seam the
-    test suite replaces so that no test depends on a resolver. What it does is
-    checked against live DNS in `scripts/playwright_smoke.py::_check_private_name_block`.
-    """
-    infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    return tuple(sorted({str(info[4][0]) for info in infos}))
-
-
 def _scroll_script(move: str) -> str:
     """Wrap a scroll expression so the page reports where it ended up."""
     return (
@@ -583,220 +453,6 @@ def _scroll_position(reported: object) -> str:
     if after == before:
         return f'Position unchanged, {after} of {furthest} px down.'
     return f'{after} of {furthest} px down.'
-
-
-RequestKind = Literal['navigation', 'subframe', 'data', 'subresource']
-"""What a request is for, which is what an egress rule is usually about.
-
-`navigation` is the top-level document, `subframe` a document loaded into an
-embedded frame, `data` anything a script uses to move data (`fetch`, XHR,
-EventSource, WebSocket, `sendBeacon`), and `subresource` the passive assets that
-render a page (images, stylesheets, scripts, fonts, media).
-"""
-
-DEFAULT_ALLOWLIST_REACH: frozenset[RequestKind] = frozenset({'navigation', 'data'})
-"""Which request kinds `allowed_domains` bounds unless the policy says otherwise.
-
-Navigation, so the agent stays on the sites it was given, and data requests, so a
-script on one of those pages cannot read from or post to somewhere else. Passive
-subresources are left alone because a page whose images, fonts and scripts are
-aborted renders as a broken page, and sub-frame documents because a permitted
-page's identity-provider and payment steps live in them.
-"""
-
-_DATA_RESOURCE_TYPES = frozenset({'fetch', 'xhr', 'eventsource', 'websocket', 'ping', 'preflight'})
-"""Playwright resource types that carry data rather than render the page.
-
-`ping` is `navigator.sendBeacon`, which is a send channel like the rest of them.
-"""
-
-
-def _request_kind(request: PlaywrightRequest, top_level: bool) -> RequestKind:
-    """Classify a Playwright request for the policy.
-
-    A document is a navigation only in the main frame; the same type inside an
-    embedded frame is what loads an identity provider or a payment step, which a
-    policy usually treats differently.
-    """
-    if request.resource_type in _DATA_RESOURCE_TYPES:
-        return 'data'
-    if request.is_navigation_request():
-        return 'navigation' if top_level else 'subframe'
-    return 'subresource'
-
-
-@dataclass(frozen=True)
-class EgressRequest:
-    """One request the browser is about to make, as the policy sees it.
-
-    Everything the guard knows is passed through, including the raw Playwright
-    `resource_type`, so a policy that needs a distinction this module never
-    anticipated can make it without waiting for a new field here.
-    """
-
-    url: str
-    kind: RequestKind
-    resource_type: str = 'document'
-    """Playwright's own classification, e.g. `document`, `xhr`, `image`, `font`."""
-    method: str = 'GET'
-    top_level: bool = True
-    """Whether this is the main frame's own document rather than something inside the page."""
-    resolved_addresses: tuple[str, ...] = ()
-    """What the host resolved to, when the caller resolved it. Empty when it did not."""
-    resolution_failed: bool = False
-    """Whether a lookup the policy asked for did not answer, leaving the host unclassifiable."""
-
-
-DEFAULT_RESOLVED_KINDS: frozenset[RequestKind] = frozenset(get_args(RequestKind))
-"""Which kinds have their host resolved before the private-address block classifies it.
-
-A name is not an IP literal, so `is_blocked_address` cannot see that it points at a
-private address; resolving first is what closes that. Every kind is resolved,
-because the literal check already covers every kind and a spelling should not
-decide the verdict: an `img` pointed at `169.254.169.254` and one pointed at a name
-answering with that address are the same request. Passive subresources do not
-return content to the model, but a page can still time their loads to map what is
-listening inside the network.
-
-The cost is bounded by the resolution cache, which makes this a lookup per distinct
-host rather than per request, and a page draws on few hosts.
-"""
-
-
-@dataclass(frozen=True)
-class EgressPolicy:
-    """Where the browser may go, and what a page loaded there may talk to.
-
-    The axes are independent and deny wins: a blocked address is refused even when
-    the allowlist names it, and `blocked_domains` beats `allowed_domains`. Holding
-    them in one object keeps enforcement and the description given to the model
-    from drifting apart -- the failure mode being instructions that promise a reach
-    the guards do not grant.
-
-    The fields cover the rules we expect; `refuse` covers the rest. Subclass and
-    override it for anything else -- per-path rules, a CDN allowed only for fonts,
-    a method-dependent rule -- calling `super().refuse(request)` for the default
-    verdict.
-    """
-
-    allowed_domains: list[str] | None = None
-    """Hosts the reachable kinds are limited to. `None` allows every public host."""
-    blocked_domains: list[str] | None = None
-    """Hosts refused whatever else permits them, for every kind of request."""
-    block_private_addresses: bool = True
-    """Refuse addresses that are not globally routable, in every frame and for every kind."""
-    include_subdomains: bool = True
-    """Whether an entry also covers its subdomains, so `example.com` reaches `api.example.com`."""
-    allowlist_reach: frozenset[RequestKind] = DEFAULT_ALLOWLIST_REACH
-    """Which kinds `allowed_domains` bounds. `frozenset(get_args(RequestKind))` locks down everything."""
-    resolved_kinds: frozenset[RequestKind] = DEFAULT_RESOLVED_KINDS
-    """Which kinds have their host resolved so `block_private_addresses` can see where a name points."""
-
-    def __post_init__(self) -> None:
-        for field_name in ('allowed_domains', 'blocked_domains'):
-            for entry in getattr(self, field_name) or ():
-                # Validated as `_matches` will read it, so an entry that only
-                # differs by surrounding whitespace cannot dodge a check.
-                entry = entry.strip()
-                if '*' in entry:
-                    raise UserError(
-                        f'{field_name} entry {entry!r} contains a wildcard, which never matches a host. '
-                        'Write the bare domain: subdomains are included unless include_subdomains=False.'
-                    )
-                if entry.startswith('.'):
-                    raise UserError(
-                        f'{field_name} entry {entry!r} starts with a dot, which never matches a host. '
-                        'Write the bare domain: subdomains are included unless include_subdomains=False.'
-                    )
-
-    def refuse(self, request: EgressRequest) -> str | None:
-        """Why the browser must not make this request, or `None` to allow it.
-
-        `about:blank` is permitted: it is the state a context starts in and the
-        target a refused navigation is bounced to, so denying it would refuse every
-        tool call made before the first navigation. Other hostless URLs (`data:`,
-        `blob:`) are refused as navigation and allowed as page content, where they
-        are ordinary inline assets.
-        """
-        if request.url == _BLANK_PAGE:
-            return None
-        host = _url_host(request.url)
-        if host is not None and self.block_private_addresses and is_blocked_address(host):
-            return _PRIVATE_ADDRESS_REASON
-        if self.block_private_addresses and request.resolution_failed:
-            return _UNRESOLVED_REASON
-        if self.block_private_addresses and any(is_blocked_address(a) for a in request.resolved_addresses):
-            return _PRIVATE_ADDRESS_REASON
-        if host is None:
-            return None if request.kind in ('data', 'subresource') else 'URL with no host'
-        return self._domain_reason(host, request.kind)
-
-    def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
-        """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
-        if self._matches(host, self.blocked_domains):
-            return 'domain in blocked_domains'
-        if kind in self.allowlist_reach and not self._permitted(host):
-            return 'domain not in allowed_domains'
-        return None
-
-    def _permitted(self, host: str) -> bool:
-        """Whether the allowlist admits `host`, with `None` meaning every public host."""
-        return self.allowed_domains is None or self._matches(host, self.allowed_domains)
-
-    def _matches(self, host: str, domains: list[str] | None) -> bool:
-        """Whether `host` equals an entry, or sits under one when subdomains count."""
-        if not domains:
-            return False
-        host = _to_idna(host)
-        for entry in domains:
-            domain = _to_idna(entry.strip().lower())
-            if domain and (host == domain or (self.include_subdomains and host.endswith('.' + domain))):
-                return True
-        return False
-
-    def needs_resolution(self, request: EgressRequest) -> bool:
-        """Whether the caller must resolve this host before `refuse` can classify it.
-
-        Asked before `refuse` so that `refuse` stays synchronous: an override needs
-        no async machinery, and the lookup a name-based private address requires
-        happens outside it. A host that is already an address needs none, and
-        neither does one the domain lists refuse, since `refuse` refuses it
-        whatever the host resolves to. That holds only for this
-        class's own `refuse`: an override may permit what the lists refuse, so its
-        hosts are still resolved. An override that refuses some hosts by name should
-        override this too, returning `False` for them, so they are not looked up.
-        """
-        if not self.block_private_addresses or request.kind not in self.resolved_kinds:
-            return False
-        host = _url_host(request.url)
-        if host is None or _is_ip_literal(host):
-            return False
-        return type(self).refuse is not EgressPolicy.refuse or self._domain_reason(host, request.kind) is None
-
-    def enforced(self) -> bool:
-        """Whether anything is restricted, i.e. whether a route guard is worth installing."""
-        return self.allowed_domains is not None or bool(self.blocked_domains) or self.block_private_addresses
-
-    def describe(self) -> str:
-        """The reach, phrased for the model's instructions."""
-        if self.allowed_domains is None:
-            domains = 'all'
-        elif self.allowed_domains:
-            domains = ', '.join(self.allowed_domains)
-            if self.include_subdomains:
-                domains += ' (and their subdomains)'
-        else:
-            domains = 'none'
-        if self.allowed_domains is not None and self.allowlist_reach != DEFAULT_ALLOWLIST_REACH:
-            # Named only when it is not the default, so the model is told what the
-            # allowlist actually bounds rather than being left with the reach the
-            # default sentence implies.
-            domains += f' (allowlist bounds {", ".join(sorted(self.allowlist_reach)) or "nothing"})'
-        if self.blocked_domains:
-            domains += f', except {", ".join(self.blocked_domains)}'
-        if self.block_private_addresses:
-            domains += ' (private/internal addresses blocked)'
-        return domains
 
 
 _CREDENTIAL_PARAMETERS = (
@@ -1646,11 +1302,7 @@ class PlaywrightBrowserSession:
         is asked about: the route guard, the socket guard, the `navigate`
         pre-check, and the post-action re-check.
         """
-        host = _url_host(request.url)
-        if host is not None and self.policy.needs_resolution(request):
-            addresses = await _resolve_host(host)
-            request = replace(request, resolved_addresses=addresses or (), resolution_failed=addresses is None)
-        return self.policy.refuse(request)
+        return await refusal_reason(self.policy, request)
 
     async def _route_guard(self, route: PlaywrightRoute, request: PlaywrightRequest) -> None:
         """Network-layer egress policy: abort what the policy refuses, pass the rest.
@@ -1666,7 +1318,7 @@ class PlaywrightBrowserSession:
             top_level = frame == frame.page.main_frame
         except PlaywrightError:
             top_level = True
-        kind = _request_kind(request, top_level)
+        kind = request_kind(request.resource_type, is_navigation=request.is_navigation_request(), top_level=top_level)
         reason = await self.decide(
             EgressRequest(
                 url=request.url,

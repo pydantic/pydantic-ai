@@ -37,6 +37,7 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -186,6 +187,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_unsupported_model_settings': (),
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
+    'openai_chat_streaming_repeats_usage_totals': False,
     'openai_chat_supports_web_search': False,
     'openai_chat_audio_input_encoding': 'base64',
     'openai_chat_supports_file_urls': False,
@@ -264,8 +266,18 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_max_effort': True,
@@ -307,8 +319,18 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
@@ -351,6 +373,7 @@ def test_anthropic_claude_haiku_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_temperature_with_top_p': True,
             'anthropic_restricts_sampling_with_thinking': True,
@@ -363,7 +386,16 @@ def test_anthropic_claude_haiku_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
@@ -427,7 +459,15 @@ def test_openai_gpt_5_4():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -452,13 +492,14 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400.
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400, and
+    minus the native `computer` tool, which OpenAI doesn't offer on it.
 
     OpenAI has deprecated gpt-5.4-nano, and not gpt-5.4, so only gpt-5.4-nano's profile carries a `deprecation`.
     """
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
-    expected['supported_native_tools'] -= {ToolSearchTool}
+    expected['supported_native_tools'] -= {ToolSearchTool, ComputerTool}
     expected['deprecation'] = ModelDeprecation(
         source_url='https://developers.openai.com/api/docs/deprecations#2026-10-01-gpt-53-codex-gpt-51-gpt-54-nano',
         retirement_date=date(2027, 4, 1),
@@ -488,7 +529,15 @@ def test_openai_gpt_5_6():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -537,7 +586,15 @@ def test_openai_gpt_6_astra():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -863,6 +920,7 @@ def test_google_gemini_3_pro():
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -894,6 +952,7 @@ def test_google_gemini_2_5_flash():
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -928,6 +987,7 @@ def test_google_gemini_2_5_flash_image():
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -985,6 +1045,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': False,
+            'google_supports_computer_use': False,
             'supports_tool_return_schema': True,
             'supported_image_media_types': frozenset(
                 {
@@ -1979,6 +2040,7 @@ def test_openrouter_google_gemini_3_pro():
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2040,6 +2102,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': False,
+            'google_supports_computer_use': True,
             'openai_chat_supports_web_search': True,
             'supported_image_media_types': frozenset(
                 {
@@ -2292,6 +2355,7 @@ def test_github_copilot_google_gemini_3_pro():
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -3195,6 +3259,7 @@ def test_fireworks_gemma():
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
         }
     )
 
@@ -4069,6 +4134,7 @@ def test_vercel_vertex_gemini():
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4303,6 +4369,7 @@ def test_otari_gemini():
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',

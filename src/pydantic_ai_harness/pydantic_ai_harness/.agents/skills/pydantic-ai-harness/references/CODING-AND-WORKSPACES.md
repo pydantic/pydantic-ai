@@ -18,7 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
-| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display. `desktop=True` also works on `SmolSandbox` and `BoxLiteSandbox` (local micro-VMs, with `allow_internet_access=True`), on `BoxdSandbox`, `DaytonaSandbox`, `E2BSandbox`, `ModalSandbox`, `RenderSandbox` and `SpritesSandbox` in the cloud, on `OpenSandbox(image=...)` self-hosted, and on `KubernetesSandbox(warm_pool=...)` on your cluster |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -408,6 +408,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   isolated one and returns its ref: pass it as `workspace=` to try another approach from the same state,
   then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated or is on a
   named boxd network.
+- `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`; `desktop=(w, h)`
+  sets another size. It needs a machine on boxd's current default image, not a fork or snapshot of an older one. A
+  top panel's Terminal button opens `xterm` and its Chromium button opens agent-browser's Chromium; from a shell,
+  `agent-browser open <url>` opens a URL in it. The agent can type any text, emoji included. Anyone in the boxd organization can watch the desktop in the console.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
@@ -415,6 +419,22 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
+- `E2BSandbox(desktop=True)` gives a new sandbox a 1280x800 screen for `ComputerUse()`, from E2B's `desktop`
+  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. The Print key opens XFCE's
+  screenshot dialog instead of reaching the app. The agent can type only ASCII. A custom `template` needs `xdotool`,
+  `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with `apt-get` as
+  root or with passwordless `sudo`, plus `startxfce4` for the XFCE desktop.
+- `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have the
+  display's programs (listed under "What the display needs" in the `ComputerUse` docs); otherwise every command and
+  file operation refuses, naming what is missing.
+- `OpenSandbox(image=..., desktop=True)` gives the sandbox a 1280x800 desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`. The first use installs the desktop's programs with `apt-get` when the image's user is root;
+  otherwise build them into the image. Use execd 1.2 or later: older versions take about a second per command. On
+  the Docker runtime, set the server's `network_mode` to `bridge`. No port or endpoint is opened for the screen.
+- `RenderSandbox(desktop=True)` gives the sandbox a 1280x800 desktop (fluxbox, a panel with a terminal button, no
+  browser) for `ComputerUse()`, or pass `desktop=(w, h)`. The first use installs the desktop's programs with
+  `apt-get`, so a new sandbox with `allow_internet_access=False` raises `UserError`.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -424,15 +444,28 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
+  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, or type
+  characters beyond U+FFFF (most emoji). Its VNC server has no password: anyone with a preview token for its port
+  can see and control it, and on a public sandbox anyone with the preview URL can.
+  Where Chromium can't run its own sandbox, as in the default snapshot, it adds `--no-sandbox` through a file in
+  `/etc/chromium.d/` (as root or passwordless `sudo`) that stays after the run, also on an attached sandbox.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
+- `ModalSandbox(desktop=True)` gives the sandbox a 1280x800 desktop (fluxbox, a panel with a terminal button, no
+  browser) for `ComputerUse()`, or pass `desktop=(w, h)`. The default image has the desktop's programs; a custom
+  `image` gets them installed on first use. The agent can type only ASCII.
+- `SpritesSandbox(desktop=True)` gives the Sprite a 1280x800 screen for `ComputerUse()`, with a window manager, a
+  panel and a terminal, whose programs the first use installs with `apt-get`. A cold wake closes the agent's windows. Within the same run, the display restarts on the next screenshot or action, and
+  until then a program started from the shell can't open a window; a later run's first command starts it.
 
 ### KubernetesSandbox
 
 `KubernetesSandbox(*, warm_pool, namespace='default', connection='port-forward', sandbox_timeout=86_400,
-working_dir=None, env=None)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a pod from a
-[kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use. Credentials
-are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs `kubectl`.
+working_dir=None, env=None, desktop=False)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a
+pod from a [kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use.
+Credentials are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs
+`kubectl`.
 
 - The pool's `SandboxTemplate` must run sandboxd; commands run in that container, so its image decides the
   tools. Commands start in sandboxd's root directory (`/workspace` by default).
@@ -441,15 +474,18 @@ are your kubeconfig (or the pod's service account in the cluster); `'port-forwar
 - From inside the cluster use `connection='in-cluster-pod-ip'` or `'in-cluster-service'`; the template's
   NetworkPolicy must admit the agent on ports 8080 and 9090. Port-forward does not work on gVisor or Kata.
 - File operations go through the sandbox's shell.
+- `desktop=True` or `(w, h)` gives the pod a desktop for `ComputerUse()`; see the desktop bullet above for what the
+  image needs.
 
 ### SmolSandbox
 
 `SmolSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False,
-working_dir='/workspace', env=None)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
+working_dir='/workspace', env=None, desktop=False)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
 [smolvm](https://github.com/smol-machines/smolvm) microVM on first use. No credentials; needs macOS on
 Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`.
 
-- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
+- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`), or `debian:bookworm-slim` with
+  `desktop`; pass an OCI image such as
   `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
   egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
 - The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
@@ -463,16 +499,22 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
   not flush a VM's disk when the process exits, so stop it first:
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+- `desktop=True` gives the VM a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
+  `allow_internet_access=True`, or an `image` that has them; creating a new VM without either raises `UserError`,
+  attaching to one doesn't.
 
 ### BoxLiteSandbox
 
 `BoxLiteSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False, allowed_hosts=None,
-working_dir='/workspace', env=None, box_options=None)` (backend `BoxLiteSandboxBackend`, extra `[boxlite]`)
+working_dir='/workspace', env=None, box_options=None, desktop=False)` (backend `BoxLiteSandboxBackend`, extra
+`[boxlite]`)
 creates a local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on first use. No credentials or
 daemon; needs macOS 14+ on Apple silicon, or Linux x86_64/aarch64 with glibc 2.28+ and access to `/dev/kvm`;
 Python up to 3.14.
 
-- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`); pass e.g. `image='python:3.12-slim'`.
+- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`), or `debian:bookworm-slim` with `desktop`;
+  pass e.g. `image='python:3.12-slim'`.
   No network unless `allow_internet_access=True`; `allowed_hosts=['pypi.org', ...]` limits egress to those
   hosts, IPs or CIDRs. `working_dir` is created.
 - `box_options` passes other `boxlite.BoxOptions` arguments to a new box (`volumes`, `ports`, `secrets`,
@@ -487,6 +529,10 @@ Python up to 3.14.
   `WorkspaceUnavailableError`.
 - Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
+- `desktop=True` gives the box a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
+  `allow_internet_access=True` (with `deb.debian.org` in any `allowed_hosts`), or an `image` that has them;
+  creating a new box without either raises `UserError`, attaching to one doesn't. For a browser, pass `box_options={'disk_size_gb': 4}`.
 
 ### DockerContainer
 

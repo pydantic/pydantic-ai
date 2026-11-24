@@ -13,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ... import ModelAPIError, ModelHTTPError, _model_errors, _utils
 from ..._utils import is_str_dict as _is_str_dict
-from ...exceptions import ModelConnectionError, ModelRequestRejectedError
+from ...exceptions import ModelConnectionError, ModelContextWindowExceededError, ModelRequestRejectedError
 from ...messages import ModelResponse
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
@@ -97,14 +97,22 @@ def status_error(
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+    reported = body if error_object is None else error_object
+    metadata = reported.get('metadata') if _utils.is_str_dict(reported) else None
     if model_id_namespace == 'zai':
         # Z.ai's numeric codes mean something only from Z.ai, so other OpenAI-compatible APIs don't get this mapping.
         category = _model_errors.zai_code_category(code) or category
     elif model_id_namespace == 'moonshotai':
         # Moonshot sends an exhausted balance as a 429 too; only its error type tells it from a rate limit.
         category = _model_errors.moonshot_type_category(error_type) or category
-    reported = body if error_object is None else error_object
-    if status_code == 403 and flags_input(reported.get('metadata') if _utils.is_str_dict(reported) else None):
+    elif (
+        model_id_namespace == 'openrouter'
+        and category is ModelRequestRejectedError
+        and metadata_raw_reports_context_window(metadata)
+    ):
+        # OpenRouter forwards the upstream provider's overflow behind a generic rejection; a specific category wins.
+        category = ModelContextWindowExceededError
+    if status_code == 403 and flags_input(metadata):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
@@ -125,6 +133,25 @@ def flags_input(metadata: object) -> bool:
     See https://openrouter.ai/docs/api-reference/errors#moderation-errors.
     """
     return _utils.is_str_dict(metadata) and ('flagged_input' in metadata or 'reasons' in metadata)
+
+
+def metadata_raw_reports_context_window(metadata: object) -> bool:
+    """Whether the upstream error OpenRouter forwards in an error's `metadata.raw` says the context window was exceeded.
+
+    OpenRouter puts it there behind a generic message like `Provider returned error`, as plain text or as a JSON
+    `{"error": {...}}` string. Only its message is read: a nested code or type, like a generic `400`, never counts.
+    """
+    raw = metadata.get('raw') if _utils.is_str_dict(metadata) else None
+    if not isinstance(raw, str):
+        return False
+    parsed, _, fields = _model_errors.parse_error_body(raw)
+    if parsed is None:
+        message = raw
+    elif _utils.is_str_dict(parsed) and 'error' in parsed:
+        message = fields.get('message')
+    else:
+        return False
+    return _model_errors.openai_compatible_category(None, None, None, message) is ModelContextWindowExceededError
 
 
 def map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:
