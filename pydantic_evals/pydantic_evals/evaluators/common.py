@@ -20,6 +20,7 @@ from ..otel.span_tree import SpanQuery
 from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+from .spec import EvaluatorSpec
 
 if TYPE_CHECKING:
     from .llm_as_a_judge import JudgeAnswer
@@ -398,7 +399,8 @@ class StructuredJudge(Evaluator[object, object, object]):
 
     A type cannot be written in a YAML or JSON dataset file, so only a question answered yes or no and the
     mapping of rubrics round-trip through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file]. Any other
-    `output_type`, and a model of questions, is written by name, so build an evaluator that uses one in Python.
+    `output_type` is written by name, and saving a dataset with a model of questions raises a `TypeError`, so
+    build a dataset that uses either in Python.
     """
 
     # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file.
@@ -469,6 +471,15 @@ class StructuredJudge(Evaluator[object, object, object]):
 
     def get_default_evaluation_name(self) -> str:
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def _serialization_spec(self) -> EvaluatorSpec:
+        # Written by name, a model of questions would load back as a single question that is the model's name.
+        if isinstance(self.questions, type):
+            raise TypeError(
+                f'`StructuredJudge({self.questions.__name__})` cannot be serialized, as its questions are a Python '
+                'type. To save a dataset to a file, use a mapping of rubrics, or build the dataset in Python.'
+            )
+        return super()._serialization_spec()
 
     def build_serialization_arguments(self):
         arguments = _serialize_model_as_string(super().build_serialization_arguments())

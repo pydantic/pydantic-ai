@@ -5,11 +5,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from enum import Enum, IntEnum, StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, RootModel, computed_field, model_serializer
-from pydantic_core import to_jsonable_python
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -22,6 +23,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext, llm_as_a_judge
     from pydantic_evals.evaluators.common import (
         DEFAULT_EVALUATORS,
@@ -1115,3 +1117,16 @@ def test_structured_judge_serializes_a_model_of_questions_by_name():
         assert spec.arguments == (questions.__name__,)
         # Online evaluation records each result's `source` as this JSON.
         assert spec.model_dump_json() == f'{{"name":"StructuredJudge","arguments":["{questions.__name__}"]}}'
+
+
+def test_structured_judge_with_a_model_of_questions_is_not_saved_to_a_file(tmp_path: Path):
+    """Written by name, a model of questions would load back as a single question, so saving fails instead."""
+    dataset = Dataset[str, str, Any](
+        name='unsaveable', cases=[Case(inputs='x')], evaluators=[StructuredJudge(ReplyReview)]
+    )
+
+    with pytest.raises(
+        PydanticSerializationError, match=re.escape('`StructuredJudge(ReplyReview)` cannot be serialized')
+    ):
+        dataset.to_file(tmp_path / 'dataset.yaml')
+    assert list(tmp_path.iterdir()) == []
