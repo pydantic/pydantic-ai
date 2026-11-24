@@ -22,8 +22,8 @@ from pydantic_ai_harness.computer_use import (
     UnsupportedActionError,
 )
 
-from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, png
-from ..workspace_fakes import FilesystemOnlyWorkspaceBackend, InMemoryProvider, ProviderBackend
+from ...computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, png
+from ...workspace_fakes import FilesystemOnlyWorkspaceBackend, InMemoryProvider, ProviderBackend
 
 
 class ScreenProvider(InMemoryProvider):

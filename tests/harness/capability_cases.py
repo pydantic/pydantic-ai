@@ -134,7 +134,7 @@ from ._counting_clients import (
     judge_relevant,
 )
 from ._mcp_server import MCPServer
-from .display_fakes import ScreenProvider
+from .computer_use.display_fakes import ScreenProvider
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox

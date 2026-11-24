@@ -27,9 +27,9 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._display import RELEASE_TIMEOUT, LazyDisplay, png_from_base64
-from pydantic_ai_harness._drag import DRAG_STEP_PAUSE, drag_steps
-from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use._display import RELEASE_TIMEOUT, LazyDisplay, png_from_base64
+from pydantic_ai_harness.computer_use._drag import DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness.computer_use._protocol import DisplayAction, UnsupportedActionError
 
 DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
