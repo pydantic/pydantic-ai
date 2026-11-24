@@ -463,7 +463,7 @@ class SessionInstrumentation:
         for key, value in (self.model_settings or {}).items():
             if key == 'elevenlabs_agents_custom_llm_extra_body':
                 continue
-            if key == 'elevenlabs_agents_dynamic_variables' and is_str_mapping(value):
+            if key == 'elevenlabs_agents_dynamic_variables' and is_str_mapping(value) and value:
                 value = {name: variable for name, variable in value.items() if not name.startswith('secret__')}
                 if not value:
                     continue

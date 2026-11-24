@@ -934,6 +934,24 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
     assert session_attributes is not None
     assert 'model_settings' not in json.loads(str(session_attributes['logfire.json_schema']))['properties']
 
+    # An empty `elevenlabs_agents_dynamic_variables` is recorded as given.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([ResponseDone()]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_dynamic_variables={}),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    session_attributes = {s.name: s for s in exporter.get_finished_spans()}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert json.loads(str(session_attributes['model_settings'])) == snapshot(
+        {'elevenlabs_agents_dynamic_variables': {}}
+    )
+
 
 async def test_session_span_records_lifecycle_spans() -> None:
     # Barge-ins and turn boundaries have no span of their own, so they surface as zero-duration child
