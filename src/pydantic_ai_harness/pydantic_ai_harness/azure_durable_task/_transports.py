@@ -227,6 +227,7 @@ class _Request:
     context: ContextSnapshot
     streaming: bool = False
     instructions: str | None = None
+    attempt: int = 1
 
 
 _REQUEST = TypeAdapter(_Request)
@@ -241,6 +242,7 @@ def request_transport(restore: RestoreContext) -> _Transport[ModelRequestParams,
             model_settings=dict(params.model_settings) if params.model_settings is not None else None,
             model_request_parameters=params.model_request_parameters,
             context=ContextSnapshot.capture(params.run_context),
+            attempt=params.attempt,
         ),
         lambda wire: ModelRequestParams(
             wire.model_id,
@@ -248,6 +250,7 @@ def request_transport(restore: RestoreContext) -> _Transport[ModelRequestParams,
             model_settings=cast(ModelSettings | None, wire.model_settings),
             model_request_parameters=wire.model_request_parameters,
             run_context=restore(wire.context),
+            attempt=wire.attempt,
         ),
     )
 

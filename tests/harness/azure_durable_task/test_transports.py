@@ -563,3 +563,28 @@ def test_mcp_discovery_instructions_and_calls(durable_worker: 'InMemoryWorker') 
         'mcp__mcp_server__calc.get_instructions',
         'mcp__model.request',
     ]
+
+
+async def test_model_request_transport_carries_the_attempt() -> None:
+    """The activity gets the attempt at the request step, which its stream events record as their origin's.
+
+    Not a worker test: the attempt only goes above 1 once a fallback or retry capability moves on, and this pins
+    the wire field it travels in.
+    """
+    from pydantic_ai.durable_exec import ModelRequestParams
+    from pydantic_ai.messages import ModelRequest
+
+    agent = Agent(TestModel(), name='attempt-transport', capabilities=[AzureDurableTaskDurability()])
+    capability = AzureDurableTaskDurability.from_agent(agent)
+    assert capability is not None
+    transport = capability.get_durable_operation_backend().parameter_transports.model_request(ModelResponse)
+    params = ModelRequestParams(
+        None,
+        messages=[ModelRequest.user_text_prompt('hi')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        run_context=RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run', run_step=1),
+        attempt=3,
+    )
+    async with capability._activity_scope(None):  # pyright: ignore[reportPrivateUsage]
+        assert transport.load(transport.dump(params), runtime=None).attempt == 3
