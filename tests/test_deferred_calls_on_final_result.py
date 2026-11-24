@@ -28,8 +28,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.run import AgentRunResultEvent
 
-pytestmark = pytest.mark.anyio
-
 DEFERRED_RESULT = 'Tool call deferred - the run ended on a final result before its result was collected.'
 SKIPPED_RESULT = 'Tool not executed - a final result was already processed.'
 
@@ -133,3 +131,37 @@ async def test_call_deferred_by_its_tool_kind_is_not_executed_when_the_run_ends_
 
     assert output == Summary(text='done')
     assert delete_file_results(messages) == [SKIPPED_RESULT]
+
+
+async def test_calls_deferred_while_running_get_results_in_the_response_order():
+    """Calls deferred different ways land in different groups, but their results follow the order the model called them."""
+
+    def respond_with_both(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # `CallDeferred` is grouped after `ApprovalRequired`, so this order differs from the grouping.
+        return ModelResponse(
+            parts=[
+                ToolCallPart('start_export', {}, tool_call_id='call_export'),
+                ToolCallPart('delete_file', {'path': 'a.txt'}, tool_call_id='call_delete'),
+                ToolCallPart('final_result', {'text': 'done'}, tool_call_id='call_output'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(respond_with_both), output_type=Summary)
+
+    @agent.tool_plain
+    def start_export() -> str:
+        raise CallDeferred
+
+    @agent.tool_plain
+    def delete_file(path: str) -> str:
+        raise ApprovalRequired
+
+    result = await agent.run('Export, then clean up.')
+
+    last_request = result.all_messages()[-1]
+    assert isinstance(last_request, ModelRequest)
+    assert [(part.tool_call_id, part.content) for part in last_request.parts if isinstance(part, ToolReturnPart)] == [
+        ('call_output', 'Final result processed.'),
+        ('call_export', DEFERRED_RESULT),
+        ('call_delete', DEFERRED_RESULT),
+    ]
