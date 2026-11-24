@@ -1,5 +1,0 @@
-{
-  "against": "v2.71.0",
-  "reason": "Adds the new `supports_tool_updates` flag (#12440) and the new `supports_appending_voice_instructions` flag (#14191) to `DEFAULT_REALTIME_PROFILE`, both defaulting to `False`; every existing key and value is unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12440"
-}

@@ -1,5 +1,0 @@
-{
-  "against": "v2.71.0",
-  "reason": "Adds the new `UpdateTools` input (#12440) and the new `AppendVoiceInstructions` input (#14191) to `RealtimeInput`. The session sends each only to a connection whose model's profile sets the matching new flag, `supports_tool_updates` or `supports_appending_voice_instructions`, both defaulting to `False`, so an existing connection never receives either.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12440"
-}
