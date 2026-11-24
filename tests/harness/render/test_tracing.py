@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from render.workflows import TaskContext, Workflows
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.render import RenderWorkflows
@@ -107,13 +108,25 @@ async def test_wire_tracer_flag_uses_only_worker_configuration(instrumented: boo
 
 
 @pytest.mark.parametrize('worker_content', [False, True])
-async def test_a_task_records_content_only_if_the_worker_allows_it(worker_content: bool) -> None:
-    """A run that allows content still records none in a task whose worker doesn't, since the task's spans go to it."""
+@pytest.mark.parametrize('configured_on', ['model', 'capability'])
+async def test_a_task_records_content_only_if_the_worker_allows_it(worker_content: bool, configured_on: str) -> None:
+    """A run that allows content still records none in a task whose worker doesn't, since the task's spans go to it.
+
+    An `Instrumentation` capability on the worker's agent wins over `agent.instrument`, as it does in the run.
+    """
     provider = TracerProvider()
     settings = InstrumentationSettings(tracer_provider=provider, include_content=worker_content)
     model = TestModel()
     runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
-    agent = Agent(InstrumentedModel(model, settings), name='content-flag', deps_type=type(None), capabilities=[runtime])
+    if configured_on == 'model':
+        agent = Agent(
+            InstrumentedModel(model, settings), name='content-flag', deps_type=type(None), capabilities=[runtime]
+        )
+    else:
+        agent = Agent(
+            model, name='content-flag', deps_type=type(None), capabilities=[runtime, Instrumentation(settings=settings)]
+        )
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
     seen: list[bool] = []
 
     @agent.tool
