@@ -3438,3 +3438,20 @@ def test_messages_builder_copies_parts_it_did_not_make():
     assert own_parts == [TextPart('a')]
     assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
     assert builder.last_modified(checkpoint, of_type=ModelResponse) is message
+
+
+def test_messages_builder_speech_part_routes_by_speaker():
+    from pydantic_ai.messages import SpeechPart
+
+    builder = MessagesBuilder()
+    user_speech = SpeechPart(speaker='user', transcript='hi')
+    assistant_speech = SpeechPart(speaker='assistant', transcript='hello')
+
+    builder.add(user_speech)
+    builder.add(assistant_speech)
+
+    assert len(builder.messages) == 2
+    assert isinstance(builder.messages[0], ModelRequest)
+    assert builder.messages[0].parts == [user_speech]
+    assert isinstance(builder.messages[1], ModelResponse)
+    assert builder.messages[1].parts == [assistant_speech]
