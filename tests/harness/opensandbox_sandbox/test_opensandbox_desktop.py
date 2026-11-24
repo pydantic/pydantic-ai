@@ -44,9 +44,9 @@ async def test_a_shell_command_finds_the_desktop_running(
     # A program the shell starts opens on the screen, so a command starts the display.
     backend = _backend(server, working_dir, desktop=True, env={'FOO': 'bar'})
 
-    result = await backend.run('echo "$DISPLAY $FOO"', shell=True)
-
-    assert result.stdout == ':1 bar\n'
+    # The fake display refuses `xwininfo` until the display has started, so this passes only if it started first.
+    assert 'Width: 1280' in (await backend.run('xwininfo -root', shell=True)).stdout
+    assert (await backend.run('echo "$DISPLAY $FOO"', shell=True)).stdout == ':1 bar\n'
     assert len(display.starts) == 1
     await backend.aclose()
 
