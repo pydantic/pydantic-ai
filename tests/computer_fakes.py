@@ -1,4 +1,4 @@
-"""A fake `computer` tool for testing model adapters without a screen. It behaves like Pydantic AI Harness's tool."""
+"""A fake `computer` tool for testing model adapters without a screen. It returns results in the shape Pydantic AI Harness's tool does."""
 
 from __future__ import annotations as _annotations
 
@@ -6,7 +6,7 @@ import struct
 import zlib
 from typing import Any
 
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
@@ -46,9 +46,10 @@ _LOOKING = (Wait, Screenshot)
 
 
 class FakeComputer(AbstractCapability[Any]):
-    """A `computer` tool that records the actions it runs. On a read-only workspace an acting call fails, which gives tests a failed call.
+    """A `computer` tool that records the actions it runs.
 
     It refuses `hold_keys`, and returns an image for each zoom and each screenshot before the last action. With
+    `fail_acting=True`, the first action that isn't a screenshot or a wait fails, which gives tests a failed call. With
     `native=True`, it also adds a `ComputerTool`, as `ComputerUse` does.
     """
 
@@ -58,22 +59,24 @@ class FakeComputer(AbstractCapability[Any]):
         requires_approval: bool = False,
         native: bool = True,
         display_size: tuple[int, int] = FAKE_DISPLAY_SIZE,
+        fail_acting: bool = False,
     ) -> None:
         self.native = native
         self.display_size = display_size
+        self.fail_acting = fail_acting
         self.actions: list[ComputerToolAction] = []
         tool = Tool(self._computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
         self._toolset = FunctionToolset[Any]([tool])
 
-    async def _computer(self, ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
+    async def _computer(self, actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
         outputs: list[str | BinaryImage] = []
         for index, action in enumerate(actions):
             if isinstance(action, Zoom) or (isinstance(action, Screenshot) and index < len(actions) - 1):
                 outputs.append(BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png'))
             elif not isinstance(action, _LOOKING):
-                if ctx.workspace.read_only:
-                    result['error'] = 'This workspace is read-only.'
+                if self.fail_acting:
+                    result['error'] = 'The action failed.'
                     break
                 if isinstance(action, HoldKeys):
                     result['error'] = "the fake display cannot perform 'hold_keys'"
