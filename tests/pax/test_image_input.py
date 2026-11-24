@@ -54,6 +54,12 @@ def test_normalize(mode: str) -> None:
         assert restored.mode == ('RGBA' if mode == 'RGBA' else 'RGB')
 
 
+@pytest.mark.parametrize(('size', 'shown'), [((3000, 2000), (1024, 683)), ((1024, 600), (1024, 600))])
+def test_large_image_is_downscaled_to_max_side(size: tuple[int, int], shown: tuple[int, int]) -> None:
+    with Image.open(io.BytesIO(encode_image(Image.new('RGB', size)).data)) as restored:
+        assert restored.size == shown
+
+
 def test_size_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(image_codec, 'MAX_PIXELS', 5)
     with pytest.raises(ValueError, match='megapixel'):

@@ -19,6 +19,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox, secrets_error
 
 if TYPE_CHECKING:
@@ -95,12 +96,18 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     in HTTPS request headers as requests leave for the Secret's `hosts` (any host if it has none). An
     attached sandbox keeps the ones it was created with."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. The size applies to a new sandbox. A sandbox the run attaches to keeps its
+    own size."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('DaytonaSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
+        checked_desktop_size(self.desktop)
         if (error := secrets_error(self.secrets, self.env)) is not None:
             raise UserError(f'{error}.')
 
@@ -119,6 +126,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
         secrets: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> DaytonaSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -138,11 +146,14 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             authority=authority,
             path_authority=path_authority,
             secrets=secrets,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
         """Construct a lazy backend for an existing sandbox."""
-        return DaytonaSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return DaytonaSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a sandbox by ID without starting it, including one Daytona has stopped.
@@ -170,6 +181,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             secrets=self.secrets,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

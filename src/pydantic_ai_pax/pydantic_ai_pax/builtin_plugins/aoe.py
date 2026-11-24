@@ -50,7 +50,7 @@ _SESSION_ID = re.compile(r'[A-Za-z0-9_.][A-Za-z0-9_.-]{0,255}')
 """AoE's `is_valid_session_id`."""
 _AGENT_SESSION = re.compile(r'aoe_(?!term_).*_([A-Za-z0-9_-]{1,8})')
 """The tmux session AoE starts an agent in: `aoe_<title>_<first 8 characters of the instance ID>`."""
-_CLAI2 = frozenset({'pax', 'pydantic-ai-pax', 'clai2', 'pydantic-clai2'})
+_PAX_COMMANDS = frozenset({'pax', 'pydantic-ai-pax', 'clai2', 'pydantic-clai2'})
 _RUNNING_REFRESH = 60.0
 """AoE ignores a `running` status older than 15 minutes, so a long run rewrites it well before that."""
 _LOOKUP_ATTEMPTS = 20
@@ -157,14 +157,14 @@ def nested(pane_pid: int) -> bool:
     pid = os.getpid()
     while pid != pane_pid and pid in processes:
         pid = processes[pid][0]
-        if pid in processes and _is_clai2(processes[pid][1]):
+        if pid in processes and _is_pax(processes[pid][1]):
             return True
     return False
 
 
-def _is_clai2(args: str) -> bool:
+def _is_pax(args: str) -> bool:
     tokens = args.split()
-    return any(Path(token).name in _CLAI2 for token in tokens[:2]) or tokens[1:3] in (
+    return any(Path(token).name in _PAX_COMMANDS for token in tokens[:2]) or tokens[1:3] in (
         ['-m', 'pydantic_ai_pax'],
         ['-m', 'pydantic_clai2'],
     )

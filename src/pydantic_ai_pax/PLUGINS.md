@@ -254,7 +254,7 @@ change, as explained in the guide.
 
 Custom agents can opt in with `PaxDocs()` from `pydantic_ai_pax.pax_docs`;
 `customization_guide()` from `pydantic_ai_pax.customization` returns `ClaiDocs` for agents and saved sessions that already use
-`clai_customization`, `search_clai_docs`, and `read_clai_docs`. New agents should use `PaxDocs()`.
+`clai_customization`, `search_clai_docs`, and `read_clai_docs`. New agents should use `PaxDocs()`. The default agent restores the older tools only if the session history loaded them.
 Both sets of tools only return documentation; they do not write files, activate plugins, or
 grant permission to execute generated code. Keep the customization guide aligned
 with this contract when changing plugin APIs.

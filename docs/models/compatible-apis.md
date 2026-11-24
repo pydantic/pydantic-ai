@@ -506,9 +506,34 @@ The [API key documentation](https://docs.oracle.com/en-us/iaas/Content/generativ
 !!! note "Allow API keys in an IAM policy"
     An API key works only once an IAM policy lets API keys use Generative AI. To authorize every key in a compartment, create the policy before the key. To limit the policy to one key, create the key first and use its OCID. See [Adding Key Permissions](https://docs.oracle.com/en-us/iaas/Content/generative-ai/add-api-permission.htm) for the policy statements.
 
+### WaveSpeed AI {#wavespeed-ai}
+
+[WaveSpeed AI](https://wavespeed.ai/llm) serves models from many vendors through an [OpenAI-compatible Chat Completions API](https://wavespeed.ai/docs/llm-service-quick-start) at `https://llm.wavespeed.ai/v1`. Pass your WaveSpeed API key as `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+provider = OpenAICompatibleProvider(
+    'wavespeed',
+    base_url='https://llm.wavespeed.ai/v1',
+    api_key='your-wavespeed-api-key',
+)
+model = OpenAIChatModel('qwen/qwen3.8-flash', provider=provider)
+agent = Agent(model)
+...
+```
+
+WaveSpeed names models `<vendor>/<model>`, so each model gets the profile of its family, as [Other endpoints](#other-endpoints) explains. `GET https://llm.wavespeed.ai/v1/models` [lists the current model IDs](https://wavespeed.ai/docs/supported-llm-models) without an API key.
+
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
+
+## Streamed usage
+
+Chat Completions streams normally report usage once, on the last chunk, and [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] adds up whatever the chunks report. Gemini's OpenAI-compatible endpoint instead repeats its running totals on every chunk, so [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_streaming_repeats_usage_totals`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_repeats_usage_totals] for `gemini*` model names, and each chunk's usage replaces the last. This also applies through a custom `base_url`. A server that serves these names and reports per-chunk deltas turns it off with `openai_chat_streaming_repeats_usage_totals=False` in the model's [profile](overview.md#models-and-providers).
 
 ## Response data Pydantic AI doesn't map
 

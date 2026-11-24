@@ -10,6 +10,7 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, ModelSettings, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.providers import infer_provider_class
@@ -349,7 +350,7 @@ def test_bedrock_mantle_profiles() -> None:
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
             'tool_call_ids_are_response_scoped': True,
-            'supported_native_tools': frozenset(),
+            'supported_native_tools': frozenset({ComputerTool}),
             'supports_inline_system_prompts': True,
         }
     )
@@ -374,6 +375,9 @@ def test_bedrock_mantle_profiles() -> None:
     assert (
         infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supports_inline_system_prompts', False) is False
     )
+    assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supported_native_tools') == frozenset()
+    # GPT-5.2 is on the Responses interface but OpenAI doesn't offer it the computer tool.
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.2').get('supported_native_tools') == frozenset()
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'
     # Non-OpenAI and unknown models fall back to the default profile (best-effort).
     assert infer_model_profile('bedrock-mantle:anthropic.claude-sonnet-5') == DEFAULT_PROFILE

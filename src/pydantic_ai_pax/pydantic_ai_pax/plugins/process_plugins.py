@@ -298,7 +298,7 @@ class LiveRuntime:
         return await self._host.complete(text)
 
 
-_CURRENT: ContextVar[LiveRuntime | None] = ContextVar('clai2_live_session', default=None)
+_CURRENT: ContextVar[LiveRuntime | None] = ContextVar('pax_live_session', default=None)
 """The session whose moment, command, or run is being handled, for `LiveSessions.current`."""
 
 

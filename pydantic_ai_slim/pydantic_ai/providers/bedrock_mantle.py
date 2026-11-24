@@ -5,8 +5,13 @@ from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIModelProfile,
+    is_openai_computer_use_model,
+    openai_model_profile,
+)
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 try:
@@ -69,8 +74,11 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
         # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
         # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
-        # provider error.
-        supported_native_tools=frozenset(),
+        # provider error. The exception is OpenAI's native computer tool, which works on the `/openai/v1` endpoint
+        # for the same models as on OpenAI's API.
+        supported_native_tools=frozenset({ComputerTool})
+        if interface == 'openai-responses' and is_openai_computer_use_model(base_model_name)
+        else frozenset(),
     )
     if interface == 'openai-responses':
         # GPT-5.x on `/openai/v1` accepts a `system` message after a tool result, keeps it in place (the prompt-cache

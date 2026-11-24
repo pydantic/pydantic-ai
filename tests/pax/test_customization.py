@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -126,7 +127,12 @@ async def test_default_agent_loads_docs_then_reads_guide(tmp_path: Path, monkeyp
         assert f'## {section}' in guide
 
 
-async def test_custom_agent_can_opt_in_with_the_former_name() -> None:
+@pytest.mark.parametrize('resume_on', ['custom agent', 'default agent'])
+async def test_custom_agent_can_opt_in_with_the_former_name(
+    resume_on: Literal['custom agent', 'default agent'],
+) -> None:
+    """A history that loaded `clai_customization` resumes with its tools on that agent and on the default one."""
+
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tools = {tool.name for tool in info.function_tools}
         if len(messages) == 1:
@@ -149,7 +155,8 @@ async def test_custom_agent_can_opt_in_with_the_former_name() -> None:
             return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'customization'})])
         return ModelResponse(parts=[TextPart('resumed')])
 
-    resumed = await agent.run('Read it again', model=FunctionModel(resume), message_history=result.all_messages())
+    resuming = agent if resume_on == 'custom agent' else create_agent()
+    resumed = await resuming.run('Read it again', model=FunctionModel(resume), message_history=result.all_messages())
     assert tool_returns(resumed.new_messages()) == guide
 
 

@@ -33,7 +33,7 @@ network:
     # auto-allowlists the host; this explicit entry is a harmless safety net.
     - api.z.ai
 engine:
-  model: anthropic/${{ vars.GH_AW_MODEL }}
+  model: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
 tools:
   github:
     mode: gh-proxy

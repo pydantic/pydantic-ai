@@ -70,7 +70,7 @@ OutputT = TypeVar('OutputT')
 
 STEERING = 'clai2_steering'
 """Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
-_CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
+_CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('pax_session_id', default=None)
 
 
 def current_session_id() -> str | None:

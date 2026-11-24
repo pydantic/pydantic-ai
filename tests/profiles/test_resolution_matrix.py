@@ -37,6 +37,7 @@ from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -186,6 +187,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_unsupported_model_settings': (),
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
+    'openai_chat_streaming_repeats_usage_totals': False,
     'openai_chat_supports_web_search': False,
     'openai_chat_audio_input_encoding': 'base64',
     'openai_chat_supports_file_urls': False,
@@ -200,6 +202,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
     'openai_responses_supports_prompt_cache_diagnostics': False,
+    'openai_responses_stable_instructions_as_input': False,
     'openai_responses_tool_choice_accepts_additional_tools': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
@@ -264,11 +267,23 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -305,14 +320,26 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
+            'anthropic_computer_tool_version': 'computer_20251124',
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -347,7 +374,10 @@ def test_anthropic_claude_haiku_4_5():
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_computer_tool_version': 'computer_20250124',
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -357,7 +387,16 @@ def test_anthropic_claude_haiku_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'supported_native_tools': frozenset(
-                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+                {
+                    AdvisorTool,
+                    CodeExecutionTool,
+                    ComputerTool,
+                    MCPServerTool,
+                    MemoryTool,
+                    ToolSearchTool,
+                    WebFetchTool,
+                    WebSearchTool,
+                }
             ),
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
@@ -382,6 +421,8 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -419,7 +460,15 @@ def test_openai_gpt_5_4():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -444,13 +493,14 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400.
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400, and
+    minus the native `computer` tool, which OpenAI doesn't offer on it.
 
     OpenAI has deprecated gpt-5.4-nano, and not gpt-5.4, so only gpt-5.4-nano's profile carries a `deprecation`.
     """
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
-    expected['supported_native_tools'] -= {ToolSearchTool}
+    expected['supported_native_tools'] -= {ToolSearchTool, ComputerTool}
     expected['deprecation'] = ModelDeprecation(
         source_url='https://developers.openai.com/api/docs/deprecations#2026-10-01-gpt-53-codex-gpt-51-gpt-54-nano',
         retirement_date=date(2027, 4, 1),
@@ -480,7 +530,15 @@ def test_openai_gpt_5_6():
             'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -529,7 +587,15 @@ def test_openai_gpt_6_astra():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'supported_native_tools': frozenset(
-                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+                {
+                    CodeExecutionTool,
+                    ComputerTool,
+                    FileSearchTool,
+                    ImageGenerationTool,
+                    MCPServerTool,
+                    ToolSearchTool,
+                    WebSearchTool,
+                }
             ),
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -635,10 +701,17 @@ def test_openrouter_gpt_6_1_sol(model_name: str):
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
 def test_openai_gpt_6_2(model_name: str):
-    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`."""
+    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`.
+
+    They also take the stable instructions as leading input messages, since they put the top-level field after it.
+    """
 
     profile = OpenAIProvider.model_profile(model_name)
-    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+    assert profile is not None
+    assert profile.get('openai_responses_stable_instructions_as_input') is True
+    assert _normalize(profile) == _normalize(
+        {**(OpenAIProvider.model_profile('gpt-6-astra') or {}), 'openai_responses_stable_instructions_as_input': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -854,6 +927,8 @@ def test_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -884,6 +959,8 @@ def test_google_gemini_2_5_flash():
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -917,6 +994,8 @@ def test_google_gemini_2_5_flash_image():
             'supports_video_input': False,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -973,6 +1052,8 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
+            'google_supports_computer_use': False,
             'supports_tool_return_schema': True,
             'supported_image_media_types': frozenset(
                 {
@@ -1001,6 +1082,7 @@ def test_xai_grok_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
         }
     )
 
@@ -1017,6 +1099,7 @@ def test_xai_grok_3_mini():
             'supports_json_object_output': True,
             'supports_thinking': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
+            'grok_supports_stop_sequences': False,
             'supported_native_tools': frozenset(),
             'thinking_enabled_by_default': True,
         }
@@ -1037,6 +1120,7 @@ def test_xai_grok_4_7():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_supports_stop_sequences': False,
             'grok_default_effort_omitted': True,
             'needs_sealed_system_blocks': True,
         }
@@ -1350,6 +1434,8 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1434,6 +1520,8 @@ def test_bedrock_anthropic_with_geo_prefix():
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1480,6 +1568,8 @@ def test_bedrock_anthropic_legacy_claude_3():
             'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1799,6 +1889,7 @@ def test_bedrock_xai_grok(region: str):
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'grok_supports_stop_sequences': False,
                 'supported_native_tools': frozenset(),
                 'needs_sealed_system_blocks': True,
                 'bedrock_supports_tool_choice': True,
@@ -1815,6 +1906,7 @@ def test_bedrock_xai_grok(region: str):
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'grok_supports_stop_sequences': False,
                 'supported_native_tools': frozenset(),
                 'grok_default_effort_omitted': True,
                 'needs_sealed_system_blocks': True,
@@ -1859,6 +1951,8 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -1952,6 +2046,8 @@ def test_openrouter_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2012,6 +2108,8 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': False,
+            'google_supports_computer_use': True,
             'openai_chat_supports_web_search': True,
             'supported_image_media_types': frozenset(
                 {
@@ -2062,6 +2160,7 @@ def test_openrouter_x_ai_grok_4_7():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_supports_stop_sequences': False,
             'grok_default_effort_omitted': True,
             'needs_sealed_system_blocks': True,
             'openai_chat_send_back_thinking_parts': 'field',
@@ -2155,6 +2254,7 @@ def test_openrouter_xai_grok_4():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -2194,6 +2294,8 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -2258,6 +2360,8 @@ def test_github_copilot_google_gemini_3_pro():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2291,6 +2395,7 @@ def test_github_copilot_xai_grok_4_5():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_supports_stop_sequences': False,
             'needs_sealed_system_blocks': True,
             'openai_chat_supports_max_completion_tokens': True,
         }
@@ -2601,6 +2706,7 @@ def test_azure_grok_prefix():
             'supports_json_object_output': True,
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': False,
@@ -2800,6 +2906,7 @@ def test_xai_provider_grok_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
         }
     )
 
@@ -2816,6 +2923,7 @@ def test_xai_provider_grok_3_mini():
             'supports_json_object_output': True,
             'supports_thinking': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'none'}),
+            'grok_supports_stop_sequences': False,
             'supported_native_tools': frozenset(),
             'thinking_enabled_by_default': True,
         }
@@ -3152,6 +3260,8 @@ def test_fireworks_gemma():
             'supports_video_input': True,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
         }
     )
 
@@ -3420,6 +3530,7 @@ def test_together_qwen():
                     'thinking_always_enabled': True,
                     'grok_supports_builtin_tools': True,
                     'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                    'grok_supports_stop_sequences': False,
                     'grok_default_effort_omitted': True,
                     'needs_sealed_system_blocks': True,
                     'may_tokenize_special_tokens_in_content': False,
@@ -3727,6 +3838,185 @@ def test_ovhcloud_llama():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_compatible_qwen3_next():
+    """Every OpenAI-compatible route that shares `qwen_model_profile` sends Qwen3 Next tool returns as JSON strings."""
+    profiles = {
+        'openrouter': OpenRouterProvider.model_profile('qwen/qwen3-next-80b-a3b-instruct'),
+        'openrouter-thinking': OpenRouterProvider.model_profile('qwen/qwen3-next-80b-a3b-thinking'),
+        'together': TogetherProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct'),
+        'fireworks': FireworksProvider.model_profile('accounts/fireworks/models/qwen3-next-80b-a3b-instruct'),
+        'nebius': NebiusProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct'),
+        'alibaba': AlibabaProvider.model_profile('qwen3-next-80b-a3b-instruct'),
+        'cerebras': CerebrasProvider.model_profile('qwen-3-next-80b'),
+        'ollama': OllamaProvider.model_profile('qwen3-next:80b'),
+        'vllm': VLLMProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct'),
+        'sambanova': SambaNovaProvider.model_profile('Qwen3-Next-80B-A3B-Instruct'),
+    }
+    assert {route: _normalize(profile) for route, profile in profiles.items()} == snapshot(
+        {
+            'openrouter': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_video_input': False,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_chat_send_back_thinking_parts': 'field',
+                'openai_chat_thinking_field': 'reasoning',
+                'openai_chat_supports_file_urls': True,
+                'openai_chat_supports_web_search': True,
+                'openai_chat_supports_max_completion_tokens': False,
+                'openrouter_system_messages_precede_generation': False,
+                'supports_thinking': True,
+                'supports_cache': False,
+                'supported_cache_retentions': (),
+                'openrouter_supports_cache_control': False,
+                'openrouter_supports_trailing_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'openrouter-thinking': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_video_input': False,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'thinking_always_enabled': True,
+                'openrouter_lowest_reasoning_effort': 'minimal',
+                'openai_chat_send_back_thinking_parts': 'field',
+                'openai_chat_thinking_field': 'reasoning',
+                'openai_chat_supports_file_urls': True,
+                'openai_chat_supports_web_search': True,
+                'openai_chat_supports_max_completion_tokens': False,
+                'openrouter_system_messages_precede_generation': False,
+                'supports_thinking': True,
+                'supports_cache': False,
+                'supported_cache_retentions': (),
+                'openrouter_supports_cache_control': False,
+                'openrouter_supports_trailing_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'together': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'fireworks': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'supports_json_schema_output': True,
+            },
+            'nebius': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'alibaba': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'openai_chat_supports_document_input': False,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+            },
+            'cerebras': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_unsupported_model_settings': ('logit_bias',),
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'ollama': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_chat_thinking_field': 'reasoning',
+                'openai_supports_strict_tool_definition': False,
+                'supports_json_schema_output': True,
+                'supports_json_object_output': True,
+                'openai_chat_supports_max_completion_tokens': False,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'vllm': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_chat_supports_document_input': False,
+                'openai_chat_supports_multiple_system_messages': False,
+                'supports_json_schema_output': True,
+                'supports_json_object_output': True,
+                'native_output_requires_schema_in_instructions': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'sambanova': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_qwen3_next():
+    profile = BedrockProvider.model_profile('qwen.qwen3-next-80b-a3b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'ignore_streamed_leading_whitespace': True,
+            'needs_json_string_tool_returns': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_thinking_variant': 'qwen',
+            'bedrock_supports_stop_sequences': False,
+            'supports_thinking': True,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_qwen3_next():
+    profile = GroqProvider.model_profile('qwen/qwen3-next-80b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'needs_json_string_tool_returns': True,
+            'supports_thinking': True,
+            'groq_supports_reasoning_disable': True,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_qwen3_next():
+    profile = HuggingFaceProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'needs_json_string_tool_returns': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_alibaba_qwen():
     profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
     assert _normalize(profile) == snapshot(
@@ -3770,6 +4060,8 @@ def test_anthropic_unknown_model_returns_some_profile():
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': False,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -3876,6 +4168,7 @@ def test_github_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
         }
     )
 
@@ -3943,6 +4236,8 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -4010,6 +4305,8 @@ def test_vercel_vertex_gemini():
             ),
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': False,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4040,6 +4337,7 @@ def test_vercel_xai_grok():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
+            'grok_supports_stop_sequences': False,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -4090,6 +4388,8 @@ def test_heroku_returns_openai_transformer():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -4203,6 +4503,8 @@ def test_otari_anthropic():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
             'anthropic_disables_thinking_with_between_tools': True,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -4238,6 +4540,8 @@ def test_otari_gemini():
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
+            'google_supports_penalties': True,
+            'google_supports_computer_use': False,
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4391,6 +4695,8 @@ def test_stav_anthropic():
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_max_effort': True,
+            'anthropic_disallows_temperature_with_top_p': True,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
