@@ -176,6 +176,8 @@ def temporalize_dynamic_toolset(
         # on the resolved toolset that `for_run` hands the run); the construction-time
         # factory itself has nothing to enter.
         lifecycle='enter-never',
+        # Activities get a deserialized `RunContext`, so each resolves its own toolset.
+        units_share_run_context=False,
         durable_registrations=[registered_get_tools, registered_call_tool, registered_validate_args],
         durable_config=activity_config,
     )
