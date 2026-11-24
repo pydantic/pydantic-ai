@@ -120,12 +120,14 @@ class AttachedTarget:
 
 def screenshot_return(result: dict[str, object], params: dict[str, object]) -> ToolReturn[str] | str:
     """Return a `Page.captureScreenshot` result as an image, so a vision model sees the page instead of base64."""
-    image = base64.b64decode(str(result.get('data', '')))
+    data = str(result.get('data', ''))
+    hint = "capture a smaller `clip`, or pass `format: 'jpeg'` with a lower `quality`."
+    # The longest base64 an image within the limit encodes to, so this refuses no valid image.
+    if len(data) > 4 * ((MAX_SCREENSHOT_BYTES + 2) // 3):
+        return f'Error: screenshot is over the {MAX_SCREENSHOT_BYTES} byte image limit; {hint}'
+    image = base64.b64decode(data)
     if len(image) > MAX_SCREENSHOT_BYTES:
-        return (
-            f'Error: screenshot is {len(image)} bytes, over the {MAX_SCREENSHOT_BYTES} byte image limit; '
-            "capture a smaller `clip`, or pass `format: 'jpeg'` with a lower `quality`."
-        )
+        return f'Error: screenshot is {len(image)} bytes, over the {MAX_SCREENSHOT_BYTES} byte image limit; {hint}'
     image_format = params.get('format')
     media_type = f'image/{image_format}' if image_format in ('jpeg', 'webp') else 'image/png'
     return ToolReturn(

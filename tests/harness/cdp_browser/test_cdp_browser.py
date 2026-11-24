@@ -407,8 +407,7 @@ class TestCDPBrowser:
         ).run('go')
         assert tool_returns(result.all_messages()) == ['DOM.querySelector failed: Could not find node with given id']
 
-    async def test_screenshots_are_image_content(self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(toolset_module, 'MAX_SCREENSHOT_BYTES', len(chrome.screenshot))
+    async def test_screenshots_are_image_content(self, chrome: FakeChrome):
         result = await Agent(
             calls_then_reply(
                 {'method': 'Page.captureScreenshot'},
@@ -432,16 +431,31 @@ class TestCDPBrowser:
             (chrome.screenshot, 'image/jpeg'),
         ]
 
-    async def test_an_oversized_screenshot_is_an_error(self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(toolset_module, 'MAX_SCREENSHOT_BYTES', len(chrome.screenshot) - 1)
+    @pytest.mark.parametrize(
+        ('extra_bytes', 'expected'),
+        [
+            pytest.param(0, 'Screenshot attached (image/png, 5000000 bytes).', id='at-the-limit'),
+            pytest.param(
+                1,
+                'Error: screenshot is 5000001 bytes, over the 5000000 byte image limit; '
+                "capture a smaller `clip`, or pass `format: 'jpeg'` with a lower `quality`.",
+                id='refused-after-decoding',
+            ),
+            pytest.param(
+                3,
+                'Error: screenshot is over the 5000000 byte image limit; '
+                "capture a smaller `clip`, or pass `format: 'jpeg'` with a lower `quality`.",
+                id='refused-before-decoding',
+            ),
+        ],
+    )
+    async def test_screenshot_size_limit(self, chrome: FakeChrome, extra_bytes: int, expected: str):
+        """One byte over the limit still has base64 no longer than the limit's, so only the decoded size refuses it."""
+        chrome.screenshot = bytes(toolset_module.MAX_SCREENSHOT_BYTES + extra_bytes)
         result = await Agent(calls_then_reply({'method': 'Page.captureScreenshot'}), capabilities=[CDPBrowser()]).run(
             'go'
         )
-        assert tool_returns(result.all_messages()) == snapshot(
-            [
-                "Error: screenshot is 15 bytes, over the 14 byte image limit; capture a smaller `clip`, or pass `format: 'jpeg'` with a lower `quality`."
-            ]
-        )
+        assert tool_returns(result.all_messages()) == [expected]
 
     async def test_a_lost_connection_ends_the_run(self, chrome: FakeChrome, monkeypatch: pytest.MonkeyPatch):
         """A crashed Chrome is not something the model can retry; teardown still kills it."""
