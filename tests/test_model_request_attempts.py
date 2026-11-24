@@ -1030,13 +1030,19 @@ def _answer() -> FunctionModel:
 
 
 _BILLED = RequestUsage(input_tokens=100, output_tokens=5)
+"""What `BilledThenFailsModel`'s failing stream reports.
+
+The tests below use that stub rather than a cassette: a provider reporting usage on opening a stream and then failing
+before any output, like Anthropic's `message_start` followed by an `overloaded_error`, depends on the provider's load,
+so it can't be recorded on demand.
+"""
 
 
 @pytest.mark.parametrize('moved_on_by', ['FallbackModel', 'ModelFallback', 'RetryOnModelErrors'])
 async def test_a_streamed_attempt_billed_before_it_failed_keeps_its_usage(moved_on_by: str):
     """A stream that failed before its first event, after the provider reported usage, was billed for it.
 
-    The attempt moved on from records that usage, and it counts in the run's usage once.
+    The attempt moved on from records that usage, and it counts in the run's usage once. Not a VCR test: see `_BILLED`.
     """
     match moved_on_by:
         case 'FallbackModel':
@@ -1056,14 +1062,17 @@ async def test_a_streamed_attempt_billed_before_it_failed_keeps_its_usage(moved_
     )
 
 
-async def _consume(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+async def _consume(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
     async for _ in events:
         pass
 
 
 @pytest.mark.parametrize('fails_by', ['FallbackModel', 'ModelFallback'])
 async def test_streamed_attempts_billed_before_every_model_failed_are_counted(fails_by: str):
-    """When every model's stream fails after it was billed, the group lists the attempts and the run counts them."""
+    """When every model's stream fails after it was billed, the group lists the attempts and the run counts them.
+
+    Not a VCR test: see `_BILLED`.
+    """
     if fails_by == 'FallbackModel':
         # Without an error hook, the stream opens once it's iterated, and `FallbackModel` falls back then.
         agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), BilledThenFailsModel(_answer())))
@@ -1078,7 +1087,10 @@ async def test_streamed_attempts_billed_before_every_model_failed_are_counted(fa
 
 @pytest.mark.parametrize('model_kind', ['FallbackModel', 'ModelFallback'])
 async def test_a_streamed_failure_billed_before_it_was_not_fallen_back_from_is_counted(model_kind: str):
-    """A billed stream failure that nothing falls back from ends the run, and what the provider billed still counts."""
+    """A billed stream failure that nothing falls back from ends the run, and what the provider billed still counts.
+
+    Not a VCR test: see `_BILLED`.
+    """
     if model_kind == 'FallbackModel':
         agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), _answer(), fallback_on=lambda error: False))
     else:
@@ -1092,7 +1104,10 @@ async def test_a_streamed_failure_billed_before_it_was_not_fallen_back_from_is_c
 
 
 async def test_a_billed_attempt_before_a_stream_that_then_fails_is_counted_once():
-    """The stream that answers after a billed attempt carries it, and failing partway doesn't count it again."""
+    """The stream that answers after a billed attempt carries it, and failing partway doesn't count it again.
+
+    Not a VCR test: see `_BILLED`.
+    """
 
     async def fails_partway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'hel'

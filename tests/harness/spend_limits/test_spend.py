@@ -2561,7 +2561,11 @@ class TestFallbackAttempts:
 
     @pytest.mark.parametrize('moved_on_by', ['FallbackModel', 'ModelFallback'])
     async def test_a_streamed_attempt_billed_before_it_failed_is_charged_once(self, moved_on_by: str):
-        """A stream that failed before its first event, after the provider reported usage, is charged once."""
+        """A stream that failed before its first event, after the provider reported usage, is charged once.
+
+        Not a VCR test: a provider reporting usage on opening a stream and then failing before any output depends on
+        its load, so it can't be recorded on demand.
+        """
 
         async def answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             yield 'ok'
