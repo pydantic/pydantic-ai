@@ -478,3 +478,29 @@ def test_gpt_oss_schema_transformer_inlines_defs():
         '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
     }
     assert transformer(nullable_object).walk() == OpenAIJsonSchemaTransformer(nullable_object).walk()
+
+
+def test_openai_transformer_preserves_root_anyof_ref():
+    """Root $ref to a typeless anyOf definition must keep anyOf on the root (#13724)."""
+    from copy import deepcopy
+
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    schema: dict[str, Any] = {
+        '$ref': '#/$defs/U',
+        '$defs': {
+            'U': {
+                'anyOf': [{'type': 'string'}, {'type': 'array', 'items': {'$ref': '#/$defs/U'}}],
+                'title': 'U',
+            }
+        },
+    }
+
+    for strict in (False, True):
+        walked = OpenAIJsonSchemaTransformer(deepcopy(schema), strict=strict).walk()
+        assert walked == {
+            'anyOf': [
+                {'type': 'string'},
+                {'type': 'array', 'items': {'$ref': '#'}},
+            ]
+        }

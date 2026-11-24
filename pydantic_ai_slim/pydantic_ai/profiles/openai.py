@@ -915,7 +915,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
             root_key = re.sub(r'^#/\$defs/', '', self.root_ref).replace('~1', '/').replace('~0', '~')
-            root_schema = self.defs.get(root_key)
+            defs = result.get('$defs')
+            if isinstance(defs, dict) and root_key in defs:
+                root_schema = defs.pop(root_key)
+                if not defs:
+                    result.pop('$defs', None)
+            else:
+                root_schema = self.defs.get(root_key)
             assert not isinstance(root_schema, bool)
             result.update(root_schema or {})
 
