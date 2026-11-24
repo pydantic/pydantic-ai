@@ -377,7 +377,7 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
 VIEWS = ['sessions', 'projects']
 """The sidebar's two listings, which render different rows and row controls."""
 FIELD_VIEWS = [*VIEWS, 'command palette', 'plugin settings']
-"""The views above, plus surfaces whose search fields have no name of their own."""
+"""The views above, plus the command palette's and the plugin settings' search fields."""
 
 MARK_CONTROLS = """() => {
   const controls = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')]
@@ -387,14 +387,14 @@ MARK_CONTROLS = """() => {
 }"""
 """Mark each control the page renders in the Tab order; return how many."""
 
-MARK_UNNAMED_FIELDS = """() => [...document.querySelectorAll('input[placeholder], textarea[placeholder]')]
-  .filter((field) => field.placeholder && !field.hasAttribute('aria-label') && !field.hasAttribute('aria-labelledby')
-    && !(field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`)))
+MARK_PLACEHOLDER_FIELDS = """() => [...document.querySelectorAll('input[placeholder], textarea[placeholder]')]
+  .filter((field) => field.placeholder && field.checkVisibility())
   .map((field, index) => {
-    field.setAttribute('data-unnamed', String(index))
-    return field.placeholder
+    field.setAttribute('data-placeholder-field', String(index))
+    const labelled = field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`)
+    return [field.placeholder, field.hasAttribute('aria-label') || field.hasAttribute('aria-labelledby') || Boolean(labelled)]
   })"""
-"""Mark each field with a placeholder and no name of its own; return their placeholders."""
+"""Mark each visible field with a placeholder; return its placeholder and whether it has a name of its own."""
 
 
 async def open_view(page: Page, web_ui: WebUI, view: str) -> None:
@@ -451,17 +451,21 @@ async def test_tab_reaches_every_control_a_pointer_can(page: Page, web_ui: WebUI
     assert not missed, f'Tab never focuses these controls a pointer can use; hide one by size or opacity: {missed}'
 
 
-async def test_a_field_with_no_name_of_its_own_is_named_by_its_placeholder(page: Page, web_ui: WebUI) -> None:
-    """A wrapping label names a field after everything inside it, as it named the session search 'Archived Ctrl K' (#11306)."""
+async def test_each_field_with_a_placeholder_has_an_accessible_name(page: Page, web_ui: WebUI) -> None:
+    """A field with no name of its own is named by its placeholder, not by whatever else its wrapping label holds.
+
+    A wrapping label named the session search 'Archived Ctrl K' (#11306), and one holding only an icon left the command
+    palette's and the plugin settings' search fields with no name at all.
+    """
     judged = 0
     for view in FIELD_VIEWS:
         await open_view(page, web_ui, view)
-        placeholders: list[str] = await page.evaluate(MARK_UNNAMED_FIELDS)
-        for index, placeholder in enumerate(placeholders):
-            field = page.locator(f'[data-unnamed="{index}"]')
-            await expect(field).to_have_accessible_name(re.compile(re.escape(placeholder)))
-        judged += len(placeholders)
-    assert judged, f'no field in {FIELD_VIEWS} relies on its placeholder for a name: open a view that has one'
+        fields: list[tuple[str, bool]] = await page.evaluate(MARK_PLACEHOLDER_FIELDS)
+        for index, (placeholder, named) in enumerate(fields):
+            field = page.locator(f'[data-placeholder-field="{index}"]')
+            await expect(field).to_have_accessible_name(re.compile(r'\S' if named else re.escape(placeholder)))
+        judged += len(fields)
+    assert judged, f'no view in {FIELD_VIEWS} has a field with a placeholder: open one that does'
 
 
 async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
