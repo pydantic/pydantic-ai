@@ -48,6 +48,10 @@ def test_env_is_not_shown_in_repr() -> None:
         ({'env': {'PORT': 3000}}, '`env`: env keys and values must be strings.'),
         ({'env': {'A=B': 'x'}}, '`env`: env keys must be non-empty without `=` or NUL'),
         ({'defer_loading': True}, '`AgentCoreSandbox` does not support `defer_loading=True`'),
+        (
+            {'path_authority': {'~/repo': 'none'}},
+            "`path_authority` paths are paths on the sandbox or host, so `~` is not expanded: got '~/repo'",
+        ),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, object], message: str) -> None:

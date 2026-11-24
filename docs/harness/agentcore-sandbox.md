@@ -194,6 +194,10 @@ agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder(), hooks])
 | `session_timeout` | Seconds a new session lives, counted from its start. Default: `900` (15 minutes); at most `28800` (8 hours). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the session's own (`/opt/amazon/genesis1p-tools/var` on `aws.codeinterpreter.v1`). Created in a new session; in an attached session it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the session. The agent's commands can read these values, so leave out secrets the agent should not see. |
+| `authority` | Who wrote the session's files. A capability that puts a file's text in the prompt gives it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the session, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+
+`code_interpreter` and `session_timeout` only shape a new session. The other options also apply when you reattach, and `destroy` uses `region_name`.
 
 `AgentCoreSandbox` works under asyncio and Trio: boto3 calls run in worker threads.
 

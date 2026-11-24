@@ -7,9 +7,17 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace import with_authority
+from pydantic_ai_harness._workspace_provider import (
+    check_env,
+    check_integer,
+    check_path_authority,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.agentcore_sandbox._backend import (
     DEFAULT_CODE_INTERPRETER,
     DEFAULT_SESSION_TIMEOUT,
@@ -65,12 +73,23 @@ class AgentCoreSandbox(AbstractCapability[AgentDepsT]):
     The agent's commands can read them.
     """
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the session's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are session paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('AgentCoreSandbox', self.defer_loading)
         check_integer('session_timeout', self.session_timeout)
         if self.session_timeout > MAX_SESSION_TIMEOUT:
             raise UserError(f'session_timeout must be at most {MAX_SESSION_TIMEOUT}, got {self.session_timeout!r}.')
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         try:
             check_env(self.env)
         except (TypeError, ValueError) as error:
@@ -87,8 +106,12 @@ class AgentCoreSandbox(AbstractCapability[AgentDepsT]):
         await stop_session(ref, region_name=self.region_name)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        """Build the backend for this run. No I/O here: it starts or attaches on first use."""
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
         del ctx
+        return with_authority(self._run_backend(ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ref: WorkspaceRef | None) -> AgentCoreSandboxBackend | None:
+        """Build the backend for this run. No I/O here: it starts or attaches on first use."""
         if ref is not None and ref.provider != PROVIDER:
             return None
         return AgentCoreSandboxBackend(
