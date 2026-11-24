@@ -389,7 +389,8 @@ with try_import() as ui_imports_successful:
 _DEFAULT_MODEL_NAMES: dict[Provider, str] = {
     'anthropic': 'claude-opus-5-5',
     'openai-responses': 'gpt-5.6-sol',
-    # Chat Completions rejects function tools with reasoning on GPT-5.6; gpt-5.2 accepts them live.
+    # The scenarios send function tools at default reasoning, which Chat Completions accepts on gpt-5.2 (live) and
+    # `OpenAIChatModel` refuses before sending on GPT-5.6: gpt-5.2 runs them the way a Chat Completions user can.
     'openai-chat': 'gpt-5.2',
 }
 

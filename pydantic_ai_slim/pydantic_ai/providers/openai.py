@@ -190,6 +190,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # `openai_model_profile` because the restriction is unverified on the OpenAI-compatible endpoints
                 # that share it.
                 # gpt-5.5 stays off: its default tool request succeeds live, and only an explicit effort gets the 400.
+                # gpt-5.4-pro stays off: Chat Completions doesn't serve it (404).
                 openai_chat_function_tools_require_reasoning_off=(
                     (model_name.startswith('gpt-5.4') and not model_name.startswith('gpt-5.4-pro'))
                     or model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES))
