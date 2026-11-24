@@ -65,7 +65,10 @@ from .conftest import try_import
 Provider = Literal['anthropic', 'openai-responses', 'openai-chat']
 PROVIDERS: tuple[Provider, ...] = ('anthropic', 'openai-responses', 'openai-chat')
 
-ToolCall = tuple[str, dict[str, Any]]
+ToolArgs = dict[str, Any]
+"""A tool call's arguments, as a test passes them."""
+
+ToolCall = tuple[str, ToolArgs]
 
 START = datetime(2026, 10, 16, 9, 58, tzinfo=UTC)
 """Just before the hour, so the first clock step crosses it."""

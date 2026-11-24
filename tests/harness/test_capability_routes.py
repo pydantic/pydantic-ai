@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import anyio
 import pytest
@@ -44,7 +44,7 @@ from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, 
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 
 from .. import capability_cases as core
-from ..append_only import ToolCall, discover_capabilities, drain_events, run_through_ui, ui_imports_successful
+from ..append_only import ToolArgs, ToolCall, discover_capabilities, drain_events, run_through_ui, ui_imports_successful
 from ..capability_cases import CORE_CAPABILITY_PACKAGES, Calls, CapabilityCase
 from ..conftest import try_import
 from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
@@ -94,17 +94,17 @@ ROUTES: tuple[Route, ...] = (
 )
 
 
-def _python_call(name: str, args: dict[str, Any]) -> str:
+def _python_call(name: str, args: ToolArgs) -> str:
     return f'{name}({", ".join(f"{key}={value!r}" for key, value in args.items())})'
 
 
-def _code_mode_call(name: str, args: dict[str, Any], info: AgentInfo) -> ToolCall:
+def _code_mode_call(name: str, args: ToolArgs, info: AgentInfo) -> ToolCall:
     """Code Mode's catalog renders a sequential tool as a sync function, and the rest as async ones."""
     sync = re.search(rf'(?<!async )def {re.escape(name)}\(', info.instructions or '') is not None
     return 'run_code', {'code': f'{"" if sync else "await "}{_python_call(name, args)}'}
 
 
-_WRAPS: dict[Route, Callable[[str, dict[str, Any], AgentInfo], ToolCall]] = {
+_WRAPS: dict[Route, Callable[[str, ToolArgs, AgentInfo], ToolCall]] = {
     'code_mode': _code_mode_call,
     'ipython_code_mode': lambda name, args, info: ('run_code', {'code': _python_call(name, args)}),
     'tool_bridge': lambda name, args, info: ('tool_call', {'name': name, 'args_json': json.dumps(args)}),
@@ -210,7 +210,7 @@ class _Observer(AbstractCapability[None]):
         self.ran.append(call.tool_name)
         return args
 
-    async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+    async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[object]) -> AgentRunResult[object]:
         self.histories.append(result.all_messages())
         return result
 
@@ -223,7 +223,7 @@ class _Script:
     """
 
     calls: Sequence[ToolCall]
-    wrap: Callable[[str, dict[str, Any], AgentInfo], ToolCall] | None = None
+    wrap: Callable[[str, ToolArgs, AgentInfo], ToolCall] | None = None
     wrapped: int = 0
 
     def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -252,10 +252,23 @@ class _Script:
 
 async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     """A prepare hook that builds each definition anew from the fields a user sets, leaving out the stamped ids."""
-    stamped = {'toolset_id', 'capability_id'}
     return [
         ToolDefinition(
-            **{f.name: getattr(tool_def, f.name) for f in fields(tool_def) if f.init and f.name not in stamped}
+            name=tool_def.name,
+            parameters_json_schema=tool_def.parameters_json_schema,
+            description=tool_def.description,
+            outer_typed_dict_key=tool_def.outer_typed_dict_key,
+            strict=tool_def.strict,
+            sequential=tool_def.sequential,
+            kind=tool_def.kind,
+            metadata=tool_def.metadata,
+            timeout=tool_def.timeout,
+            durable=tool_def.durable,
+            defer_loading=tool_def.defer_loading,
+            unless_native=tool_def.unless_native,
+            with_native=tool_def.with_native,
+            return_schema=tool_def.return_schema,
+            include_return_schema=tool_def.include_return_schema,
         )
         for tool_def in tool_defs
     ]
@@ -402,6 +415,7 @@ async def ipython_kernel(ipython_dir: None) -> AsyncIterator[IPythonKernel]:
 
 
 @pytest.mark.skipif(not ipython_installed(), reason='jupyter-client not installed')
+@pytest.mark.xdist_group(name='harness-ipython-kernel')
 @pytest.mark.parametrize(('name', 'route'), list(_matrix(['ipython_code_mode'])))
 async def test_calls_reach_the_model_the_same_through_ipython_code_mode(
     name: str, route: Route, tmp_path: Path, ipython_kernel: IPythonKernel
