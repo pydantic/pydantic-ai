@@ -483,8 +483,8 @@ def trace_retry(
 ) -> None:
     """Record a zero-duration span marking a guardrail sending the value back to the model to try again.
 
-    Without it a retry leaves no trace of the guard when content is off: the run's only sign is a
-    second model request. The retry message, which can quote the value, is content.
+    Without it a retry leaves no trace of the guard: the run's only sign is a second model request.
+    The retry message, which can quote the value, is content.
     """
     record_decision(
         ctx,

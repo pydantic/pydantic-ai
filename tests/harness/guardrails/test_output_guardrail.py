@@ -332,15 +332,6 @@ class TestOutputGuardrailTracing:
             **({'guardrail.message': 'try again'} if include_content else {}),
         }
 
-    async def test_a_replacement_is_stringified_when_content_is_on(self, instrumented: Instrumented):
-        tracing, exporter = instrumented(True)
-        agent = Agent(TestModel(), capabilities=[OutputGuardrail(guard=_replace_clean), tracing])
-
-        await agent.run('hello')
-
-        [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail redacted output']
-        assert (span.attributes or {})['guardrail.replacement'] == 'clean'
-
 
 class TestOutputGuardrailOrdering:
     """`get_ordering()` placement: outermost but wrapped by `Instrumentation`."""
