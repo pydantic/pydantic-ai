@@ -605,6 +605,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             ('PAI_AGENT', 'pydantic_ai_gh_aw_shim.agent:agent', 'the repository workflow policy'),
             ('PAI_RESULT_METADATA', 'pydantic_ai_gh_aw_shim.agent:result_metadata', 'authenticated workflow metadata'),
             ('PAI_OTEL_EXPORT_PATH', '/tmp/gh-aw/pydantic-ai-private-otel.jsonl', 'credential-free workflow tracing'),
+            # `ai-credits-accounting` holds the fallback's price.
+            ('PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL', 'glm-5.3-flash', 'the priced overload fallback model'),
             ('GH_AW_PROTECTED_SESSION_CAPTURE', '1', 'native protected session capture'),
         ):
             if str(env.get(name)) != expected:
@@ -620,8 +622,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             missing.append('AWF exclusion of the provider credential')
         if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
             missing.append('task identity available inside the agent sandbox')
-        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
-            missing.append('the unchanged Z.ai model selected through Anthropic')
+        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_ZAI_MODEL }}':
+            missing.append('the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic')
         if env.get('ANTHROPIC_API_KEY') != ENGINE_CREDENTIAL:
             missing.append('injection of the account-selected Z.ai key at the provider proxy')
     return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')] if missing else []
@@ -725,10 +727,14 @@ def check_ai_credits_accounting(lock: Path) -> list[Violation]:
     """Allow verified GLM prices in USD per token, never per-million overlay values.
 
     Z.ai published no GLM-5.4 API price as of 2026-11-23, so GLM-5.4 is priced at GLM-5.3's rates.
+    GLM-5.3-Flash, the overload fallback, is priced at its own rates.
     """
     expected: dict[str, object] = {
         'anthropic': {
-            'models': {'glm-5.4': {'cost': {'input': 0.0000014, 'cache_read': 0.00000026, 'output': 0.0000044}}}
+            'models': {
+                'glm-5.4': {'cost': {'input': 0.0000014, 'cache_read': 0.00000026, 'output': 0.0000044}},
+                'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.0000005}},
+            }
         }
     }
     fallback: dict[str, float] = {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4}
@@ -736,7 +742,8 @@ def check_ai_credits_accounting(lock: Path) -> list[Violation]:
         Violation(
             str(lock),
             'ai-credits-accounting',
-            '`models.providers` must price GLM-5.4 at the verified GLM-5.3 USD-per-token rates; '
+            '`models.providers` must price GLM-5.4 at the verified GLM-5.3 USD-per-token rates, '
+            'and GLM-5.3-Flash at its own; '
             'per-million values incorrectly exhaust the fixed AWF credit cap. '
             '`models.default-ai-credits-pricing` must use the same rates in USD per million tokens.',
         )

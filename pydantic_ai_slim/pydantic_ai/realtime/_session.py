@@ -810,7 +810,11 @@ class RealtimeSession:
             instructions=instructions,
             metadata=metadata,
             model_request_parameters=model_request_parameters,
-            model_settings=model_settings,
+            model_settings=(
+                model._recorded_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
+                if model is not None and model_settings
+                else model_settings
+            ),
             output_type='speech' if output_modality == 'audio' else 'text',
         )
         self._usage_limits = usage_limits

@@ -17,7 +17,8 @@
 # staged outside the checkout and selected through the public PAI_AGENT seam.
 #
 # Required repo variable:
-#   GH_AW_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
+#   GH_AW_ZAI_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
+# `.github/workflows/AGENTS.md` says why GH_AW_MODEL stays set.
 # Required secret:
 #   ZAI_API_KEY — primary Coding Plan API key injected by the AWF api-proxy.
 # Optional secret:
@@ -37,6 +38,7 @@ models:
   # USD per million tokens. Z.ai published no GLM-5.4 API price as of 2026-11-23 (https://docs.z.ai/guides/llm/glm-5.4),
   # so these are GLM-5.3's: https://docs.z.ai/guides/overview/pricing (2026-11-23). GLM-5.4 succeeds GLM-5.3,
   # and the Coding Plan's credit multipliers rate it below GLM-5.3: https://docs.z.ai/devpack/overview.
+  # GLM-5.3-Flash, the overload fallback, has its own price on that page (2026-11-24).
   default-ai-credits-pricing:
     input: 1.4
     cache_read: 0.26
@@ -50,6 +52,11 @@ models:
             input: 0.0000014
             cache_read: 0.00000026
             output: 0.0000044
+        glm-5.3-flash:
+          cost:
+            input: 0.00000015
+            cache_read: 0.00000003
+            output: 0.0000005
 engine:
   id: pydantic-ai
   version: '0.70.0'
@@ -59,6 +66,8 @@ engine:
     PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
     PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
     PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
+    # A request Z.ai refuses as overloaded (HTTP 529, code 1305) goes to this model instead. Price it under `models:`.
+    PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL: glm-5.3-flash
     # Digest of the staged policy sources, from the `Install repository workflow policy` step.
     LOGFIRE_SERVICE_VERSION: ${{ steps.workflow-policy.outputs.service-version }}
     PYTHONPATH: /tmp/gh-aw/workflow-python

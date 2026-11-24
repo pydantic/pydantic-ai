@@ -783,7 +783,8 @@ jobs:
           PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
           PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
           PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
-          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
+          PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL: glm-5.3-flash
+          PAI_MODEL: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
           ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYTHONPATH: /tmp/gh-aw/workflow-python
@@ -797,6 +798,14 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     """The public engine retains policy, model and proxy credential exclusion."""
     lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK)
     assert check_compiled_runner_contract(lock) == []
+
+
+def test_compiled_runner_contract_rejects_the_variable_of_older_locks(tmp_path: Path):
+    """`GH_AW_MODEL` stays on the model older locks are priced for, so a new lock must read `GH_AW_ZAI_MODEL`."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('vars.GH_AW_ZAI_MODEL', 'vars.GH_AW_MODEL'))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic' in violations[0].message
 
 
 @pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
@@ -848,6 +857,22 @@ def test_compiled_runner_contract_requires_policy_observability(tmp_path: Path, 
     lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
+
+
+@pytest.mark.parametrize('fallback', [None, 'glm-5.3'])
+def test_compiled_runner_contract_requires_the_priced_overload_fallback(tmp_path: Path, fallback: str | None):
+    """An overloaded request may go only to the fallback `ai-credits-accounting` prices."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    env = workflow['jobs']['agent']['steps'][0]['env']
+    if fallback is None:
+        del env['PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL']
+    else:
+        env['PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL'] = fallback
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the priced overload fallback model' in violations[0].message
 
 
 @pytest.mark.parametrize('pythonpath', [None, '/tmp/other-policy'])
@@ -1077,28 +1102,33 @@ jobs:
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
 
 
+@pytest.mark.parametrize('flash_priced', [False, True])
 @pytest.mark.parametrize('per_million', [False, True])
 @pytest.mark.parametrize('stale_fallback', [False, True])
-def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_million: bool, stale_fallback: bool):
-    """The same published rates use different units in the two pricing settings."""
+def test_ai_credits_accounting_checks_glm_overlay_units(
+    tmp_path: Path, per_million: bool, stale_fallback: bool, flash_priced: bool
+):
+    """The same published rates use different units in the two pricing settings.
+
+    GLM-5.3-Flash, the overload fallback, needs its own entry: the default prices it at GLM-5.3's rates.
+    """
     unit = 1 if per_million else 1_000_000
+    models: dict[str, object] = {
+        'glm-5.4': {'cost': {'input': 1.4 / unit, 'cache_read': 0.26 / unit, 'output': 4.4 / unit}}
+    }
+    if flash_priced:
+        models['glm-5.3-flash'] = {'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.5 / unit}}
     config: dict[str, object] = {
         'apiProxy': {
             'defaultAiCreditsPricing': {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
             if stale_fallback
             else {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4},
-            'providers': {
-                'anthropic': {
-                    'models': {
-                        'glm-5.4': {'cost': {'input': 1.4 / unit, 'cache_read': 0.26 / unit, 'output': 4.4 / unit}}
-                    }
-                }
-            },
+            'providers': {'anthropic': {'models': models}},
         }
     }
     workflow: dict[str, object] = {'jobs': {'agent': {'steps': [{'run': f"printf '%s' '{json.dumps(config)}'"}]}}}
     lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
-    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback)
+    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback or not flash_priced)
 
 
 def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):

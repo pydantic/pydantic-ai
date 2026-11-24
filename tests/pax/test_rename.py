@@ -53,6 +53,7 @@ def test_code_names_say_pax_not_clai2() -> None:
     """Identifiers and `ContextVar` names use the new name.
 
     Persisted keys, `CLAI2_*` variables, and the `pydantic_clai2` alias keep the old one, in strings only.
+    It reads source only, so it is not a VCR test.
     """
     package = SOURCES / 'pydantic_ai_pax' / 'pydantic_ai_pax'
     found: list[str] = []

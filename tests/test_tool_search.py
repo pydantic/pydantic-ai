@@ -2966,10 +2966,13 @@ async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
     ]
 
 
-def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:
+def _cross_provider_tool_search_agent(
+    model: AnthropicModel | OpenAIResponsesModel, *, client_executed_search: bool = False
+) -> Agent[None, str]:
     agent: Agent[None, str] = Agent(
         model,
         instructions='Always use get_exchange_rate to answer exchange-rate questions.',
+        capabilities=[ToolSearch(strategy='keywords')] if client_executed_search else None,
     )
 
     @agent.tool_plain(defer_loading=True)
@@ -3148,6 +3151,55 @@ async def test_live_local_tool_search_replays_on_native_tool_search_model(
         for item in replayed_input
         if isinstance(item, dict) and item.get('type') in ('reasoning', 'tool_search_call')
     ] == snapshot([('reasoning', True), ('tool_search_call', False), ('reasoning', True)])
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='a model without native tool search replays tool_search_call as function_call')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_client_tool_search_replays_on_model_without_native_tool_search(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A client-executed search made on a model with native tool search replays on one without it.
+
+    The stored call carries a `tool_search_call` (`tsc_*`) item ID, which the Responses API rejects
+    on the `function_call` item it is replayed as, so the item ID is omitted there. The reasoning
+    item before the call keeps its own ID and is accepted.
+    """
+    # `gpt-5.4` defaults to no reasoning, and the reasoning item is what this replay must keep valid.
+    model_settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='auto')
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key)),
+        client_executed_search=True,
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?', model_settings=model_settings)
+    search_calls = list(iter_message_parts(first.all_messages(), ModelResponse, ToolSearchCallPart))
+    assert search_calls and all(call.id and call.id.startswith('tsc_') for call in search_calls)
+    search_call_ids = {call.tool_call_id for call in search_calls}
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel(
+            'gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        ),
+        client_executed_search=True,
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+        model_settings=model_settings,
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    replayed_input = request_capture.body('/responses')['input']
+    assert isinstance(replayed_input, list)
+    assert [
+        (item.get('type'), 'id' in item)
+        for item in replayed_input
+        if isinstance(item, dict)
+        and (
+            item.get('type') == 'reasoning'
+            or (item.get('type') == 'function_call' and item.get('call_id') in search_call_ids)
+        )
+    ] == snapshot([('reasoning', True), ('function_call', False)])
 
 
 def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -5318,8 +5370,8 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
         )
     assert str(exc_info.value) == snapshot(
         "Native tool(s) ['ToolSearchTool'] not supported by this model. "
-        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'FileSearchTool', 'ImageGenerationTool', 'MCPServerTool', "
-        "'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
+        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'ComputerTool', 'FileSearchTool', 'ImageGenerationTool', "
+        "'MCPServerTool', 'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
         'To use these tools with this model, provide a local fallback via NativeOrLocalTool(native=..., local=...) '
         "or the `local` parameter of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
         'MCP(local=True), ImageGeneration(local=my_func)). '
