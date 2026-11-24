@@ -380,9 +380,10 @@ Otherwise, run this gate before the first push and later pushes while the review
 The gate catches semantic defects before they consume a CI and hosted-review round.
 
 Dispatch `pre-push-review` at most three times per PR during one task, plus the one remediation
-review below. Count every dispatch, including repeated reviews after findings. Reserve the next count before dispatch and include
-`call N of 3` in the reviewer prompt. The final metadata review does not count against this budget,
-and neither does an additional local review the author asks for after the loop completes.
+review below. Count every dispatch, including repeated reviews after findings. Reserve the next
+count before dispatch and include `call N of 3` in the reviewer prompt. The final metadata review
+does not count against this budget, and neither does an additional local review the author asks for
+after the loop completes.
 
 After the third review, the budget holds one remediation review. Dispatch it for the first
 remediation after the third review that changes runtime behavior. The remediation may fix a review
