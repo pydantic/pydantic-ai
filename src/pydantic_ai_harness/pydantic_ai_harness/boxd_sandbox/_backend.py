@@ -1,7 +1,8 @@
 """A [boxd](https://boxd.sh) machine behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK behavior verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster. Re-check these before
-changing acquisition, command, file, or error handling:
+SDK behavior originally verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster; credential
+notes updated 2026-11-24 for boxd 0.3.4. Re-check these before changing acquisition, command, file, or
+error handling:
 
 - `machines.create` returns once the machine is scheduled. A name is unique in its org: creating a second
   machine under it raises `ConflictError`, and `machines.get` finds a machine by id or name.
@@ -24,10 +25,12 @@ changing acquisition, command, file, or error handling:
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
 - A command that prints nothing for 30 minutes is ended, its process killed, with `APIStatusError` code
   `deadline_exceeded` ("no output from the command for 30m").
-- Each client exchanges `BOXD_API_KEY` for a session token on its first call, and boxd allows 30 exchanges per
-  60 seconds from one source IP (`RateLimitError` past that). Missing and rejected credentials raise
-  `AuthenticationError`; an exchange that could not reach boxd raises `APIConnectionError`, and one that got
-  a 5xx answer `APIStatusError`.
+- With boxd 0.3.4, a client sends `BOXD_API_KEY` itself as the bearer when the endpoint is reached over TLS
+  or loopback (the default `https://boxd.sh:9443`), and only exchanges it for a session token after the
+  server refuses the raw key. The old 30-exchanges-per-60-seconds-per-IP limit (`RateLimitError`) therefore
+  does not apply to the default path. Missing and rejected credentials raise `AuthenticationError`; an
+  exchange that could not reach boxd raises `APIConnectionError`, and one that got a 5xx answer
+  `APIStatusError`.
 - `machines.fs` runs as the `boxd` user and sees the files commands see. A write creates missing parents,
   writes through a symlink, and keeps an existing file's mode; a read or write of a FIFO is refused at once.
   A failure is the matching builtin `OSError` (`FileNotFoundError`, `IsADirectoryError`, ...), a symlink loop
