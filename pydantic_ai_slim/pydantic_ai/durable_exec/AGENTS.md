@@ -110,6 +110,14 @@ generator and the manifest from the base branch, never the pull request's copies
 either takes effect only once merged. To list the touched entries yourself, run
 `uv run python scripts/durable_exec_contract.py --touched <owner/repo> <pr> <base sha> <head sha>`.
 
+A durable-exec reviewer with write access signs off by commenting the marker line that
+`uv run python scripts/durable_exec_contract.py --signoff-marker <owner/repo> <pr> <base sha> <head sha>`
+prints, on a line of its own, and removing the label. Run it from a checkout of the current base
+branch, with that branch's tip as `<base sha>`, so it uses the manifest the label job uses. The label
+then stays off until the pull request's own added or removed lines in the core files whose gating
+entries it touches change, or a newer marker comment by a user with write access carries another
+fingerprint. Merging the base branch in does not bring it back. A core file GitHub shows no patch for cannot be signed off.
+
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
 Read the diff: a new entry is a new dependency an engine took on core.
