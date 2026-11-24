@@ -17,7 +17,7 @@ from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.conversation_store import InMemoryConversationStore
-from pydantic_ai.exceptions import ModelRetry, RunCancelled, UserError
+from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     CompactionPart,
@@ -73,6 +73,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, conversation_view, message, message_part, try_import
+from .rejected_response_utils import ANNOUNCEMENT, ANSWER, announce_then_answer, reject_announcements
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 with try_import() as otel_sdk_imports_successful:
@@ -305,16 +306,8 @@ async def test_run_stream_text_and_thinking():
 async def test_run_stream_rejected_response_ends_its_turn():
     """A rejected response's turn ends after the rejection, so the response replacing it starts a turn of its own."""
 
-    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-        yield 'The answer.' if len(messages) > 1 else 'An announcement.'
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function))
-
-    @agent.output_validator
-    def reject_announcements(ctx: RunContext, output: str) -> str:
-        if output == 'An announcement.':
-            raise ModelRetry('Answer the question.')
-        return output
+    agent = Agent(model=FunctionModel(stream_function=announce_then_answer))
+    agent.output_validator(reject_announcements)
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('When?')])
     adapter = DummyUIAdapter(agent, request)
@@ -324,17 +317,17 @@ async def test_run_stream_rejected_response_ends_its_turn():
         [
             '<stream>',
             '<response>',
-            '<text follows_text=False>An announcement.',
+            f'<text follows_text=False>{ANNOUNCEMENT}',
             '<final-result tool_name=None />',
             '</text followed_by_text=False>',
             '<rejected run_step=1 attempt=1 />',
             '</response>',
             '<response>',
-            '<text follows_text=False>The answer.',
+            f'<text follows_text=False>{ANSWER}',
             '<final-result tool_name=None />',
             '</text followed_by_text=False>',
             '</response>',
-            '<run-result>The answer.</run-result>',
+            f'<run-result>{ANSWER}</run-result>',
             '</stream>',
         ]
     )

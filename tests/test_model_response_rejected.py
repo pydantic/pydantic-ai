@@ -34,7 +34,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestContext
@@ -45,36 +45,28 @@ from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
 from ._timeouts import READINESS_WAIT_TIMEOUT
-from .conftest import IsDatetime, IsInstance
-
-ANNOUNCEMENT = "I'll look that up."
-ANSWER = 'The store opens at 9 am.'
-
-
-async def announce_then_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    """Announce a lookup on the first request, and answer once asked again."""
-    yield ANSWER if len(messages) > 1 else ANNOUNCEMENT
-
-
-async def always_announce(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    yield ANNOUNCEMENT
-
-
-def reject_announcements(ctx: RunContext, output: str) -> str:
-    if output == ANNOUNCEMENT:
-        raise ModelRetry('Answer the question.')
-    return output
+from .conftest import IsDatetime, IsInstance, no_leaked_tasks
+from .rejected_response_utils import (
+    ANNOUNCEMENT,
+    ANSWER,
+    FEEDBACK,
+    RejectAnnouncements,
+    always_announce,
+    announce_then_answer,
+    reject_announcements,
+)
 
 
 @dataclass
-class RejectAnnouncements(AbstractCapability[Any]):
-    """Rejects the announcement from `after_model_request`."""
+class RetryAnnouncements(AbstractCapability[Any]):
+    """Rejects the announcement from `wrap_model_request`, after its handler returned."""
 
-    async def after_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
     ) -> ModelResponse:
+        response = await handler(request_context)
         if response.text == ANNOUNCEMENT:
-            raise ModelRetry('Answer the question.')
+            raise ModelRetry(FEEDBACK)
         return response
 
 
@@ -131,9 +123,11 @@ async def test_output_validator_retry_is_reported_between_the_responses():
         )
     )
     # The reason is the very part the retry sends.
+    run_result = events[-1]
+    assert isinstance(run_result, AgentRunResultEvent)
     retry_request = next(
         message
-        for message in events[-1].result.all_messages()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+        for message in run_result.result.all_messages()
         if isinstance(message, ModelRequest) and isinstance(message.parts[0], RetryFeedbackPart)
     )
     assert retry_request.parts == [rejected.reason]
@@ -162,7 +156,7 @@ async def test_none_output_retry_is_reported():
     @agent.output_validator
     def require_an_answer(ctx: RunContext, output: str | None) -> str | None:
         if output is None:
-            raise ModelRetry('Answer the question.')
+            raise ModelRetry(FEEDBACK)
         return output
 
     events = await collect(agent)
@@ -190,44 +184,50 @@ async def test_after_model_request_retry_is_reported_from_the_model_stream():
     assert run.result.output == ANSWER
 
 
-async def test_rejection_that_uses_up_the_retry_budget_is_reported_before_the_run_fails():
-    validated = Agent(FunctionModel(stream_function=always_announce), retries={'output': 0})
-    validated.output_validator(reject_announcements)
-    hooked = Agent(
-        FunctionModel(stream_function=always_announce),
-        capabilities=[RejectAnnouncements()],
-        retries={'output': 0},
-    )
+@pytest.mark.parametrize('source', ['output validator', 'after_model_request', 'wrap_model_request'])
+@pytest.mark.parametrize('output_retries', [0, 1])
+async def test_rejection_that_uses_up_the_retry_budget_is_reported_before_the_run_fails(
+    source: str, output_retries: int
+):
+    """Every rejection is reported, the one that uses up the output retry budget included, before the run fails.
 
-    for agent in (validated, hooked):
-        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+    A `wrap_model_request` retry decided after its handler returned has no next request to be reported from then, so
+    the stream waits for its verdict once the budget is spent.
+    """
+    agent = Agent(
+        FunctionModel(stream_function=always_announce),
+        capabilities={
+            'output validator': [],
+            'after_model_request': [RejectAnnouncements()],
+            'wrap_model_request': [RetryAnnouncements()],
+        }[source],
+        retries={'output': output_retries},
+    )
+    if source == 'output validator':
+        agent.output_validator(reject_announcements)
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+
+    with pytest.raises(UnexpectedModelBehavior, match=rf'Exceeded maximum output retries \({output_retries}\)'):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async with agent.run_stream_events('When does the store open?') as stream:
                 async for event in stream:
                     events.append(event)
 
-        assert summarize(events) == [('text', ANNOUNCEMENT), ('rejected', ANNOUNCEMENT, 1, 1)]
-        rejected = events[-1]
-        assert isinstance(rejected, ModelResponseRejectedEvent)
-        # Not stamped as a retry, as there is none left.
-        assert rejected.reason == RetryFeedbackPart(
-            content='Answer the question.', retry=RetryInfo(cause='model_retry'), timestamp=IsDatetime()
-        )
+    assert summarize(events) == [
+        seen
+        for run_step in range(1, output_retries + 2)
+        for seen in (('text', ANNOUNCEMENT), ('rejected', ANNOUNCEMENT, run_step, 1))
+    ]
+    rejected = events[-1]
+    assert isinstance(rejected, ModelResponseRejectedEvent)
+    # Not stamped as a retry, as there is none left.
+    assert rejected.reason == RetryFeedbackPart(
+        content=FEEDBACK, retry=RetryInfo(cause='model_retry'), timestamp=IsDatetime()
+    )
 
 
 async def test_wrap_model_request_retry_is_reported_before_the_retried_response():
     """A retry `wrap_model_request` decides on after its handler returned is reported once the stream has ended."""
-
-    @dataclass
-    class RetryAnnouncements(AbstractCapability[Any]):
-        async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
-        ) -> ModelResponse:
-            response = await handler(request_context)
-            if response.text == ANNOUNCEMENT:
-                raise ModelRetry('Answer the question.')
-            return response
-
     events = await collect(
         Agent(FunctionModel(stream_function=announce_then_answer), capabilities=[RetryAnnouncements()])
     )
@@ -244,7 +244,7 @@ async def test_retry_a_wrapper_recovers_from_is_not_reported():
     @dataclass
     class AcceptAnyway(AbstractCapability[Any]):
         async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
             try:
                 return await handler(request_context)
@@ -263,7 +263,7 @@ async def test_retry_a_wrapper_turns_into_an_error_is_not_reported():
     @dataclass
     class FailInstead(AbstractCapability[Any]):
         async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
             try:
                 return await handler(request_context)
@@ -290,12 +290,12 @@ class CutShort(AbstractCapability[Any]):
     calls: list[int] = field(default_factory=list[int])
 
     async def wrap_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
     ) -> ModelResponse:
         self.calls.append(ctx.run_step)
         if len(self.calls) > 1:
             return await handler(request_context)
-        handler_task = asyncio.create_task(handler(request_context))
+        handler_task = asyncio.ensure_future(handler(request_context))
         await self.first_chunk_sent.wait()
         handler_task.cancel()
         await asyncio.gather(handler_task, return_exceptions=True)
@@ -491,3 +491,48 @@ async def test_consumer_raising_after_the_verdict_counts_the_response_once(capab
                         raise RuntimeError('consumer failed')
 
     assert runs[0].usage == RunUsage(input_tokens=50, output_tokens=5, requests=1)
+
+
+async def test_consumer_cancelled_while_the_hooks_pass_their_verdict_leaves_no_task_behind():
+    """A consumer cancelled while its stream waits for the `after_model_request` verdict stops the hook and the request.
+
+    The stream waits for the verdict once the model stream ends, so the cancellation lands in that wait, and the
+    request step's teardown has to cancel the hook it is waiting on rather than leave it running.
+    """
+    verdict_started = anyio.Event()
+    verdict_cancelled = anyio.Event()
+
+    @dataclass
+    class SlowVerdict(AbstractCapability[Any]):
+        async def after_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            verdict_started.set()
+            try:
+                await anyio.sleep_forever()
+            finally:
+                verdict_cancelled.set()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+    agent = Agent(FunctionModel(stream_function=always_announce), capabilities=[SlowVerdict()])
+    events: list[AgentStreamEvent] = []
+
+    with no_leaked_tasks(), anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+
+            async def cancel_once_the_verdict_started() -> None:
+                await verdict_started.wait()
+                tg.cancel_scope.cancel()
+
+            tg.start_soon(cancel_once_the_verdict_started)
+            async with agent.iter('When does the store open?') as run:
+                async for node in run:  # pragma: no branch
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as stream:
+                            async for event in stream:  # pragma: no branch
+                                events.append(event)
+
+    assert tg.cancel_scope.cancelled_caught
+    assert verdict_cancelled.is_set()
+    # The whole response reached the consumer before the stream waited for the verdict.
+    assert summarize(events) == [('text', ANNOUNCEMENT)]

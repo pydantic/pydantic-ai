@@ -23,7 +23,7 @@ from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory, WrapModelRequestHandler
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -127,6 +127,7 @@ from .conftest import (
     server_history_agent,
     try_import,
 )
+from .rejected_response_utils import ANNOUNCEMENT, ANSWER, announce_then_answer, reject_announcements
 
 with try_import() as otel_sdk_installed:
     # `opentelemetry-sdk` arrives with the `logfire` extra.
@@ -15212,22 +15213,13 @@ async def test_dispatch_request_forwards_manage_message_history():
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
 
 
-async def _announce_then_answer(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
-
-
 async def test_rejected_response_streams_in_a_step_of_its_own():
     """A rejected response's step ends with a `data-model-response-rejected` part, and the retry gets a new step.
 
     So a frontend can set the rejected text apart from the answer instead of showing both as one reply.
     """
-    agent = Agent(FunctionModel(stream_function=_announce_then_answer))
-
-    @agent.output_validator
-    def reject_announcements(ctx: RunContext, output: str) -> str:
-        if output.startswith("I'll look"):
-            raise ModelRetry('Answer the question.')
-        return output
+    agent = Agent(FunctionModel(stream_function=announce_then_answer))
+    agent.output_validator(reject_announcements)
 
     request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
     adapter = VercelAIAdapter(agent, request)
@@ -15242,7 +15234,7 @@ async def test_rejected_response_streams_in_a_step_of_its_own():
             {'type': 'start'},
             {'type': 'start-step'},
             {'type': 'text-start', 'id': (rejected_id := IsSameStr())},
-            {'type': 'text-delta', 'delta': "I'll look that up.", 'id': rejected_id},
+            {'type': 'text-delta', 'delta': ANNOUNCEMENT, 'id': rejected_id},
             {'type': 'text-end', 'id': rejected_id},
             {
                 'type': 'data-model-response-rejected',
@@ -15251,7 +15243,7 @@ async def test_rejected_response_streams_in_a_step_of_its_own():
             {'type': 'finish-step'},
             {'type': 'start-step'},
             {'type': 'text-start', 'id': (answer_id := IsSameStr())},
-            {'type': 'text-delta', 'delta': 'The store opens at 9 am.', 'id': answer_id},
+            {'type': 'text-delta', 'delta': ANSWER, 'id': answer_id},
             {'type': 'text-end', 'id': answer_id},
             {'type': 'message-metadata', 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}}},
             {'type': 'finish-step'},
@@ -15273,9 +15265,9 @@ async def test_response_replaced_mid_part_closes_the_part_before_the_rejection()
     @dataclass
     class BlockMidStream(AbstractCapability[Any]):
         async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
-            handler_task = asyncio.create_task(handler(request_context))
+            handler_task = asyncio.ensure_future(handler(request_context))
             await first_chunk_sent.wait()
             handler_task.cancel()
             await asyncio.gather(handler_task, return_exceptions=True)
@@ -15306,6 +15298,70 @@ async def test_response_replaced_mid_part_closes_the_part_before_the_rejection()
             {'type': 'finish-step'},
             {'type': 'finish'},
         ]
+    )
+
+
+async def test_rejected_run_dumps_its_history_and_loads_back_without_the_rejection_chunk():
+    """A rejected run's history dumps like any retried run's, and the rejection's data part is ignored on load.
+
+    The AI SDK keeps the `data-model-response-rejected` chunk on the assistant message it streamed into, between the
+    rejected step and the retry's.
+    """
+    agent = Agent(FunctionModel(stream_function=announce_then_answer))
+    agent.output_validator(reject_announcements)
+    async with agent.run_stream_events('When does the store open?') as stream:
+        run_result = [event async for event in stream][-1]
+    assert isinstance(run_result, AgentRunResultEvent)
+
+    dumped = VercelAIAdapter.dump_messages(
+        run_result.result.all_messages(), generate_message_id=lambda _message, role, index: f'{role}-{index}'
+    )
+    assert [
+        (message.role, [(part.type, getattr(part, 'text', None)) for part in message.parts]) for message in dumped
+    ] == snapshot(
+        [
+            ('user', [('text', 'When does the store open?')]),
+            ('assistant', [('text', "I'll look that up.")]),
+            (
+                'user',
+                [
+                    (
+                        'text',
+                        """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+Answer the question.
+</pyai:retry_feedback>\
+""",
+                    )
+                ],
+            ),
+            ('assistant', [('text', 'The store opens at 9 am.')]),
+        ]
+    )
+
+    def streamed(*rejection: DataUIPart) -> list[UIMessage]:
+        return [
+            UIMessage(id='user-1', role='user', parts=[TextUIPart(text='When does the store open?')]),
+            UIMessage(
+                id='assistant-1',
+                role='assistant',
+                parts=[
+                    StepStartUIPart(),
+                    TextUIPart(text=ANNOUNCEMENT),
+                    *rejection,
+                    StepStartUIPart(),
+                    TextUIPart(text=ANSWER),
+                ],
+            ),
+        ]
+
+    rejection = DataUIPart(
+        type='data-model-response-rejected',
+        data={'run_step': 1, 'attempt': 1, 'outcome': 'retried', 'cause': 'model_retry'},
+    )
+    assert _model_visible(VercelAIAdapter.load_messages(streamed(rejection))) == _model_visible(
+        VercelAIAdapter.load_messages(streamed())
     )
 
 

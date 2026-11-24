@@ -202,6 +202,13 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr
+    from ...rejected_response_utils import (
+        ANNOUNCEMENT,
+        ANSWER,
+        RejectAnnouncements,
+        announce_then_answer,
+        reject_announcements,
+    )
     from ...workspace_fakes import FakeWorkspace
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
@@ -4276,22 +4283,21 @@ class HandlerDurableAgentWorkflow:
         return result.output
 
 
-async def _announce_then_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
-
-
 _rejection_durable_agent = Agent(
-    FunctionModel(stream_function=_announce_then_answer),
+    FunctionModel(stream_function=announce_then_answer),
     name='durability_rejection_agent',
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_durability_handler)],
 )
+_rejection_durable_agent.output_validator(reject_announcements)
 
-
-@_rejection_durable_agent.output_validator
-def _reject_announcements(ctx: RunContext, output: str) -> str:
-    if output.startswith("I'll look"):
-        raise ModelRetry('Answer the question.')
-    return output
+_hooked_rejection_durable_agent = Agent(
+    FunctionModel(stream_function=announce_then_answer),
+    name='durability_hooked_rejection_agent',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_durability_handler),
+        RejectAnnouncements(),
+    ],
+)
 
 
 @workflow.defn
@@ -4299,6 +4305,14 @@ class RejectionDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await _rejection_durable_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class HookedRejectionDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _hooked_rejection_durable_agent.run(prompt)
         return result.output
 
 
@@ -4441,27 +4455,40 @@ async def test_temporal_durability_event_stream_handler(client: Client) -> None:
     assert any(isinstance(event, FinalResultEvent) for event in events)
 
 
-async def test_temporal_rejected_streamed_response_is_reported_between_the_attempts(client: Client) -> None:
+@pytest.mark.parametrize(
+    ('workflow_class', 'agent'),
+    [
+        (RejectionDurableAgentWorkflow, _rejection_durable_agent),
+        (HookedRejectionDurableAgentWorkflow, _hooked_rejection_durable_agent),
+    ],
+    ids=['output validator', 'after_model_request'],
+)
+async def test_temporal_rejected_streamed_response_is_reported_between_the_attempts(
+    client: Client,
+    workflow_class: type[RejectionDurableAgentWorkflow | HookedRejectionDurableAgentWorkflow],
+    agent: Agent[None, str],
+) -> None:
     """Under Temporal, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
 
     The model stream is handled inside the request activity; the rejection is decided workflow-side and dispatched
-    to the handler activity before the next request's activity runs, so the order the design promises holds.
+    to the handler activity before the next request's activity runs, so the order the design promises holds. An
+    `after_model_request` verdict is waited for in the step's stream, so it holds the same order.
     """
     _durability_handler_events.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[RejectionDurableAgentWorkflow],
-        plugins=[AgentPlugin(_rejection_durable_agent)],
+        workflows=[workflow_class],
+        plugins=[AgentPlugin(agent)],
     ):
         output = await client.execute_workflow(
-            RejectionDurableAgentWorkflow.run,
+            workflow_class.run,
             args=['When does the store open?'],
-            id=RejectionDurableAgentWorkflow.__name__,
+            id=workflow_class.__name__,
             task_queue=TASK_QUEUE,
         )
 
-    assert output == 'The store opens at 9 am.'
+    assert output == ANSWER
     assert all(in_activity for _, in_activity in _durability_handler_events)
     assert [event.event_kind for event, _ in _durability_handler_events] == snapshot(
         [
@@ -4475,7 +4502,7 @@ async def test_temporal_rejected_streamed_response_is_reported_between_the_attem
         ]
     )
     rejected = next(event for event, _ in _durability_handler_events if isinstance(event, ModelResponseRejectedEvent))
-    assert rejected.response.text == "I'll look that up."
+    assert rejected.response.text == ANNOUNCEMENT
     assert isinstance(rejected.reason, RetryFeedbackPart)
 
 

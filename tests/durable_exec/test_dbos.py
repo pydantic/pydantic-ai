@@ -182,6 +182,7 @@ from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..rejected_response_utils import ANSWER, RejectAnnouncements, announce_then_answer, reject_announcements
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 from .preamble_text import (
     RunAndStreamResult,
@@ -502,22 +503,18 @@ async def _collect_rejection_events(ctx: RunContext[object], stream: AsyncIterab
         _rejection_events.append(event)
 
 
-async def _announce_then_answer(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
-
-
 rejection_stream_agent = Agent(
-    FunctionModel(stream_function=_announce_then_answer),
+    FunctionModel(stream_function=announce_then_answer),
     name='rejection_stream_agent',
     capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events)],
 )
+rejection_stream_agent.output_validator(reject_announcements)
 
-
-@rejection_stream_agent.output_validator
-def _reject_announcements(ctx: RunContext, output: str) -> str:
-    if output.startswith("I'll look"):
-        raise ModelRetry('Answer the question.')
-    return output
+hooked_rejection_stream_agent = Agent(
+    FunctionModel(stream_function=announce_then_answer),
+    name='hooked_rejection_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events), RejectAnnouncements()],
+)
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
@@ -942,20 +939,28 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     assert exported_event_messages != []
 
 
+@pytest.mark.parametrize(
+    'agent',
+    [rejection_stream_agent, hooked_rejection_stream_agent],
+    ids=['output validator', 'after_model_request'],
+)
 async def test_dbos_reports_a_rejected_streamed_response_between_the_attempts(
-    allow_model_requests: None, dbos: DBOS
+    allow_model_requests: None, dbos: DBOS, agent: Agent[None, str]
 ) -> None:
-    """In a DBOS workflow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events."""
+    """In a DBOS workflow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
+
+    An `after_model_request` verdict is waited for in the step's stream, so it holds the same order.
+    """
     _rejection_events.clear()
 
     @DBOS.workflow()
     async def run_rejection_workflow() -> str:
-        return (await rejection_stream_agent.run('When does the store open?')).output
+        return (await agent.run('When does the store open?')).output
 
     with SetWorkflowID(str(uuid.uuid4())):
         output = await run_rejection_workflow()
 
-    assert output == 'The store opens at 9 am.'
+    assert output == ANSWER
     assert [event.event_kind for event in _rejection_events] == snapshot(
         ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
     )

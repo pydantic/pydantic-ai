@@ -220,6 +220,7 @@ from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
+from ..rejected_response_utils import ANSWER, RejectAnnouncements, announce_then_answer, reject_announcements
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
@@ -1143,33 +1144,30 @@ async def _collect_rejection_events(ctx: RunContext[object], stream: AsyncIterab
         _rejection_events.append(event)
 
 
-async def _announce_then_answer(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-    yield 'The store opens at 9 am.' if len(messages) > 1 else "I'll look that up."
-
-
-async def test_prefect_reports_a_rejected_streamed_response_between_the_attempts(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('source', ['output validator', 'after_model_request'])
+async def test_prefect_reports_a_rejected_streamed_response_between_the_attempts(
+    allow_model_requests: None, source: str
+) -> None:
     """In a Prefect flow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
 
-    Each event reaches the handler in a task of its own, so the order is the order the flow dispatches them in.
+    Each event reaches the handler in a task of its own, so the order is the order the flow dispatches them in. An
+    `after_model_request` verdict is waited for in the step's stream, so it holds the same order.
     """
     _rejection_events.clear()
+    durability = PrefectDurability(event_stream_handler=_collect_rejection_events)
     agent = Agent(
-        FunctionModel(stream_function=_announce_then_answer),
+        FunctionModel(stream_function=announce_then_answer),
         name='rejection_stream_agent',
-        capabilities=[PrefectDurability(event_stream_handler=_collect_rejection_events)],
+        capabilities=[durability, RejectAnnouncements()] if source == 'after_model_request' else [durability],
     )
-
-    @agent.output_validator
-    def reject_announcements(ctx: RunContext, output: str) -> str:
-        if output.startswith("I'll look"):
-            raise ModelRetry('Answer the question.')
-        return output
+    if source == 'output validator':
+        agent.output_validator(reject_announcements)
 
     @flow(name='test_prefect_reports_a_rejected_streamed_response_between_the_attempts')
     async def run_flow() -> str:
         return (await agent.run('When does the store open?')).output
 
-    assert await run_flow() == 'The store opens at 9 am.'
+    assert await run_flow() == ANSWER
     assert [event.event_kind for event in _rejection_events] == snapshot(
         ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
     )
