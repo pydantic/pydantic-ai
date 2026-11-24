@@ -639,7 +639,7 @@ its metadata under `reason`. Resolve it with a
 [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] to the agent's `output_type` to end the run and resume
 it later. Without either, the run fails at the first flagged call.
 
-```python {test="skip" lint="skip"}
+```python {test="skip" lint="skip" gateway_toggle="skip"}
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai_harness import ComputerUse

@@ -534,12 +534,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(_EARLIER_CALL_FAILED)
         part = found_call[2] if found_call else None
         confirmation = part.confirmation if isinstance(part, ComputerCallPart) else None
+        # Cleared below if the call succeeds. Set before the approval check, so a call waiting for a person also
+        # stops the response's later calls, which expect the screen after it.
+        run_buttons.halted_call_ids = _other_call_ids(found_call[1], ctx.tool_call_id) if found_call else set()
         if confirmation is not None and not ctx.tool_call_approved:
             # The provider asked for a person to approve this action before it runs. This is checked here, in the
             # tool, so no hook can skip it.
             raise ApprovalRequired(metadata={'reason': confirmation})
-        # Cleared below if the call succeeds.
-        run_buttons.halted_call_ids = _other_call_ids(found_call[1], ctx.tool_call_id) if found_call else set()
         call_inputs = _CallInputs(
             # The model gave its positions on the latest screenshot before its call.
             screenshot_size=latest_screenshot_size(ctx.messages[:response_index]) if found_call else None,

@@ -195,6 +195,41 @@ class TestConfirmation:
         (tool_return,) = _returns(resumed.all_messages())
         assert tool_return.metadata == {'performed': 1, 'confirmed': True}
 
+    async def test_a_flagged_call_stops_the_responses_later_calls(self) -> None:
+        """They were chosen for the screen after the flagged call, which hasn't run yet, so the model re-plans."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolCallPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart('done')])
+            flagged = ComputerCallPart(
+                'computer',
+                {'actions': [{'type': 'click', 'x': 1, 'y': 1}]},
+                provider_details={'confirmation': 'It accepts cookies.'},
+            )
+            return ModelResponse(
+                parts=[flagged, ToolCallPart('computer', {'actions': [{'type': 'type_text', 'text': 'foo'}]})]
+            )
+
+        provider = ScreenProvider()
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[provider.capability(), ComputerUse()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+        assert provider.actions == []
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+        assert provider.actions == [Click(x=1, y=1)]
+        returns = {part.tool_call_id: part for part in _returns(resumed.all_messages())}
+        (later,) = [part for call_id, part in returns.items() if call_id != call.tool_call_id]
+        assert later.content == 'Not executed: an earlier computer action in this turn failed.'
+
     async def test_a_denied_call_does_not_run(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
