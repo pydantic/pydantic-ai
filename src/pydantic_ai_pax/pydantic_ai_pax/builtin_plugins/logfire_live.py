@@ -1,6 +1,6 @@
 """The `observability` plugin's side panel: Logfire's live view of the conversation's trace, in the web UI.
 
-Every run of a conversation nests under its `CLAI session` root, so the root's trace is the
+Every run of a conversation nests under its `Pax session` root, so the root's trace is the
 conversation, and the live view filtered to it (`?q=trace_id='...'`, the link Logfire's own MCP
 server builds) fills in as the agent works. Once a run started, `traceId` and `spanId` open that
 run's details. The project's address comes from Logfire, which names it for the write token.

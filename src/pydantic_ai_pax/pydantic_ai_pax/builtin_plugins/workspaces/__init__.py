@@ -2,10 +2,10 @@
 
 The built-in `workspaces` plugin, off by default. Its settings are the kinds of workspace there are: named
 profiles of a backend with its options. This release has one backend, `local-worktree`, a Git worktree on
-this machine. A workspace's sessions run in the CLAI that opens them, in its checkout, as any other session
+this machine. A workspace's sessions run in the Pax that opens them, in its checkout, as any other session
 does, so the web UI's sidebar lists them under their repository, by branch.
 
-The workspaces are kept in a registry in CLAI's state directory, so every CLAI lists the same ones;
+The workspaces are kept in a registry in Pax's state directory, so every Pax lists the same ones;
 see `registry`. `Workspaces` in `manager` is what `/workspaces` and the web UI's orchestrator call.
 """
 
@@ -105,7 +105,7 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
                 workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref, base=self.host.workspace)
                 return (
                     f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}. '
-                    "Start a session there with the web UI's New session, or run CLAI in it."
+                    "Start a session there with the web UI's New session, or run Pax in it."
                 )
             case ['destroy', workspace_id]:
                 workspace = await self.workspaces.destroy(workspace_id, live=self.host.live)
