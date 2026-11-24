@@ -445,8 +445,8 @@ class OnlineEvalConfig:
     When `True` (the default), each emitted `gen_ai.evaluation.result` event also
     carries the keys present in the current OTel baggage as attributes — useful
     for propagating tenant/user/request identifiers from the calling context.
-    Standard `gen_ai.*` and `error.type` attributes always win on conflict, so
-    baggage cannot accidentally overwrite the semantic-convention attributes.
+    Baggage keys in the reserved `gen_ai.evaluation.*` namespace and `error.type`
+    are dropped, so baggage cannot set the semantic-convention attributes.
 
     Set to `False` to skip the baggage snapshot per event.
     """

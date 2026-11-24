@@ -50,6 +50,9 @@ _ATTR_TARGET = 'gen_ai.evaluation.target'
 _ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator.source'
 _ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
 
+# Baggage keys in this namespace, and `error.type`, are dropped so baggage never sets the event's own attributes.
+_RESERVED_BAGGAGE_PREFIX = 'gen_ai.evaluation.'
+
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
 
@@ -89,25 +92,32 @@ def emit_otel_events(
         target: Name of the function/agent being evaluated. Written to
             `gen_ai.evaluation.target`.
         include_baggage: When True (the default), each emitted event also carries
-            every key from the current OTel baggage as an attribute. Standard
-            `gen_ai.*` and `error.type` attributes always win on conflict.
+            every key from the current OTel baggage as an attribute, except keys in
+            the reserved `gen_ai.evaluation.*` namespace and `error.type`, which are
+            dropped.
     """
     if not results and not failures:
         return
 
     baggage_attrs = _baggage_attrs() if include_baggage else None
+    # Log processors can copy the baggage of a record's context onto the record (logfire>=6 does when
+    # `add_baggage_to_attributes` is on, its default), which would override `include_baggage` and the
+    # reserved-key filter. Clearing it keeps the parent span, so events stay nested under the call.
+    record_context = baggage.clear()
     for result in results:
-        _emit_result(result, target, baggage_attrs)
+        _emit_result(result, target, baggage_attrs, record_context)
     for failure in failures:
-        _emit_failure(failure, target, baggage_attrs)
+        _emit_failure(failure, target, baggage_attrs, record_context)
 
 
 def _baggage_attrs() -> Mapping[str, Any] | None:
-    """Snapshot the current OTel baggage as a flat attribute mapping, or `None` if empty."""
+    """Snapshot the current OTel baggage as a flat attribute mapping minus the reserved keys, or `None` if empty."""
     bag = baggage.get_all()
     if not bag:
         return None
-    return {str(k): v for k, v in bag.items()}
+    return {
+        str(k): v for k, v in bag.items() if not str(k).startswith(_RESERVED_BAGGAGE_PREFIX) and k != _ATTR_ERROR_TYPE
+    }
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
@@ -135,18 +145,22 @@ def _emit_result(
     result: EvaluationResult,
     target: str,
     baggage_attrs: Mapping[str, Any] | None,
+    context: Context,
 ) -> None:
     attrs = _base_attrs(target, result.name, result.source, result.evaluator_version, baggage_attrs)
     _set_score_attrs(attrs, result.value)
     if result.reason is not None:
         attrs[_ATTR_EXPLANATION] = result.reason
-    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs))
+    _get_logger().emit(
+        LogRecord(context=context, event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs)
+    )
 
 
 def _emit_failure(
     failure: EvaluatorFailure,
     target: str,
     baggage_attrs: Mapping[str, Any] | None,
+    context: Context,
 ) -> None:
     attrs = _base_attrs(target, failure.name, failure.source, failure.evaluator_version, baggage_attrs)
     # Prefer the actual raising exception class when available; fall back to the
@@ -156,6 +170,7 @@ def _emit_failure(
         attrs[_ATTR_EXPLANATION] = failure.error_message
     _get_logger().emit(
         LogRecord(
+            context=context,
             event_name=_EVENT_NAME,
             body=_format_failure_body(failure),
             attributes=attrs,
