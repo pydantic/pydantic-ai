@@ -100,6 +100,7 @@ from pydantic_ai_harness.sub_agents import (
     is_task_report,
     serialize_message,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness._rendering import sent_messages
 
 from .._deferred_tools import pending_agent
@@ -2368,7 +2369,7 @@ class TestTaskControlTelemetry:
         )
         parent.instrument = settings
         owner = DelegationTasks()
-        with anyio.fail_after(WAIT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async with owner.opened():
                 with owner.bind():
                     await parent.run('Go.')
@@ -2392,7 +2393,7 @@ class TestTaskControlTelemetry:
         )
         parent.instrument = settings
         owner = DelegationTasks(agents={'alpha': researcher()})
-        with anyio.fail_after(WAIT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             async with owner.opened():
                 with owner.bind():
                     await parent.run('Go.')
