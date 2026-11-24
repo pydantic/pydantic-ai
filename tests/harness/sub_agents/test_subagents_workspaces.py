@@ -95,6 +95,37 @@ async def test_selected_directory_keeps_the_parents_authority(
     await _assert_delegate_levels(workspace, directory, expected)
 
 
+@pytest.mark.parametrize(
+    'path_authority,expected',
+    [
+        # The parent gives a directory outside its working directory `'none'`, and so does the delegate.
+        ({}, 'none'),
+        # An entry elsewhere doesn't bring it in.
+        ({'vendor': 'none'}, 'none'),
+        # An entry containing it is how the operator opts it back in, at that entry's level.
+        ({'../uploads': 'operator'}, 'operator'),
+        ({'../uploads': 'user'}, 'user'),
+    ],
+)
+async def test_a_directory_outside_the_parents_root_has_no_authority_unless_an_entry_covers_it(
+    tmp_path: Path, path_authority: dict[str, Authority], expected: Authority
+) -> None:
+    parent_dir = tmp_path / 'parent'
+    (parent_dir / 'vendor').mkdir(parents=True)
+    (tmp_path / 'uploads' / 'project').mkdir(parents=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(parent_dir)), authority='operator', path_authority=path_authority
+    )
+    assert await workspace.authority_of(str(tmp_path / 'uploads' / 'project' / 'AGENTS.md')) == expected
+    await _assert_delegate_levels(workspace, '../uploads/project', expected)
+
+
+async def test_a_plain_parent_gives_a_directory_outside_its_root_no_authority(tmp_path: Path) -> None:
+    (tmp_path / 'parent').mkdir()
+    (tmp_path / 'checkout').mkdir()
+    await _assert_delegate_levels(Workspace(LocalWorkspaceBackend(tmp_path / 'parent')), '../checkout', 'none')
+
+
 async def test_a_linked_directory_keeps_the_parents_cap(tmp_path: Path) -> None:
     # `rules` is an operator entry, but it's a link the repository controls to `evil`, so the parent caps it at
     # `none`; delegating to `evil` mustn't give the link's target the entry's level.
@@ -209,8 +240,12 @@ async def test_selected_directory_keeps_the_parents_policy(
     workspace = Workspace(LocalWorkspaceBackend(parent_dir))
     if parent_read_only:
         workspace = ReadOnlyWorkspace(workspace)
-    if not parent_trusted:
-        workspace = AuthorityWorkspace(workspace, authority='none')
+    # `../policy` is outside the parent's working directory, so only an entry naming it keeps it at `'operator'`.
+    workspace = (
+        AuthorityWorkspace(workspace, authority='operator', path_authority={'../policy': 'operator'})
+        if parent_trusted
+        else AuthorityWorkspace(workspace, authority='none')
+    )
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
 
     @child.tool

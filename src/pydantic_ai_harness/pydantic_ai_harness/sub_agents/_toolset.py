@@ -1837,9 +1837,8 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lower of:
 
     - the lowest level the parent gives any path at or under `directory`, as
-      [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under] finds it, with `directory` counted as
-      part of the parent's workspace: a directory outside the parent's working directory starts from the parent's own
-      level rather than `'none'`, and a `path_authority` entry containing it or inside it still lowers it;
+      [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under] finds it: a directory outside the
+      parent's working directory is at `'none'`, as the parent gives it, unless a `path_authority` entry contains it;
     - the parent's own level, which a capability reading above the delegate's directory, such as `RepoContext`'s
       walk-up, gives the ancestors the parent doesn't list.
 
@@ -1849,8 +1848,6 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     if not parent.attached:
         # A parent without a workspace has no files whose levels the delegate could raise.
         return workspace
-    # Naming `directory` at `'operator'` in a wrapper brings it into the workspace without raising any level.
-    view = AuthorityWorkspace(parent, authority='operator', path_authority={directory: 'operator'})
-    levels = {await lowest_authority_under(view, directory), parent.authority}
+    levels = {await lowest_authority_under(parent, directory), parent.authority}
     lowest: Authority = 'none' if 'none' in levels else 'user' if 'user' in levels else 'operator'
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
