@@ -1162,8 +1162,9 @@ def parse_signoff(body: str, login: str) -> Signoff | None:
     """The last line of a comment `body` that is exactly a sign-off marker, or `None` if no line is."""
     found: Signoff | None = None
     # Only `\n` ends a line: `splitlines` also splits on `\u2028` and the like, which leave a quoted marker unquoted.
+    # Leading spaces stay, so a marker quoted as an indented code block does not count either.
     for line in body.split('\n'):
-        if marker := _SIGNOFF_MARKER.fullmatch(line.strip()):
+        if marker := _SIGNOFF_MARKER.fullmatch(line.rstrip()):
             found = Signoff(marker[1], marker[2], login)
     return found
 

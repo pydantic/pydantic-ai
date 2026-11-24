@@ -119,7 +119,9 @@ The label then stays off until the pull request's own added or removed lines in 
 gating entries it touches change, or a newer marker comment by a user with write access carries
 another fingerprint. Merging the base branch in does not bring it back. The fingerprint covers the
 text and order of those lines, not where they are, so moving a changed line to another definition in
-the same file keeps it. A core file GitHub shows no patch for cannot be signed off.
+the same file keeps it. A core file GitHub shows no patch for cannot be signed off. A push that lands
+while the label job checks the previous one can bring the label back: remove it again, and the next
+push's run checks the fingerprint again.
 
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.

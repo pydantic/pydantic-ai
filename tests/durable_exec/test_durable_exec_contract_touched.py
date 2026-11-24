@@ -396,7 +396,8 @@ MARKER = f'<!-- durable-exec-signoff fingerprint={FINGERPRINT} head={HEAD_SHA} -
     'body, signoff',
     [
         pytest.param(f'Durable review done.\n\n{MARKER}\n', (FINGERPRINT, HEAD_SHA), id='own-line'),
-        pytest.param(f'Done.\r\n  {MARKER}  \r\n', (FINGERPRINT, HEAD_SHA), id='crlf-and-spaces'),
+        pytest.param(f'Done.\r\n{MARKER}  \r\n', (FINGERPRINT, HEAD_SHA), id='crlf-and-trailing-spaces'),
+        pytest.param(f'Quoting:\n\n    {MARKER}\n', None, id='indented-code-block'),
         pytest.param(f'{MARKER.replace("f" * 64, "e" * 64)}\n{MARKER}', (FINGERPRINT, HEAD_SHA), id='last-wins'),
         pytest.param(f'> {MARKER}', None, id='quoted'),
         pytest.param(f'> x\u2028{MARKER}', None, id='quoted-after-line-separator'),
@@ -535,13 +536,21 @@ def test_a_fingerprint_is_only_for_the_named_head(
     """The files listing is the live head's, so a live head other than `HEAD_SHA` around the listing fails."""
     gh = _fake_gh()
     heads = iter(live_heads)
+    head_read = (f'repos/{REPO}/pulls/42', '--jq', '.head.sha')
 
     def live(*arguments: str) -> str:
-        return f'{next(heads)}\n' if arguments[0] == f'repos/{REPO}/pulls/42' else gh(*arguments)
+        if arguments == head_read:
+            gh.calls.append(arguments)
+            return f'{next(heads)}\n'
+        return gh(*arguments)
 
     assert generator.main([command, REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=live) == 1
 
     captured = capsys.readouterr()
     assert captured.out == ''
     assert captured.err == f'cannot fingerprint: the pull request head is {live_heads}, not {HEAD_SHA}\n'
-    assert not any('/comments' in argument for call in gh.calls for argument in call)
+    assert gh.calls[1:] == [
+        head_read,
+        ('--paginate', '--slurp', f'repos/{REPO}/pulls/42/files?per_page=100'),
+        head_read,
+    ]
