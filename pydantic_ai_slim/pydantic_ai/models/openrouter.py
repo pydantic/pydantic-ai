@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
-from .. import _model_errors, models, usage
+from .. import _model_errors, usage
 from .._run_context import RunContext
 from .._utils import is_str_dict
 from ..exceptions import (
@@ -33,7 +33,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool, AdvisorTool, OpenRouterWebSearchToolSettings, WebSearchTool
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
@@ -891,26 +891,6 @@ class OpenRouterModel(OpenAIChatModel):
     @property
     def _resolved_profile(self) -> OpenRouterModelProfile:
         return cast(OpenRouterModelProfile, self.profile)
-
-    _provider_profile: ModelProfile | None = None
-    """The provider's layer of the cached `profile`, to tell whether OpenRouter's model list has changed it since."""
-
-    @override
-    def _provider_model_profile(self) -> ModelProfile:
-        self._provider_profile = super()._provider_model_profile()
-        return self._provider_profile
-
-    @override
-    @asynccontextmanager
-    async def _run_scope(self) -> AsyncGenerator[None]:
-        # The run's first chance to wait on I/O before it reads the profile: `Model.profile` is synchronous.
-        provider = self._provider
-        if isinstance(provider, OpenRouterProvider) and models.ALLOW_MODEL_REQUESTS:
-            await provider._load_input_modalities()  # pyright: ignore[reportPrivateUsage]
-            if 'profile' in vars(self) and self._provider_profile != super()._provider_model_profile():
-                del self.profile
-        async with super()._run_scope():
-            yield
 
     @property
     @override

@@ -1,218 +1,173 @@
-"""Tests for the file-input flags `OpenRouterModel` fills from OpenRouter's model list.
+"""The image, audio and video input flags `OpenRouterProvider` takes from its snapshot of OpenRouter's model list.
 
-These serve the model list and the chat completions from an `httpx2.MockTransport` rather than a cassette: the real
-list holds every model on OpenRouter (over 800 KB), and what is tested is how many times it's fetched and what a
-failed fetch leaves behind, which a recording of one successful exchange can't show.
+A weekly workflow refreshes the snapshot (`pydantic_ai/providers/_openrouter_input_modalities.py`), so these tests
+replace it with a fixed one rather than depend on what OpenRouter lists for a model in a given week. The end-to-end
+tests read the request off a mock client: the claim is what is sent in place of the file, not how OpenRouter answers.
 """
 
 from __future__ import annotations as _annotations
 
-import json
-from collections.abc import Iterator
-from dataclasses import dataclass, field
-from typing import Any
-
-import httpx2
 import pytest
 
-from pydantic_ai import Agent, BinaryImage
-from pydantic_ai.models import override_allow_model_requests
+from pydantic_ai import Agent, BinaryContent
+from pydantic_ai.profiles import ModelProfile
 
-from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message_function_tool_call import (
+        ChatCompletionMessageFunctionToolCall,
+        Function,
+    )
+
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers import openrouter as openrouter_providers
+    from pydantic_ai.providers._openrouter_input_modalities import OPENROUTER_INPUT_MODALITIES
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
-MODEL_LIST = {
-    'data': [
-        {'id': 'acme/text-only', 'architecture': {'input_modalities': ['text']}},
-        {'id': 'acme/vision', 'architecture': {'input_modalities': ['text', 'image', 'file']}},
-        {'id': 'google/gemini-3-flash', 'architecture': {'input_modalities': ['text', 'image']}},
-        {'id': 'acme/no-architecture'},
-        {'id': 'acme/no-modalities', 'architecture': {'modality': 'text->text'}},
-    ]
+INPUT_MODALITIES = {
+    'acme/text-only': (),
+    'acme/vision': ('image',),
+    'acme/omni': ('image', 'audio', 'video'),
+    'acme/vision:batch': (),
+    '~acme/vision-latest': ('image',),
+    'google/gemini-3-flash-preview': ('image',),
 }
 
+SCREENSHOT = BinaryContent(b'\x89PNG', media_type='image/png', identifier='screenshot')
+SCREENSHOT_NOTE = 'File screenshot (image/png, 4 bytes) was not sent: this model cannot read images.'
 
-def _completion(message: dict[str, Any]) -> dict[str, Any]:
+
+@pytest.fixture(autouse=True)
+def input_modalities(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(openrouter_providers, 'OPENROUTER_INPUT_MODALITIES', INPUT_MODALITIES)
+
+
+def file_input_flags(profile: ModelProfile) -> dict[str, bool | None]:
     return {
-        'id': 'gen-1',
-        'object': 'chat.completion',
-        'created': 0,
-        'model': 'acme/text-only',
-        'provider': 'Acme',
-        'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', **message}}],
-        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+        'image': profile.get('supports_image_input'),
+        'audio': profile.get('supports_audio_file_input'),
+        'video': profile.get('supports_video_input'),
+        'document': profile.get('supports_document_input'),
     }
 
 
-@dataclass
-class FakeOpenRouter:
-    model_list_status: int = 200
-    model_list_requests: int = 0
-    chat_requests: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-    replies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
-
-    async def handle(self, request: httpx2.Request) -> httpx2.Response:
-        if request.url.path == '/api/v1/models':
-            self.model_list_requests += 1
-            return httpx2.Response(self.model_list_status, json=MODEL_LIST)
-        self.chat_requests.append(json.loads(request.content))
-        return httpx2.Response(200, json=_completion(self.replies.pop(0) if self.replies else {'content': 'ok'}))
-
-    def provider(self) -> OpenRouterProvider:
-        return OpenRouterProvider(
-            api_key='test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
-        )
+def provider_flags(model_name: str) -> dict[str, bool | None]:
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    return file_input_flags(profile)
 
 
-@pytest.fixture
-def openrouter() -> Iterator[FakeOpenRouter]:
-    # The suite-wide `no_openrouter_model_list` fixture marks the list as fetched; start from a process that hasn't.
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(openrouter_providers, '_input_modalities_by_base_url', {})
-        yield FakeOpenRouter()
+def _completion(message: ChatCompletionMessage) -> ChatCompletion:
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    return ChatCompletion.model_construct(
+        id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
 
 
-def _file_input_flags(model: OpenRouterModel) -> dict[str, object]:
-    return {
-        key: model.profile.get(key)
-        for key in (
-            'supports_image_input',
-            'supports_document_input',
-            'supports_audio_file_input',
-            'supports_video_input',
-        )
-    }
+def _screenshot_call() -> ChatCompletion:
+    call = ChatCompletionMessageFunctionToolCall(
+        id='call_1', type='function', function=Function(name='screenshot', arguments='{}')
+    )
+    return _completion(ChatCompletionMessage.model_construct(role='assistant', content=None, tool_calls=[call]))
 
 
 class TestOpenRouterInputModalities:
-    async def test_run_fills_flags_from_model_list(self, allow_model_requests: None, openrouter: FakeOpenRouter):
-        """The list is fetched when a run starts, not when the model is built or its profile read, and only once."""
-        provider = openrouter.provider()
-        model = OpenRouterModel('acme/text-only', provider=provider)
-        assert _file_input_flags(model) == snapshot(
-            {
-                'supports_image_input': True,
-                'supports_document_input': True,
-                'supports_audio_file_input': True,
-                'supports_video_input': True,
-            }
-        )
-        assert openrouter.model_list_requests == 0
+    @pytest.mark.parametrize(
+        ('model_name', 'expected'),
+        [
+            pytest.param(
+                'acme/text-only', {'image': False, 'audio': False, 'video': False, 'document': None}, id='text-only'
+            ),
+            pytest.param('acme/vision', {'image': True, 'audio': False, 'video': False, 'document': None}, id='vision'),
+            # `video` beats the provider's fallback, which turns video off for a model nothing says reads it.
+            pytest.param('acme/omni', {'image': True, 'audio': True, 'video': True, 'document': None}, id='omni'),
+            # A variant the snapshot doesn't list takes its base model's kinds.
+            pytest.param(
+                'acme/vision:free', {'image': True, 'audio': False, 'video': False, 'document': None}, id='tag'
+            ),
+            # A variant the snapshot lists, because it takes other kinds than its base model, takes its own.
+            pytest.param(
+                'acme/vision:batch',
+                {'image': False, 'audio': False, 'video': False, 'document': None},
+                id='listed-tag',
+            ),
+            pytest.param(
+                '~acme/vision-latest', {'image': True, 'audio': False, 'video': False, 'document': None}, id='alias'
+            ),
+            # A model the snapshot doesn't have keeps the profile it would have without it.
+            pytest.param(
+                'acme/unlisted', {'image': None, 'audio': None, 'video': False, 'document': None}, id='unlisted'
+            ),
+            pytest.param(
+                'acme/unlisted:free',
+                {'image': None, 'audio': None, 'video': False, 'document': None},
+                id='unlisted-tag',
+            ),
+        ],
+    )
+    def test_flags_from_snapshot(self, model_name: str, expected: dict[str, bool | None]):
+        """`document` is never set: OpenRouter parses a PDF to text for a model that doesn't take files."""
+        assert provider_flags(model_name) == expected
 
-        await Agent(model).run('hello')
+    def test_hand_written_profile_wins_over_snapshot(self):
+        """`google_model_profile` sets `supports_video_input` itself, so only the image and audio flags are listed."""
+        assert provider_flags('google/gemini-3-flash-preview') == {
+            'image': True,
+            'audio': False,
+            'video': True,
+            'document': None,
+        }
 
-        # `file` isn't listed, but OpenRouter parses a PDF to text for a model that doesn't take files.
-        assert _file_input_flags(model) == snapshot(
-            {
-                'supports_image_input': False,
-                'supports_document_input': True,
-                'supports_audio_file_input': False,
-                'supports_video_input': False,
-            }
+    def test_user_profile_wins_over_snapshot(self):
+        model = OpenRouterModel(
+            'acme/text-only',
+            provider=OpenRouterProvider(api_key='test'),
+            profile=ModelProfile(supports_image_input=True),
         )
+        assert file_input_flags(model.profile) == {'image': True, 'audio': False, 'video': False, 'document': True}
 
-        # Another model on the same base URL, whose profile was read before, is resolved again with the list.
-        vision = OpenRouterModel('acme/vision:free', provider=provider)
-        assert vision.profile.get('supports_image_input') is True
-        await Agent(vision).run('hello')
-        await Agent(model).run('hello')
-        assert _file_input_flags(vision) == snapshot(
-            {
-                'supports_image_input': True,
-                'supports_document_input': True,
-                'supports_audio_file_input': False,
-                'supports_video_input': False,
-            }
-        )
-        assert openrouter.model_list_requests == 1
+    def test_unlisted_model_keeps_its_profile(self):
+        model = OpenRouterModel('acme/unlisted', provider=OpenRouterProvider(api_key='test'))
+        assert file_input_flags(model.profile) == {'image': True, 'audio': True, 'video': False, 'document': True}
 
-    async def test_tool_image_replaced_on_text_only_model(self, allow_model_requests: None, openrouter: FakeOpenRouter):
-        """An image a tool returns to a model OpenRouter lists without `image` input is replaced by a note."""
-        openrouter.replies.append(
-            {
-                'content': None,
-                'tool_calls': [
-                    {'id': 'call_1', 'type': 'function', 'function': {'name': 'screenshot', 'arguments': '{}'}}
-                ],
-            }
+    @pytest.mark.parametrize(
+        ('model_name', 'noted'),
+        [pytest.param('acme/text-only', True, id='text-only'), pytest.param('acme/vision', False, id='vision')],
+    )
+    async def test_tool_image_on_text_only_model_is_sent_as_note(
+        self, allow_model_requests: None, model_name: str, noted: bool
+    ):
+        """OpenRouter rejects an image sent to a text-only model, so a tool's image goes to it as a note instead."""
+        client = MockOpenAI.create_mock(
+            [_screenshot_call(), _completion(ChatCompletionMessage.model_construct(role='assistant', content='Done.'))]
         )
-        agent = Agent(OpenRouterModel('acme/text-only', provider=openrouter.provider()))
+        agent = Agent(OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=client)))
 
         @agent.tool_plain
-        def screenshot() -> BinaryImage:
-            return BinaryImage(data=b'\x89PNG', media_type='image/png')
+        def screenshot() -> BinaryContent:
+            return SCREENSHOT
 
-        await agent.run('Take a screenshot')
+        await agent.run('Take a screenshot.')
 
-        assert openrouter.chat_requests[-1]['messages'][-1] == snapshot(
-            {
-                'role': 'tool',
-                'tool_call_id': 'call_1',
-                'content': 'File 4effda (image/png, 4 bytes) was not sent: this model cannot read images.',
-            }
-        )
+        sent = repr(get_mock_chat_completion_kwargs(client)[-1]['messages'])
+        assert (SCREENSHOT_NOTE in sent) is noted
+        assert ('image_url' in sent) is not noted
 
-    async def test_hand_written_and_user_profiles_take_precedence(
-        self, allow_model_requests: None, openrouter: FakeOpenRouter
-    ):
-        provider = openrouter.provider()
-        # `google_model_profile` sets `supports_video_input` itself, so only the image and audio flags come from the list.
-        gemini = OpenRouterModel('google/gemini-3-flash', provider=provider)
-        user = OpenRouterModel('acme/text-only', provider=provider, profile={'supports_image_input': True})
-        await Agent(gemini).run('hello')
-        await Agent(user).run('hello')
 
-        assert _file_input_flags(gemini) == snapshot(
-            {
-                'supports_image_input': True,
-                'supports_document_input': True,
-                'supports_audio_file_input': False,
-                'supports_video_input': True,
-            }
-        )
-        assert _file_input_flags(user) == snapshot(
-            {
-                'supports_image_input': True,
-                'supports_document_input': True,
-                'supports_audio_file_input': False,
-                'supports_video_input': False,
-            }
-        )
-
-    @pytest.mark.parametrize('model_name', ['acme/unlisted', 'acme/no-architecture', 'acme/no-modalities'])
-    async def test_unlisted_or_unknown_modalities(
-        self, allow_model_requests: None, openrouter: FakeOpenRouter, model_name: str
-    ):
-        """A model the list doesn't have, or lists without its input modalities, keeps its profile."""
-        model = OpenRouterModel(model_name, provider=openrouter.provider())
-        await Agent(model).run('hello')
-
-        assert model.profile.get('supports_image_input') is True
-
-    async def test_failed_fetch_keeps_profile(self, allow_model_requests: None, openrouter: FakeOpenRouter):
-        """A failed fetch isn't retried in the same process, and leaves the hand-written profile in place."""
-        openrouter.model_list_status = 500
-        model = OpenRouterModel('acme/text-only', provider=openrouter.provider())
-
-        result = await Agent(model).run('hello')
-        await Agent(model).run('hello')
-
-        assert result.output == 'ok'
-        assert model.profile.get('supports_image_input') is True
-        assert openrouter.model_list_requests == 1
-
-    async def test_no_fetch_without_model_requests(self, openrouter: FakeOpenRouter):
-        model = OpenRouterModel('acme/text-only', provider=openrouter.provider())
-
-        with override_allow_model_requests(False), pytest.raises(RuntimeError, match='ALLOW_MODEL_REQUESTS'):
-            await Agent(model).run('hello')
-
-        assert openrouter.model_list_requests == 0
+def test_committed_snapshot_is_sorted_and_holds_only_file_kinds():
+    """The snapshot is as `scripts/update_openrouter_input_modalities.py` writes it, so a refresh diffs line by line."""
+    assert OPENROUTER_INPUT_MODALITIES
+    assert list(OPENROUTER_INPUT_MODALITIES) == sorted(OPENROUTER_INPUT_MODALITIES)
+    assert [
+        model_id
+        for model_id, kinds in OPENROUTER_INPUT_MODALITIES.items()
+        if kinds != tuple(kind for kind in ('image', 'audio', 'video') if kind in kinds)
+    ] == []

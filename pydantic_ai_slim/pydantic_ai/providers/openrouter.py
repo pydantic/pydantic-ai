@@ -1,12 +1,8 @@
 from __future__ import annotations as _annotations
 
-import logging
 import os
-from collections.abc import Mapping
 from datetime import timedelta
 from typing import Literal, overload
-
-from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
@@ -30,8 +26,10 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
+from ._openrouter_input_modalities import OPENROUTER_INPUT_MODALITIES
+
 try:
-    from openai import AsyncOpenAI, OpenAIError
+    from openai import AsyncOpenAI
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenRouter provider, '
@@ -268,50 +266,25 @@ Mythos isn't routable on OpenRouter and is included on the strength of Anthropic
 """
 
 
-_logger = logging.getLogger(__name__)
-
-_MODEL_LIST_TIMEOUT = 10.0
-"""Seconds to wait for OpenRouter's model list before going on with the hand-written profiles."""
-
-
-class _ModelArchitecture(BaseModel):
-    input_modalities: frozenset[str] | None = None
-
-
-class _ListedModel(BaseModel):
-    id: str
-    architecture: _ModelArchitecture | None = None
-
-
-class _ModelList(BaseModel):
-    data: list[_ListedModel]
-
-
-_input_modalities_by_base_url: dict[str, Mapping[str, frozenset[str]]] = {}
-"""The `architecture.input_modalities` of each model in [OpenRouter's model list](https://openrouter.ai/api/v1/models), per API base URL.
-
-An entry is added when the fetch starts, and holds an empty mapping until it succeeds, so that the list is requested
-at most once per process for each base URL, including when the request fails.
-"""
-
-
-def _input_modalities_profile(profile: ModelProfile | None, input_modalities: frozenset[str]) -> ModelProfile:
-    """The file-input flags that `input_modalities` decides and `profile` leaves unset.
+def _input_modalities_profile(model_name: str) -> ModelProfile | None:
+    """The file-input flags OpenRouter's model list gives the model, or `None` if the snapshot doesn't have it.
 
     OpenRouter routes only to endpoints that take the request's kinds of file: an image sent to
     `meta-llama/llama-3.1-8b-instruct` failed with a 404 "No endpoints found that support image input" (2026-11-12).
     `file` isn't used: OpenRouter accepts a PDF on any model, and parses it to text for one that doesn't take files.
     https://openrouter.ai/docs/guides/overview/multimodal/pdfs
     """
-    profile = profile or {}
-    flags = ModelProfile()
-    if 'supports_image_input' not in profile:
-        flags['supports_image_input'] = 'image' in input_modalities
-    if 'supports_audio_file_input' not in profile:
-        flags['supports_audio_file_input'] = 'audio' in input_modalities
-    if 'supports_video_input' not in profile:
-        flags['supports_video_input'] = 'video' in input_modalities
-    return flags
+    input_modalities = OPENROUTER_INPUT_MODALITIES.get(model_name)
+    if input_modalities is None:
+        # A variant such as `:free` or `:batch` is in the snapshot only when it takes other kinds than its base model.
+        input_modalities = OPENROUTER_INPUT_MODALITIES.get(model_name.split(':', 1)[0])
+    if input_modalities is None:
+        return None
+    return ModelProfile(
+        supports_image_input='image' in input_modalities,
+        supports_audio_file_input='audio' in input_modalities,
+        supports_video_input='video' in input_modalities,
+    )
 
 
 class OpenRouterProvider(_OpenAISDKProvider):
@@ -360,6 +333,10 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 f'{("openai/" + model_name)!r}, not {model_name!r}. '
                 'See https://openrouter.ai/models for the available model names.'
             )
+
+        # Looked up by the full model ID, as OpenRouter lists it: aliases such as `~openai/gpt-sol-latest` and
+        # variants such as `:free` are listed under their own IDs.
+        input_modalities_profile = _input_modalities_profile(model_name)
 
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
@@ -413,12 +390,15 @@ class OpenRouterProvider(_OpenAISDKProvider):
         supports_cache_control = provider in ('anthropic', 'google')
         supports_anthropic_cache = provider == 'anthropic'
 
-        # Three-layer merge:
+        # Four-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
         #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`), and video input
-        #    is off unless the upstream profile turns it on.
-        # 2. Upstream profile — model-specific traits from the lab's profile function.
-        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        #    is off unless a later layer turns it on.
+        # 2. OpenRouter's model list: the image, audio and video input flags from the snapshot in
+        #    `_openrouter_input_modalities`, for a model it lists. It's what OpenRouter reports for the model, so it beats
+        #    the fallback, but a hand-written upstream profile that sets a flag is a deliberate decision and beats it.
+        # 3. Upstream profile — model-specific traits from the lab's profile function.
+        # 4. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
@@ -430,9 +410,10 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 json_schema_transformer=OpenAIJsonSchemaTransformer,
                 # OpenRouter answers 404 "No endpoints found that support input video" for a model without video
                 # input (checked live with Claude, GPT and DeepSeek routes, 2026-11-12), so video is off unless the
-                # upstream profile turns it on, as Google's and Amazon Nova's do.
+                # model list or the upstream profile turns it on, as Google's and Amazon Nova's do.
                 supports_video_input=False,
             ),
+            input_modalities_profile,
             profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
@@ -477,38 +458,6 @@ class OpenRouterProvider(_OpenAISDKProvider):
             ),
             special_token_route_profile('openrouter', model_name),
         )
-
-    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
-        profile = self.model_profile(model_name)
-        listed = _input_modalities_by_base_url.get(str(self._client.base_url), {})
-        # Variants such as `:free` or `:batch` are listed under their own IDs, but not every one is.
-        input_modalities = listed.get(model_name, listed.get(model_name.split(':', 1)[0]))
-        if input_modalities is None:
-            return profile
-        return merge_profile(profile, _input_modalities_profile(profile, input_modalities))
-
-    async def _load_input_modalities(self) -> None:
-        """Fetch OpenRouter's model list for this provider's base URL, unless this process already has.
-
-        A failed fetch leaves the hand-written profiles as they are.
-        """
-        base_url = str(self._client.base_url)
-        if base_url in _input_modalities_by_base_url:
-            return
-        # Marks the fetch as started: a run that starts meanwhile goes on with the hand-written profile.
-        _input_modalities_by_base_url[base_url] = {}
-        try:
-            client = self._client.with_options(timeout=_MODEL_LIST_TIMEOUT, max_retries=0)
-            response = await client.models.with_raw_response.list()
-            models = _ModelList.model_validate_json(response.content).data
-        except (OpenAIError, ValidationError) as e:
-            _logger.debug('Could not load the OpenRouter model list from %s: %r', base_url, e)
-            return
-        _input_modalities_by_base_url[base_url] = {
-            model.id: model.architecture.input_modalities
-            for model in models
-            if model.architecture is not None and model.architecture.input_modalities is not None
-        }
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

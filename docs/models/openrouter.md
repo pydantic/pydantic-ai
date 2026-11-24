@@ -124,13 +124,25 @@ Other routes get a `<system>`-tagged user message instead. This keeps prompt cac
 
 ## File input
 
-OpenRouter rejects a request that sends a model a kind of file it doesn't take, such as an image to a text-only model. To know which files a model takes, an agent run on an `OpenRouterModel` fetches [OpenRouter's model list](https://openrouter.ai/api/v1/models) when it starts, and sets the model's [file-input flags](overview.md#inspecting-a-models-profile) from its `input_modalities`: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input] from `image`, [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] from `audio` and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] from `video`. A file a tool returns that the model can't take is then [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] is left as it is: OpenRouter [accepts PDFs on any model](https://openrouter.ai/docs/guides/overview/multimodal/pdfs), and turns them into text for a model that doesn't read files.
+OpenRouter rejects a request that sends a model a kind of file it doesn't take, such as an image to a text-only model. Pydantic AI ships a snapshot of [OpenRouter's model list](https://openrouter.ai/api/v1/models), refreshed weekly, and sets an `OpenRouterModel`'s [file-input flags](overview.md#inspecting-a-models-profile) from the model's `input_modalities` in it: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input] from `image`, [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] from `audio` and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] from `video`. A file a tool returns that the model can't take is then [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] is left as it is: OpenRouter [accepts PDFs on any model](https://openrouter.ai/docs/guides/overview/multimodal/pdfs), and turns them into text for a model that doesn't read files.
 
-The list is fetched once per process for each base URL, and not inside a durable execution workflow or when [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] is `False`. A flag the upstream provider's profile sets itself, or that you set with `profile=`, is kept. If the fetch fails or the list doesn't have the model, the profile stays as it would be without the list.
+The list isn't fetched at run time, so a model OpenRouter added after your installed release keeps the default flags. A variant such as `:free` takes its base model's flags. A flag the upstream provider's profile sets itself is kept, such as `supports_video_input` on Gemini routes. To set a flag yourself, pass it in `profile=`, which takes precedence over both:
+
+```python
+from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+model = OpenRouterModel(
+    'acme/new-model',
+    provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
+    profile=ModelProfile(supports_image_input=True),
+)
+```
 
 ## Video input
 
-OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Only Gemini and Amazon Nova routes are marked as reading video, except Gemini image models and Nova Micro. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. With [`FileUnderstanding`](../capabilities/file-understanding.md) on the agent, such video, including video in the prompt, is described by its understanding model instead. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
+OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Video is off unless the model reads it according to the upstream provider's profile (Gemini and Amazon Nova routes, except Gemini image models and Nova Micro) or to the [model list snapshot](#file-input). For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. With [`FileUnderstanding`](../capabilities/file-understanding.md) on the agent, such video, including video in the prompt, is described by its understanding model instead. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
 
 ## Prompt Caching
 
