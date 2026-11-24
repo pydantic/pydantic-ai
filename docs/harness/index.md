@@ -59,15 +59,11 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
 
 ```bash
-uv tool install --compile-bytecode pydantic-ai-pax
+uv tool install pydantic-ai-pax
 pax
 ```
 
-Or run the exported agent as a chat with [`clai`](../cli.md#custom-agents):
-
-```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
-```
+Point it at your own agent with `pax --agent mymodule:agent`.
 
 The bundled `coder_agent` is the example above without a model.
 

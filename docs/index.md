@@ -81,17 +81,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ]
     ```
 
-    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [Pax](harness/clai2.md) is the harness TUI over any Pydantic AI agent, and runs `Coder` by default:
+    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [pax](harness/clai2.md) is the harness TUI, running `Coder` by default and your own agent with `--agent`:
 
     ```bash
-    uv tool install --compile-bytecode pydantic-ai-pax
+    uv tool install pydantic-ai-pax
     pax
-    ```
-
-    Or run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
-
-    ```bash
-    uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
     ```
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -467,18 +461,14 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 ## Next steps
 
-**Run something right now.** [Pax](harness/clai2.md), the harness TUI, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
+**Run something right now.** [pax](harness/clai2.md), the harness TUI, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
-uv tool install --compile-bytecode pydantic-ai-pax
+uv tool install pydantic-ai-pax
 pax
 ```
 
-Or run the same agent as a chat with [`clai`](cli.md#custom-agents):
-
-```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
-```
+Point it at an agent of your own with `pax --agent mymodule:agent`.
 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 

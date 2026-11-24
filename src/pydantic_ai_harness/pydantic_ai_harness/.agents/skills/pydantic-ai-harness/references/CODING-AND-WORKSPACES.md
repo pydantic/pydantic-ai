@@ -151,10 +151,10 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 `LocalWorkspace('.')` (cwd at import) and `Coder()`:
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
+uvx pydantic-ai-pax
 ```
 
-To use a coding agent rather than build one, `pydantic-ai-pax` runs `Coder` as a TUI: `uvx pydantic-ai-pax`.
+That is pax, the harness TUI: it runs `Coder` by default, and `pax --agent mymodule:agent` runs an agent of your own.
 
 ```bash
 ```
