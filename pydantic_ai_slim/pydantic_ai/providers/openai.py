@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
@@ -14,6 +15,7 @@ from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
     # Keep the provider-specific specialization private; the provider only selects it.
     _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    is_openai_computer_use_model,
     openai_model_profile,
     openai_realtime_model_profile,
 )
@@ -86,6 +88,12 @@ class OpenAIProvider(_OpenAISDKProvider):
         # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
         # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
         profile = openai_model_profile(model_name)
+        supported_native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        if is_openai_computer_use_model(model_name):
+            # Added here, not in `openai_model_profile`, because the native computer tool is unverified on the other
+            # OpenAI-compatible servers that use that profile. `OpenAIChatModel` never sends it.
+            # https://developers.openai.com/api/docs/guides/tools-computer-use
+            supported_native_tools = supported_native_tools | {ComputerTool}
         return merge_profile(
             profile,
             OpenAIModelProfile(
@@ -156,6 +164,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                supported_native_tools=supported_native_tools,
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
                 # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.

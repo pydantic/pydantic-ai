@@ -908,6 +908,10 @@ class ComputerTool(AbstractNativeTool):
     [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one raises
     [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`. See
     [Computer Tool](../native-tools.md#computer-tool).
+
+    Supported by:
+
+    * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
     """
 
     display_size: tuple[int, int]
