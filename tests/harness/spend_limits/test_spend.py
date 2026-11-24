@@ -1488,12 +1488,12 @@ class TestTracing:
         [
             pytest.param(
                 Budget(usd=Decimal('0.001')),
-                {'spend.limit_kind': 'usd', 'spend.limit': 0.001, 'spend.spent': 1.0},
+                {'spend.limit_usd': 0.001, 'spend.spent_usd': 1.0},
                 id='usd',
             ),
             pytest.param(
                 Budget(tokens=1000),
-                {'spend.limit_kind': 'tokens', 'spend.limit': 1000, 'spend.spent': 1100},
+                {'spend.limit_tokens': 1000, 'spend.spent_tokens': 1100},
                 id='tokens',
             ),
         ],
