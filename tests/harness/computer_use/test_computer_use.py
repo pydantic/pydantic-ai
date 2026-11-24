@@ -74,7 +74,7 @@ from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
-from ..display_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
+from .display_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 

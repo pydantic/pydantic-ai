@@ -47,8 +47,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._png import latest_screenshot_size, png_size
 from pydantic_ai_harness.computer_use._events import ActionsPerformedEvent
+from pydantic_ai_harness.computer_use._png import latest_screenshot_size, png_size
 from pydantic_ai_harness.computer_use._protocol import (
     Display,
     SupportsCursorPosition,
