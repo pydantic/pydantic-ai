@@ -1,4 +1,4 @@
-"""`WorkingDirectory`: tell the model the workspace's working directory."""
+"""`AnnounceWorkingDirectory`: tell the model the workspace's working directory."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 
-_ID = 'working_directory'
+_ID = 'announce_working_directory'
 
 
 @dataclass(kw_only=True)
-class WorkingDirectory(AbstractCapability[AgentDepsT]):
+class AnnounceWorkingDirectory(AbstractCapability[AgentDepsT]):
     """Tell the model the workspace's working directory, so it uses relative paths instead of guessing absolute ones.
 
     `Shell` and `FileSystem` add it themselves. Add it to an agent whose own tools work in `ctx.workspace`.
@@ -22,7 +22,7 @@ class WorkingDirectory(AbstractCapability[AgentDepsT]):
     id: str | None = _ID
     """One-off: two of them would state the same line, so they share a fixed id and merge into one.
 
-    `None` or `''` means the default, `working_directory`.
+    `None` or `''` means the default, `announce_working_directory`.
     """
 
     def __post_init__(self) -> None:

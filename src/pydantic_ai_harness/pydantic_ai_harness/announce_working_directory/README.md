@@ -1,8 +1,8 @@
-# Working Directory
+# Announce Working Directory
 
 Tell the model the workspace's working directory, so it uses relative paths instead of guessing absolute ones. [FileSystem](../file_system/) and [Shell](../shell/) add it themselves; add it yourself when your agent's own tools work in the run's workspace.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/working_directory/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/announce_working_directory/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
@@ -23,9 +23,9 @@ pip install pydantic-ai-harness
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai_harness import WorkingDirectory
+from pydantic_ai_harness import AnnounceWorkingDirectory
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), WorkingDirectory()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), AnnounceWorkingDirectory()])
 ```
 
 The model's instructions then include the line: The working directory is `/home/me/project`.
@@ -36,4 +36,4 @@ The line asks the workspace for its directory with `working_dir()`. A sandbox th
 
 ## Composition
 
-`WorkingDirectory` has a fixed `id`, so any number of them on one agent, including the ones `FileSystem` and `Shell` bring, merge into one line. A `FileSystem` or `Shell` with `defer_loading=True` doesn't bring it, so a sandbox isn't started for tools the model may never load; add `WorkingDirectory()` yourself to name the directory anyway.
+`AnnounceWorkingDirectory` has a fixed `id`, so any number of them on one agent, including the ones `FileSystem` and `Shell` bring, merge into one line. A `FileSystem` or `Shell` with `defer_loading=True` doesn't bring it, so a sandbox isn't started for tools the model may never load; add `AnnounceWorkingDirectory()` yourself to name the directory anyway.

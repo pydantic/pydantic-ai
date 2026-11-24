@@ -154,7 +154,7 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
-The instructions name the working directory through [`WorkingDirectory`](working-directory.md), which states it once however
+The instructions name the working directory through [`AnnounceWorkingDirectory`](announce-working-directory.md), which states it once however
 many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 Asking is a durable step at run start, so Temporal and DBOS runs started before an upgrade that adds it no longer replay.
 

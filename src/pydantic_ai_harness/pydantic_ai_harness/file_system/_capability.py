@@ -11,6 +11,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.announce_working_directory import AnnounceWorkingDirectory
 from pydantic_ai_harness.file_system._content import require_pillow
 from pydantic_ai_harness.file_system._toolset import (
     DEFAULT_TOOL_NAMES,
@@ -18,7 +19,6 @@ from pydantic_ai_harness.file_system._toolset import (
     FileSystemToolset,
     root_spelling,
 )
-from pydantic_ai_harness.working_directory import WorkingDirectory
 
 _DEFAULT_READ_CHARS = 50_000
 
@@ -194,13 +194,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        """Bring `WorkingDirectory` along; copies from other capabilities merge into one line.
+        """Bring `AnnounceWorkingDirectory` along; copies from other capabilities merge into one line.
 
         A deferred one doesn't: naming the directory starts a sandbox the model may never load this capability for.
         """
         if self.defer_loading:
             return self
-        return CombinedCapability([self, WorkingDirectory()])
+        return CombinedCapability([self, AnnounceWorkingDirectory()])
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""

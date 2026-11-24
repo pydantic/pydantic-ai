@@ -450,7 +450,7 @@ class TestCoder:
 
     @pytest.mark.parametrize('repo_context', [False, True])
     async def test_instructions_name_the_project_once(self, tmp_path: Path, repo_context: bool) -> None:
-        """`Shell` and `FileSystem` each bring `WorkingDirectory`, which states the directory once."""
+        """`Shell` and `FileSystem` each bring `AnnounceWorkingDirectory`, which states the directory once."""
         model = TestModel(call_tools=[])
         await Agent(model, capabilities=[Coder(repo_context=repo_context)]).run(
             'go', workspace=LocalWorkspaceBackend(tmp_path)

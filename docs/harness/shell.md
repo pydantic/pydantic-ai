@@ -395,7 +395,7 @@ inside the workspace, and that directory is carried into subsequent calls. The p
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
 
-The instructions name the working directory through [`WorkingDirectory`](working-directory.md), which states it once however
+The instructions name the working directory through [`AnnounceWorkingDirectory`](announce-working-directory.md), which states it once however
 many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 Asking is a durable step at run start, so Temporal and DBOS runs started before an upgrade that adds it no longer replay.
 

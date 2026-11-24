@@ -268,7 +268,7 @@ so, whatever the level, it is told to choose sensible defaults and finish, and t
 target the task states.
 
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
-The instructions also name the workspace's working directory, through [`WorkingDirectory`](working-directory.md).
+The instructions also name the workspace's working directory, through [`AnnounceWorkingDirectory`](announce-working-directory.md).
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.
 
@@ -337,7 +337,7 @@ Pillow is now in the `coder` extra too, because `Coder` downscales the images `r
 
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
-`Coder`'s instructions name the working directory in one line (The working directory is `/repo`.), from [`WorkingDirectory`](working-directory.md), in place of the line that also said where commands start and which paths the file tools accept. It is there with `repo_context=False` too, so a lazily created sandbox is now created before the first request, and Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first.
+`Coder`'s instructions name the working directory in one line (The working directory is `/repo`.), from [`AnnounceWorkingDirectory`](announce-working-directory.md), in place of the line that also said where commands start and which paths the file tools accept. It is there with `repo_context=False` too, so a lazily created sandbox is now created before the first request, and Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first.
 
 `Coder`'s default instructions no longer ask for self-contained deliverables checked from a clean directory, or for a solution that uses every field of the provided data. Bind `BenchmarkInstructions()` next to `Coder` to keep them (see [Benchmarking](#benchmarking)).
 

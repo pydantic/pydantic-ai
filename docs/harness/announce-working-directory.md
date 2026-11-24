@@ -1,9 +1,9 @@
 ---
-title: Working Directory
+title: Announce Working Directory
 description: "Tell a Pydantic AI agent its workspace's working directory, once, for your own tools as well as FileSystem and Shell."
 ---
 
-# Working Directory
+# Announce Working Directory
 
 Tell the model the workspace's working directory, so it uses relative paths instead of guessing absolute ones. [FileSystem](filesystem.md) and [Shell](shell.md) add it themselves; add it yourself when your agent's own tools work in the run's workspace.
 
@@ -18,9 +18,9 @@ pip/uv-add pydantic-ai-harness
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai_harness import WorkingDirectory
+from pydantic_ai_harness import AnnounceWorkingDirectory
 
-agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), WorkingDirectory()])
+agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), AnnounceWorkingDirectory()])
 ```
 
 The model's instructions then include the line: The working directory is `/home/me/project`.
@@ -31,10 +31,10 @@ The line asks the workspace for its directory with `working_dir()`. A sandbox th
 
 ## Composition
 
-`WorkingDirectory` has a fixed `id`, so any number of them on one agent, including the ones `FileSystem` and `Shell` bring, merge into one line. A `FileSystem` or `Shell` with `defer_loading=True` doesn't bring it, so a sandbox isn't started for tools the model may never load; add `WorkingDirectory()` yourself to name the directory anyway.
+`AnnounceWorkingDirectory` has a fixed `id`, so any number of them on one agent, including the ones `FileSystem` and `Shell` bring, merge into one line. A `FileSystem` or `Shell` with `defer_loading=True` doesn't bring it, so a sandbox isn't started for tools the model may never load; add `AnnounceWorkingDirectory()` yourself to name the directory anyway.
 
-See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/working_directory/).
+See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/announce_working_directory/).
 
 ## API reference
 
-::: pydantic_ai_harness.WorkingDirectory
+::: pydantic_ai_harness.AnnounceWorkingDirectory

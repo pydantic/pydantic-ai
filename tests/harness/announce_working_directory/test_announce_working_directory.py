@@ -1,4 +1,4 @@
-"""Test that `WorkingDirectory` names the workspace's working directory once, whoever brings it.
+"""Test that `AnnounceWorkingDirectory` names the workspace's working directory once, whoever brings it.
 
 Not VCR tests: what is checked is the instruction text each request carries, which `TestModel` exposes directly.
 """
@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness import FileSystem, Shell, WorkingDirectory
+from pydantic_ai_harness import AnnounceWorkingDirectory, FileSystem, Shell
 
 
 def _lines(model: TestModel) -> list[str]:
@@ -23,14 +23,14 @@ def _lines(model: TestModel) -> list[str]:
     return [part.content for part in parts if 'working directory is' in part.content]
 
 
-class TestWorkingDirectory:
+class TestAnnounceWorkingDirectory:
     @pytest.mark.parametrize(
         'capabilities',
         [
-            pytest.param(lambda: [WorkingDirectory[None]()], id='own-tools'),
+            pytest.param(lambda: [AnnounceWorkingDirectory[None]()], id='own-tools'),
             pytest.param(lambda: [Shell[None]()], id='shell'),
             pytest.param(lambda: [FileSystem[None]()], id='file-system'),
-            pytest.param(lambda: [Shell[None](), FileSystem[None](), WorkingDirectory[None]()], id='all'),
+            pytest.param(lambda: [Shell[None](), FileSystem[None](), AnnounceWorkingDirectory[None]()], id='all'),
         ],
     )
     async def test_the_directory_is_named_once(
@@ -45,7 +45,7 @@ class TestWorkingDirectory:
     async def test_a_workspace_that_is_gone_is_left_out(self, tmp_path: Path) -> None:
         """A run that calls no tool doesn't fail because its workspace is gone; a tool call would report it."""
         model = TestModel(call_tools=[])
-        agent = Agent(model, deps_type=type(None), capabilities=[WorkingDirectory[None]()])
+        agent = Agent(model, deps_type=type(None), capabilities=[AnnounceWorkingDirectory[None]()])
         await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path / 'gone'))
         assert _lines(model) == []
 

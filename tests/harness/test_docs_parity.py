@@ -159,7 +159,7 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('file_system', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
-    'working-directory.md': ('working_directory', 'Working Directory'),
+    'announce-working-directory.md': ('announce_working_directory', 'Announce Working Directory'),
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
