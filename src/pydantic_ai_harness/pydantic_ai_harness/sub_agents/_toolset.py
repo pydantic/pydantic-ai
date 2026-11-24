@@ -393,7 +393,7 @@ def _local_abilities(ctx: RunContext[AgentDepsT], sub_agent: SubAgent[AgentDepsT
 
 
 def _new_task_id(ctx: RunContext[Any], owner: DelegationTasks) -> str:
-    """A new task's ID, derived from the run and the tool call, so a replay or a rerun with the same `run_id` gets it again.
+    """A new task's ID, derived from the run and tool call, so a replay or a rerun with the same `run_id` gets it again.
 
     A provider can reuse a tool call ID within a run, so a taken ID is derived again with a counter.
     """
