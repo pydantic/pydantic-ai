@@ -441,6 +441,50 @@ async def test_deleting_from_a_recalled_queued_prompt_survives_navigation() -> N
         assert live.queued_messages == ('a', 'b')
 
 
+@pytest.mark.parametrize('key', ['x', 'backspace', 'ctrl-w', 'ctrl-u'])
+async def test_restored_nonempty_draft_does_not_rewrite_the_recalled_queue(key: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued word')
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed(key)
+        edited = live.buffer.text
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        assert queue_rows(live) == ['Follow-up: queued word']
+        live.feed('ctrl-z')
+        assert live.buffer.text == edited
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'draft'
+        live.feed('enter')
+        assert live.queued_messages == ('queued word', 'draft')
+
+
+async def test_restoring_a_queued_edit_draft_restores_its_own_target() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'first', 'second')
+        for key in ('up', 'x', 'up', 'up', 'y', 'down', 'down'):
+            live.feed(key)
+        assert live.buffer.text == 'secondx'
+        assert queue_rows(live) == ['Follow-up: first', 'Follow-up (editing): second']
+        live.feed('enter')
+        assert live.queued_messages == ('first', 'secondx')
+
+
+@pytest.mark.parametrize(('key', 'expected'), [('x', 'queued wordx'), ('backspace', 'queued wor'), ('ctrl-u', '')])
+async def test_enter_on_edited_queue_with_nonempty_original_draft(key: str, expected: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued word')
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed(key)
+        live.feed('enter')
+        assert live.queued_messages == ((expected,) if expected else ())
+        for undo in ('ctrl-z', 'ctrl-y'):
+            live.feed(undo)
+            assert live.buffer.text == ''
+
+
 async def test_history_search_from_a_recalled_queued_prompt() -> None:
     async with editor() as (live, _, _):
         live.buffer.history = ['old']
