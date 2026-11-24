@@ -767,6 +767,19 @@ async def test_a_finished_call_in_a_response_that_did_not_complete_runs_nothing(
 
     (call,) = stored.tool_calls
     assert call.args == '{"actions": ['
+    if native:
+        # Sent back, the call keeps OpenAI's original item, though its arguments don't parse to its actions.
+        client = MockOpenAIResponses.create_mock(response_message([]))
+        model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+        refused = ToolReturnPart('computer', 'Not run.', call.tool_call_id, outcome='retried')
+        await model.request([*messages, stored, ModelRequest(parts=[refused])], None, params)
+        (request,) = get_mock_responses_kwargs(client)
+        sent = [item for item in request['input'] if item.get('type') in ('computer_call', 'computer_call_output')]
+        assert [(item['type'], item['call_id']) for item in sent] == [
+            ('computer_call', 'call_1'),
+            ('computer_call_output', 'call_1'),
+        ]
+        assert sent[0]['actions'] == [{'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}]
 
 
 async def test_a_malformed_call_runs_nothing(allow_model_requests: None) -> None:
