@@ -911,6 +911,7 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
+    * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
     * Google, on the models listed under [Google](../models/google.md#computer-use)
     """
 
