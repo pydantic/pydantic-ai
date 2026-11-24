@@ -43,7 +43,6 @@ with try_import() as imports_successful:
         ask_agent,
         cli,
         cli_agent,
-        cli_exit,
         format_usage,
         handle_slash_command,
         run_chat,
@@ -75,18 +74,6 @@ def reset_sniffio_cvar() -> Iterator[None]:
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
-
-
-def test_cli_exit_points_at_pax(capfd: CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(sys, 'argv', ['clai', '--version'])
-    with pytest.raises(SystemExit) as exc_info:
-        cli_exit()
-    assert exc_info.value.code == 0
-    out, err = capfd.readouterr()
-    assert out.startswith('clai - Pydantic AI CLI')
-    assert err == snapshot(
-        '`clai` (and its `pai` alias) is deprecated in favour of `pax` and will be removed in Pydantic AI v3. Install it with `uv tool install pydantic-ai-pax`; https://pydantic.dev/docs/ai/integrations/cli/#migrating-to-pax shows how `clai` commands map to `pax`.\n'
-    )
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
