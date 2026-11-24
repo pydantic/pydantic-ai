@@ -8,7 +8,16 @@ import dataclasses
 import warnings
 import weakref
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from copy import copy
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -124,17 +133,18 @@ from ._core import (
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
+from ._lifecycle import LifecycleEvent, RealtimeFrame, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
     InstructionChangeContext,
     SystemPromptContext,
     SystemPromptText,
+    pcm_from_wav,
     render_instruction_change,
     replay_recorded_system_prompts_in_place,
-    seed_pcm_audio,
 )
 from .codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -318,7 +328,7 @@ _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:  # noqa: TID251  (not converted to anyio yet)
     """Put without blocking the pump, retaining the newest bounded window.
 
     The queue is sized one over its data window so the completion sentinel always fits. Returns the
@@ -373,7 +383,7 @@ class _AudioTap:
     so a device-side playback position can be mapped back into those coordinates.
     """
 
-    queue: asyncio.Queue[bytes | object]
+    queue: asyncio.Queue[bytes | object]  # noqa: TID251  (not converted to anyio yet)
     subscribed_at_bytes: int
     max_buffered_bytes: int
     """How much audio the queue may hold before the oldest chunks are dropped to make room."""
@@ -390,7 +400,7 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
-    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    progress: asyncio.Event = field(default_factory=asyncio.Event)  # noqa: TID251  (not converted to anyio yet)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
 
@@ -464,6 +474,14 @@ def _build_session_tool_return(
         # could have surfaced. Nothing is silently lost by dropping the request here.
         _reject_unloaded_capability_reveals(tools_added, tool_manager)
     return result_part, user_content
+
+
+def _check_image_retention(retain_images_every_n: int, retain_images_max: int | None) -> None:
+    """Refuse the image retention settings `RealtimeSession` can't apply."""
+    if retain_images_every_n < 1:
+        raise UserError('`retain_images_every_n` must be at least 1.')
+    if retain_images_max is not None and retain_images_max < 0:
+        raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
 
 
 def _chain_context(error: BaseException, context: BaseException) -> None:
@@ -786,7 +804,11 @@ class RealtimeSession:
             instructions=instructions,
             metadata=metadata,
             model_request_parameters=model_request_parameters,
-            model_settings=model_settings,
+            model_settings=(
+                model._recorded_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
+                if model is not None and model_settings
+                else model_settings
+            ),
             output_type='speech' if output_modality == 'audio' else 'text',
         )
         self._usage_limits = usage_limits
@@ -799,11 +821,8 @@ class RealtimeSession:
         self._retain_input = audio_retention in ('input_audio', 'all') and self._audio_budget.retains_audio
         self._retain_output = audio_retention in ('output_audio', 'all') and self._audio_budget.retains_audio
         self._handle_barge_in = handle_barge_in
-        if retain_images_every_n < 1:
-            raise UserError('`retain_images_every_n` must be at least 1.')
+        _check_image_retention(retain_images_every_n, retain_images_max)
         self._retain_images_every_n = retain_images_every_n
-        if retain_images_max is not None and retain_images_max < 0:
-            raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
         self._retain_images_max = retain_images_max
         # Retained image requests in arrival order, so the cap can evict the oldest.
         self._retained_image_requests: list[ModelRequest] = []
@@ -849,7 +868,7 @@ class RealtimeSession:
         # guards is a property of the response, not of how long the user kept talking. Released
         # when the next response opens, and by a reconnect that discards the one it referred to.
         self._server_cancelled_the_response_on_speech = False
-        self._exchange_progress = asyncio.Event()
+        self._exchange_progress = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Whether the frame being handled lost a response under way (a reconnect that didn't carry it).
         self._frame_lost_response = False
         # Answered calls of tool rounds that are over, which the connection may delete from the provider's
@@ -866,7 +885,7 @@ class RealtimeSession:
         # abandon the reader generator without affecting resource lifetime, and `__aexit__` still
         # drains everything before the connection and toolset close.
         self._queue: deque[RealtimeEvent | object] = deque()
-        self._queue_event = asyncio.Event()
+        self._queue_event = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._queue_delta_count = 0
         self._queue_dropped_deltas = 0
         self._queue_structural_count = 0
@@ -874,8 +893,8 @@ class RealtimeSession:
         self._queue_changed = object()
         self._tap_finished = object()
         self._audio_taps: set[_AudioTap] = set()
-        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
-        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()  # noqa: TID251  (not converted to anyio yet)
         self._audio_tap_drops = 0
         self._transcript_tap_drops = 0
         # Emitted-audio coordinates for `interrupt(played_bytes=...)`: cumulative output audio bytes,
@@ -903,14 +922,7 @@ class RealtimeSession:
         self._send_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
-        # Shared by reference with every copy of the run's context, so it must be the one the run was
-        # created with (`before_run` may have emitted into it already); a session built around a context
-        # that has none gets its own.
-        ctx = self._tool_manager.ctx
-        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
-        self._event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
-        if ctx is not None:
-            ctx._event_stream_buffer = self._event_buffer  # pyright: ignore[reportPrivateUsage]
+        self._event_buffer = self._run_event_buffer()
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
@@ -918,8 +930,8 @@ class RealtimeSession:
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
         # `finally`, including cancellation and failure paths.
-        self._tool_completion_events: set[asyncio.Event] = set()
-        self._last_tool_barrier: asyncio.Event | None = None
+        self._tool_completion_events: set[asyncio.Event] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._last_tool_barrier: asyncio.Event | None = None  # noqa: TID251  (not converted to anyio yet)
         # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
         # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
         # released the moment `handle_call` settles (the same event-loop segment that records a
@@ -971,6 +983,18 @@ class RealtimeSession:
             usage=self.usage,
             annotate_response=self._annotate_response,
         )
+
+    def _run_event_buffer(self) -> RealtimeEventBuffer:
+        """The event buffer of the run the session belongs to, which its context then shares."""
+        # Shared by reference with every copy of the run's context, so it must be the one the run was
+        # created with (`before_run` may have emitted into it already); a session built around a context
+        # that has none gets its own.
+        ctx = self._tool_manager.ctx
+        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
+        event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
+        if ctx is not None:
+            ctx._event_stream_buffer = event_buffer  # pyright: ignore[reportPrivateUsage]
+        return event_buffer
 
     def _replayable_messages(self) -> Sequence[ModelMessage]:
         """The conversation for a reconnect to replay, with a system prompt sent mid-session kept where it was sent."""
@@ -1524,7 +1548,7 @@ class RealtimeSession:
         self._ensure_streamable()
         # The queue itself is unbounded: `_AudioTap.put` bounds it by bytes, and the completion
         # sentinel always fits behind a full buffer without discarding audio or blocking teardown.
-        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()  # noqa: TID251  (not converted to anyio yet)
         tap = _AudioTap(
             queue=queue,
             subscribed_at_bytes=self._emitted_audio_bytes,
@@ -1706,7 +1730,7 @@ class RealtimeSession:
         # Each kind gets its own subscription, so a consumer's window is never spent on items it
         # would discard: sharing one queue let a burst of deltas evict the finalized part a
         # `delta=False` consumer was waiting for, and the two speakers' transcripts interleave.
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)  # noqa: TID251  (not converted to anyio yet)
         taps: set[Any] = self._transcript_delta_taps if delta else self._transcript_taps
         taps.add(queue)
         if self._pump_finished:
@@ -1821,41 +1845,49 @@ class RealtimeSession:
         profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
-        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
-        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) and `AppendVoiceInstructions` are driven through
+        the dedicated methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`,
+        `append_voice_instructions()`), and
         [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
         self._ensure_can_send()
-        if isinstance(content, str):
-            await self._send_text(content, respond=respond is not False)
-        elif isinstance(content, SystemPromptPart):
-            await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
-        elif isinstance(content, BinaryContent):
-            if content.is_image:
-                await self._send_image(content, respond=respond is True)
-            else:
-                if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
-                    # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
-                    # `respond=False` is a no-op for it and only `respond=True` is a mistake.
-                    raise UserError(
-                        '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
-                        'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
-                    )
-                await self._send_audio_content(content)
-        elif isinstance(content, (bytes, bytearray)):
-            # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
-            # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
+        match content:
+            case str():
+                await self._send_text(content, respond=respond is not False)
+            case SystemPromptPart():
+                await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
+            case BinaryContent():
+                await self._send_binary(content, respond=respond)
+            case Sequence():
+                await self._send_sequence(content, respond=respond)
+            case _:
+                assert_never(content)
+
+    async def _send_binary(self, content: BinaryContent, *, respond: bool | None) -> None:
+        if content.is_image:
+            await self._send_image(content, respond=respond is True)
+            return
+        if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
+            # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
+            # `respond=False` is a no-op for it and only `respond=True` is a mistake.
+            raise UserError(
+                '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
+                'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
+            )
+        await self._send_audio_content(content)
+
+    async def _send_sequence(self, content: Sequence[RealtimeSessionInput], *, respond: bool | None) -> None:
+        if isinstance(content, (bytes, bytearray)):
+            # `bytes` is a `Sequence[int]`, so it is refused before it iterates into a confusing per-byte error. Raw
+            # input audio goes through `send_audio()`.
             raise UserError('Raw audio bytes cannot be sent via `session.send()`; use `session.send_audio(...)`.')
-        elif isinstance(content, Sequence):
-            if respond is None:
-                for item in content:
-                    await self.send(item)
-            else:
-                for index, item in enumerate(content):
-                    await self.send(item, respond=respond if index == len(content) - 1 else False)
+        if respond is None:
+            for item in content:
+                await self.send(item)
         else:
-            assert_never(content)
+            for index, item in enumerate(content):
+                await self.send(item, respond=respond if index == len(content) - 1 else False)
 
     async def _send_text(
         self, content: str, *, respond: bool, parts: list[ModelRequestPart] | None = None
@@ -1965,10 +1997,10 @@ class RealtimeSession:
             # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
             # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
             await self.send_audio(
-                seed_pcm_audio(
-                    audio=content,
-                    provider_name=self._provider_name or 'realtime',
+                pcm_from_wav(
+                    content.data,
                     sample_rate=self.audio_input_sample_rate,
+                    error_prefix='Cannot send WAV audio through `session.send()`',
                 )
             )
         elif content.media_type == 'audio/pcm':
@@ -2089,6 +2121,38 @@ class RealtimeSession:
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         await self._send_frame(CreateResponse())
+
+    async def append_voice_instructions(self, text: str) -> None:
+        """Add to the instructions of the voice model the caller hears, steering how it speaks from now on.
+
+        For a model whose voice model takes instructions of its own, apart from the agent's: its profile sets
+        [`supports_appending_voice_instructions`][pydantic_ai.realtime.RealtimeModelProfile.supports_appending_voice_instructions].
+        OpenAI GPT-Live does: the agent's instructions go to its delegated backend, and the voice model starts with
+        `openai_live_instructions`, which this adds to. On any other model the agent's instructions are the voice
+        model's, so [changing them](../realtime/capabilities.md#instructions-that-change) is how to steer it, and this
+        raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+        The instructions aren't part of the conversation, so history doesn't record them. The provider's
+        acknowledgement isn't waited for: one that refuses them reports a recoverable
+        [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent]. Send only instructions you
+        wrote: text from the caller, a tool, or a document doesn't earn the operator's authority by being sent here.
+
+        GPT-Live takes at most 500 tokens per call, and longer `text` raises `UserError` before anything is sent.
+        A [reconnect](../realtime/lifecycle.md#reconnecting) that forks a stored session keeps the instructions
+        added so far. One that starts a new session starts it with `openai_live_instructions` followed by those
+        instructions, as many of the newest as fit in the 16,384 tokens a session can start with: the oldest are
+        dropped first.
+
+        Args:
+            text: The instructions to add.
+        """
+        self._ensure_can_send()
+        self._require_capability(
+            'supports_appending_voice_instructions',
+            method='append_voice_instructions',
+            feature='voice instructions of its own',
+        )
+        await self._send_frame(AppendVoiceInstructions(text))
 
     @overload
     async def interrupt(self, *, played_ms: int | None = None) -> None: ...
@@ -2363,12 +2427,7 @@ class RealtimeSession:
                         )
                     )
                     if settled := await self._connection.send(content):
-                        # What the send itself settled (where the input joined the conversation, say), applied before
-                        # anything the connection reads next.
-                        for event in settled:
-                            self._core.apply(event)
-                        self._emit_effects(self._core.take_effects())
-                        self._core_advanced(self._core)
+                        self._apply_settled(settled)
                     if isinstance(content, BinaryAudio):
                         # Under the lock, so the core takes audio in the order it goes out; only once it has
                         # gone out, as a turn the provider ended while it was on its way (which the pump can
@@ -2386,6 +2445,16 @@ class RealtimeSession:
                     model_name=self._error_model_name,
                     message=f'Realtime connection failed while sending: {e}',
                 ) from e
+
+    def _apply_settled(self, settled: Sequence[LifecycleEvent]) -> None:
+        """Apply what a send itself settled (where the input joined the conversation, say).
+
+        Applied before anything the connection reads next.
+        """
+        for event in settled:
+            self._core.apply(event)
+        self._emit_effects(self._core.take_effects())
+        self._core_advanced(self._core)
 
     def _asks_reply(self, content: RealtimeInput) -> bool:
         """Whether sending `content` asks for a response the core doesn't count ahead yet (see `requests_ahead`)."""
@@ -2682,8 +2751,8 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -2921,9 +2990,9 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
-        completion: asyncio.Event,
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
+        completion: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -3068,7 +3137,7 @@ class RealtimeSession:
         # `output_parts` in emission order whatever the mode.
         order_index = self._next_tool_order_index
         self._next_tool_order_index += 1
-        completion = asyncio.Event()
+        completion = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         if is_barrier:
             execution_prerequisites = tuple(self._tool_completion_events)
             self._last_tool_barrier = completion
@@ -3077,7 +3146,7 @@ class RealtimeSession:
         else:
             execution_prerequisites = ()
         self._tool_completion_events.add(completion)
-        validation_done = asyncio.Event()
+        validation_done = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         task = asyncio.create_task(
             self._run_tool(
                 call_part,
@@ -3147,15 +3216,7 @@ class RealtimeSession:
                     if await self._handle_pump_event(event):
                         return  # a usage limit tripped: stop reading the upstream
                     continue
-                # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
-                # messages waiting for a reply to be over go out now.
-                if self._tool_rounds_over:
-                    await self._prune_tool_calls()
-                if response_done:
-                    await self._drain_pending_messages('asap')
-                    await self._drain_pending_messages('when_idle')
-                elif response_closed and self._asap_drain_deferred:
-                    await self._drain_pending_messages('asap')
+                await self._after_frame(response_done=response_done, response_closed=response_closed)
                 response_done = response_closed = False
         except Exception as e:
             self._pump_error = e
@@ -3171,6 +3232,17 @@ class RealtimeSession:
             self._queue_put(self._queue_changed)
             if token is not None:
                 otel_context.detach(token)
+
+    async def _after_frame(self, *, response_done: bool, response_closed: bool) -> None:
+        # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
+        # messages waiting for a reply to be over go out now.
+        if self._tool_rounds_over:
+            await self._prune_tool_calls()
+        if response_done:
+            await self._drain_pending_messages('asap')
+            await self._drain_pending_messages('when_idle')
+        elif response_closed and self._asap_drain_deferred:
+            await self._drain_pending_messages('asap')
 
     def _apply_core(self, item: CoreInput) -> None:
         """Hand the core an event or a command, stream what it makes, and wake whoever waits on what it owes."""
@@ -3284,24 +3356,7 @@ class RealtimeSession:
             async for frame in frames:  # pragma: no branch
                 # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
                 # to one of its events (and reading the history, say) must find the core as far along as this one.
-                steps: list[tuple[list[Effect], RealtimeCodecEvent | None]] = []
-                effects: list[Effect] = []
-                for event in frame:
-                    if not isinstance(event, StaleEvent):
-                        core.apply(event)
-                        effects.extend(core.take_effects())
-                    report = event.event if isinstance(event, StaleEvent) else event
-                    if isinstance(report, SessionUsage) and report.context_window_used is not None:
-                        # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
-                        # still the provider's latest reading of its context, though its usage isn't counted.)
-                        self._reported_context_window_used = report.context_window_used
-                    if not isinstance(report, LifecycleEvent):
-                        steps.append((effects, report))
-                        effects = []
-                core.end_frame()
-                steps.append((effects + core.take_effects(), None))
-                self._frame_lost_response = False
-                self._core_advanced(core)
+                steps = self._apply_frame(core, frame)
                 handled = 0
                 try:
                     started = (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted))
@@ -3323,6 +3378,30 @@ class RealtimeSession:
             if isinstance(frames, AsyncGenerator):
                 await frames.aclose()
 
+    def _apply_frame(
+        self, core: SessionCore, frame: RealtimeFrame
+    ) -> list[tuple[list[Effect], RealtimeCodecEvent | None]]:
+        """Apply a frame to the core: each codec event in it, with the effects ahead of it, then the frame's tail."""
+        steps: list[tuple[list[Effect], RealtimeCodecEvent | None]] = []
+        effects: list[Effect] = []
+        for event in frame:
+            if not isinstance(event, StaleEvent):
+                core.apply(event)
+                effects.extend(core.take_effects())
+            report = event.event if isinstance(event, StaleEvent) else event
+            if isinstance(report, SessionUsage) and report.context_window_used is not None:
+                # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
+                # still the provider's latest reading of its context, though its usage isn't counted.)
+                self._reported_context_window_used = report.context_window_used
+            if not isinstance(report, LifecycleEvent):
+                steps.append((effects, report))
+                effects = []
+        core.end_frame()
+        steps.append((effects + core.take_effects(), None))
+        self._frame_lost_response = False
+        self._core_advanced(core)
+        return steps
+
     def _ensure_streamable(self) -> None:
         if not self._entered:
             raise UserError('Enter the realtime session with `async with` before streaming it.')
@@ -3338,21 +3417,7 @@ class RealtimeSession:
     def _publish_taps(self, event: RealtimeEvent) -> None:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
             if delta.audio_chunk:
-                if event.index == self._interrupted_audio_part_index:
-                    # A straggler from a barge-in-flushed part, generated before the provider
-                    # processed the cancel: erased from the taps and their accounting alike, so it
-                    # neither plays as stale audio nor skews the next playback-position mapping.
-                    pass
-                else:
-                    if event.index != self._audio_part_index:
-                        # First audio of a new part: when a playback position is attributed,
-                        # everything before this offset belongs to earlier turns.
-                        self._audio_part_index = event.index
-                        self._turn_audio_start_bytes = self._emitted_audio_bytes
-                        self._audio_items.append((self._emitted_audio_bytes, self._core.part_item(event.index)))
-                    self._emitted_audio_bytes += len(delta.audio_chunk)
-                    for tap in self._audio_taps:
-                        self._audio_tap_drops += tap.put(delta.audio_chunk)
+                self._tap_audio(event.index, delta.audio_chunk)
             if self._transcript_delta_taps and delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs. An empty transcript
@@ -3363,14 +3428,32 @@ class RealtimeSession:
                     delta=delta.transcript_delta or '',
                     transcript=delta.transcript,
                 )
-                for queue in self._transcript_delta_taps:
-                    if _put_tap(queue, update) is not None:
-                        self._transcript_tap_drops += 1
+                self._put_transcript_taps(self._transcript_delta_taps, update)
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
             if part.transcript:
-                for queue in self._transcript_taps:
-                    if _put_tap(queue, part) is not None:
-                        self._transcript_tap_drops += 1
+                self._put_transcript_taps(self._transcript_taps, part)
+
+    def _tap_audio(self, index: int, chunk: bytes) -> None:
+        """Hand a chunk of the speech part at stream `index` to the audio taps, counting it as emitted."""
+        if index == self._interrupted_audio_part_index:
+            # A straggler from a barge-in-flushed part, generated before the provider
+            # processed the cancel: erased from the taps and their accounting alike, so it
+            # neither plays as stale audio nor skews the next playback-position mapping.
+            return
+        if index != self._audio_part_index:
+            # First audio of a new part: when a playback position is attributed,
+            # everything before this offset belongs to earlier turns.
+            self._audio_part_index = index
+            self._turn_audio_start_bytes = self._emitted_audio_bytes
+            self._audio_items.append((self._emitted_audio_bytes, self._core.part_item(index)))
+        self._emitted_audio_bytes += len(chunk)
+        for tap in self._audio_taps:
+            self._audio_tap_drops += tap.put(chunk)
+
+    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:  # noqa: TID251  (not converted to anyio yet)
+        for queue in queues:
+            if _put_tap(queue, item) is not None:
+                self._transcript_tap_drops += 1
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
         if discard_pending:
@@ -3396,28 +3479,7 @@ class RealtimeSession:
 
         self._iterator_active = True
         self._start_pump()
-
-        async def queue_events() -> AsyncIterator[RealtimeEvent]:
-            while True:
-                item = await self._queue_get()
-                if item is self._queue_changed:
-                    # A pump error takes priority over stuck background tools. Their cancellation and
-                    # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
-                    if self._pump_error is not None:
-                        self._stream_exhausted = True
-                        if not self._error_was_delivered(self._pump_error):
-                            self._raise_delivered(self._pump_error)
-                    if self._pump_finished and not self._background_tasks and not self._queue:
-                        self._stream_exhausted = True
-                        return
-                    continue
-                if isinstance(item, BaseException):
-                    if self._error_was_delivered(item):
-                        continue
-                    self._raise_delivered(item)
-                yield cast('RealtimeEvent', item)
-
-        source = queue_events()
+        source = self._queue_events()
         stream: AsyncIterable[RealtimeEvent] = source
         if self._wrap_event_stream is not None:
             # The wrapper vocabulary is the `AgentStreamEvent` superset, but a wrapper applied to a
@@ -3433,3 +3495,34 @@ class RealtimeSession:
             self._iterator_active = False
             self._trim_queue()
             await aclose_all((stream_iterator, stream, source))
+
+    async def _queue_events(self) -> AsyncIterator[RealtimeEvent]:
+        """The events on the session queue, raising each error on it not delivered already, until the stream ends."""
+        while True:
+            item = await self._queue_get()
+            if item is self._queue_changed:
+                if self._stream_ends():
+                    return
+                continue
+            if isinstance(item, BaseException):
+                if self._error_was_delivered(item):
+                    continue
+                self._raise_delivered(item)
+            yield cast('RealtimeEvent', item)
+
+    def _stream_ends(self) -> bool:
+        """Whether the event stream ends as the queue changes.
+
+        A pump error marks the stream exhausted, and is raised if it wasn't delivered yet. A finished pump with no
+        background tool running and nothing queued marks it exhausted too, and ends the stream.
+        """
+        # A pump error takes priority over stuck background tools. Their cancellation and
+        # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
+        if self._pump_error is not None:
+            self._stream_exhausted = True
+            if not self._error_was_delivered(self._pump_error):
+                self._raise_delivered(self._pump_error)
+        if self._pump_finished and not self._background_tasks and not self._queue:
+            self._stream_exhausted = True
+            return True
+        return False

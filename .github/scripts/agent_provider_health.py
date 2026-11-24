@@ -29,7 +29,7 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 _TRACE_ID_RE = re.compile('[0-9a-f]{32}')
 _SPAN_ID_RE = re.compile('[0-9a-f]{16}')
-REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
+REQUIRED_LABELS = ('area:agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # The recheck, artifact-replacement and two stop steps `shared/provider-health.md` adds to each agent job.
 # `agentic_workflow_guard.py` requires these names in every compiled lock.
@@ -78,7 +78,9 @@ QuotaDiagnostic = Literal[
     'invalid_reset_time',
     'missing_windows',
 ]
-FailureKind = Literal['authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other']
+FailureKind = Literal[
+    'authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'cache_miss_limit', 'other'
+]
 # Two Z.ai Coding Plan accounts. Runs use the backup only when the primary is unusable and its key is configured.
 Account = Literal['primary', 'backup']
 # Each account's provider incident key and API key variable. The primary keeps the `zai` key of earlier incidents.
@@ -910,7 +912,16 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
+    if kind not in (
+        'authentication',
+        'rate_limit',
+        'plan_limit',
+        'request_limit',
+        'time_limit',
+        'timeout',
+        'cache_miss_limit',
+        'other',
+    ):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -1040,7 +1051,10 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
 
 
 def _claims_provider_scope(failure: Failure) -> bool:
-    return failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+    # AWF's API proxy sends the `cache_miss_limit` 403 itself, so Z.ai never saw the refused request.
+    return failure.kind != 'cache_miss_limit' and (
+        failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+    )
 
 
 def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
@@ -1148,9 +1162,10 @@ def _monitor_workflow_outcome(
         result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
     # The runner reports a Z.ai account or plan limit as `plan_limit`, and a request-rate 429 that outlasts its
     # retry window as `rate_limit`. Runners on older branches report every 429 as `rate_limit`; the next run's
-    # quota check still blocks on an exhausted plan.
+    # quota check still blocks on an exhausted plan. `cache_miss_limit` is AWF's API proxy refusing this run
+    # after its consecutive cache misses reached the cap; the next run starts a fresh count.
     if result.failure is not None and (
-        result.failure.kind in ('timeout', 'rate_limit') or result.failure.http_status == 529
+        result.failure.kind in ('timeout', 'rate_limit', 'cache_miss_limit') or result.failure.http_status == 529
     ):
         print('Transient request failure remains local to this attempt')
         return 0
@@ -1257,6 +1272,7 @@ def _failure_reason(result: RunResult) -> str:
         'request_limit': 'The agent reached its per-run request limit',
         'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
+        'cache_miss_limit': "AWF's API proxy stopped the run at its consecutive cache-miss limit",
         'other': 'The provider request failed with a typed error',
     }
     reason = reasons[failure.kind]

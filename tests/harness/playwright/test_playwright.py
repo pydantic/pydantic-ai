@@ -30,6 +30,7 @@ from opentelemetry.trace import Tracer
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
 
+import pydantic_ai_harness._browser_egress as egress_module
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.agent.spec import AgentSpec
@@ -1413,9 +1414,24 @@ _BLOCKED_ADDRESS_HOSTS = [
     'app.localhost',
     'localhost.',
     '169.254.169.254.',
+    'fec0::1',
+    '2606:4700:a9fe:a9fe::',
+    '2606:4700:4700:1111:a9:fea9:fe00:0',
+    '2606:4700:4700:1111::a9fe:a9fe',
+    '2606:4700::5efe:169.254.169.254',
+    '2606:4700::5efe:10.0.0.1',
+    '2606:4700::200:5efe:192.168.1.1',
 ]
 
-_PUBLIC_ADDRESS_HOSTS = ['example.com', '8.8.8.8', '2606:4700:4700::1111', 'localhost.example.com', 'my-localhost.dev']
+_PUBLIC_ADDRESS_HOSTS = [
+    'example.com',
+    '8.8.8.8',
+    '2606:4700:4700::1111',
+    'localhost.example.com',
+    'my-localhost.dev',
+    '2606:4700:4700:1111::808:808',
+    '::ffff:8.8.8.8',
+]
 
 
 class TestPrivateAddressBlocking:
@@ -1497,7 +1513,7 @@ class TestNameResolutionBlocking:
             looked_up.append(host)
             return (address,)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
         return looked_up
 
     async def test_navigate_refuses_a_name_that_resolves_private(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1652,7 +1668,7 @@ class TestNameResolutionBlocking:
         async def unresolvable(host: str) -> tuple[str, ...]:
             raise socket.gaierror('Name or service not known')
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', unresolvable)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', unresolvable)
         page = _FakePage()
         result = await _toolset(page).navigate('https://nope.invalid/')
         assert result == (
@@ -1667,7 +1683,7 @@ class TestNameResolutionBlocking:
         async def unencodable(host: str) -> tuple[str, ...]:
             raise UnicodeError('label empty or too long')
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', unencodable)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', unencodable)
         page = _FakePage()
         result = await _toolset(page).navigate('http://a..com/')
         assert result == (
@@ -1680,13 +1696,13 @@ class TestResolutionIsBounded:
     """The lookup runs before an operation's deadline exists, so it carries its own."""
 
     async def test_a_stalled_resolver_does_not_hold_the_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(toolset_module, '_RESOLUTION_TIMEOUT_SECONDS', 0.01)
+        monkeypatch.setattr(egress_module, 'RESOLUTION_TIMEOUT_SECONDS', 0.01)
 
         async def never_answers(host: str) -> tuple[str, ...]:
             await asyncio.Event().wait()
             raise AssertionError('unreachable')  # pragma: no cover
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', never_answers)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', never_answers)
         result = await _toolset(_FakePage()).navigate('https://example.com/')
         # Bounded, and refused rather than allowed: an attacker who controls the name
         # controls how long its lookup takes, so a stall must not be a way through.
@@ -1706,7 +1722,7 @@ class TestResolutionCaching:
         assert looked_up == ['example.com']
 
     async def test_a_full_cache_is_emptied_rather_than_grown(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(toolset_module, '_RESOLUTION_CACHE_MAX', 1)
+        monkeypatch.setattr(egress_module, 'RESOLUTION_CACHE_MAX', 1)
         looked_up = TestNameResolutionBlocking._pointing_at(monkeypatch, '93.184.216.34')  # pyright: ignore[reportPrivateUsage]
         toolset = _toolset(_FakePage())
         await toolset.navigate('https://one.example/')
@@ -2386,7 +2402,7 @@ class TestPlaywrightBrowserLifecycle:
                 await asyncio.Event().wait()
             return ('93.184.216.34',)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
 
         def inherit(context: _FakeBrowserContext) -> None:
             # A fresh page per connection: a retried attach reconnects and sees new frame objects.
@@ -2402,12 +2418,12 @@ class TestPlaywrightBrowserLifecycle:
             assert 'retry the call to check the rest' in await tools.tabs()
             assert looked_up == ['example.com', 'frame0.example.org']
             # As if the lookup cache had churned: only the session's own record of admitted documents remains.
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             stalled -= {'frame0.example.org', 'frame1.example.org'}
             assert 'retry the call to check the rest' in await tools.tabs()
             assert looked_up == ['frame0.example.org', 'frame1.example.org', 'frame2.example.org']
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             stalled.clear()
             assert await tools.tabs() == '0 (active): Crowded -- https://example.com/'
@@ -2422,7 +2438,7 @@ class TestPlaywrightBrowserLifecycle:
             looked_up.append(host)
             return ('93.184.216.34',)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
         page = _FakePage(url='https://example.com/', title='Embedding')
         frame = _FakeFrameContent(url='https://embed.example.org/')
         page.frames.append(frame)
@@ -2435,21 +2451,21 @@ class TestPlaywrightBrowserLifecycle:
             tools = _toolset(page, session=session)
             await tools.tabs()
             assert looked_up == ['example.com', 'embed.example.org']
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             await tools.tabs()
             assert looked_up == []
             frame.url = 'https://blocked.example/'
             assert 'blocked by the browser policy' in await tools.tabs()
         frame.url = 'https://embed.example.org/'
-        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        egress_module.resolution_cache.clear()
         looked_up.clear()
         # A new use of the session checks everything again.
         async with session:
             tools = _toolset(page, session=session)
             await tools.tabs()
             assert looked_up == ['example.com', 'embed.example.org']
-        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        egress_module.resolution_cache.clear()
         looked_up.clear()
         # So does another session on the same browser: the record belongs to one session, and each run
         # gets its own session (`test_for_run_isolates_state`).
@@ -2473,7 +2489,7 @@ class TestPlaywrightBrowserLifecycle:
             looked_up.append(host)
             return (addresses[host],)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
 
         def inherit(context: _FakeBrowserContext) -> None:
             page = _FakePage(url='https://example.com/', title='Embedding')
@@ -2489,7 +2505,7 @@ class TestPlaywrightBrowserLifecycle:
             assert looked_up == ['example.com', 'embed.example.org']
             # The name now points inward, and the lookup cache has expired.
             addresses['embed.example.org'] = '127.0.0.1'
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             # The loaded document is not checked again, but every new request to its host is.
             assert await tools.tabs() == '0 (active): Embedding -- https://example.com/'
@@ -3432,6 +3448,131 @@ class TestPlaywrightBrowserLifecycle:
         assert 'SUPERSECRET' not in rendered
         assert 'token=' not in rendered
         assert 'http://127.0.0.1:59999' in rendered
+
+    # Messages as Playwright 1.64 words them. It quotes the `/json/version/` URL it
+    # derives from an `http(s)` endpoint, and a normalized form of the endpoint (host
+    # lower-cased, query percent-encoded), neither of which contains `cdp_url` verbatim.
+    @pytest.mark.parametrize(
+        ('endpoint', 'message', 'kept'),
+        [
+            pytest.param(
+                'http://127.0.0.1:9222/?apiToken=SUPERSECRET',
+                'BrowserType.connect_over_cdp: Unexpected status 401 when connecting to '
+                'http://127.0.0.1:9222/json/version/?apiToken=SUPERSECRET.\n'
+                'This does not look like a DevTools server, try connecting via ws://.\n'
+                'Call log:\n'
+                '  - <ws preparing> retrieving websocket url from http://127.0.0.1:9222/?apiToken=SUPERSECRET\n',
+                ('Unexpected status 401', 'http://127.0.0.1:9222'),
+                id='version-probe-query',
+            ),
+            pytest.param(
+                'http://127.0.0.1:9222/?x-api-key=SUPER"SECRET',
+                'BrowserType.connect_over_cdp: Unexpected status 401 when connecting to '
+                'http://127.0.0.1:9222/json/version/?x-api-key=SUPER%22SECRET.\n'
+                'This does not look like a DevTools server, try connecting via ws://.\n'
+                'Call log:\n'
+                '  - <ws preparing> retrieving websocket url from http://127.0.0.1:9222/?x-api-key=SUPER"SECRET\n',
+                ('Unexpected status 401', 'http://127.0.0.1:9222'),
+                id='percent-encoded-query',
+            ),
+            pytest.param(
+                'http://LOCALHOST:9222/session/SUPERSECRET',
+                'BrowserType.connect_over_cdp: Unexpected status 401 when connecting to '
+                'http://localhost:9222/session/SUPERSECRET/json/version/.\n'
+                'This does not look like a DevTools server, try connecting via ws://.\n'
+                'Call log:\n'
+                '  - <ws preparing> retrieving websocket url from http://LOCALHOST:9222/session/SUPERSECRET\n',
+                ('Unexpected status 401', 'http://localhost:9222'),
+                id='lower-cased-host-path',
+            ),
+            pytest.param(
+                'ws://LOCALHOST:9222/devtools/browser/SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: connect ECONNREFUSED 127.0.0.1:9222\n'
+                'Call log:\n'
+                '  - <ws connecting> ws://localhost:9222/devtools/browser/SUPERSECRET\n'
+                '  - <ws connect error> ws://localhost:9222/devtools/browser/SUPERSECRET '
+                'connect ECONNREFUSED 127.0.0.1:9222\n',
+                ('ECONNREFUSED 127.0.0.1:9222', 'ws://localhost:9222'),
+                id='websocket-lower-cased-host',
+            ),
+        ],
+    )
+    async def test_attach_failure_redacts_endpoint_forms_playwright_derives(
+        self, monkeypatch: pytest.MonkeyPatch, endpoint: str, message: str, kept: tuple[str, ...]
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page, launch_error=PlaywrightError(message))
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url=endpoint)])
+        result = await agent.run('screenshot the page')
+        rendered = str(result.all_messages())
+        assert 'SECRET' not in rendered
+        for text in kept:
+            assert text in rendered
+
+    # Messages as Playwright 1.65 words a rejected WebSocket handshake: the URL without
+    # its query, the status, then the response body, once in the message and again in
+    # the call log. A server that repeats the credential it rejected puts it in the body.
+    @pytest.mark.parametrize(
+        ('endpoint', 'message', 'kept'),
+        [
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?token=SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPERSECRET"}\n'
+                'Call log:\n'
+                '  - <ws connecting> ws://127.0.0.1:9222/devtools/browser\n'
+                '  - <ws unexpected response> ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPERSECRET"}\n',
+                ('401 Unauthorized', '"error": "invalid token REDACTED"', 'ws://127.0.0.1:9222'),
+                id='query-value',
+            ),
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?token=SUPER%20SECRET%2F1',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPER+SECRET%2F1"}\n'
+                'Call log:\n'
+                '  - <ws unexpected response> ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPER SECRET/1"}\n',
+                ('"error": "invalid token REDACTED"',),
+                id='percent-encoded-query-value',
+            ),
+            pytest.param(
+                'ws://user:SUPERSECRET@127.0.0.1:9222/devtools/browser',
+                'BrowserType.connect_over_cdp: WebSocket error: '
+                'ws://user:SUPERSECRET@127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid password SUPERSECRET"}\n'
+                'Call log:\n'
+                '  - <ws connecting> ws://user:SUPERSECRET@127.0.0.1:9222/devtools/browser\n',
+                ('"error": "invalid password REDACTED"', 'ws://127.0.0.1:9222'),
+                id='userinfo-password',
+            ),
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?browser=chromium&x-api-key=SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid x-api-key SUPERSECRET for chromium"}\n',
+                ('"error": "invalid x-api-key REDACTED for REDACTED"',),
+                id='any-parameter-name',
+            ),
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?headless=true&profile=default&token=MYSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token MYSECRET", "headless": true, "profile": "default"}\n',
+                ('"headless": true', '"profile": "default"', '"error": "invalid token REDACTED"'),
+                id='values-under-eight-characters-kept',
+            ),
+        ],
+    )
+    async def test_attach_failure_redacts_endpoint_credentials_the_server_repeats(
+        self, monkeypatch: pytest.MonkeyPatch, endpoint: str, message: str, kept: tuple[str, ...]
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page, launch_error=PlaywrightError(message))
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url=endpoint)])
+        result = await agent.run('screenshot the page')
+        rendered = str(result.all_messages())
+        assert 'SECRET' not in rendered
+        for text in kept:
+            assert text in rendered
 
     async def test_attach_failure_redacts_an_endpoint_without_a_scheme_or_port(
         self, monkeypatch: pytest.MonkeyPatch
@@ -4920,3 +5061,17 @@ class TestReviewFollowUps:
         assert f'URL: {redacted}' in await toolset.click('a#next')
         assert f'URL: {redacted}' in await toolset.go_back()
         assert redacted in await toolset.tabs('list')
+
+
+@pytest.mark.parametrize(
+    ('url', 'reason'),
+    [
+        ('https://example.com/a', 'domain in blocked_domains'),
+        ('https://example.com/a?b=c#d', 'domain in blocked_domains'),
+        ('https://example.com/a?b=c\\d', 'domain in blocked_domains'),
+        ('https://example.com\\a?b=c', 'URL with no host'),
+    ],
+)
+def test_url_host_parses_up_to_the_query(url: str, reason: str) -> None:
+    policy = EgressPolicy(blocked_domains=['example.com'])
+    assert policy.refuse(EgressRequest(url=url, kind='navigation')) == reason

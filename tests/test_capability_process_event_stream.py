@@ -33,6 +33,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -43,7 +44,6 @@ from .capability_models import (
 )
 
 pytestmark = []
-READINESS_WAIT_TIMEOUT = 10
 
 
 class _RequestOnlyModel(Model):

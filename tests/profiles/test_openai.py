@@ -201,8 +201,8 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
     ),
-    # gpt-6-astra and gpt-6.1-sol: reason by default with no `effort='none'`; carry over
-    # `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
+    # gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra: reason by default with no `effort='none'`;
+    # carry over `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
     ReasoningCase(
         model='gpt-6-astra',
         enabled_by_default=True,
@@ -215,6 +215,26 @@ REASONING_CASES = [
     ),
     ReasoningCase(
         model='gpt-6.1-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-astra',
         enabled_by_default=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
@@ -319,6 +339,20 @@ def test_delegates_unprompted(model_name: str, delegates: bool):
     profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('delegates_unprompted', False) is delegates
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [('gemini-3.1-flash-lite', True), ('google/gemini-3.1-flash-lite', False), ('gpt-5-mini', False)],
+)
+def test_cumulative_stream_usage_only_on_openai_provider_gemini_names(model_name: str, expected: bool):
+    """The shared profile stays off, as the hosts that reuse it aren't verified to repeat running totals."""
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_chat_streaming_repeats_usage_totals', False) is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_chat_streaming_repeats_usage_totals', False) is False
 
 
 class TestEncryptedReasoningContent:

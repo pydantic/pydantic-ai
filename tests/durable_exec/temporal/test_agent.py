@@ -118,6 +118,7 @@ from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
 from ...wrapped_retry_toolsets import call_probe_once, snapshot_probe_toolset
+from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
@@ -1028,6 +1029,7 @@ async def test_complex_agent_run_in_workflow(
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     assert root_span == snapshot(
@@ -2286,6 +2288,16 @@ class SimpleAgentWorkflowWithOverrideModel:
             pass
 
 
+async def test_temporal_agent_override_capabilities_in_workflow() -> None:
+    """The guard raises before any model request, so there is nothing to record: `in_workflow` is patched instead."""
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(
+            UserError, match='Capabilities cannot be contextually overridden inside a Temporal workflow'
+        ):
+            with simple_temporal_agent.override(capabilities=[]):
+                pass
+
+
 async def test_temporal_agent_override_model_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
@@ -2394,7 +2406,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         with workflow_raises(
             UserError,
             snapshot(
-                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
             ),
         ):
             await client.execute_workflow(

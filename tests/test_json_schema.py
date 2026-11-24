@@ -4,10 +4,12 @@ from __future__ import annotations as _annotations
 
 import json
 import re
+import sys
 from copy import deepcopy
 from typing import Any
 
 import pytest
+from jsonschema.validators import validator_for
 from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
@@ -24,7 +26,7 @@ from .conftest import try_import
 
 with try_import() as provider_imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
-    from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer
+    from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer, BedrockProvider
     from pydantic_ai.providers.openrouter import (
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
@@ -1375,6 +1377,345 @@ def test_inline_defs_subclass_transforms_a_keyword_ref_once():
             },
         }
     )
+
+
+def test_inline_defs_writes_out_a_ref_under_a_keyword_the_walk_does_not_enter():
+    """A `$ref` under `not`, `if`/`then`/`else` or `dependentSchemas` is replaced by its definition as written.
+
+    The walk leaves those subschemas as written, so the definition goes in as written too, with the `$ref`'s other
+    keywords merged over it, and `transform()` doesn't run on it. At a position the walk enters, the same definition is
+    transformed as before. Unit test: a cassette matches on method and URI, not on the schema in the request body.
+    """
+
+    class MarkingTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            if 'description' in schema:
+                schema['description'] += '!'
+            return schema
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'username': {'type': 'string', 'not': {'$ref': '#/$defs/Reserved'}},
+            'role': {'$ref': '#/$defs/Reserved'},
+            'address': {
+                'type': 'object',
+                'properties': {'country': {'type': 'string'}, 'zip': {'type': 'string'}},
+                'if': {'$ref': '#/$defs/Domestic'},
+                'then': {'$ref': '#/$defs/Zip', 'required': ['zip']},
+                'dependentSchemas': {'zip': {'$ref': '#/$defs/Zip'}},
+            },
+        },
+        '$defs': {
+            'Reserved': {'description': 'a reserved name', 'enum': ['admin', 'root']},
+            'Domestic': {'properties': {'country': {'const': 'US'}}},
+            'Zip': {'properties': {'zip': {'pattern': '^[0-9]{5}$'}}},
+        },
+    }
+    assert MarkingTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'username': {'type': 'string', 'not': {'description': 'a reserved name', 'enum': ['admin', 'root']}},
+                'role': {'description': 'a reserved name!', 'enum': ['admin', 'root']},
+                'address': {
+                    'type': 'object',
+                    'properties': {'country': {'type': 'string'}, 'zip': {'type': 'string'}},
+                    'if': {'properties': {'country': {'const': 'US'}}},
+                    'then': {'properties': {'zip': {'pattern': '^[0-9]{5}$'}}, 'required': ['zip']},
+                    'dependentSchemas': {'zip': {'properties': {'zip': {'pattern': '^[0-9]{5}$'}}}},
+                },
+            },
+        }
+    )
+
+
+def test_inline_defs_keeps_a_recursive_ref_under_a_keyword_the_walk_does_not_enter():
+    """A `$ref` under `not` that leads back into its own definition stays, and the definition goes under `$defs`.
+
+    A recursive definition can't be written out in full, so the `$ref` that closes the cycle stays and the output takes
+    the `$defs` + `$ref` shape the walk gives a recursive definition it enters. The definition there is as written,
+    like the rest of what's under `not`. Unit test: a cassette matches on method and URI, not on the request body.
+    """
+    chain: JsonSchema = {
+        'type': 'object',
+        'properties': {'child': {'$ref': '#/$defs/Chain'}},
+        'required': ['child'],
+    }
+    schema: JsonSchema = {
+        'type': 'object',
+        'title': 'Tree',
+        'properties': {'node': {'type': 'object', 'not': {'$ref': '#/$defs/Chain'}}},
+        '$defs': {'Chain': chain},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            '$defs': {
+                'Chain': chain,
+                'Tree': {
+                    'type': 'object',
+                    'title': 'Tree',
+                    'properties': {'node': {'type': 'object', 'not': chain}},
+                },
+            },
+            '$ref': '#/$defs/Tree',
+        }
+    )
+
+
+def test_inline_defs_leaves_a_ref_under_not_that_already_resolves():
+    """A `$ref` under `not` to a recursive definition the output keeps under `$defs` already resolves, so it stays.
+
+    Only a schema whose walk leaves a `$ref` into `$defs` pointing at nothing is written out, so every other schema
+    gets the output it got before. Unit test: a cassette matches on method and URI, not on the request body.
+    """
+    node: JsonSchema = {'type': 'object', 'properties': {'next': {'$ref': '#/$defs/Node'}}}
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'child': {'$ref': '#/$defs/Node'}, 'other': {'type': 'object', 'not': {'$ref': '#/$defs/Node'}}},
+        '$defs': {'Node': node},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            '$defs': {
+                'Node': node,
+                'root': {
+                    'type': 'object',
+                    'properties': {'child': node, 'other': {'type': 'object', 'not': {'$ref': '#/$defs/Node'}}},
+                },
+            },
+            '$ref': '#/$defs/root',
+        }
+    )
+
+
+def test_inline_defs_leaves_a_ref_in_data_alone():
+    """A `$ref` inside `examples`, `default`, `enum` or `const` is data, not a subschema, so it isn't written out.
+
+    Unit test: a cassette matches on method and URI, not on the request body.
+    """
+    data = {'$ref': '#/$defs/Empty'}
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'value': {
+                'not': {'$ref': '#/$defs/Empty'},
+                'examples': [data],
+                'default': data,
+                'enum': [data, 'other'],
+            },
+            'fixed': {'const': data},
+        },
+        '$defs': {'Empty': {'const': ''}},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'value': {'not': {'const': ''}, 'examples': [data], 'default': data, 'enum': [data, 'other']},
+                'fixed': {'const': data},
+            },
+        }
+    )
+
+
+def test_inline_defs_writes_out_a_json_pointer_into_defs_under_not():
+    """A JSON pointer `$ref` into a definition, under `not`, is replaced by the subschema it points at, as written.
+
+    Unit test: a cassette matches on method and URI, not on the request body.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'nickname': {'type': 'string', 'not': {'$ref': '#/$defs/User/properties/name'}}},
+        '$defs': {'User': {'type': 'object', 'properties': {'name': {'type': 'string', 'maxLength': 2}}}},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'nickname': {'type': 'string', 'not': {'type': 'string', 'maxLength': 2}}},
+        }
+    )
+
+
+def test_inline_defs_leaves_a_ref_under_not_it_cannot_write_out():
+    """A `$ref` under `not` to a missing definition, or a JSON pointer that leads back to itself, stays a `$ref`.
+
+    A pointer that closes a cycle names no definition the output could keep, so it stays after one level is written
+    out, as does a `$ref` to a definition that doesn't exist. A recursive definition nothing refers to isn't added to
+    the output. Unit test: a cassette matches on method and URI, not on the request body.
+    """
+    loop = '#/$defs/Loop/properties/next'
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'missing': {'type': 'string', 'not': {'$ref': '#/$defs/Missing'}},
+            'loop': {'type': 'object', 'not': {'$ref': loop}},
+        },
+        '$defs': {
+            'Loop': {'type': 'object', 'properties': {'next': {'not': {'$ref': loop}}}},
+            'Unused': {'not': {'$ref': '#/$defs/Unused'}},
+        },
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'missing': {'type': 'string', 'not': {'$ref': '#/$defs/Missing'}},
+                'loop': {'type': 'object', 'not': {'not': {'$ref': '#/$defs/Loop/properties/next'}}},
+            },
+        }
+    )
+
+
+def test_inline_defs_leaves_every_ref_under_not_when_writing_them_out_passes_the_value_limit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """When writing out the `$ref`s under `not` would take the schema past the value limit, none is written out.
+
+    The walk doesn't inline a `$ref` there, so such a schema didn't raise before, and doesn't now: it goes out as the
+    walk left it, without its `$defs`, so each `$ref` points at nothing. Unit test: the limit is reached while the
+    schema is prepared, before any provider is involved.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    levels = _VALUE_LIMIT.bit_length()
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'x': {'not': {'$ref': f'#/$defs/D{levels}'}},
+            'code': {'type': 'string', 'not': {'$ref': '#/$defs/Short'}},
+        },
+        '$defs': {**_doubling_chain(levels)['$defs'], 'Short': {'type': 'string', 'maxLength': 2}},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {
+            'x': {'not': {'$ref': f'#/$defs/D{levels}'}},
+            'code': {'type': 'string', 'not': {'$ref': '#/$defs/Short'}},
+        },
+    }
+
+
+def test_inline_defs_writes_out_only_the_definitions_the_walk_reaches(monkeypatch: pytest.MonkeyPatch):
+    """A definition nothing refers to isn't written out, so it can't push the schema past the value limit.
+
+    Unit test: the limit is reached while the schema is prepared, before any provider is involved.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    levels = _VALUE_LIMIT.bit_length()
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'code': {'type': 'string', 'not': {'$ref': '#/$defs/Short'}}},
+        '$defs': {
+            **_doubling_chain(levels)['$defs'],
+            'Unused': {'not': {'$ref': f'#/$defs/D{levels}'}},
+            'Short': {'type': 'string', 'maxLength': 2},
+        },
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {'type': 'object', 'properties': {'code': {'type': 'string', 'not': {'type': 'string', 'maxLength': 2}}}}
+    )
+
+
+def test_inline_defs_counts_a_ref_written_out_in_a_definition_once(monkeypatch: pytest.MonkeyPatch):
+    """A definition written out inside one the walk inlines counts once toward the value limit, not twice.
+
+    `Reserved` alone is over half the limit, so counting it again inside `User` would pass the limit and leave the
+    `$ref` pointing at nothing. Unit test: the limit is reached while the schema is prepared, before any provider is
+    involved.
+    """
+    monkeypatch.setattr('pydantic_ai._json_schema.MAX_INLINED_SCHEMA_VALUES', _VALUE_LIMIT, raising=False)
+    reserved = list(range(_VALUE_LIMIT * 3 // 5))
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'user': {'$ref': '#/$defs/User'}},
+        '$defs': {
+            'User': {'type': 'object', 'properties': {'name': {'type': 'string', 'not': {'$ref': '#/$defs/Reserved'}}}},
+            'Reserved': {'enum': reserved},
+        },
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {
+            'user': {'type': 'object', 'properties': {'name': {'type': 'string', 'not': {'enum': reserved}}}}
+        },
+    }
+
+
+def test_inline_defs_leaves_a_ref_under_not_when_writing_it_out_recurses_too_deep():
+    """A chain of definitions under `not` too deep to write out stays as the walk left it, rather than raising.
+
+    The walk never enters `not`, so the chain didn't raise before. Unit test: the recursion happens while the schema
+    is prepared, before any provider is involved.
+    """
+    depth = sys.getrecursionlimit()
+    defs: JsonSchema = {'D0': {'type': 'string'}}
+    for i in range(1, depth):
+        defs[f'D{i}'] = {'not': {'$ref': f'#/$defs/D{i - 1}'}}
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'not': {'$ref': f'#/$defs/D{depth - 1}'}}},
+        '$defs': defs,
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {'x': {'not': {'$ref': f'#/$defs/D{depth - 1}'}}},
+    }
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+@pytest.mark.parametrize('model_name', ['us.zai.glm-5.3', 'minimax.minimax-m2'])
+def test_strict_bedrock_inlining_keeps_what_a_ref_under_not_rejects(model_name: str):
+    """A strict Bedrock transformer that inlines `$defs` keeps the bounds of a definition written out under `not`.
+
+    In strict mode these transformers move `minimum` into `description`. Under `not`, that would turn "anything but a
+    bulk quantity" into "anything but an integer", so the definition goes in as written instead. Unit test: Bedrock
+    validates the arguments the model produces, not the schema, so a recording wouldn't show the constraint changing.
+    """
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_cls = profile.get('json_schema_transformer')
+    assert transformer_cls is not None
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'quantity': {'type': 'integer', 'not': {'$ref': '#/$defs/Bulk'}}},
+        'required': ['quantity'],
+        '$defs': {'Bulk': {'type': 'integer', 'minimum': 100}},
+    }
+
+    walked = transformer_cls(schema, strict=True).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'quantity': 5})
+    assert not validator.is_valid({'quantity': 500})
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+@pytest.mark.parametrize('model_name', ['us.zai.glm-5.3', 'minimax.minimax-m2'])
+def test_strict_bedrock_inlining_keeps_the_root_definition_a_ref_under_not_leads_back_to(model_name: str):
+    """A root `$ref` to a definition that a `$ref` under `not` leads back to keeps that definition as written.
+
+    The walked root goes under a name of its own, so the `$ref` under `not` doesn't reach the copy whose `minimum`
+    moved into `description`. Unit test: Bedrock validates the arguments the model produces, not the schema, so a
+    recording wouldn't show the constraint changing.
+    """
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_cls = profile.get('json_schema_transformer')
+    assert transformer_cls is not None
+    schema: JsonSchema = {
+        '$ref': '#/$defs/Node',
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'properties': {'n': {'type': 'integer', 'minimum': 0}, 'child': {'not': {'$ref': '#/$defs/Node'}}},
+                'required': ['n'],
+            }
+        },
+    }
+
+    walked = transformer_cls(schema, strict=True).walk()
+    validator = validator_for(walked)(walked)
+    assert validator.is_valid({'n': 1, 'child': {'n': -1}})
+    assert not validator.is_valid({'n': 1, 'child': {'n': 1}})
 
 
 @pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])

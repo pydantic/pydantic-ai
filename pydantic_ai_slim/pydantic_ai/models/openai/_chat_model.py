@@ -46,6 +46,7 @@ from ..._run_context import RunContext
 from ..._thinking_part import render_replayed_thinking
 from ..._utils import (
     guard_tool_call_id as _guard_tool_call_id,
+    has_yaml_structured_suffix as _has_yaml_structured_suffix,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
@@ -336,10 +337,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
 
-        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
-        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
+        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6,
+        GPT-6.1 and GPT-6.2 model), while the Responses API on the same models accepts it, and the providers declare their
         tiers per model rather than per API.
+
+        `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
         """
+        if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
+            profile = merge_profile(profile, ModelProfile(deprecation=None))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:
             return profile
@@ -1443,10 +1448,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             image_url['url'] = image_content['data']
         return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
 
+    @staticmethod
+    def _is_inlined_as_text(item: BinaryContent) -> bool:
+        """Whether `item` is inlined as a text block.
+
+        An `image/*+yaml` type is an image, and a `+yaml` type the OS mime table knows an extension for is a
+        document: both keep their own part.
+        """
+        return _is_text_like_media_type(item.media_type) or (
+            _has_yaml_structured_suffix(item.media_type) and not item.is_image and not item.is_document
+        )
+
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
         profile = self.profile
-        if _is_text_like_media_type(item.media_type):
+        if self._is_inlined_as_text(item):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
                 item.data.decode('utf-8'),
