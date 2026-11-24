@@ -371,6 +371,8 @@ def test_bedrock_mantle_profiles() -> None:
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supported_native_tools') == frozenset()
+    # GPT-5.2 is on the Responses interface but OpenAI doesn't offer it the computer tool.
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.2').get('supported_native_tools') == frozenset()
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'
     # Non-OpenAI and unknown models fall back to the default profile (best-effort).
     assert infer_model_profile('bedrock-mantle:anthropic.claude-sonnet-5') == DEFAULT_PROFILE
