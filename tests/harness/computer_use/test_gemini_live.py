@@ -18,7 +18,7 @@ from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction
 from tests.models.conftest import json_objects
 
 from ...conftest import RequestCapture, try_import
-from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenBackend, ScreenProvider, png
+from .display_fakes import FAKE_DISPLAY_SIZE, ScreenBackend, ScreenProvider, png
 from .shared_live import vcr_config as vcr_config
 
 with try_import() as google_installed:
