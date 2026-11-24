@@ -21,6 +21,7 @@ from pydantic_ai_pax.plugins import AgentCapability, Plugin, SessionStart
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.cli_runner import CliRunner
+from tests.pax.test_app_edges import inputs
 
 
 class ProbeSettings(BaseModel):
@@ -97,38 +98,44 @@ def _loaded(shell: SessionRuntime[None, str]) -> list[str]:
     return [entry.name for entry in shell.loader.entries() if entry.loaded is not None]
 
 
-async def test_a_launched_plugin_stays_off_through_reload_once_disabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_launched_plugin_loads_disabled_and_is_saved_as_declared(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     shell = _shell(store)
     await shell.loader.load_all()
     assert _loaded(shell) == ['probe']
     # Never saved before, it is saved disabled, as it is declared, along with the settings it saved.
     assert store.plugins() == [PROBE.model_copy(update={'settings': {'started': 1}})]
-    await shell.loader.disable('probe')
     await shell.close('exit')
 
+
+@pytest.mark.parametrize(
+    ('commands', 'starts'),
+    [
+        pytest.param(['/reload'], 2, id='kept-through-reload'),
+        pytest.param(['/plugins disable probe', '/reload'], 1, id='disabled-stays-off'),
+    ],
+)
+async def test_reload_keeps_the_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commands: list[str], starts: int
+) -> None:
     def rebuild(build: Callable[[], object]) -> object:
         return build()
 
     monkeypatch.setattr(app, 'reload_clai', rebuild)
-    rebuilt = app._reload_shell(  # pyright: ignore[reportPrivateUsage]
-        shell,
-        agent=Agent(TestModel(call_tools=[])),
-        rebuild_stock=None,
+    inputs(monkeypatch, [*commands, '/exit'])
+    store = SettingsStore(tmp_path / 'config.db')
+    await app.chat(
+        Agent(TestModel()),
         deps=None,
-        plugins=(),
-        console=Console(file=io.StringIO()),
+        settings=Settings(model='test'),
+        console=Console(file=io.StringIO(), width=200),
+        store=store,
         builtin_plugins=[PROBE],
-        use_defaults=False,
-        use_stock_defaults=False,
-        transcript=app.TranscriptBuffer(),
-        load_plugins=True,
+        launch_plugins=['probe'],
     )
-    await rebuilt.loader.load_all()
-    assert _loaded(rebuilt) == []
-    await rebuilt.close('exit')
+    # Each load counts a start; the rebuilt session loads it again only while the launch still names it.
+    [saved] = store.plugins()
+    assert (saved.enabled, saved.settings) == (False, {'started': starts})
 
 
 async def test_reloading_a_launched_plugin_keeps_it_in_the_other_sessions(tmp_path: Path) -> None:
