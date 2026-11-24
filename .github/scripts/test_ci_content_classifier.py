@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -26,7 +27,7 @@ class ClassifierJob(TypedDict):
     steps: list[ClassifierStep]
 
 
-CheckWith = TypedDict('CheckWith', {'allowed-skips': str})
+CheckWith = TypedDict('CheckWith', {'allowed-skips': str, 'allowed-failures': str})
 
 
 CheckStep = TypedDict('CheckStep', {'with': CheckWith})
@@ -56,6 +57,21 @@ JOB_STEPS_ADAPTER: TypeAdapter[JobSteps] = TypeAdapter(JobSteps)
 BENCHMARK_JOB_ADAPTER: TypeAdapter[BenchmarkJob] = TypeAdapter(BenchmarkJob)
 CONDITIONAL_JOB_ADAPTER: TypeAdapter[ConditionalJob] = TypeAdapter(ConditionalJob)
 DEPENDENT_JOB_ADAPTER: TypeAdapter[DependentJob] = TypeAdapter(DependentJob)
+JOB_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+SERVICES_ADAPTER: TypeAdapter[dict[str, dict[str, object]]] = TypeAdapter(dict[str, dict[str, object]])
+STRING_ADAPTER: TypeAdapter[str] = TypeAdapter(str)
+
+# The `ci.yml` jobs whose result depends on an upstream service, image or daemon.
+LIVE_SERVICE_JOBS = frozenset(
+    {
+        'harness-localstack-integration',
+        'harness-mongodb-integration',
+        'harness-postgres-integration',
+        'harness-redis-integration',
+        'harness-azure-durable-task-integration',
+        'harness-kubernetes-integration',
+    }
+)
 
 
 def _workflow(path: Path = WORKFLOW) -> Workflow:
@@ -725,6 +741,52 @@ def test_latest_versions_canary_runs_on_tags_without_gating_any_job():
     for name, job in jobs.items():
         needs = DEPENDENT_JOB_ADAPTER.validate_python(job).get('needs', [])
         assert 'latest-versions-canary' not in ([needs] if isinstance(needs, str) else needs), name
+
+
+def test_check_allows_live_service_failures_only_on_tags():
+    check = CHECK_JOB_ADAPTER.validate_python(_workflow()['jobs']['check'])
+    allowed_failures = check['steps'][0]['with']['allowed-failures']
+
+    match = re.fullmatch(
+        r"\$\{\{\s*github\.ref_type == 'tag'\s*&&\s*'([^']+)'\s*\|\|\s*''\s*\}\}", allowed_failures.strip()
+    )
+    assert match
+    assert set(match[1].split(',')) == LIVE_SERVICE_JOBS
+    assert LIVE_SERVICE_JOBS <= set(check['needs'])
+
+
+def _services(job: object) -> dict[str, dict[str, object]]:
+    return SERVICES_ADAPTER.validate_python(JOB_ADAPTER.validate_python(job).get('services', {}))
+
+
+def test_ci_service_images_are_pinned_by_digest():
+    for name, job in _workflow()['jobs'].items():
+        for service in _services(job).values():
+            image = STRING_ADAPTER.validate_python(service['image'])
+            assert re.fullmatch(r'[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}', image), name
+
+
+def test_live_service_images_nightly_runs_the_ci_jobs_on_their_floating_tags():
+    ci_jobs = _workflow()['jobs']
+    nightly_jobs = _workflow(WORKFLOW.with_name('live-service-images-nightly.yml'))['jobs']
+    tested = set(nightly_jobs) - {'report'}
+    assert tested == {name for name in LIVE_SERVICE_JOBS if _services(ci_jobs[name])}
+
+    for name in tested:
+        ci = JOB_ADAPTER.validate_python(ci_jobs[name])
+        nightly = JOB_ADAPTER.validate_python(nightly_jobs[name])
+        # Every pinned reference to the image, the Redis cluster step's included, moves to the floating tag.
+        expected = json.dumps({key: ci[key] for key in ('timeout-minutes', 'services', 'env', 'steps')})
+        for service, config in _services(ci).items():
+            pinned = STRING_ADAPTER.validate_python(config['image'])
+            floating = STRING_ADAPTER.validate_python(_services(nightly)[service]['image'])
+            assert '@' not in floating, name
+            assert pinned.startswith(floating.rpartition(':')[0] + ':'), name
+            expected = expected.replace(pinned, floating)
+        # The nightly job's first step records the digest the floating tag resolved to.
+        steps = TypeAdapter(list[object]).validate_python(nightly['steps'])
+        actual = {key: nightly[key] for key in ('timeout-minutes', 'services', 'env')} | {'steps': steps[1:]}
+        assert actual == json.loads(expected), name
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
