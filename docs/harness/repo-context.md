@@ -61,7 +61,7 @@ print(result.output)
 
 ### 1. Instruction autoload (on by default)
 
-Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`.
+Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A `filenames` entry with a directory part, such as `.github/copilot-instructions.md`, loads only when that directory resolves inside the scanned one.
 
 A same-directory link loads only when it points to another instruction file,
 one named in `filenames` or `AGENTS.md`/`CLAUDE.md`: `CLAUDE.md -> AGENTS.md`
@@ -163,6 +163,18 @@ only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
 
+`nested_exclude` skips directories whose instruction files are written for
+someone else: by default `node_modules`, `.venv`, `venv` and `site-packages`,
+where package managers install dependencies. Without it, reading a file in an
+installed package would surface that package's `AGENTS.md`, and as the deeper
+file it would take precedence over the project's. Each entry is an `fnmatch`
+pattern matched against every directory name below the working directory, both
+as written and after resolving symlinks, so a link such as
+`libs/dep -> node_modules/dep` is skipped too. Everything beneath a match is
+skipped, while the directories above it are still surfaced. `vendor/` and
+`third_party/` aren't in the default because projects often commit and own
+them; add them if yours doesn't.
+
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the
 more deeply nested file wins a conflict, and the user's direct instructions win
@@ -221,7 +233,7 @@ print(await pinned.authority_of('AGENTS.md'))
 
 A changed file never rises above the level the workspace already gives it, and files not in `accepted` keep the workspace's level. Files are compared when `pin_accepted_files` is called, not when they are read later in the run.
 
-The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Files you didn't write](../workspace.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
+The lower level changes what reaches the model only in capabilities that check `authority_of` (see [Marking who wrote the files](../workspace-custom.md#workspace-authority)). `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they still load a changed file as before.
 
 ## Cache cost
 
@@ -244,6 +256,7 @@ RepoContext(
     inventory_tool_name='inventory_agent_context',
     nested_traversal=True,          # Strategy 3
     nested_inject='contents',       # 'contents' | 'pointer'
+    nested_exclude=('node_modules', '.venv', 'venv', 'site-packages'),  # fnmatch patterns Strategy 3 skips
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
     traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
     traversal_path_arg='path',                                       # deprecated fallback
@@ -260,6 +273,8 @@ RepoContext(
 ## Upgrading
 
 `RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining up to 32,000 characters of their contents per conversation before surfacing the rest as pointers (`nested_max_chars=None` removes the cap). To get close to the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`. It only approximates it: no setting loads both files from one directory any more, so a directory holding both loads only `CLAUDE.md`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
+
+Nested traversal no longer surfaces instruction files under `node_modules`, `.venv`, `venv` or `site-packages` below the working directory, nor anything beneath them; pass `nested_exclude=()` to surface them again. It also skips the workspace calls it used to make for those directories, so a durable run that read a file under one of them before the upgrade records more workspace calls than its replay makes: let such runs finish or version the deployment first.
 
 ## Further reading
 

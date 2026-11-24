@@ -365,7 +365,7 @@ class DelegationTasks:
         self.problems: list[SavedTaskProblem] = []
         """Saved task files that `opened()` skipped, from the most recent `opened()`."""
         self._workers: dict[str, asyncio.Task[str]] = {}
-        self._released: dict[str, asyncio.Event] = {}
+        self._released: dict[str, asyncio.Event] = {}  # noqa: TID251  (not converted to anyio yet)
         self._stopping: set[str] = set()
         # Stacks, like `_emitters`: the latest registration receives, and each run removes only its own.
         self._receivers: dict[
@@ -588,9 +588,9 @@ class DelegationTasks:
 
     async def _write(self, record: DelegationTask) -> None:
         """Save `record` with its history, loading that back first when it is in the saved file only."""
-        if not _SAFE_ID.fullmatch(record.id):
-            raise ValueError('Invalid task identity')
         if self.directory is not None:
+            if not _SAFE_ID.fullmatch(record.id):
+                raise ValueError('Invalid task identity')
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
@@ -680,7 +680,7 @@ class DelegationTasks:
             resumable=resumable,
             working_directory=working_directory,
         )
-        release = self._released[record.id] = asyncio.Event()
+        release = self._released[record.id] = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Persist acceptance before scheduling: cancellation here cannot leave an orphan worker.
         try:
             await self.save(record)

@@ -212,6 +212,8 @@ When a Google error carries no `retry-after-ms` or `Retry-After` header, [`Model
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video.
 
+Gemini reads JPEG, PNG, GIF, WebP, HEIC, HEIF, AVIF and BMP images. On Google Cloud it also reads TIFF, which the Gemini API rejects. Gemini 2.5 models don't read Word or Excel documents; Gemini 3 models do. A file of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+
 YouTube video URLs can be passed directly to Google models:
 
 ```py {title="youtube_input.py" test="skip" lint="skip"}
@@ -348,6 +350,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+`presence_penalty` and `frequency_penalty` aren't sent through the Gemini API, which rejects them for every model, or on Google Cloud for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models, which reject them too.
+
 ### Configure thinking
 
 Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:
@@ -375,18 +379,21 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
-[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
-API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
-keeps the default levels. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` and `gemini-4-neon` are the exceptions:
+Pydantic AI applies their levels only when the client talks to the Gemini API, and Vertex AI keeps the default
+levels. Google [documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for
+`gemini-3.1-flash-image`, but only the Gemini API enforces them, and
+[Vertex's thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking) doesn't
+list `gemini-4-neon` yet. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` support the `low`, `medium` and `high` levels, so
-`thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` also supports `xhigh`, its deepest reasoning,
-which `thinking='xhigh'` and `'max'` select; on models without it, they resolve to `high`. The `google-genai` SDK's
-`ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends the level
-anyway.
+`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
+`low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
+the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
+select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
+`google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
+`XHIGH is not a valid ThinkingLevel` and sends the level anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
@@ -394,6 +401,12 @@ On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinkin
 Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
 rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
 `high`. Without a `thinking` setting it thinks by default there.
+
+On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens. The exception is `gemini-2.5-flash-lite`
+on the Gemini API, which rejects budgets below 512, so it gets 512.
+To send another budget for `minimal`, set
+[`GoogleModelProfile.google_minimal_thinking_budget`][pydantic_ai.profiles.google.GoogleModelProfile.google_minimal_thinking_budget]
+in the model's `profile`.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
@@ -553,7 +566,7 @@ A job that fails or is cancelled before it writes any results doesn't report whi
 
 ## Long decode
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` cap the output of each request; Google's
+`gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon` cap the output of each request; Google's
 [long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response
@@ -603,6 +616,49 @@ Without `max_tokens`, Google's default output limit applies, and a response that
 On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` location and the `us` and `eu`
 multi-regions, not in single regions such as the default `us-central1`: pass one of those as the provider's
 [`location`](google-cloud.md#customizing-location-or-project).
+
+## Computer use
+
+To let Gemini use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Gemini API, it sends Google's own
+[computer use tool](https://ai.google.dev/gemini-api/docs/computer-use) as a
+[`ComputerTool`][pydantic_ai.native_tools.ComputerTool] to the Gemini 4 models, Gemini 3.8 Flash, Gemini 3.5 Flash-Lite
+and Gemini 3 Flash Preview. Other models, every model on Vertex AI, and any model with `ComputerUse(native=False)` get a
+regular function tool named `computer` instead.
+
+Google's tool can't zoom or read the pointer position. It can't be sent beside a function tool named like one of its
+functions, such as `click` or `type`, so with such a tool the model gets the `computer` function tool instead.
+
+### Actions that need approval
+
+Gemini's safety checks can flag an action, such as deleting files or accepting terms, as one a person must confirm. The
+flagged call waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), with Gemini's explanation in
+its metadata under `reason`. Resolve it with a
+[`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler, or add
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] to the agent's `output_type` to end the run and resume
+it later. Without either, the run fails at the first flagged call.
+
+```python {test="skip" lint="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai_harness import ComputerUse
+
+
+async def ask_a_person(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    approvals = {}
+    for call in requests.approvals:
+        reason = requests.metadata[call.tool_call_id]['reason']
+        approvals[call.tool_call_id] = input(f'{reason} Approve? [y/N] ') == 'y'
+    return requests.build_results(approvals=approvals)
+
+
+agent = Agent(
+    '{{ google:medium }}',
+    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=ask_a_person)],
+)
+```
+
+Google sends no safety decisions on streamed requests, so streamed runs never pause for approval.
 
 ## Streaming cancellation
 

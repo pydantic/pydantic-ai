@@ -174,6 +174,13 @@ def current_model_request_span() -> Span | None:
     return policy.span
 
 
+def add_input_transformations_event(provider: str, reported: Sequence[Mapping[str, object]]) -> None:
+    """Record the replayed items a provider withheld as an event on the model request span."""
+    if (span := current_model_request_span()) is not None:
+        key = f'{provider}.input_transformations'
+        span.add_event(key, attributes={key: to_json(reported).decode()})
+
+
 @contextmanager
 def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
     """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
@@ -348,6 +355,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # `validated_args` is left out: it's already dumped to JSON, where a validation hook's
+                # `BinaryContent` or `bytes` is base64 text that can't be told apart from other text.
                 # Kind names, so never binary; serialized only when there are questions, as the type does.
                 **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
@@ -520,17 +529,22 @@ def public_class_path(cls: type[AbstractCapability[Any]] | type[AbstractToolset[
     `pydantic_ai.capabilities._tool_search.ToolSearch`. A subpackage export is preferred over a
     top-level one so core classes read consistently, falling back to the top-level package.
     """
-    for base in cls.__mro__:
+    bases = [
+        base
+        for base in cls.__mro__
+        if base.__module__.partition('.')[0] in _PUBLIC_PACKAGES and not base.__name__.startswith('_')
+    ]
+    for base in bases:
         name = base.__name__
         parts = base.__module__.split('.')
-        if parts[0] not in _PUBLIC_PACKAGES or name.startswith('_'):
-            continue
         prefixes = ['.'.join(parts[:depth]) for depth in range(2, len(parts) + 1)]
         # Read the module's namespace directly: `getattr` would run a deprecation shim's `__getattr__`.
         for prefix in [*itertools.takewhile(lambda p: not p.rpartition('.')[2].startswith('_'), prefixes), parts[0]]:
             if (module := sys.modules.get(prefix)) is not None and vars(module).get(name) is base:
                 return f'{prefix}.{name}'
-    raise AssertionError(f'{cls!r} does not extend a public Pydantic AI class')  # pragma: no cover
+    # No exporting module is loaded, as in a Temporal sandbox with lazy module passthrough disabled:
+    # record the nearest framework class under its defining module rather than fail the run.
+    return f'{bases[0].__module__}.{bases[0].__qualname__}'
 
 
 class _ComponentRecord(TypedDict, total=False):
@@ -1070,7 +1084,7 @@ class _FinishModelRequestSpan(Protocol):
 
 
 def _prepare_model_request_span_context(
-    settings: InstrumentationSettings, request_context: ModelRequestContext
+    settings: InstrumentationSettings, request_context: ModelRequestContext, span: Span
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
     # The model warns about ignored settings when it prepares the request to send it.
     with suppress_unsupported_setting_warnings():
@@ -1079,6 +1093,9 @@ def _prepare_model_request_span_context(
         )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    # A sampled-out span drops its attributes; metrics need only the model attributes above.
+    if not span.is_recording():
+        return prepared, attributes
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
         attributes.update(
@@ -1224,7 +1241,7 @@ def open_model_request_span(
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
-                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context, span)
 
                 # Keep attributes set on the span since it opened, but describe the model this request
                 # is now made to: a hook can move it on to another model for a later attempt (#7018).

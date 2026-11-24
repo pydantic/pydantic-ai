@@ -58,7 +58,10 @@ from pydantic_ai.capabilities import HandleDeferredToolCalls
 
 def refund_policy(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
     return requests.build_results(
-        approvals={call.tool_call_id: call.args_as_dict()['amount'] <= 100 for call in requests.approvals},
+        approvals={
+            call.tool_call_id: requests.validated_args[call.tool_call_id]['amount'] <= 100
+            for call in requests.approvals
+        },
         answered_by={call.tool_call_id: 'refund-policy' for call in requests.approvals},
     )
 

@@ -338,3 +338,13 @@ async def test_url_derived_mcp_toolset_id_is_never_recorded(include_content: boo
 def test_class_path_passes_over_a_framework_class_not_exported_under_its_name() -> None:
     """A public-looking class only in a private module records as the nearest exported class it extends."""
     assert public_class_path(OutputToolset) == 'pydantic_ai.toolsets.AbstractToolset'
+
+
+def test_class_path_falls_back_to_the_defining_module_when_no_export_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the exporting modules in `sys.modules`, as in a Temporal sandbox with lazy passthrough disabled, the nearest framework class records under its defining module instead of failing the run."""
+    from types import SimpleNamespace
+
+    from pydantic_ai import _instrumentation
+
+    monkeypatch.setattr(_instrumentation, 'sys', SimpleNamespace(modules={}))
+    assert public_class_path.__wrapped__(BillingGuard) == 'pydantic_ai.capabilities.abstract.AbstractCapability'

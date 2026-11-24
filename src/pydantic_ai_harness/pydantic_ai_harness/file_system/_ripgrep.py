@@ -34,7 +34,12 @@ _MISSING = 127
 
 _ERROR_STATUS = '2'
 
-_UNREADABLE = re.compile(r'rg: (?P<path>.+?): (?:IO error for operation on .+?: )?(?P<reason>[^:]+?) \(os error \d+\)')
+_UNREADABLE = re.compile(
+    # The lookahead checks how the line ends once, so a line that cannot match fails there rather
+    # than once for every way of splitting it at `: `; `\A` keeps a search from retrying it at each `rg: `.
+    r'\Arg: (?=.*: [^:]+ \(os error \d+\)\Z)'
+    r'(?P<path>.+?): (?:IO error for operation on .+?: )?(?P<reason>[^:]+?) \(os error \d+\)'
+)
 """An error `rg` reports for one path it could not open, after which it carries on with the rest."""
 
 _T = TypeVar('_T')

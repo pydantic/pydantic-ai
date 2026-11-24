@@ -172,8 +172,9 @@ before writing cleanup.
   `__aenter__` or `agen.aclose()` by hand. Core's realtime early-break tests
   called `aclose()` themselves and passed while the shipped syntax leaked its
   tasks.
-- Order steps with `Event`s, not sleeps, and wait on them with a module-level
-  readiness timeout, not a one-second literal: short waits flake under `xdist`
+- Order steps with `Event`s, not sleeps, and wait on them with
+  `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, not a one-second
+  literal: short waits flake under `xdist`
   (pydantic/pydantic-ai#5399). `tests/harness/shell/test_shell.py` and
   `tests/harness/guardrails/test_input_guardrail.py` already carry sleeps; when you touch
   one, convert it.

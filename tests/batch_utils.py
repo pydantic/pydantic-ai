@@ -20,6 +20,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.batch import Batch, BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 class FastPolling(TypedDict):
@@ -36,8 +37,6 @@ FAST_POLLING: FastPolling = {'poll_interval': timedelta(milliseconds=1), 'max_po
 
 FAST_BATCH_SETTINGS: FastBatchSettings = {**FAST_POLLING, 'max_wait': timedelta(milliseconds=1)}
 """`FAST_POLLING`, plus a tiny but nonzero `max_wait`, for `BatchModelRequests`."""
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 class SlowBatchTestModel(TestModel):
