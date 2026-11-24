@@ -61,6 +61,9 @@ dependencies = [
     "anyio>=4.7.0",
     "griffelib>=2.0",
     "httpx2>=2.7",
+    # `httpx2` verifies TLS with `truststore` by default; 0.10.5 locks `SSLContext.wrap_bio`, which anyio runs in
+    # worker threads, so concurrent first requests no longer configure the shared context at once and crash (#12530).
+    "truststore>=0.10.5; sys_platform != 'emscripten'",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
     "opentelemetry-api>=1.28.0",
