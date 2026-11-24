@@ -353,7 +353,7 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     (package / 'plugin.py').write_text('import clai_missing_dependency\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
-    # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
+    # Saved by a Pax version that shipped a `retired` built-in; this one does not.
     harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
@@ -485,7 +485,7 @@ async def test_a_cancelled_turn_still_ends_the_plugins_it_unloaded(tmp_path: Pat
 
 
 async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
-    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+    """Another Pax process may replace the declaration while this one has the plugin loaded."""
 
     class Chosen(BaseModel):
         level: int
@@ -1113,7 +1113,7 @@ class Shared(Plugin):
 
 
 def two_sessions(tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> tuple[Harness, Harness]:
-    """Two live sessions of one process, as a CLAI serving several sessions will hold them."""
+    """Two live sessions of one process, as a Pax serving several sessions will hold them."""
     process = ProcessPlugins[None](store=SettingsStore(tmp_path / 'config.db'), builtin=builtin)
     return Harness(tmp_path, process=process, name='a'), Harness(tmp_path, process=process, name='b')
 

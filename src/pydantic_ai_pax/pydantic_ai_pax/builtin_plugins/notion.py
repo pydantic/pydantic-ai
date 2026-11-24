@@ -4,7 +4,7 @@ The built-in `notion` plugin: harness `Notion`, connected with a browser sign-in
 
 Plugin settings are plaintext SQLite, so they hold only `Notion`'s non-secret options, all edited in the menu
 `/plugins configure notion` opens, or the web UI's plugins panel shows. Its key row picks or enters a key in the named keystore and saves only the
-name, in CLAI's credential store; each run resolves it again, so replacing the key in `/keys` reaches every
+name, in Pax's credential store; each run resolves it again, so replacing the key in `/keys` reaches every
 plugin that shares it, and a deleted key fails the run rather than connecting.
 
 By default Notion uses a browser sign-in kept in the keyring under `mcp-plugin_notion`; key-only sign-in uses the

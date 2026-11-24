@@ -111,7 +111,7 @@ integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:
 	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/postgres
 
 .PHONY: integration-redis
-integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
+integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8.10.3`, or set REDIS_TEST_URL)
 	uv run --all-packages --all-extras pytest src/pydantic_ai_harness/integration_tests/redis
 
 .PHONY: integration-azure-durable-task

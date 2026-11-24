@@ -122,7 +122,7 @@ def markdown_style() -> RenderStyle:
 
 
 MAX_LINK = 2048
-"""The longest URL CLAI makes a terminal hyperlink, since the escape repeats it: per streamed chunk, or per folded row."""
+"""The longest URL Pax makes a terminal hyperlink, since the escape repeats it: per streamed chunk, or per folded row."""
 _URL_RE = re.compile(r'<(https?://[^\s<>]+)>|(?<![\w/])https?://[^\s<>`]+')
 _URL_START, _URL_END = '\ufdd0', '\ufdd1'
 """Marks around a URL while Termflow formats the line.

@@ -252,7 +252,7 @@ async def test_a_running_turns_edits_show_before_it_ends(
         files = panel.get_by_role('list', name='Changed files').get_by_role('listitem')
         await expect(files).to_have_text(['Mnotes.txt+1 −1'])
 
-        composer = page.get_by_role('combobox', name='Message CLAI')
+        composer = page.get_by_role('combobox', name='Message Pax')
         await composer.fill('edit old.txt, then run a long command')
         await composer.press('Enter')
         activity = page.locator('.topbar-status .activity')
