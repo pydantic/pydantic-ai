@@ -587,6 +587,10 @@ async def _openrouter_status_error(status_code: int, error_body: dict[str, objec
 async def test_openrouter_context_window_exceeded_via_metadata_raw(
     allow_model_requests: None, raw: str, stream: bool
 ) -> None:
+    """A generic 400 whose `metadata.raw` reports an overflow is a context window error.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to return this error on demand.
+    """
     error = await _openrouter_status_error(
         400, {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': raw}}, stream=stream
     )
@@ -647,6 +651,10 @@ async def test_openrouter_metadata_raw_keeps_outer_error_category(
     expected_error: type[ModelAPIError],
     stream: bool,
 ) -> None:
+    """An error status keeps its category unless it's a generic rejection whose `metadata.raw` names an overflow.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to return these errors on demand.
+    """
     error = await _openrouter_status_error(
         status_code, {'message': 'Provider returned error', **error_body}, stream=stream
     )
@@ -3364,6 +3372,10 @@ async def test_openrouter_stream_error_without_integer_code_raises_model_api_err
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
 async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_model_requests: None) -> None:
+    """An in-stream generic error whose `metadata.raw` reports an overflow is a context window error.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to send this error on demand.
+    """
     outer_error = {
         'code': 400,
         'message': 'Provider returned error',
@@ -3398,6 +3410,10 @@ async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_
 async def test_openrouter_stream_context_window_metadata_raw_non_context_error(
     allow_model_requests: None, raw: str | None
 ) -> None:
+    """An in-stream generic error whose `metadata.raw` names no overflow stays a generic rejection.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to send these errors on demand.
+    """
     outer_error = {
         'code': 400,
         'message': 'Provider returned error',
@@ -3410,7 +3426,31 @@ async def test_openrouter_stream_context_window_metadata_raw_non_context_error(
 
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize(
+    ('code', 'expected_error'),
+    [(401, ModelAuthenticationError), (404, ModelNotFoundError)],
+    ids=['401', '404'],
+)
+async def test_openrouter_stream_metadata_raw_keeps_outer_error_category(
+    allow_model_requests: None, code: int, expected_error: type[ModelAPIError]
+) -> None:
+    """An in-stream 401 or 404 keeps its category even when its `metadata.raw` reports an overflow.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to send these errors on demand.
+    """
+    outer_error = {'code': code, 'message': 'Provider returned error', 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}
+    error_chunk = f'data: {json.dumps({"error": outer_error})}\n\n'.encode()
+    error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
+    assert isinstance(error, expected_error)
+    assert not isinstance(error, ModelContextWindowExceededError)
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
 async def test_openrouter_stream_consumer_error_keeps_its_category(allow_model_requests: None) -> None:
+    """An error raised in the `run_stream` body comes out unchanged, not reclassified from its `metadata.raw`.
+
+    A mock transport stands in for a cassette because the error comes from the caller, not from OpenRouter.
+    """
     consumer_error = ModelHTTPError.for_category(
         ModelRequestRejectedError,
         status_code=400,
