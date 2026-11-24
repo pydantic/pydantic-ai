@@ -265,10 +265,16 @@ def map_computer_call(
     model_request_parameters: ModelRequestParameters,
     tool_call_id: str,
     provider_name: str,
-) -> ComputerCallPart:
-    """Turn a `computer_call` item into a `computer` tool call that keeps the item."""
-    # OpenAI sends a `computer_call` only when the request sent its computer tool for this `computer` tool.
-    tool_name = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)[0]
+) -> ComputerCallPart | None:
+    """Turn a `computer_call` item into a `computer` tool call that keeps the item.
+
+    Returns `None` when the request has no `computer` tool, such as when a computer tool was passed in
+    `openai_native_tools` without `ComputerUse`: nothing could run the call, so the item is dropped.
+    """
+    tool_names = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)
+    if not tool_names:
+        return None
+    tool_name = tool_names[0]
     # The SDK doesn't validate a response, so the item can hold any value. Keep it as sent, without warnings.
     item_json = item.model_dump(mode='json', exclude_none=True, warnings=False)
     return ComputerCallPart(

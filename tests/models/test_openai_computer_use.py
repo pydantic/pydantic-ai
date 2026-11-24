@@ -1198,6 +1198,38 @@ async def test_a_response_scoped_computer_call_id_is_stored_qualified(
     assert call.tool_call_id == 'call_1_f9rpvkyf'
 
 
+@pytest.mark.parametrize('streamed', [False, True], ids=['response', 'stream'])
+async def test_a_computer_call_without_a_computer_tool_is_dropped(allow_model_requests: None, streamed: bool) -> None:
+    """A computer tool passed in `openai_native_tools` without `ComputerUse` has nothing to run its calls."""
+    item = resp.ResponseComputerToolCall.model_validate(
+        {**_COMPUTER_ITEM, 'actions': [{'type': 'screenshot'}], 'pending_safety_checks': []}
+    )
+    response = response_message([item])
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=0),
+        resp.ResponseOutputItemDoneEvent(
+            item=item, output_index=0, type='response.output_item.done', sequence_number=1
+        ),
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}), type='response.completed', sequence_number=2
+        ),
+    ]
+    client = MockOpenAIResponses.create_mock_stream(stream) if streamed else MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    settings = OpenAIResponsesModelSettings(openai_native_tools=[{'type': 'computer'}])
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+    params = ModelRequestParameters(allow_text_output=True)
+    if streamed:
+        async with model.request_stream(messages, settings, params) as stream_response:
+            async for _ in stream_response:
+                pass
+        stored = stream_response.get()
+    else:
+        stored = await model.request(messages, settings, params)
+
+    assert stored.parts == []
+
+
 # Property tests: the SDK doesn't validate response items, and a stored history can be edited, so any value can arrive.
 
 _JSON = st.recursive(
