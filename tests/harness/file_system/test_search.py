@@ -552,6 +552,41 @@ async def test_a_brace_alternative_naming_a_hidden_directory_searches_it_with_rg
     assert await tools.grep('needle', glob=vendored, workspace=workspace) == 'src/x.yml:1:needle'
 
 
+async def test_a_glob_does_not_make_rg_walk_hidden_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `--glob` overrides `rg`'s hidden-path skip, so each batch of hidden paths it printed cost a path check."""
+    monkeypatch.setattr('pydantic_ai_harness.file_system._ripgrep._PREPARE_BATCH', 2)
+    (tmp_path / '.cache' / 'deep').mkdir(parents=True)
+    for index in range(6):
+        (tmp_path / '.cache' / 'deep' / f'{index}.txt').write_text('needle\n')
+    (tmp_path / '.env').write_text('needle\n')
+    (tmp_path / 'a.txt').write_text('needle\n')
+    (tmp_path / 'b.txt').write_text('needle\n')
+    backend = CountingBackend(tmp_path, os.environ['PATH'])
+    tools = FileSystem[None](root_dir=tmp_path, tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    await tools.list_files(workspace=backend)  # Probe for `rg` once.
+    for unfiltered, globbed in (
+        (lambda: tools.list_files(workspace=backend), lambda: tools.list_files(glob='*', workspace=backend)),
+        (lambda: tools.grep('needle', workspace=backend), lambda: tools.grep('needle', glob='*', workspace=backend)),
+        (
+            lambda: tools.search_files('needle', workspace=backend),
+            lambda: tools.search_files('needle', include_glob='*', workspace=backend),
+        ),
+    ):
+        backend.commands = 0
+        expected = await unfiltered()
+        commands = backend.commands
+        backend.commands = 0
+        assert await globbed() == expected
+        assert backend.commands == commands
+    assert await tools.list_files(glob='*', workspace=backend) == 'a.txt\nb.txt'
+    # A glob or path naming a hidden entry still finds it.
+    assert await tools.list_files(glob='.env', workspace=backend) == '.env'
+    assert await tools.grep('needle', glob='.env', workspace=backend) == '.env:1:needle'
+    assert len((await tools.list_files(path='.cache', glob='*', workspace=backend)).splitlines()) == 6
+    assert len((await tools.grep('needle', path='.cache', glob='*', workspace=backend)).splitlines()) == 6
+
+
 async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
     """A hidden directory the glob names is searched, as the walker and the POSIX fallback already do."""
     (tmp_path / '.github' / 'workflows').mkdir(parents=True)
