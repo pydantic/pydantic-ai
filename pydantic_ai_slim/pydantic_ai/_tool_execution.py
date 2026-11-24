@@ -112,6 +112,10 @@ _OUTPUT_NOT_FINAL_RESULT = 'Output tool processed, but its value will not be the
 _OUTPUT_EXECUTION_FAILED = 'Output tool not used - output function execution failed.'
 _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
 _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
+# A call the tool deferred while running may have started work elsewhere, so it isn't said not to have run.
+_DEFERRED_CALL_FINAL_ALREADY_PROCESSED = (
+    'Tool call deferred - the run ended on a final result before its result was collected.'
+)
 
 
 def cancelled_sub_agent_return(
@@ -1162,10 +1166,30 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             async for event in self._collect_deferred_calls():
                 yield event
 
-        if not self.final_result and self.deferred_calls:
-            async with aclosing(self._resolve_deferred_calls()) as events:
-                async for event in events:
-                    yield event
+        if not self.final_result:
+            if self.deferred_calls:
+                async with aclosing(self._resolve_deferred_calls()) as events:
+                    async for event in events:
+                        yield event
+        elif not isinstance(self.final_result.output, DeferredToolRequests):
+            for event in self._close_deferred_calls():
+                yield event
+
+    def _close_deferred_calls(self) -> Iterator[_messages.FunctionToolResultEvent]:
+        """Give each call a tool deferred while running a result, as the run ended on a final result instead.
+
+        Every tool call needs a result in the history. Unlike a call skipped for the final result, these ran
+        and emitted their `FunctionToolCallEvent` then, so only the result event is emitted here.
+        """
+        deferred = [call for bucket in _DEFERRED_BUCKETS for call in self.deferred_calls[bucket]]
+        for call in sorted(deferred, key=self.tool_calls.index):
+            part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=_DEFERRED_CALL_FINAL_ALREADY_PROCESSED,
+                tool_call_id=call.tool_call_id,
+            )
+            self.output_parts.append(part)
+            yield _messages.FunctionToolResultEvent(part)
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
