@@ -69,6 +69,7 @@ from pydantic_ai_harness.computer_use import (
     UnsupportedActionError,
 )
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
@@ -805,6 +806,36 @@ The `computer` tool shows and controls this computer's screen.
         assert failed.metadata == {'performed': 0, 'error': "the fake display cannot perform 'hold_keys'"}
         assert skipped.content == 'Not executed: an earlier computer action in this turn failed.'
         assert provider.actions == []
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_a_failed_call_does_not_stop_a_later_response_that_compaction_put_in_its_place(self) -> None:
+        """Compaction can put the next response at the failed one's index in the messages, and its calls still run."""
+        hooks = Hooks[object]()
+
+        @hooks.on.before_model_request
+        async def keep_only_the_latest_request(
+            ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.messages[:] = [ModelRequest.user_text_prompt('Go on.')]
+            return request_context
+
+        responses = iter(
+            [
+                [{'type': 'hold_keys', 'keys': ['shift'], 'seconds': 1}],
+                [{'type': 'click', 'x': 1, 'y': 1}],
+            ]
+        )
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            actions = next(responses, None)
+            if actions is None:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('computer', {'actions': actions})])
+
+        provider = ScreenProvider()
+        await Agent(FunctionModel(respond), capabilities=[provider.capability(), ComputerUse(), hooks]).run('Go.')
+
+        assert provider.actions == [Click(x=1, y=1)]
 
     async def test_a_call_a_hook_repaired_reports_that_it_changed(self) -> None:
         """A call whose arguments didn't validate stays a plain tool call, and still reads as the call the model made."""
