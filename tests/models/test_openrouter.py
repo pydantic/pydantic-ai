@@ -561,6 +561,8 @@ _CONTEXT_WINDOW_RAW = json.dumps(
     {'error': {'message': _CONTEXT_WINDOW_MESSAGE, 'type': 'BadRequestError', 'param': None, 'code': 400}}
 )
 _DEEPLY_NESTED_RAW = '[' * 100_000 + ']' * 100_000
+_OpenRouterModelClass = Literal['OpenRouterModel', 'OpenAIChatModel', 'OpenAIResponsesModel']
+"""A model class that talks to OpenRouter, by name: the classes aren't defined when `openai` isn't installed."""
 
 
 async def _openrouter_status_error(
@@ -568,8 +570,14 @@ async def _openrouter_status_error(
     error_body: dict[str, object],
     *,
     stream: bool,
-    model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel] = OpenRouterModel,
+    model_class: _OpenRouterModelClass = 'OpenRouterModel',
 ) -> ModelAPIError:
+    model_classes: dict[_OpenRouterModelClass, type[OpenAIChatModel] | type[OpenAIResponsesModel]] = {
+        'OpenRouterModel': OpenRouterModel,
+        'OpenAIChatModel': OpenAIChatModel,
+        'OpenAIResponsesModel': OpenAIResponsesModel,
+    }
+
     def handler(_: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status_code, json={'error': error_body})
 
@@ -577,7 +585,7 @@ async def _openrouter_status_error(
         provider = OpenRouterProvider(
             api_key='test', base_url='https://openrouter.example/api/v1', http_client=http_client
         )
-        agent = Agent(model_class('openai/gpt-oss-120b', provider=provider))
+        agent = Agent(model_classes[model_class]('openai/gpt-oss-120b', provider=provider))
         with pytest.raises(ModelAPIError) as exc_info:
             if stream:
                 # The error arrives while the stream is being opened.
@@ -592,14 +600,14 @@ async def _openrouter_status_error(
 @pytest.mark.parametrize('raw', [_CONTEXT_WINDOW_RAW, _CONTEXT_WINDOW_MESSAGE], ids=['json', 'plain'])
 @pytest.mark.parametrize(
     'model_class',
-    [OpenRouterModel, OpenAIChatModel, OpenAIResponsesModel],
+    ['OpenRouterModel', 'OpenAIChatModel', 'OpenAIResponsesModel'],
     ids=['openrouter', 'openai-chat', 'openai-responses'],
 )
 async def test_openrouter_context_window_exceeded_via_metadata_raw(
     allow_model_requests: None,
     raw: str,
     stream: bool,
-    model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel],
+    model_class: _OpenRouterModelClass,
 ) -> None:
     """A generic 400 whose `metadata.raw` reports an overflow is a context window error, on any OpenRouter model.
 
