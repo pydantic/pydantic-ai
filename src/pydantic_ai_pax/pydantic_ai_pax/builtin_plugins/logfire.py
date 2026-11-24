@@ -177,7 +177,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             raise
         self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
         # UI records and plugin errors are Pax's own, so they share the session root's scope.
-        self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
+        self._pax = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
@@ -230,7 +230,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         # Subscribed even without `ui_events`, so handled errors are recorded and the root is bound as soon as
         # startup selects the conversation.
         self._unsubscribe = telemetry.subscribe(
-            self._clai2,
+            self._pax,
             root=self._session_tracing.root,
             include_content=self.settings.include_content,
             ui_events=self.settings.ui_events,
@@ -238,7 +238,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self.settings.ui_events:
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
-                self._clai2.log('info', 'session started', attributes={'model': model})
+                self._pax.log('info', 'session started', attributes={'model': model})
 
     def _instrument_httpx(self) -> None:
         # Imported here: HTTPX instrumentation is off by default, and the instrumentors are slow to import.
@@ -256,7 +256,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
             telemetry.log_error(
-                self._clai2,
+                self._pax,
                 'Plugin {plugin!r} failed to load',
                 event.error,
                 content=self.settings.include_content,
@@ -268,9 +268,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             # An error that left the agent run is already on the run's span; this records the rest, such as a
             # model that could not be resolved or a failing `on_turn_start`, which fail the turn before the run.
             if event.error is not None and not self._session_tracing.raised_in_run(event.error):
-                telemetry.log_error(self._clai2, 'Turn failed', event.error, content=self.settings.include_content)
+                telemetry.log_error(self._pax, 'Turn failed', event.error, content=self.settings.include_content)
             if self.settings.ui_events:
-                self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
+                self._pax.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # HTTPX instrumentors are global: if another plugin instance remains, point them at its live provider.

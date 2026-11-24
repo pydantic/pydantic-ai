@@ -198,7 +198,8 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
     its input, so relocated instructions would be replayed alongside every later request's own.
     On `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level field after the input, the dynamic
-    instructions that rewrite the prefix stay there (see
+    instructions that rewrite the prefix stay there, and an `openai_previous_response_id='auto'` chain sends the
+    others as leading input, with this breakpoint after the static ones, when it starts or resends the history (see
     [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
@@ -249,6 +250,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+
+    For the computer tool, use Pydantic AI Harness's `ComputerUse`, which sends it for you. Don't also pass a
+    `ComputerToolParam` here, or the request declares the tool twice.
     """
 
     openai_reasoning_mode: Literal['standard', 'pro']

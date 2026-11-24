@@ -123,6 +123,7 @@ class TestSpritesSandbox:
         ('kwargs', 'message'),
         [
             ({'working_dir': 'relative'}, "working_dir must be an absolute POSIX path or None, got 'relative'."),
+            ({'desktop': (0, 0)}, '`desktop` must be a `(width, height)` of at least 1 pixel each, got (0, 0).'),
             (
                 {'defer_loading': True},
                 '`SpritesSandbox` does not support `defer_loading=True`: '
@@ -1370,6 +1371,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'authority',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'path_authority',
@@ -1385,5 +1387,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
         'runtime': 'python',
+        'desktop': (1440, 900),
     }
     assert SpritesSandbox[None].from_spec(**spec_fields) == SpritesSandbox[None](**spec_fields)
