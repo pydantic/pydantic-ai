@@ -869,6 +869,22 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'ComputerTool': {
+                    'properties': {
+                        'kind': {'default': 'computer', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'display_size': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                            'title': 'Display Size',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['display_size'],
+                    'title': 'ComputerTool',
+                    'type': 'object',
+                },
                 'FileSearchProviderSettings': {
                     'additionalProperties': True,
                     'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
@@ -1784,6 +1800,12 @@ def test_model_json_schema_with_capabilities():
                                             'allOf': [
                                                 {'$ref': '#/$defs/MemoryTool'},
                                                 {'properties': {'kind': {'const': 'memory'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
+                                                {'$ref': '#/$defs/ComputerTool'},
+                                                {'properties': {'kind': {'const': 'computer'}}, 'required': ['kind']},
                                             ]
                                         },
                                         {

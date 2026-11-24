@@ -51,6 +51,10 @@ agent = Agent(model)
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
+## Sampling settings
+
+The Claude models that aren't covered by the migration note above take `temperature`, `top_p` and `top_k`, with two limits Pydantic AI applies silently instead of sending a request Anthropic rejects: while the model thinks, `temperature` other than `1`, `top_p` below `0.95` and `top_k` are dropped, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`.
+
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:
@@ -969,6 +973,33 @@ agent = Agent(
 ```
 
 The response's usage, and so its cost, stays the sum of the passes either way.
+
+## Computer use
+
+To let Claude use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Claude API and on Amazon Bedrock (the `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` clients), it sends
+each Claude model the computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
+
+| Models | Tool |
+|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
+| Claude Haiku 4.5 | `computer_20250124` |
+
+Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead.
+
+Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+`computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
+token per 28x28 pixels), and the request fails with a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The older tools, and the function tool, shrink a larger
+screenshot without saying so, so Claude's clicks miss.
+
+To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own
+list, and choose the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version]
+(default `computer_20250124`).
 
 ## Web Tool Callers
 

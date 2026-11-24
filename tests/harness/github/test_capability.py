@@ -177,7 +177,8 @@ class TestGitHub:
         assert only_leaf(GitHub[str | None](id=unset, auth='token').get_toolset()).id == 'github'
 
     def test_unset_ids_are_not_combined(self) -> None:
-        # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
+        # Without an id there is nothing to combine on, so differing settings don't raise when the agent is built.
+        # Its first run still fails: https://github.com/pydantic/pydantic-ai/issues/13968.
         Agent(
             TestModel(),
             capabilities=[

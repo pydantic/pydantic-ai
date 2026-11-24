@@ -40,12 +40,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import try_import
 from tests.harness.conftest import IsDatetime, IsStr
 
 from .._recording_durability import RecordingDurability
-
-READINESS_WAIT_TIMEOUT = 5
 
 with try_import() as imports_successful:
     from jupyter_client.client import KernelClient

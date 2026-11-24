@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
 import gzip
+import ipaddress
 import re
 import zlib
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -81,6 +84,48 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', factory_wrapper)
     return mock
+
+
+_IanaNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+_IANA_FOOTNOTE = re.compile(r'\s*\[\d+\]')
+# Snapshots of IANA's special-purpose address registries, fetched on 2026-11-23 from
+# https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry-1.csv and
+# https://www.iana.org/assignments/iana-ipv6-special-registry/iana-ipv6-special-registry-1.csv.
+_IANA_REGISTRIES = (
+    Path(__file__).parent / 'assets' / 'iana-ipv4-special-registry-1.csv',
+    Path(__file__).parent / 'assets' / 'iana-ipv6-special-registry-1.csv',
+)
+# Each registry address block, mapped to its `Globally Reachable` value, or `None` when that is `N/A` or empty.
+_IANA_ROWS: dict[_IanaNetwork, bool | None] = {
+    ipaddress.ip_network(block): {'True': True, 'False': False}.get(
+        _IANA_FOOTNOTE.sub('', record['Globally Reachable'])
+    )
+    for path in _IANA_REGISTRIES
+    for record in csv.DictReader(path.read_text().splitlines())
+    for block in _IANA_FOOTNOTE.sub('', record['Address Block']).split(', ')
+}
+# Rows that `is_private_ip` does not judge by their `Globally Reachable` value, mapped to whether it blocks them.
+_IANA_ROW_OVERRIDES: dict[_IanaNetwork, bool] = {
+    # `N/A`: the table lists Teredo whole.
+    ipaddress.IPv6Network('2001::/32'): True,
+    # Globally reachable anycast addresses inside `192.0.0.0/24`, which the table lists whole.
+    ipaddress.IPv4Network('192.0.0.9/32'): True,
+    ipaddress.IPv4Network('192.0.0.10/32'): True,
+    # Deprecated, with no value: the 6to4 relay anycast prefix is not listed, and the former ORCHID
+    # prefix falls back to `2001::/23`.
+    ipaddress.IPv4Network('192.88.99.0/24'): False,
+    ipaddress.IPv6Network('2001:10::/28'): True,
+}
+# Rows that `is_private_ip` decodes to the IPv4 they embed and judges by that IPv4, as the 6to4, NAT64 and
+# IPv4-mapped cases in `TestIsPrivateIp` check.
+_IANA_ROWS_DECODED: frozenset[_IanaNetwork] = frozenset(
+    {
+        ipaddress.IPv6Network('::ffff:0:0/96'),  # IPv4-mapped
+        ipaddress.IPv6Network('64:ff9b::/96'),  # NAT64 well-known prefix
+        ipaddress.IPv6Network('64:ff9b:1::/48'),  # NAT64 local-use prefix
+        ipaddress.IPv6Network('2002::/16'),  # 6to4, `N/A`
+    }
+)
 
 
 class TestIsPrivateIp:
@@ -177,6 +222,8 @@ class TestIsPrivateIp:
             # ISATAP (RFC 5214) with a public prefix, embedding a private/link-local IPv4
             '2606:4700::5efe:192.168.1.1',
             '2606:4700::200:5efe:169.254.169.254',
+            # ISATAP in a globally reachable row of 2001::/23 (AMT), embedding a private IPv4
+            '2001:3::5efe:192.168.1.1',
         ],
     )
     def test_private_ips_detected(self, ip: str) -> None:
@@ -199,8 +246,7 @@ class TestIsPrivateIp:
             '203.0.114.0',  # TEST-NET-3
             '::ffff:1:0:0',  # IPv4-translated
             '100:0:0:2::',  # Dummy prefix
-            '2001:1::',  # Teredo tunneling
-            '2001:2:1::',  # Benchmarking
+            '2001:200::',  # IETF Protocol Assignments
             '2001:db9::',  # Documentation (RFC 3849)
             '3fff:1000::',  # Documentation (RFC 9637)
             '5f01::',  # Segment Routing (SRv6) SIDs
@@ -296,6 +342,35 @@ class TestIsPrivateIp:
         """Invalid IP addresses should be treated as potentially dangerous."""
         assert is_private_ip('not-an-ip') is True
         assert is_private_ip('') is True
+
+    @pytest.mark.parametrize(
+        'address',
+        dict.fromkeys(
+            address
+            for row in _IANA_ROWS
+            if row not in _IANA_ROWS_DECODED
+            for address in (row[0], row[row.num_addresses // 2], row[-1])
+        ),
+        ids=str,
+    )
+    def test_matches_iana_special_purpose_registries(
+        self, address: ipaddress.IPv4Address | ipaddress.IPv6Address
+    ) -> None:
+        """An address is blocked exactly when the most specific IANA row holding it is not globally reachable.
+
+        A row in `_IANA_ROW_OVERRIDES` is judged by its override instead, and the rows in `_IANA_ROWS_DECODED`
+        are left to the embedded-IPv4 cases. The first, middle and last address of every row outside
+        `_IANA_ROWS_DECODED` are checked, so a wrong prefix length fails.
+        """
+        row = max((row for row in _IANA_ROWS if address in row), key=lambda row: row.prefixlen)
+        blocked = _IANA_ROW_OVERRIDES.get(row, not _IANA_ROWS[row])
+        assert is_private_ip(str(address)) is blocked, f'IANA row {row}'
+
+    def test_iana_rows_without_a_verdict_are_explicit(self) -> None:
+        """Every IANA row with no `Globally Reachable` value is judged explicitly, and every explicit row is in IANA's registries."""
+        explicit = _IANA_ROW_OVERRIDES.keys() | _IANA_ROWS_DECODED
+        assert {row for row, reachable in _IANA_ROWS.items() if reachable is None} <= explicit
+        assert explicit <= _IANA_ROWS.keys()
 
 
 class TestIsCloudMetadataIp:
@@ -926,6 +1001,16 @@ class TestSafeDownload:
                 'https://[2606:4700:4700::1111]:8443/file.txt',
                 'https://[2606:4700:4700::1111]:8443/file.txt',
                 '[2606:4700:4700::1111]:8443',
+            ),
+            (
+                'https://[2606:4700:4700::1111]/file.txt',
+                'https://[2606:4700:4700::1111]/file.txt',
+                '[2606:4700:4700::1111]',
+            ),
+            (
+                'http://[2606:4700:4700::1111]/file.txt',
+                'http://[2606:4700:4700::1111]/file.txt',
+                '[2606:4700:4700::1111]',
             ),
             ('http://93.184.215.14:8080/file.txt', 'http://93.184.215.14:8080/file.txt', '93.184.215.14:8080'),
         ],

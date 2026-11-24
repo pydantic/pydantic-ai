@@ -98,6 +98,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
@@ -111,9 +112,6 @@ from .conftest import (
     message_part,
 )
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
-"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -2676,6 +2674,46 @@ class TestStreamingCachedOutput:
         assert output1 == Foo(a=999, b='MUTATED')
         # Second output should be the original cached value (not mutated)
         assert output2 == Foo(a=42, b='FOO')
+
+    @pytest.mark.parametrize(
+        'reads',
+        [
+            pytest.param(('get_output',), id='get_output'),
+            pytest.param(('get_output', 'get_output'), id='get_output_twice'),
+            pytest.param(('stream_output',), id='stream_output'),
+            pytest.param(('stream_output', 'stream_output'), id='stream_output_twice'),
+            pytest.param(('stream_output', 'get_output'), id='stream_output_then_get_output'),
+            pytest.param(('get_output', 'stream_output'), id='get_output_then_stream_output'),
+        ],
+    )
+    async def test_none_output_validated_once(self, reads: tuple[Literal['get_output', 'stream_output'], ...]):
+        """A final output of `None` runs the output function and each validator once, however it is read.
+
+        Not a VCR test: how often they run is local and provider-independent, and a cassette records none of it.
+        """
+        final_calls: list[str] = []
+
+        def lookup(ctx: RunContext, key: int) -> int | None:
+            if not ctx.partial_output:
+                final_calls.append('function')
+            return None
+
+        agent: Agent[None, int | None] = Agent(TestModel(), output_type=lookup)
+
+        @agent.output_validator
+        def check(ctx: RunContext, value: int | None) -> int | None:
+            if not ctx.partial_output:
+                final_calls.append('validator')
+            return value
+
+        async with agent.run_stream('test') as result:
+            for read in reads:
+                if read == 'get_output':
+                    assert await result.get_output() is None
+                else:
+                    assert [output async for output in result.stream_output(debounce_by=None)][-1] is None
+
+        assert final_calls == ['function', 'validator']
 
 
 class OutputType(BaseModel):
