@@ -24,12 +24,15 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelMessage,
     ModelNotFoundError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
     ModelRequest,
     ModelRequestRejectedError,
     ModelResponse,
     ModelServerError,
     ModelSettingsDeltaPart,
     ModelTimeoutError,
+    ModelUnavailableError,
     NativeOutput,
     PartEndEvent,
     PartStartEvent,
@@ -582,10 +585,14 @@ async def _openrouter_status_error(
     def handler(_: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status_code, json={'error': error_body})
 
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
-        provider = OpenRouterProvider(
-            api_key='test', base_url='https://openrouter.example/api/v1', http_client=http_client
-        )
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        # The SDK would retry a 429 or 5xx with a real backoff.
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        provider = OpenRouterProvider(openai_client=client)
         agent = Agent(model_classes[model_class]('openai/gpt-oss-120b', provider=provider))
         with pytest.raises(ModelAPIError) as exc_info:
             if stream:
@@ -643,6 +650,9 @@ async def test_openrouter_context_window_exceeded_via_metadata_raw(
             id='403-flagged-input',
         ),
         pytest.param(404, {'code': 404, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelNotFoundError, id='404'),
+        pytest.param(402, {'code': 402, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelQuotaExceededError, id='402'),
+        pytest.param(429, {'code': 429, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelRateLimitError, id='429'),
+        pytest.param(503, {'code': 503, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelUnavailableError, id='503'),
         pytest.param(
             400,
             {'code': 'model_not_found', 'metadata': {'raw': _CONTEXT_WINDOW_RAW}},
