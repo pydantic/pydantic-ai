@@ -1898,9 +1898,23 @@ async def test_openai_responses_stable_instructions_stay_top_level_with_server_s
     assert [item for request in requests for item in request['input'] if item.get('role') == 'system'] == []
 
 
-@pytest.mark.parametrize('instructions', ['Support policies.', 'Billing policies.'], ids=['same-agent', 'handoff'])
+@pytest.mark.parametrize(
+    'instructions, expected_second_request',
+    [
+        pytest.param(
+            'Support policies.',
+            {'continues': True, 'roles': ['user'], 'system': []},
+            id='same-agent',
+        ),
+        pytest.param(
+            'Billing policies.',
+            {'continues': False, 'roles': ['system', 'user', 'assistant', 'user'], 'system': ['Billing policies.']},
+            id='handoff',
+        ),
+    ],
+)
 async def test_openai_responses_auto_chain_sends_stable_instructions_once(
-    allow_model_requests: None, instructions: str
+    allow_model_requests: None, instructions: str, expected_second_request: dict[str, Any]
 ):
     """An `'auto'` chain sends the static instructions as leading input when it starts, and leaves them out while it
     continues, since the stored response holds them. Different ones fail the history digest, so a handoff resends the
@@ -1921,19 +1935,11 @@ async def test_openai_responses_auto_chain_sends_stable_instructions_once(
         {'role': 'user', 'content': 'Where is order 1234?'},
     ]
     assert 'instructions' not in second_request
-    if instructions == 'Support policies.':
-        assert second_request['previous_response_id'] == first.response.provider_response_id
-        assert second_request['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
-    else:
-        assert 'previous_response_id' not in second_request
-        assert [(item.get('role'), item.get('content')) for item in second_request['input']] == snapshot(
-            [
-                ('system', 'Billing policies.'),
-                ('user', 'Where is order 1234?'),
-                ('assistant', [{'text': 'first', 'type': 'output_text', 'annotations': []}]),
-                ('user', 'And order 5678?'),
-            ]
-        )
+    assert {
+        'continues': second_request.get('previous_response_id') == first.response.provider_response_id,
+        'roles': [item.get('role') for item in second_request['input']],
+        'system': [item['content'] for item in second_request['input'] if item.get('role') == 'system'],
+    } == expected_second_request
 
 
 async def test_openai_responses_auto_chain_with_cache_instructions(allow_model_requests: None):
@@ -1960,6 +1966,33 @@ async def test_openai_responses_auto_chain_with_cache_instructions(allow_model_r
     assert second_request['previous_response_id'] == first.response.provider_response_id
     assert 'instructions' not in second_request
     assert second_request['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+
+
+async def test_openai_responses_auto_chain_opted_out_keeps_instructions_top_level(allow_model_requests: None):
+    """With the profile flag off, an `'auto'` chain keeps every instruction in the top-level field and continues."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False),
+    )
+    agent = Agent(
+        model,
+        instructions='Support policies.',
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    assert [
+        (
+            request.get('previous_response_id') == first.response.provider_response_id,
+            request['instructions'],
+            [item.get('role') for item in request['input']],
+        )
+        for request in get_mock_responses_kwargs(mock_client)
+    ] == [(False, 'Support policies.', ['user']), (True, 'Support policies.', ['user'])]
 
 
 async def test_openai_responses_auto_chain_continues_across_appended_change(allow_model_requests: None):
@@ -2314,6 +2347,19 @@ _STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n
     f'Entry {i:04d}: shelf {i % 23}, aisle {i % 7}, volume {i}, catalogued under subject heading {i % 11}.'
     for i in range(160)
 )
+
+
+def _wire_shape(body: dict[str, Any]) -> dict[str, Any]:
+    """What a Responses request continues, where it puts its instructions, and its input, with `_STABLE_PREFIX` cut."""
+
+    def cut(content: Any) -> Any:
+        return content.replace(_STABLE_PREFIX, '<_STABLE_PREFIX>') if isinstance(content, str) else content
+
+    return {
+        'previous_response_id': body.get('previous_response_id'),
+        'instructions': cut(body.get('instructions')),
+        'input': [(item.get('role'), cut(item.get('content'))) for item in body['input']],
+    }
 
 
 def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
@@ -2701,9 +2747,73 @@ async def test_openai_responses_cache_instructions_e2e(
 
 
 @pytest.mark.vcr
-@pytest.mark.parametrize('stable_instructions_as_input', [True, False], ids=['leading-input', 'top-level'])
+@pytest.mark.parametrize(
+    'stable_instructions_as_input, expected_requests',
+    [
+        pytest.param(
+            True,
+            snapshot(
+                [
+                    {
+                        'previous_response_id': None,
+                        'instructions': 'Queue position: 17.',
+                        'input': [
+                            ('system', '<_STABLE_PREFIX>'),
+                            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                        ],
+                    },
+                    {
+                        'previous_response_id': None,
+                        'instructions': 'Queue position: 12.',
+                        'input': [
+                            ('system', '<_STABLE_PREFIX>'),
+                            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                            ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                            ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                        ],
+                    },
+                ]
+            ),
+            id='leading-input',
+        ),
+        pytest.param(
+            False,
+            snapshot(
+                [
+                    {
+                        'previous_response_id': None,
+                        'instructions': """\
+<_STABLE_PREFIX>
+
+Queue position: 17.\
+""",
+                        'input': [('user', 'Which shelf holds entry 0042? Reply with just the number.')],
+                    },
+                    {
+                        'previous_response_id': None,
+                        'instructions': """\
+<_STABLE_PREFIX>
+
+Queue position: 12.\
+""",
+                        'input': [
+                            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                            ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                            ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                        ],
+                    },
+                ]
+            ),
+            id='top-level',
+        ),
+    ],
+)
 async def test_openai_responses_stable_instructions_as_input_e2e(
-    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, stable_instructions_as_input: bool
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    stable_instructions_as_input: bool,
+    expected_requests: list[dict[str, Any]],
 ):
     """On GPT-6.2, static instructions leading the input are cached with the conversation, also while a dynamic
     instruction in the top-level field changes. In the top-level field, OpenAI puts them after the input and the next
@@ -2726,14 +2836,9 @@ async def test_openai_responses_stable_instructions_as_input_e2e(
     )
 
     first_body, second_body = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
-    assert [first_body['instructions'], second_body['instructions']] == (
-        ['Queue position: 17.', 'Queue position: 12.']
-        if stable_instructions_as_input
-        else [f'{_STABLE_PREFIX}\n\nQueue position: 17.', f'{_STABLE_PREFIX}\n\nQueue position: 12.']
-    )
+    assert [_wire_shape(first_body), _wire_shape(second_body)] == expected_requests
     assert second_body['input'][: len(first_body['input'])] == first_body['input']
     if stable_instructions_as_input:
-        assert first_body['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
         # The second request reads back everything the first wrote: its whole input, ahead of the top-level field.
         assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
         assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
@@ -2769,13 +2874,32 @@ async def test_openai_responses_explicit_id_with_history_e2e(
     )
 
     bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
-    assert bodies[0]['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
-    assert 'previous_response_id' not in bodies[1]
-    assert bodies[1]['instructions'] == _STABLE_PREFIX
-    assert [item.get('role') for item in bodies[1]['input']] == ['user', 'assistant', 'user']
-    assert bodies[2]['previous_response_id'] == second_id
-    assert bodies[2]['instructions'] == _STABLE_PREFIX
-    assert [item.get('role') for item in bodies[2]['input']] == ['user']
+    assert [_wire_shape(body) for body in bodies] == snapshot(
+        [
+            {
+                'previous_response_id': None,
+                'instructions': None,
+                'input': [
+                    ('system', '<_STABLE_PREFIX>'),
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ],
+            },
+            {
+                'previous_response_id': None,
+                'instructions': '<_STABLE_PREFIX>',
+                'input': [
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                    ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                    ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ],
+            },
+            {
+                'previous_response_id': 'resp_017d0ab63852be68006b047b02859c87d29e24628d98e4d657',
+                'instructions': '<_STABLE_PREFIX>',
+                'input': [('user', 'Which shelf holds entry 0101? Reply with just the number.')],
+            },
+        ]
+    )
     assert first.usage.cache_write_tokens > 0
     assert (second.usage.cache_read_tokens, third.usage.cache_read_tokens) == (0, 0)
 
@@ -2807,17 +2931,50 @@ async def test_openai_responses_auto_chain_e2e(
     )
 
     bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
-    assert 'instructions' not in bodies[0]
-    assert bodies[0]['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
-    assert bodies[1]['previous_response_id'] == first.response.provider_response_id
-    assert [item.get('role') for item in bodies[1]['input']] == ['user']
-    assert 'previous_response_id' not in bodies[2]
-    assert bodies[2]['input'][0] == {'role': 'system', 'content': changed}
-    assert bodies[3]['previous_response_id'] == third.response.provider_response_id
-    assert [item.get('role') for item in bodies[3]['input']] == ['user']
-    assert first.usage.cache_write_tokens > 0
-    assert second.usage.cache_read_tokens > 0
-    assert fourth.usage.cache_read_tokens > 0
+    assert [_wire_shape(body) for body in bodies] == snapshot(
+        [
+            {
+                'previous_response_id': None,
+                'instructions': None,
+                'input': [
+                    ('system', '<_STABLE_PREFIX>'),
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ],
+            },
+            {
+                'previous_response_id': 'resp_04a5bbea70ed9246006b05a27282f087d28291b1a50abd0ae2',
+                'instructions': None,
+                'input': [('user', 'Which aisle holds entry 0101? Reply with just the number.')],
+            },
+            {
+                'previous_response_id': None,
+                'instructions': None,
+                'input': [
+                    (
+                        'system',
+                        """\
+<_STABLE_PREFIX>
+Answer with just the number.\
+""",
+                    ),
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                    ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                    ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                    ('assistant', [{'text': '3', 'type': 'output_text', 'annotations': []}]),
+                    ('user', 'Which volume is entry 0077?'),
+                ],
+            },
+            {
+                'previous_response_id': 'resp_04a5bbea70ed9246006b05a275e61087d291bf29e58ba7ac94',
+                'instructions': None,
+                'input': [('user', 'Which shelf holds entry 0101?')],
+            },
+        ]
+    )
+    # Each continuation reads back everything the request before it cached, so the whole stored prefix stays cached.
+    assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
+    assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
+    assert fourth.usage.cache_read_tokens == third.usage.cache_write_tokens + third.usage.cache_read_tokens
 
 
 # ===== Prompt cache diagnostics =====
