@@ -230,7 +230,8 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                 )
             )
             return
-        # `chat` relays stderr itself; this also covers the `git` calls around it.
+        # Keeps macOS fork notices off the terminal around the session, such as from its `git` calls; `chat` sends
+        # standard error to its log while it runs.
         with relay_stderr():
             # Before the session, so commits made during it count as changes on exit.
             launched = worktree or _launched_worktree(relaunched=relaunched)

@@ -1,14 +1,14 @@
-"""Keep telemetry SDK log records out of the interactive terminal.
+"""Keep telemetry SDK log records, and on a terminal everything written to standard error, out of the session's display.
 
 Logfire and OpenTelemetry report export problems, such as a request to Logfire timing out, through `logging`.
 With no handler configured, Python's last-resort handler writes them to stderr, over the editor. While the
-interactive session runs they go to a small rotating file instead.
+interactive session runs they go to a small rotating file instead, and on a POSIX terminal so does standard error.
 """
 
 import logging
 import os
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import Callable, Generator
+from contextlib import contextmanager, nullcontext
 from io import TextIOWrapper
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -16,6 +16,7 @@ from pathlib import Path
 from rich.console import Console
 
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.stderr_relay import stderr_to_file
 
 _LOGGERS = ('logfire', 'opentelemetry')
 _MAX_BYTES = 1_000_000
@@ -76,7 +77,8 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
 
     A logger that already reaches a handler, one the embedding application configured on it, an ancestor, or a
     descendant, is left alone: only records no handler would write out are redirected, whether they would fall
-    through to `logging.lastResort` or be discarded by a `NullHandler`.
+    through to `logging.lastResort` or be discarded by a `NullHandler`. When `console` is the terminal, everything
+    written to standard error goes to `path` too (`stderr_to_file`), including what such a handler writes there.
     """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
     handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
@@ -88,15 +90,23 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     loggers = [logger for name in _LOGGERS if not _shown(logger := logging.getLogger(name))]
     for logger in loggers:
         logger.addHandler(handler)
+    stderr_written: Callable[[], bool] = _nothing
     try:
-        yield
+        with stderr_to_file(path) if console.is_terminal else nullcontext(_nothing) as stderr_written:
+            yield
     finally:
         for logger in loggers:
             logger.removeHandler(handler)
         handler.close()
-        if handler.wrote:
-            console.print(
-                f'Logfire or OpenTelemetry reported problems, such as failed exports. See {path}.',
-                style=theme.color(theme.MUTED),
-                markup=False,
-            )
+        if stderr_written():
+            notice = f'Warnings and errors from this session are in {path}.'
+        elif handler.wrote:
+            notice = f'Logfire or OpenTelemetry reported problems, such as failed exports. See {path}.'
+        else:
+            notice = None
+        if notice is not None:
+            console.print(notice, style=theme.color(theme.MUTED), markup=False)
+
+
+def _nothing() -> bool:
+    return False

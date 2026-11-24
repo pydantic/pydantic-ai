@@ -1,29 +1,32 @@
-"""Keep macOS's `MallocStackLogging` fork notices off the interactive terminal.
+"""Own the terminal's standard error: off it during the interactive session, and without macOS fork notices around it.
+
+While the interactive session runs on a POSIX terminal, file descriptor 2 is a pipe (`stderr_to_file`). Pax's own
+writes, `logging.lastResort`, warnings, a library's handler on `sys.stderr`, and every child started meanwhile write
+to it, and a thread appends what arrives to the session's log, so nothing paints over the live display. A child that
+must draw on the terminal itself, such as an editor, passes `terminal_stderr()` as its `stderr`.
 
 Once a process receives a memory pressure event, macOS's allocator loads its stack logging library. From then on
 the child half of every `fork()` reports `python(PID) MallocStackLogging: can't turn off malloc stack logging
 because it was not enabled.` on standard error, before the child sets up its own streams and starts the program.
-That standard error is still Pax's, the terminal, so every subprocess (a shell tool call, `git`, a notification)
-prints a line through the live display. No environment variable is involved, and a child's own `stderr=PIPE`
-cannot catch it.
-
-While the interactive session runs on macOS with standard error on a terminal, file descriptor 2 is a pipe
-instead. A thread copies everything written to it to the terminal unchanged, except those exact lines.
+No environment variable is involved, and a child's own `stderr=PIPE` cannot catch it. The log copy drops those
+exact lines. Around the session, as for the `git` calls the CLI makes, `relay_stderr` holds file descriptor 2 as a
+pipe on macOS and copies everything else written to it to the terminal unchanged.
 """
 
 import os
 import re
 import sys
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from pathlib import Path
 
 _NOTICE = re.compile(
     rb"[^\s()]+\(\d+\) MallocStackLogging: can't turn off malloc stack logging because it was not enabled\.\r?\n"
 )
 # One `os.read` gets everything in the pipe up to this size; the allocator writes each notice in a single `write`.
 _CHUNK = 65536
-# How long leaving the session waits for the copy to reach the terminal.
+# How long leaving the session, or the relay around it, waits for the copy to reach the log or the terminal.
 _DRAIN_TIMEOUT = 1.0
 
 _terminal: int | None = None
@@ -42,7 +45,7 @@ def drop_fork_notices(data: bytes, *, at_line_start: bool = True) -> bytes:
 
 
 def terminal_stderr() -> int | None:
-    """The terminal's standard error while `relay_stderr` holds file descriptor 2, else `None`.
+    """The terminal's standard error while `stderr_to_file` or `relay_stderr` holds file descriptor 2, else `None`.
 
     Pass it as a subprocess's `stderr` when the child must draw on the terminal itself, such as a progress bar.
     `None` keeps the default of inheriting Pax's standard error.
@@ -61,6 +64,65 @@ def _copy(source: int, terminal: int) -> None:
     finally:
         os.close(source)
         os.close(terminal)
+
+
+def _append(source: int, path: Path, appended: threading.Event) -> None:
+    at_line_start = True
+    try:
+        while data := os.read(source, _CHUNK):
+            kept = drop_fork_notices(data, at_line_start=at_line_start)
+            at_line_start = data.endswith((b'\n', b'\r'))
+            if not kept:
+                continue
+            # Opened per write, so a rotation of the log is followed. Like the log's records, an unwritable file
+            # loses the text: reporting the failure would write to standard error, which is this pipe.
+            try:
+                log = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            except OSError:
+                continue
+            try:
+                os.fchmod(log, 0o600)  # What a program reports can quote paths and settings, so the log is owner-only.
+                view = memoryview(kept)
+                while view:
+                    view = view[os.write(log, view) :]
+            finally:
+                os.close(log)
+            appended.set()
+    finally:
+        os.close(source)
+
+
+@contextmanager
+def stderr_to_file(path: Path) -> Generator[Callable[[], bool]]:
+    """Append everything written to standard error to `path`, while it is a POSIX terminal; yields whether any was.
+
+    File descriptor 2 is a pipe for the block, so children started meanwhile write to it too. Elsewhere, or when
+    standard error is not a terminal, this does nothing. Under `relay_stderr`, the terminal is the one it holds.
+    """
+    global _terminal
+    shown = _terminal
+    if sys.platform == 'win32' or not os.isatty(2 if shown is None else shown):
+        yield lambda: False
+        return
+    appended = threading.Event()
+    sys.stderr.flush()
+    restore = os.dup(2)
+    terminal = os.dup(2 if shown is None else shown)
+    source, sink = os.pipe()
+    os.dup2(sink, 2)
+    os.close(sink)
+    copier = threading.Thread(target=_append, args=(source, path, appended), name='pax-stderr-log', daemon=True)
+    copier.start()
+    _terminal = terminal
+    try:
+        yield appended.is_set
+    finally:
+        _terminal = shown
+        sys.stderr.flush()
+        os.dup2(restore, 2)
+        os.close(restore)
+        os.close(terminal)
+        copier.join(_DRAIN_TIMEOUT)
 
 
 @contextmanager

@@ -20,6 +20,8 @@ from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import TextArea
 
+from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
+
 EditorApp = Application[str | None]
 """The built-in editor: its result is the edited text, or `None` when cancelled."""
 TextAreaRunner = Callable[[EditorApp], str | None]
@@ -52,7 +54,7 @@ def run_editor(command: Sequence[str], text: str, *, prefix: str, suffix: str) -
         with os.fdopen(handle, 'w', encoding='utf-8') as file:
             file.write(text)
         print('\x1b[2J\x1b[H', end='', flush=True, file=sys.__stdout__)
-        if subprocess.call([*command, name]) != 0:
+        if subprocess.call([*command, name], stderr=terminal_stderr()) != 0:
             return None
         return path.read_text(encoding='utf-8')
     finally:
