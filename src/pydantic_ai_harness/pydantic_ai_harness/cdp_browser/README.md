@@ -121,6 +121,7 @@ What the guard does not cover:
   the two lookups gets past the block.
 - Speculative connections: Chrome can open a TCP connection to a refused host before the request is refused,
   without sending it.
+- Traffic other than HTTP requests and WebSockets: block it with an egress firewall.
 
 Set `allowed_domains` when the agent acts on untrusted input, and run it on a network where these gaps are
 acceptable.
