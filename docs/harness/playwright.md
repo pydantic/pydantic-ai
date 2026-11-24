@@ -335,7 +335,9 @@ those of workers registered before attachment, unless
 attachment bypass the guards, and so does a new WebSocket opened through the
 browser's own `WebSocket` constructor if script that ran before attachment kept
 a reference to it. A page loaded before attachment can still register a worker
-until it navigates.
+until it navigates. Those documents also keep the page APIs the session removes
+under an enforced policy (see [Egress and SSRF](#egress-and-ssrf)), which the
+session removes from documents created or navigated after attachment.
 
 ### Provisioning a browser per run
 
@@ -556,6 +558,32 @@ permitted site's identity-provider and payment steps live in frames. The
 private-address block ignores that split entirely: it applies to every frame and
 every resource type. WebSocket connections, which a network route never sees, get
 their own guard, applying the same policy the table above describes.
+
+Some page APIs open connections or send requests that neither guard sees: WebRTC
+(`RTCPeerConnection`), WebTransport, `WebSocketStream`, and FedCM, whose requests
+the browser sends itself. Under an enforced policy, which
+`block_private_addresses=True` makes the default, every context the session uses
+gets an init script that removes `RTCPeerConnection`, `webkitRTCPeerConnection`,
+`WebTransport`, `WebSocketStream`, `IdentityCredential` and `IdentityProvider`,
+and rejects a `navigator.credentials.get` call that carries `identity`. A browser
+the session launches also starts with
+`--disable-blink-features=FedCm,WebSocketStream`. A session with nothing to
+enforce keeps them all.
+
+These paths stay outside the policy:
+
+- **Workers.** The init script does not reach dedicated, nested or shared workers.
+  A worker can open a WebTransport connection, and in a browser reached over
+  `cdp_url`, a `WebSocketStream`.
+- **Sandboxed iframes Chromium isolates.** The full Chromium binary runs a
+  sandboxed iframe in a process of its own and gives it `WebTransport` back. This
+  affects `headless=False` and `cdp_url` browsers, not the default headless
+  launch.
+- **Documents loaded before attachment** under `cdp_context='default'` keep every
+  API the script removes until they navigate.
+
+Where these paths matter, enforce egress outside the browser with a firewall or a
+filtering proxy that also covers UDP.
 
 A host that is not already an address is resolved before the private-address block
 classifies it, so a name pointing at an internal address (`169.254.169.254.nip.io`

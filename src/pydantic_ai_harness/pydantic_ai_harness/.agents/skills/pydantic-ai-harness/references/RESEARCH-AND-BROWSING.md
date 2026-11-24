@@ -364,6 +364,7 @@ Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
 them, as does a new WebSocket opened through the native `WebSocket` constructor that script running
 before attachment kept, and a page loaded before attachment can register a worker until it navigates.
+Under an enforced policy, pages lose WebRTC, WebTransport, `WebSocketStream` and FedCM, whose traffic no guard sees; workers, isolated sandboxed iframes and documents loaded before attachment keep some of them.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
