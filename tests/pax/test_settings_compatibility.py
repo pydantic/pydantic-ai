@@ -361,11 +361,9 @@ def test_footer_layout_survives_a_build_without_it(
         connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
         connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test"'))
     store = SettingsStore(path)
-    # `trust` joined the shipped layout with the folder trust prompt; a saved layout keeps its own fields.
     defaults: list[str] = [
         'model',
         'workspace',
-        'trust',
         'context',
         'output',
         'cost',

@@ -96,7 +96,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
-| `display.footer_fields` | `["model", "workspace", "trust", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
+| `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
 | `display.full_screen` | `false` | Take the whole terminal height from the start, instead of starting compact below the shell and growing as the session needs room. Takes effect next start. |
 | `display.tool_calls` | `detailed` | How tool calls print: detailed gives each call its own line with arguments; grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output and display.tool_arg_chars; file diffs still print. |
@@ -215,11 +215,12 @@ contents.
 
 - **Yes, I trust this folder**: the folder's files are yours. Their text reaches the model
   as your own instructions.
-- **No, keep it untrusted** (the default, also <kbd>Esc</kbd> and <kbd>Ctrl</kbd>+<kbd>C</kbd>):
+- **No, keep it untrusted** (the default):
   the agent still reads, edits, and runs code there, as before. Pax gives the folder's files
   no authority (`authority='none'` on its `LocalWorkspace`), so capabilities that check it send
   their text as the repository's data, not as yours. Use it to look at a repository someone
-  else wrote.
+  else wrote. Dismissing the prompt with <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> keeps
+  the folder untrusted for this session without saving the answer, so Pax asks again next time.
 
 Trust is not a sandbox, and it does not approve anything else in the folder. Project settings
 still wait for `/project approve`, project plugins and hooks for `/plugins enable`, and project
@@ -228,8 +229,8 @@ project file may apply at once, such as `display.*` or a stricter `run.permissio
 
 `/trust` shows the decision and what it covers; `/trust yes` and `/trust no` change it. A change
 applies from the next prompt. What the model has already read stays in the conversation, so
-`/clear` starts a new one when you want a clean break. The status row's `trust` field shows
-`trusted`, or `untrusted` in the warning colour.
+`/clear` starts a new one when you want a clean break. The status row shows `trusted`, or
+`untrusted` in the warning colour, beside the `workspace` directory.
 
 Where the decision is kept:
 
@@ -239,12 +240,13 @@ Where the decision is kept:
 - Inside a Git repository, it covers the whole repository: every subfolder and every linked
   worktree share the main checkout's decision. A repository nested inside it, such as a
   submodule or a clone, is asked about on its own. A folder whose `.git` file points at another
-  repository counts as that repository's worktree only if the repository lists it among its
-  worktrees.
+  repository counts as that repository's worktree only if that repository's worktree metadata
+  points back to it.
 - Outside a repository, it is kept for the folder you started in and covers its subfolders; the
   nearest folder with a decision wins.
-- In your home folder or the filesystem root, the answer holds for that session only, so Pax
-  asks again next time, and a decision there never covers the folders below.
+- In your home folder or the filesystem root, the answer holds for that session only, even if it
+  sits inside a repository or worktree, so Pax asks again next time, and a decision there never
+  covers the folders below.
 
 `pax -p`, `pax --web`, and sessions the web UI opens never ask: they use the decision you made
 before, and a folder you never decided about stays untrusted. `pax -p` says so on stderr and
@@ -1826,7 +1828,7 @@ fields are hidden; `[]` hides the footer figures, not the prompt or task panel.
 The default order is:
 
 ```json
-["model", "workspace", "trust", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
+["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
 ```
 
 Every field is independently selectable and reorderable:
@@ -1834,8 +1836,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
-| `trust` | `trusted` or `untrusted` (in the warning colour): whether you trust the working directory; see [Folder trust](#folder-trust) |
+| `workspace` | Working directory, abbreviated to its tail, with its `trusted` / `untrusted` state when folder trust applies; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1851,7 +1852,7 @@ fragments move and hide together through `plugins`, not as individual fields.
 
 When the row is wider than the terminal, `workspace` shortens to its last folder
 (`…/jsonrc`), then fields are hidden, least important first, until it fits:
-`assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`, `trust`,
+`assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
 `plugins`, the `context` labels, then `model`. `activity` and the context figure
 always stay. The row is cut at the edge rather than wrapped if it still does not fit.
 

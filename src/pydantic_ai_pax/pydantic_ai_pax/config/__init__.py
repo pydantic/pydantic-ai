@@ -29,7 +29,6 @@ TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 FooterField = Literal[
     'model',
     'workspace',
-    'trust',
     'context',
     'output',
     'cost',

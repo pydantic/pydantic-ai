@@ -90,7 +90,6 @@ class Status:
         ('hide', 'updates'),
         ('hide', 'live'),
         ('hide', 'workspace'),
-        ('hide', 'trust'),
         ('hide', 'plugins'),
         ('shorten', 'context'),
         ('hide', 'model'),
@@ -218,15 +217,16 @@ class Status:
         path = _short_path(terminal_text(shown.workspace, keep=''))
         folder = f'…/{PurePath(path).name}'
         figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
-        trust = self.trust()
+        trust = shown.trust()
+        trust_parts = [(theme.WARNING if trust == 'untrusted' else theme.MUTED, trust)] if trust is not None else []
+        short_path = folder if cell_len(folder) < cell_len(path) else path
         shorter: dict[FooterField, list[tuple[str, str]]] = {
-            'workspace': [(theme.MUTED, folder if cell_len(folder) < cell_len(path) else path)],
+            'workspace': _workspace_with_trust(short_path, trust_parts),
             'context': [figure],
         }
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            'workspace': [(theme.MUTED, path)],
-            'trust': [(theme.WARNING if trust == 'untrusted' else theme.MUTED, trust or '')],
+            'workspace': _workspace_with_trust(path, trust_parts),
             'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
@@ -381,6 +381,12 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if path and trust:
+        return [(theme.MUTED, path), (theme.MUTED, ' | '), *trust]
+    return trust or [(theme.MUTED, path)]
 
 
 def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:

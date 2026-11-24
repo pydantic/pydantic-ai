@@ -13,8 +13,8 @@ TRUST = 'Yes, I trust this folder'
 DISTRUST = 'No, keep it untrusted'
 
 
-async def ask_trust(details: str, *, console: Console) -> bool:
-    """Whether you trust the folder `details` describes; No, Esc and Ctrl-C keep it untrusted, as does the default."""
+async def ask_trust(details: str, *, console: Console) -> bool | None:
+    """Whether you trust the folder `details` describes; `None` when dismissed with Esc or Ctrl-C."""
     menu = QuestionMenu(
         question=Question(
             header='Trust this folder?',
@@ -29,4 +29,4 @@ async def ask_trust(details: str, *, console: Console) -> bool:
     )
     with question_input() as key_source:
         answer = await run_worker(partial(menu.run, console=console, key_source=key_source), inline=True)
-    return answer == (TRUST,)
+    return None if answer is None else answer == (TRUST,)

@@ -24,9 +24,8 @@ from pathlib import Path
 from typing import Literal, Self
 
 from pydantic_ai.messages import Authority
-from pydantic_ai_pax.config.project_settings import PROJECT_FILE, repository_directories, repository_root
+from pydantic_ai_pax.config.project_settings import PROJECT_FILE, repository_directories
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.runtime.project_identity import project_identity, worktree_roots
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 TrustLevel = Literal['trusted', 'untrusted']
@@ -58,9 +57,21 @@ class TrustScope:
 def trust_scope(directory: Path) -> TrustScope:
     """The scope of the trust decision for a session working in `directory`."""
     start = directory.resolve()
-    root = repository_root(start)
+    if _session_only(start):
+        return TrustScope(key=start, repository=False, remembered=False)
+    root = _repository_root_for_trust(start)
     key = start if root is None else _main_checkout(root)
     return TrustScope(key=key, repository=root is not None, remembered=not _session_only(key))
+
+
+def _repository_root_for_trust(start: Path) -> Path | None:
+    """The nearest repository root at or above `start`, stopping before `$HOME` and `/`, which never cover subfolders."""
+    for folder in (start, *start.parents):
+        if _session_only(folder):
+            return None
+        if os.path.lexists(folder / '.git'):
+            return folder
+    return None  # pragma: no cover -- every resolved path reaches `/`, which is session-only.
 
 
 def _main_checkout(root: Path) -> Path:
@@ -68,12 +79,53 @@ def _main_checkout(root: Path) -> Path:
 
     A `.git` folder makes `root` its own repository. A `.git` file names a Git directory elsewhere, which a
     downloaded folder can point at a trusted repository's, so `root` takes that repository's decision only when
-    the repository lists it among its worktrees. A submodule is its own main checkout, so it gets its own decision.
+    that repository's `worktrees/` entry points back to `root / '.git'`. A submodule has no worktree `commondir`,
+    so it gets its own decision.
     """
-    if (root / '.git').is_dir():
+    dot_git = root / '.git'
+    if dot_git.is_symlink() or not dot_git.is_file():
         return root
-    checkouts = [Path(listed).resolve() for listed in worktree_roots(project_identity(str(root)))]
-    return checkouts[0] if root in checkouts[1:] else root
+    target = _gitdir_target(dot_git)
+    if target is None:
+        return root
+    wt_gitdir = (root / target).resolve()
+    back = _read_first_line(wt_gitdir / 'gitdir')
+    common_raw = _read_first_line(wt_gitdir / 'commondir')
+    if back is None or common_raw is None:
+        return root
+    back_path = wt_gitdir / back
+    if back_path.name != '.git' or back_path.parent.resolve() != root:
+        return root
+    common = (wt_gitdir / common_raw).resolve()
+    if wt_gitdir.parent != (common / 'worktrees').resolve():
+        return root
+    return common.parent if _is_main_git_dir(common) else root
+
+
+def _gitdir_target(dot_git: Path) -> str | None:
+    line = _read_first_line(dot_git)
+    if line is None or not line.startswith('gitdir:'):
+        return None
+    return line.removeprefix('gitdir:').strip() or None
+
+
+def _read_first_line(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+    first, _, _ = text.partition('\n')
+    return first.strip() or None
+
+
+def _is_main_git_dir(common: Path) -> bool:
+    main_dot_git = common.parent / '.git'
+    return (
+        common.name == '.git'
+        and not main_dot_git.is_symlink()
+        and main_dot_git.is_dir()
+        and main_dot_git.resolve() == common
+    )
 
 
 def _session_only(key: Path) -> bool:

@@ -127,7 +127,7 @@ async def test_trust_shows_what_it_covers(repository: Path) -> None:
 def terminal(monkeypatch: pytest.MonkeyPatch) -> Console:
     """A terminal console with a terminal to answer in, as the interactive shell has."""
     monkeypatch.setattr('sys.stdin.isatty', lambda: True)
-    return Console(file=io.StringIO(), force_terminal=True, width=100, height=30)
+    return Console(file=io.StringIO(), force_terminal=True, width=300, height=30)
 
 
 async def test_first_run_question_is_asked_once_and_remembered(tmp_path: Path, terminal: Console) -> None:
@@ -180,7 +180,7 @@ async def test_no_keeps_the_folder_untrusted_and_is_remembered(tmp_path: Path, t
 async def test_nobody_is_asked_without_a_terminal(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
 
-    async def never(details: str) -> bool:
+    async def never(details: str) -> bool:  # pragma: no cover
         raise AssertionError('asked without a terminal')
 
     shell = shell_in(tmp_path, store)
@@ -191,9 +191,17 @@ async def test_nobody_is_asked_without_a_terminal(tmp_path: Path) -> None:
         await shell.close('exit')
 
 
-@pytest.mark.parametrize(('keys', 'trusted'), [('1', True), ('\r', False), ('\x1b', False), ('2', False)])
+@pytest.mark.parametrize(
+    ('keys', 'trusted', 'saved'),
+    [('1', True, True), ('\r', False, False), ('2', False, False), ('\x1b', False, None)],
+)
 async def test_the_question_defaults_to_untrusted(
-    tmp_path: Path, terminal: Console, monkeypatch: pytest.MonkeyPatch, keys: str, trusted: bool
+    tmp_path: Path,
+    terminal: Console,
+    monkeypatch: pytest.MonkeyPatch,
+    keys: str,
+    trusted: bool,
+    saved: bool | None,
 ) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     shell = shell_in(tmp_path, store)
@@ -202,12 +210,14 @@ async def test_the_question_defaults_to_untrusted(
             monkeypatch.setattr('pydantic_ai_pax.ui.prompt.question_input.create_input', lambda: pipe)
             pipe.send_text(keys)
             await _decide_trust(shell, console=terminal)
-        assert shell.session.trust is not None and shell.session.trust.trusted is trusted
+        assert shell.session.trust is not None
+        assert shell.session.trust.trusted is trusted
+        assert shell.session.trust.decided is (saved is not None)
     finally:
         await shell.close('exit')
     shown = Text.from_ansi(terminal.file.getvalue()).plain  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownArgumentType]
     assert f'{tmp_path.resolve()}: this folder and its subfolders.' in ' '.join(shown.split())
-    assert store.workspace_trust(tmp_path.resolve()) is trusted
+    assert store.workspace_trust(tmp_path.resolve()) is saved
 
 
 def test_a_repository_is_trusted_as_a_whole(repository: Path, tmp_path: Path) -> None:
@@ -237,14 +247,81 @@ def test_a_nested_repository_is_asked_about_on_its_own(repository: Path, tmp_pat
 
 
 def test_a_git_file_cannot_borrow_a_trusted_repository(repository: Path, tmp_path: Path) -> None:
-    """A downloaded folder whose `.git` file names a trusted repository's Git directory is not one of its worktrees."""
+    """A downloaded folder cannot inherit a trusted repository's decision via a forged `.git` file or symlink."""
     store = SettingsStore(tmp_path / 'config.db')
     WorkspaceTrust.saved(store, repository).decide(store, trusted=True)
+
+    # 1. `.git` file pointing directly at a trusted repository's `.git` directory.
     spoof = tmp_path / 'download'
     spoof.mkdir()
     (spoof / '.git').write_text(f'gitdir: {repository / ".git"}\n')
     assert trust_scope(spoof).key == spoof.resolve()
     assert not WorkspaceTrust.saved(store, spoof).trusted
+
+    # 2. `.git` file pointing at a real linked worktree's gitdir belonging to another path.
+    real_wt = tmp_path / 'real-wt'
+    git(repository, 'worktree', 'add', '--quiet', '-b', 'real', str(real_wt))
+    wt_gitdir = (real_wt / '.git').read_text().strip()
+    other_wt = tmp_path / 'other-wt'
+    other_wt.mkdir()
+    (other_wt / '.git').write_text(f'{wt_gitdir}\n')
+    assert trust_scope(other_wt).key == other_wt.resolve()
+
+    # 3. Symlink `.git` pointing at a real linked worktree's `.git` file.
+    symlinked = tmp_path / 'symlinked'
+    symlinked.mkdir()
+    (symlinked / '.git').symlink_to(real_wt / '.git')
+    assert trust_scope(symlinked).key == symlinked.resolve()
+
+    # 4. Forged local worktree gitdir whose `commondir` points at the trusted repo's `.git`.
+    forged = tmp_path / 'forged'
+    fake_gitdir = forged / 'fake_wt'
+    fake_gitdir.mkdir(parents=True)
+    (forged / '.git').write_text('gitdir: ./fake_wt\n')
+    (fake_gitdir / 'gitdir').write_text('../.git\n')
+    (fake_gitdir / 'commondir').write_text(f'{repository / ".git"}\n')
+    assert trust_scope(forged).key == forged.resolve()
+
+    # 5. Corrupt or unreadable `.git` file.
+    corrupt = tmp_path / 'corrupt'
+    corrupt.mkdir()
+    (corrupt / '.git').write_text('not a gitdir pointer\n')
+    assert trust_scope(corrupt).key == corrupt.resolve()
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    (empty / '.git').write_bytes(b'\xff\xfe')
+    assert trust_scope(empty).key == empty.resolve()
+
+
+def test_bare_repository_worktree_gets_its_own_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    bare = tmp_path / 'bare.git'
+    git(tmp_path, 'init', '--quiet', '--bare', str(bare))
+    wt = tmp_path / 'bare-wt'
+    git(bare, 'worktree', 'add', '--quiet', '--orphan', '-b', 'main', str(wt))
+    assert trust_scope(wt).key == wt.resolve()
+
+
+def test_home_inside_a_repository_or_worktree_stays_session_only(
+    repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    WorkspaceTrust.saved(store, repository).decide(store, trusted=True)
+
+    # Home as a linked worktree of a trusted repository stays session-only.
+    home_wt = tmp_path / 'home-wt'
+    git(repository, 'worktree', 'add', '--quiet', '-b', 'home-wt', str(home_wt))
+    monkeypatch.setattr(Path, 'home', staticmethod(lambda: home_wt))
+    scope = trust_scope(home_wt)
+    assert scope.key == home_wt.resolve() and not scope.remembered and not scope.repository
+    assert not WorkspaceTrust.saved(store, home_wt).decided
+
+    # A dotfiles `.git` in `$HOME` does not capture subfolders of `$HOME`.
+    sub = home_wt / 'notes'
+    sub.mkdir()
+    sub_scope = trust_scope(sub)
+    assert sub_scope.key == sub.resolve() and sub_scope.remembered and not sub_scope.repository
 
 
 def test_outside_a_repository_a_decision_covers_subfolders(tmp_path: Path) -> None:
@@ -299,10 +376,16 @@ async def test_a_project_file_cannot_trust_its_repository(repository: Path, tmp_
 
 def test_footer_shows_the_trust_level() -> None:
     level: list[str] = ['untrusted']
-    status = Status(trust=lambda: 'untrusted' if level[0] == 'untrusted' else 'trusted')
+    status = Status(
+        workspace='/a/very/long/project/folder', trust=lambda: 'untrusted' if level[0] == 'untrusted' else 'trusted'
+    )
     assert (theme.WARNING, 'untrusted') in status.toolbar()
+    assert '/a/very/long/project/folder | untrusted' in status.text()
+    short = status.toolbar(width=72)
+    assert (theme.MUTED, '…/folder') in short and (theme.WARNING, 'untrusted') in short
     level[0] = 'trusted'
     assert (theme.MUTED, 'trusted') in status.toolbar()
+    assert (theme.WARNING, 'untrusted') in Status(trust=lambda: 'untrusted').toolbar()
     assert 'trusted' not in Status().text(), "a host's own session shows no trust level"
     assert Status(trust=lambda: 'trusted', fields=lambda: ['model']).text() == 'agent default'
 

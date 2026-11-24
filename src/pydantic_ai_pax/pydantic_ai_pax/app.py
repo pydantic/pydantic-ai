@@ -387,13 +387,14 @@ async def _decide_trust(
     shell: SessionRuntime[DepsT, OutputT],
     *,
     console: Console,
-    ask: Callable[[str], Awaitable[bool]] | None = None,
+    ask: Callable[[str], Awaitable[bool | None]] | None = None,
 ) -> None:
     """Ask whether you trust the folder of `shell`, the session Pax starts with, unless you decided before.
 
     Asked only with a terminal to answer in, before any plugin loads or turn runs, through `ask` (by default
-    the inline question), and kept in your settings. Nothing the folder holds is read to decide whether to
-    ask, only its file names to say what trusting it covers.
+    the inline question), and kept in your settings unless dismissed (`None`), which keeps the folder untrusted
+    for this session and asks again next launch. Nothing the folder holds is read to decide whether to ask,
+    only its file names to say what trusting it covers.
     """
     trust = shell.session.trust
     assert trust is not None, 'create_shell sets the trust of every session it builds'
@@ -404,6 +405,14 @@ async def _decide_trust(
 
         ask = partial(ask_trust, console=console)
     trusted = await ask(await to_thread.run_sync(describe, trust, Path(shell.session.workspace)))
+    if trusted is None:
+        console.print(
+            "Untrusted for this session: the agent can still work here, with its files as the repository's. "
+            '/trust changes it.',
+            style=theme.color(theme.INFO),
+            markup=False,
+        )
+        return
     await to_thread.run_sync(partial(trust.decide, shell.context.store, trusted=trusted))
     level = 'Trusted' if trusted else "Untrusted: the agent can still work here, with its files as the repository's"
     held = '' if trust.scope.remembered else ' for this session'
