@@ -4,6 +4,7 @@ changelog:
       - docs
       - chore
       - pkg:clai2
+      - bug:unreleased
   # GitHub lists each PR only under the first category it matches, so categories are
   # change types. The release manager lists `compatibility impact` PRs again under
   # Compatibility Notes.

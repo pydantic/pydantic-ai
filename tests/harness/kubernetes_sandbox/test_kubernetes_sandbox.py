@@ -91,11 +91,14 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([KubernetesSandbox])['$defs']
     params = definitions['spec_params_KubernetesSandbox']
     assert sorted(params['properties']) == [
+        'authority',
         'connection',
         'description',
+        'desktop',
         'env',
         'id',
         'namespace',
+        'path_authority',
         'sandbox_timeout',
         'warm_pool',
         'working_dir',
@@ -113,6 +116,9 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         sandbox_timeout=600,
         working_dir='/work',
         env={'A': '1'},
+        authority='none',
+        path_authority={'/work/own': 'operator'},
+        desktop=(1440, 900),
     )
     assert from_spec == KubernetesSandbox(
         id='kubernetes',
@@ -123,6 +129,9 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         sandbox_timeout=600,
         working_dir='/work',
         env={'A': '1'},
+        authority='none',
+        path_authority={'/work/own': 'operator'},
+        desktop=(1440, 900),
     )
 
 
@@ -615,6 +624,29 @@ async def test_a_run_keeps_its_connection_open_and_closes_it_at_the_end(cluster:
     ref = result.workspace.ref
     assert ref is not None
     await capability.destroy(ref)
+
+
+async def test_authority_reaches_the_runs_workspace_and_the_run_still_closes_its_connection(
+    cluster: FakeCluster,
+) -> None:
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[KubernetesSandbox(warm_pool='pool', authority='none')])
+
+    @agent.tool
+    async def probe(ctx: RunContext[object]) -> str:
+        await ctx.workspace.run(['true'])
+        return await ctx.workspace.authority_of('AGENTS.md')
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":"none"}'
+    [client] = cluster.clients
+    assert client.closed
+    assert result.workspace.ref is not None and result.workspace.ref.provider == 'kubernetes'
+
+
+def test_a_tilde_path_authority_is_refused() -> None:
+    with pytest.raises(UserError, match='`~` is not expanded'):
+        KubernetesSandbox(warm_pool='pool', path_authority={'~/repo': 'none'})
 
 
 async def test_a_cancelled_run_still_closes_its_connection(cluster: FakeCluster) -> None:

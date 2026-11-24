@@ -47,7 +47,13 @@ from pydantic_ai_harness.sub_agents._events import (
     TaskSettledEvent,
     task_mailbox,
 )
-from pydantic_ai_harness.sub_agents._tasks import CANCELLED_ANSWER, STOPPED_OUTPUT, DelegationTask, DelegationTasks
+from pydantic_ai_harness.sub_agents._tasks import (
+    ASK_PARENT_TOOL_NAME,
+    CANCELLED_ANSWER,
+    STOPPED_OUTPUT,
+    DelegationTask,
+    DelegationTasks,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -58,9 +64,6 @@ _logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 _TEARDOWN_SECONDS = 5.0
 """How long a remote task's teardown may take to stop its worker and release its mailbox."""
-
-ASK_PARENT_TOOL_NAME = 'ask_parent'
-"""The tool a delegated run uses to ask the delegating agent a question."""
 
 _TASK_INSTRUCTIONS = (
     'You are working on a task another agent delegated to you. '
