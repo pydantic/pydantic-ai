@@ -17,6 +17,10 @@ def is_mcp_sdk_v2() -> bool:
     return match is not None and tuple(map(int, match.groups())) >= (2, 0, 0)
 
 
+MCP_SDK_V2 = is_mcp_sdk_v2()
+"""Whether the installed MCP SDK is v2 (FastMCP 4). Read once at import, since reading package metadata touches disk."""
+
+
 def wire_name(name: str) -> str:
     """The camelCase (wire and SDK v1) spelling of a snake_case field name."""
     first, *rest = name.split('_')

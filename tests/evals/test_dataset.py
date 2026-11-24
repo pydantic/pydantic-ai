@@ -18,6 +18,8 @@ import yaml
 from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 from .._inline_snapshot import snapshot
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsStr, try_import
@@ -2670,10 +2672,6 @@ async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOut
 
     lifecycle = partial(ConfigurableLifecycle, my_config=123)
     await example_dataset.evaluate(task, lifecycle=lifecycle)
-
-
-# How long a test waits for a background thread it controls; never reached unless the code under test hangs.
-READINESS_WAIT_TIMEOUT = 10
 
 
 async def test_task_timeout_fails_only_the_slow_case():

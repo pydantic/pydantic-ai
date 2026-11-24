@@ -33,7 +33,7 @@ _OPENAI_BASE_BUILTINS = frozenset(
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below."""
+profile below. `OpenAIProvider` adds `ComputerTool` for the models that OpenAI offers it on."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -133,28 +133,38 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
+_GPT_6_2_MODEL_PREFIXES = ('gpt-6.2-sol', 'gpt-6.2-astra')
+
+_GPT_6_MODEL_PREFIXES = (
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
+    *_GPT_6_2_MODEL_PREFIXES,
+)
+
+_GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
+    enabled_by_default=True,
+    can_be_disabled=False,
+    supports_mode=True,
+    supports_context=True,
+    efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
+)
+"""The GPT-6 models that always reason, at efforts `low` through `max`: they reject `effort='none'` and `'minimal'`."""
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
-    'gpt-6-astra': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol
-    'gpt-6.1-sol': _ReasoningSupport(
-        enabled_by_default=True,
-        can_be_disabled=False,
-        supports_mode=True,
-        supports_context=True,
-        efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
-    ),
+    'gpt-6.1-sol': _GPT_6_ALWAYS_ON_REASONING,
+    # GPT-6.2 Sol and Astra follow GPT-6 Astra too (live-verified 2026-11).
+    # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.2-sol': _GPT_6_ALWAYS_ON_REASONING,
+    'gpt-6.2-astra': _GPT_6_ALWAYS_ON_REASONING,
     # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
     'gpt-6.1-terra': _ReasoningSupport(
@@ -279,13 +289,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the model includes thinking content in requests. Default: `'auto'`.
 
     This can be:
-    * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
-    (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
-    it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
-    default when receiving responses. If your provider uses a different field name, you must explicitly set
-    `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
-    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
-    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
+    * `'auto'` (default): Automatically detects how to send thinking content. Thinking received from this provider
+    (tracked via `ThinkingPart.provider_name`) is sent back in a field only when its `ThinkingPart.id` is the
+    configured `openai_chat_thinking_field`, or, with none configured, `reasoning` or `reasoning_content`, the fields
+    checked by default when receiving responses. Any other thinking is sent using tags, including thinking received in
+    a field this profile doesn't name, such as history from another model on the same provider. If your provider uses
+    a different field name, you must explicitly set `openai_chat_thinking_field` to that field name. When the request
+    sends exactly one of these fields back, it's also sent empty on tool-calling assistant turns after the last user
+    message that don't already carry it, such as a step served by another model or provider, since DeepSeek-style APIs
+    reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
@@ -342,6 +354,17 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, reaching clean EOF before any chunk supplies a `finish_reason` raises
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
+
+    openai_chat_streaming_repeats_usage_totals: bool
+    """Whether every streamed Chat Completions chunk repeats the running usage totals unprompted. Default: `False`.
+
+    When enabled, each chunk's usage replaces the usage recorded so far instead of adding to it, as
+    [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_continuous_usage_stats]
+    does, without sending `stream_options.continuous_usage_stats`.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
+    usage under-reported, so turn this off in the model's profile."""
 
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
@@ -415,6 +438,19 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, unified `thinking='max'` is sent as `reasoning_effort='max'`; otherwise it falls back to `'xhigh'`.
     OpenAI's own Chat Completions API rejects `'max'` on every model, so only providers that accept it set this
     (DeepSeek V4, and Kimi K3, K2.6 and K2.7). Explicit `openai_reasoning_effort='max'` settings are still passed through unchanged."""
+
+    openai_chat_function_tools_require_reasoning_off: bool
+    """Whether the Chat Completions API rejects function tools while reasoning is on. Default: `False`.
+
+    When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
+    included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
+    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
+    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra). `openai_model_profile` leaves it off,
+    because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
+    these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
+    On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
+    accepted effort rather than `'none'`, so it is not a way out there."""
 
     openai_chat_thinking_false_body: dict[str, Any]
     """Request body fields that unified `thinking=False` sends on the Chat Completions API, in place of
@@ -531,6 +567,25 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_stable_instructions_as_input: bool
+    """Whether the Responses API gets the instructions that keep the prompt prefix stable as leading input messages.
+    Default: `False`.
+
+    Those are the literal instructions and the [`on_change='append'`](../agent.md#appending-instruction-changes)
+    blocks, whose changes are appended to the history. The instructions that rewrite the prefix when they change stay
+    in the top-level `instructions` field, and with
+    [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]
+    too. All of them stay there on a request that sets a concrete `openai_previous_response_id` or
+    `openai_conversation_id`, continues a compacted history, has a dynamic system prompt, or uses the `'user'` system
+    prompt role. With `openai_previous_response_id='auto'` (which `openai_transport='websocket'` sets by default), they
+    lead the input when the chain starts or resends the history, and are left out while it continues: each response's
+    history digest records them, so a request with different ones resends the history.
+
+    Set by `OpenAIProvider` for `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level `instructions` after
+    `input` and bill them at the uncached rate on every request:
+    https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works.
+    """
+
     openai_responses_tool_choice_accepts_additional_tools: bool
     """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
     declares. Default: `False`.
@@ -598,7 +653,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_input_token_counting: bool
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
-    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    When `False`, `count_tokens()` raises a `UserError` that is also a `NotImplementedError` instead of calling a
+    missing endpoint.
     """
 
     openai_supports_batch_api: bool
@@ -722,6 +778,18 @@ def is_openai_live_model(model_name: str) -> bool:
     return model_name.startswith('gpt-live')
 
 
+def is_openai_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI offers its native computer tool on this model.
+
+    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
+    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
+    is added here.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
+
+
 def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for an OpenAI GPT-Live model.
 
@@ -742,6 +810,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
+        # The agent's instructions are the backend's; the voice model's own prompt can be added to mid-session.
+        'supports_appending_voice_instructions': True,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
         'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going

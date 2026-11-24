@@ -4,6 +4,7 @@
     options:
       members:
         - ModelProfile
+        - ModelDeprecation
         - ModelProfileSpec
         - JsonSchemaTransformer
         - InlineDefsJsonSchemaTransformer
@@ -41,5 +42,17 @@
 ::: pydantic_ai.profiles.zai
 
 ::: pydantic_ai.profiles.minimax
+
+::: pydantic_ai.profiles.nvidia
+
+::: pydantic_ai.profiles.thinkingmachines
+
+::: pydantic_ai.profiles.xiaomi
+
+::: pydantic_ai.profiles.stepfun
+
+::: pydantic_ai.profiles.tencent
+
+::: pydantic_ai.profiles.inclusionai
 
 ::: pydantic_ai.profiles.decision

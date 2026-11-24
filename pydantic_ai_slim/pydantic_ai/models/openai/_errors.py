@@ -13,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ... import ModelAPIError, ModelHTTPError, _model_errors, _utils
 from ..._utils import is_str_dict as _is_str_dict
-from ...exceptions import ModelConnectionError, ModelRequestRejectedError
+from ...exceptions import ModelConnectionError, ModelContextWindowExceededError, ModelRequestRejectedError
 from ...messages import ModelResponse
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
@@ -36,21 +36,7 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gener
         # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
     except httpx2.HTTPStatusError as e:
-        # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
-        body, error, text = _model_errors.transport_error_body(e.response)
-        code, error_type = _model_errors.openai_error_fields(error)
-        raise status_error(
-            model_name,
-            model_id_namespace,
-            status_code=e.response.status_code,
-            body=body,
-            code=code,
-            error_type=error_type,
-            # `openai`'s own message holds the whole body.
-            message=text,
-            headers=dict(e.response.headers),
-            error_object=error,
-        ) from e
+        raise map_transport_status_error(e, model_name, model_id_namespace) from e
     except httpx2.TransportError as e:
         # For a streamed request, `openai` reads the body of an error status outside its own transport error handling,
         # so a connection that breaks off while sending that body surfaces as the raw `httpx2` error.
@@ -68,6 +54,24 @@ def map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str
         error_type=e.type,
         message=e.message,
         headers=dict(e.response.headers),
+    )
+
+
+def map_transport_status_error(e: httpx2.HTTPStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
+    """The error for a status a retrying transport gave up on, which `openai` lets through unwrapped."""
+    body, error, text = _model_errors.transport_error_body(e.response)
+    code, error_type = _model_errors.openai_error_fields(error)
+    return status_error(
+        model_name,
+        model_id_namespace,
+        status_code=e.response.status_code,
+        body=body,
+        code=code,
+        error_type=error_type,
+        # `openai`'s own message holds the whole body.
+        message=text,
+        headers=dict(e.response.headers),
+        error_object=error,
     )
 
 
@@ -92,14 +96,22 @@ def status_error(
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+    reported = body if error_object is None else error_object
+    metadata = reported.get('metadata') if _utils.is_str_dict(reported) else None
     if model_id_namespace == 'zai':
         # Z.ai's numeric codes mean something only from Z.ai, so other OpenAI-compatible APIs don't get this mapping.
         category = _model_errors.zai_code_category(code) or category
     elif model_id_namespace == 'moonshotai':
         # Moonshot sends an exhausted balance as a 429 too; only its error type tells it from a rate limit.
         category = _model_errors.moonshot_type_category(error_type) or category
-    reported = body if error_object is None else error_object
-    if status_code == 403 and flags_input(reported.get('metadata') if _utils.is_str_dict(reported) else None):
+    elif (
+        model_id_namespace == 'openrouter'
+        and category is ModelRequestRejectedError
+        and metadata_raw_reports_context_window(metadata)
+    ):
+        # OpenRouter forwards the upstream provider's overflow behind a generic rejection; a specific category wins.
+        category = ModelContextWindowExceededError
+    if status_code == 403 and flags_input(metadata):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
@@ -120,6 +132,25 @@ def flags_input(metadata: object) -> bool:
     See https://openrouter.ai/docs/api-reference/errors#moderation-errors.
     """
     return _utils.is_str_dict(metadata) and ('flagged_input' in metadata or 'reasons' in metadata)
+
+
+def metadata_raw_reports_context_window(metadata: object) -> bool:
+    """Whether the upstream error OpenRouter forwards in an error's `metadata.raw` says the context window was exceeded.
+
+    OpenRouter puts it there behind a generic message like `Provider returned error`, as plain text or as a JSON
+    `{"error": {...}}` string. Only its message is read: a nested code or type, like a generic `400`, never counts.
+    """
+    raw = metadata.get('raw') if _utils.is_str_dict(metadata) else None
+    if not isinstance(raw, str):
+        return False
+    parsed, _, fields = _model_errors.parse_error_body(raw)
+    if parsed is None:
+        message = raw
+    elif _utils.is_str_dict(parsed) and 'error' in parsed:
+        message = fields.get('message')
+    else:
+        return False
+    return _model_errors.openai_compatible_category(None, None, None, message) is ModelContextWindowExceededError
 
 
 def map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:

@@ -11,6 +11,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.file_system._content import require_pillow
 from pydantic_ai_harness.file_system._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
@@ -102,6 +103,15 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     smaller than the header and hint themselves cannot be met; the result still carries them.
     """
 
+    max_image_side: int | None = field(default=None, kw_only=True)
+    """Longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to fit.
+
+    The copy keeps the aspect ratio and the file's format, and is never upscaled.
+    `None` (the default) sends images at their full size; `Coder` sets 1024.
+    Downscaling needs Pillow, which the `coder` extra installs: setting this
+    without it raises an `ImportError`.
+    """
+
     max_list_results: int = 1000
     """Maximum number of entries returned by `list_directory`."""
 
@@ -167,9 +177,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         }
         if self.max_read_chars is not None:
             values['max_read_chars'] = self.max_read_chars
+        if self.max_image_side is not None:
+            values['max_image_side'] = self.max_image_side
         for name, value in values.items():
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
+        if self.max_image_side is not None:
+            require_pillow()
         retries: object = self.max_retries
         if retries is not None and (not isinstance(retries, int) or isinstance(retries, bool) or retries < 0):
             raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
@@ -201,5 +215,6 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 content_hashes=self.content_hashes,
                 tools=self.tools,
                 max_retries=self.max_retries,
+                max_image_side=self.max_image_side,
             )
         return self._toolset

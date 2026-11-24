@@ -4,7 +4,7 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Generic, TypeGuard
+from typing import TYPE_CHECKING, Generic, TypeGuard
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -34,6 +34,9 @@ from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
 
+if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
+
 InstructionFunc = _system_prompt.PromptFunc[AgentDepsT, str | InstructionPart]
 """A function computing an instruction: it may or may not take `RunContext`, may or may not be async,
 and returns text, an [`InstructionPart`][pydantic_ai.messages.InstructionPart], or `None`.
@@ -51,6 +54,9 @@ into an id against whatever source contributes it), its
 `InstructionPart` to declare the same from inside it."""
 
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
+"""Instructions as `Agent(instructions=...)` and `Agent.override(instructions=...)` take them and
+[`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] returns them: one
+instruction, a sequence of them, or `None`."""
 
 
 def validate_instruction_id_segment(id: str, *, kind: str) -> None:
@@ -75,7 +81,12 @@ def validate_instruction_name(name: str) -> None:
 
 @dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
-    """A lazy instruction recipe with the name and key its content should be addressed by."""
+    """An instruction as the agent collects it: a lazy recipe with the name and key its content is addressed by.
+
+    Capabilities don't build these to contribute instructions. They return instructions from
+    [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], and the agent
+    wraps each one with where it came from; `instruction` holds what the capability returned.
+    """
 
     instruction: AgentInstruction[AgentDepsT]
 
@@ -91,6 +102,8 @@ class SourcedInstruction(Generic[AgentDepsT]):
     """
     dynamic: bool = False
     on_change: InstructionChangePolicy = 'rewrite'
+    owner: AbstractCapability[AgentDepsT] | None = field(default=None, compare=False)
+    """The capability whose code a function instruction is, which the context it's called with is attributed to."""
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -214,7 +227,14 @@ async def resolve_sourced_instructions(
             _add_instruction_part(context, instruction, sourced.id)
         elif isinstance(instruction, str):
             _add_instruction_text(context, instruction, sourced.id)
-        elif (part := await resolve_instruction_function(sourced, instruction, run_context)) is not None:
+        elif (
+            part := await resolve_instruction_function(
+                sourced,
+                instruction,
+                # What a capability's instruction function enqueues is held to that capability's authority.
+                run_context if sourced.owner is None else run_context._attributed_to(sourced.owner),  # pyright: ignore[reportPrivateUsage]
+            )
+        ) is not None:
             if context.group:
                 context.pending_parts.append(part)
             else:
@@ -504,6 +524,8 @@ class LoadedInstructionValues:
                     self.values.pop(capability_id, None)
                     self._changed.discard(capability_id)
                     self._unstated.pop(capability_id, None)
+                    # The load no longer owns the block, so a later load of the capability counts again.
+                    self._loads.forget(capability_id)
         loaded = self._loads.loads(part)
         for capability_id in loaded:
             # Moved to the end, so the values stay in load order.
