@@ -3,7 +3,7 @@
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
@@ -335,6 +335,8 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
 DataCarryingChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
+# The same types as a tuple, for `isinstance` callers outside this package such as Pydantic AI Harness.
+DATA_CHUNK_TYPES = get_args(DataCarryingChunk)
 _data_carrying_chunk_ta: TypeAdapter[DataCarryingChunk] = TypeAdapter(DataCarryingChunk)
 
 
