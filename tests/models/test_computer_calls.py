@@ -1,4 +1,7 @@
-"""Tests for the X11 key names that Claude's and Gemini's computer tools send."""
+"""Tests for the X11 key names that Claude's and Gemini's computer tools send.
+
+Not VCR tests: `key_from_x11` is a pure mapping that makes no provider request, so a recording would add nothing.
+"""
 
 from __future__ import annotations
 
